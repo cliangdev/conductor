@@ -231,7 +231,7 @@ export function buildRows(args: BuildRowsArgs, now: Date = new Date()): Destinat
         ? 'retry'
         : target?.state === 'AWAITING_MANUAL' && settled
           ? 'mark-published'
-          : rowConsent && !rowConsent.given && mode === 'pick'
+          : rowConsent && !rowConsent.given && (mode === 'pick' || target?.state === 'PENDING')
             ? 'review-consent'
             : null
     return {

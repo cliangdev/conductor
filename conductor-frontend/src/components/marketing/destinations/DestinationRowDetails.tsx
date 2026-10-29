@@ -69,6 +69,38 @@ export function DestinationRowDetails({
   // A music carousel set to go out as its slideshow video is a video post, whatever the media list says.
   const postsAsVideo = row.carouselAs === 'video' || rowIsVideo
 
+  // Consent for this TikTok destination: the preview of what is being agreed to and the checkbox. Shown while
+  // picking, and also once the Post is approved or under review but this destination is still waiting, so
+  // consent that went stale after approval can be given again here rather than only on the bulk page.
+  const consentBlock = row.consent ? (
+          <div className="space-y-3 border-t border-border pt-3">
+            <TikTokConsentPreview
+              target={{
+                connectionId: option.connectionId ?? '',
+                label: option.label,
+                creatorNickname: option.creatorNickname ?? null,
+                options: row.tiktokOptions,
+                problem: row.consent.problem,
+                caption: row.content.captionOverride ?? caption,
+                ...(row.content.assetIds === null ? {} : { assetIds: row.content.assetIds }),
+              }}
+              assets={assets}
+            />
+            <TikTokConsentCheckbox
+              given={row.consent.given}
+              unresolved={Boolean(row.consent.problem)}
+              disabled={locked}
+              saving={consentSaving}
+              consentedAt={row.consent.consentedAt}
+              consentedByName={row.consent.consentedByName}
+              anyPaidPartnership={Boolean(row.tiktokOptions.brandContentToggle)}
+              error={consentError}
+              onChange={(next) => void actions.setConsent(next)}
+            />
+            <p className="text-xs text-muted-foreground">Covers every TikTok destination on this post.</p>
+          </div>
+        ) : null
+
   if (mode === 'pick' && !row.settled) {
     return (
       <div className="space-y-3">
@@ -141,34 +173,7 @@ export function DestinationRowDetails({
           disabled={saving || locked}
           onChange={(next) => actions.setContent(row, next)}
         />
-        {row.consent && (
-          <div className="space-y-3 border-t border-border pt-3">
-            <TikTokConsentPreview
-              target={{
-                connectionId: option.connectionId ?? '',
-                label: option.label,
-                creatorNickname: option.creatorNickname ?? null,
-                options: row.tiktokOptions,
-                problem: row.consent.problem,
-                caption: row.content.captionOverride ?? caption,
-                ...(row.content.assetIds === null ? {} : { assetIds: row.content.assetIds }),
-              }}
-              assets={assets}
-            />
-            <TikTokConsentCheckbox
-              given={row.consent.given}
-              unresolved={Boolean(row.consent.problem)}
-              disabled={locked}
-              saving={consentSaving}
-              consentedAt={row.consent.consentedAt}
-              consentedByName={row.consent.consentedByName}
-              anyPaidPartnership={Boolean(row.tiktokOptions.brandContentToggle)}
-              error={consentError}
-              onChange={(next) => void actions.setConsent(next)}
-            />
-            <p className="text-xs text-muted-foreground">Covers every TikTok destination on this post.</p>
-          </div>
-        )}
+        {consentBlock}
       </div>
     )
   }
@@ -234,6 +239,8 @@ export function DestinationRowDetails({
           )}
         </p>
       )}
+
+      {target.state === 'PENDING' && row.consent && !row.consent.given && consentBlock}
 
       {row.customized && (
         <div className="space-y-2">
