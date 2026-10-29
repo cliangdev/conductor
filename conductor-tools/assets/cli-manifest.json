@@ -291,7 +291,7 @@
     },
     {
       "name": "list_work_item_comments",
-      "description": "List comments on a Work Item, optionally filtered by resolved status. HTML-document comments include a text anchor and an outdated flag.",
+      "description": "List comments on a Work Item, optionally filtered by resolved status. HTML-document comments include a rendered-text anchor and an outdated flag.",
       "category": "comments",
       "requiredParams": [
         "issueId"

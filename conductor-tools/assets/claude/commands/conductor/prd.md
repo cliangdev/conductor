@@ -118,8 +118,8 @@ Use AskUserQuestion:
 - Each section is `<section id="{name}" data-prd-section="{name}">` with an `<h2>`; names, in order: `problem`, `glossary`, `goals`, `non-goals`, `users`, `reference-patterns`, `features`, then optional `out-of-scope`, `open-questions`, `supporting-documents`
 - An empty Glossary or Reference Patterns contains exactly `<p><em>None.</em></p>`
 - Each feature is `<article id="P0-1" data-feature="P0-1">` with an `<h3>`, then a `<dl>` whose `<dt>`s are What, Not, Inputs, Outputs, Invariants, then `<ul data-acs>` of `<li data-ac="AC-P0-1.1">…</li>`
-- Self-contained: inline `<style>` and `<script>`, Google Fonts, and CDN scripts only from cdnjs.cloudflare.com, cdn.jsdelivr.net or unpkg.com with a pinned version. No `fetch`/XHR and no `window.claude` calls — Conductor renders the page in a sandbox with no network access. The page needs no script; add one only when it earns its place
-- Escape `<`, `>` and `&` in text. Keep ids stable: reviewers' comments reference the nearest section id
+- Self-contained: inline `<style>` and `<script>`, Google Fonts, and pinned CDN scripts only from cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com or code.jquery.com. No `fetch`/XHR/WebSocket (the viewer's CSP blocks them), no `window.claude`, no `window.open` (popups are blocked). Links are plain `<a href>`: `#hash` scrolls inside the page and `http(s)` links open in a new tab through the Conductor app. The page needs no script; add one only when it earns its place
+- Escape `<`, `>` and `&` in text. Keep ids stable: reviewers' comments reference the nearest section id. Comment quotes are rendered text (tags dropped, whitespace collapsed), so write section text that reads naturally
 
 ### HTML PRD Template
 
@@ -301,7 +301,7 @@ Before showing the PRD to the user in Step 3d, run through the checklist for the
 - [ ] Every P0 feature's `<dl>` has `<dt>`s What, Not, Inputs, Outputs, Invariants, and a `<ul data-acs>` follows (P1 features may omit all but What)
 - [ ] Every criterion is `<li data-ac="AC-P0-1.1">` with an id matching `^AC-P[01]-\d+\.\d+$`
 - [ ] Every AC id is unique, and its feature part matches the enclosing article (`AC-P0-3.2` only inside `P0-3`)
-- [ ] No `fetch`/XHR/`window.claude`; scripts, if any, are inline or pinned from cdnjs.cloudflare.com, cdn.jsdelivr.net or unpkg.com
+- [ ] No `fetch`/XHR/`window.claude`/`window.open`; scripts, if any, are inline or pinned from cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com or code.jquery.com
 
 **If markdown (`prd.md`):**
 - [ ] Frontmatter contains `schemaVersion: 2`
@@ -538,7 +538,7 @@ Write a valid standalone HTML file with inline CSS — no external dependencies.
    - A `.html` / `.htm` path: Read the file.
    - A claude.ai artifact URL (`claude.ai/artifact/{id}` or `claude.ai/code/artifact/{id}`): call the Artifact tool with `action: "read"` and the URL.
      - If the result is only a summary because the artifact belongs to someone else, **stop**. Say the full page is only readable for artifacts the user owns, and ask them to download the `.html` file and re-run `/conductor:prd import <path>`.
-     - If the result lists declared runtime capabilities (live data, shared state, Claude calls), warn the user: Conductor renders pages in a sandbox with no network and no `window.claude`, so those parts will not work there.
+     - If the result lists declared runtime capabilities (live data, shared state, Claude calls), warn the user: Conductor renders pages in a sandbox that blocks `fetch`/XHR and popups and has no `window.claude`, so those parts will not work there.
      - For the user's own artifact the result names a saved file that holds the full page: Read that file.
 2. **Detect whether it already meets the HTML PRD contract**: the `conductor:doc-type` = `prd` meta tag plus `data-prd-section` and `data-ac` markers (Grep the content).
    - **Meets it**: keep the page verbatim. Skip to step 3 and only set `conductor:issue-id` (adding the meta tag if absent) once the Work Item exists. Run the HTML self-check from 3c and report any failures to the user rather than rewriting their page.

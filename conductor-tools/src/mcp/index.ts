@@ -335,7 +335,7 @@ export const TOOLS = [
   },
   {
     name: 'list_work_item_comments',
-    description: 'List comments on a Work Item, optionally filtered by resolved status. Canonical tool. Comments on HTML documents carry anchor (quoted text plus section id/title) and outdated (document changed since): find the spot by searching the document for the quote.',
+    description: 'List comments on a Work Item, optionally filtered by resolved status. Canonical tool. Comments on HTML documents carry anchor (quoted rendered text plus section id/title) and outdated (document changed since). The quote is rendered text, not source: search the HTML loosely (ignore tags and whitespace) or use sectionId.',
     inputSchema: {
       type: 'object',
       properties: {
