@@ -88,7 +88,8 @@ public class DocumentService {
         // Summaries only: documents.content can be large and the list never displays it.
         return documentRepository.findSummariesByWorkItemId(workItemId).stream()
                 .map(d -> new DocumentView(d.getId(), d.getWorkItemId(), d.getFilename(), d.getContentType(),
-                        d.getCreatedAt(), null, d.getStoragePath(), null, null, d.getUpdatedAt()))
+                        d.getCreatedAt(), null, d.getStoragePath(), null, null, d.getUpdatedAt(),
+                        d.getContentHash()))
                 .toList();
     }
 
@@ -232,7 +233,8 @@ public class DocumentService {
                 document.getStoragePath(),
                 null,
                 null,
-                document.getUpdatedAt());
+                document.getUpdatedAt(),
+                document.getContentHash());
     }
 
     private DocumentView toEnrichedDocumentView(Document document) {
@@ -259,6 +261,7 @@ public class DocumentService {
                 document.getStoragePath(),
                 storageUrl,
                 storageUrlExpiresAt,
-                document.getUpdatedAt());
+                document.getUpdatedAt(),
+                document.getContentHash());
     }
 }

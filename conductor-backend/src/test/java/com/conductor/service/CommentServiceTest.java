@@ -154,7 +154,7 @@ class CommentServiceTest {
             return c;
         });
 
-        Comment response = commentService.createComment("proj-1", "issue-1", "doc-1", "Looks good", 2, null, author);
+        Comment response = commentService.createComment("proj-1", "issue-1", "doc-1", "Looks good", 2, null, null, author).comment();
 
         assertThat(response.getLineNumber()).isEqualTo(2);
         assertThat(response.getContent()).isEqualTo("Looks good");
@@ -175,7 +175,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Needs clarification", 2, null, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Needs clarification", 2, null, null, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -196,7 +196,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on first line", 1, null, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on first line", 1, null, null, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -217,7 +217,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on line 99", 99, null, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on line 99", 99, null, null, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -237,7 +237,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment", 1, null, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment", 1, null, null, author);
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -278,7 +278,7 @@ class CommentServiceTest {
         givenMarkdownDocument("# Spec");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Missing lineNumber", null, null, author))
+                "proj-1", "issue-1", "doc-1", "Missing lineNumber", null, null, null, author))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("lineNumber");
         verify(commentRepository, never()).save(any());
@@ -289,7 +289,7 @@ class CommentServiceTest {
         givenMarkdownDocument("# Spec");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Anchored", null, ANCHOR, author))
+                "proj-1", "issue-1", "doc-1", "Anchored", null, ANCHOR, null, author))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("anchor");
         verify(commentRepository, never()).save(any());
@@ -300,7 +300,7 @@ class CommentServiceTest {
         givenMarkdownDocument("# Spec");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Both", 1, ANCHOR, author))
+                "proj-1", "issue-1", "doc-1", "Both", 1, ANCHOR, null, author))
                 .isInstanceOf(BusinessException.class);
         verify(commentRepository, never()).save(any());
     }
@@ -310,7 +310,7 @@ class CommentServiceTest {
         givenHtmlDocument("<p>20 of 26</p>");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Old client", 3, null, author))
+                "proj-1", "issue-1", "doc-1", "Old client", 3, null, null, author))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("lineNumber");
         verify(commentRepository, never()).save(any());
@@ -321,7 +321,7 @@ class CommentServiceTest {
         givenHtmlDocument("<p>20 of 26</p>");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Both", 3, ANCHOR, author))
+                "proj-1", "issue-1", "doc-1", "Both", 3, ANCHOR, null, author))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("lineNumber");
         verify(commentRepository, never()).save(any());
@@ -332,7 +332,7 @@ class CommentServiceTest {
         givenHtmlDocument("<p>20 of 26</p>");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Nothing", null, null, author))
+                "proj-1", "issue-1", "doc-1", "Nothing", null, null, null, author))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("anchor");
         verify(commentRepository, never()).save(any());
@@ -346,7 +346,7 @@ class CommentServiceTest {
         document.setFilename("Mockup.HTM");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Old client", 3, null, author))
+                "proj-1", "issue-1", "doc-1", "Old client", 3, null, null, author))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -356,7 +356,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         Comment created = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Check this number", null, ANCHOR, author);
+                "proj-1", "issue-1", "doc-1", "Check this number", null, ANCHOR, null, author).comment();
 
         assertThat(created.getQuotedText()).isEqualTo("20 of 26");
         assertThat(created.getAnchorExact()).isEqualTo("20 of 26");
@@ -375,7 +375,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         Comment created = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Hash me", null, ANCHOR, author);
+                "proj-1", "issue-1", "doc-1", "Hash me", null, ANCHOR, null, author).comment();
 
         assertThat(created.getDocumentHash()).isEqualTo(DocumentContent.sha256Hex("<p>20 of 26</p>"));
     }
@@ -386,7 +386,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         Comment created = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Line comment", 2, null, author);
+                "proj-1", "issue-1", "doc-1", "Line comment", 2, null, null, author).comment();
 
         assertThat(created.getDocumentHash()).isEqualTo(DocumentContent.sha256Hex("line one\nline two"));
         assertThat(created.getAnchorExact()).isNull();
@@ -401,7 +401,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         Comment created = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "No content", 1, null, author);
+                "proj-1", "issue-1", "doc-1", "No content", 1, null, null, author).comment();
 
         assertThat(created.getDocumentHash()).isNull();
     }
@@ -473,27 +473,126 @@ class CommentServiceTest {
     }
 
     @Test
-    void isOutdatedComparesAgainstTheDocumentsCurrentHash() {
+    void resolveCommentReportsOutdatedAgainstTheDocumentsCurrentHash() {
         comment.setDocumentHash("old-hash");
+        when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
+        when(commentRepository.save(any(Comment.class))).thenReturn(comment);
         when(documentRepository.findContentHashById("doc-1")).thenReturn("new-hash");
 
-        assertThat(commentService.isOutdated(comment)).isTrue();
+        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", author).outdated()).isTrue();
     }
 
     @Test
-    void isOutdatedIsFalseWhenTheCommentHasNoHash() {
+    void resolveCommentSkipsTheHashQueryWhenTheCommentHasNoHash() {
         comment.setDocumentHash(null);
+        when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
+        when(commentRepository.save(any(Comment.class))).thenReturn(comment);
 
-        assertThat(commentService.isOutdated(comment)).isFalse();
+        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", author).outdated()).isFalse();
         verify(documentRepository, never()).findContentHashById(any());
     }
 
     @Test
-    void isOutdatedIsFalseWhenTheDocumentHasNoHash() {
+    void resolveCommentIsNotOutdatedWhenTheDocumentHasNoHash() {
         comment.setDocumentHash("old-hash");
+        when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
+        when(commentRepository.save(any(Comment.class))).thenReturn(comment);
         when(documentRepository.findContentHashById("doc-1")).thenReturn(null);
 
-        assertThat(commentService.isOutdated(comment)).isFalse();
+        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", author).outdated()).isFalse();
+    }
+
+    // --- documentHash: the version the reviewer was looking at ---
+
+    private static final String OLD_HASH = DocumentContent.sha256Hex("<p>funnel: 19 of 26 signed up</p>");
+
+    @Test
+    void createCommentWithDocumentHashThatDiffersFromCurrentIsStampedWithItAndOutdated() {
+        givenHtmlDocument("<p>funnel: 20 of 26 signed up</p>");
+        givenSaveAssignsIds();
+
+        CommentService.CommentResult result = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Stale view", null, ANCHOR, OLD_HASH, author);
+
+        assertThat(result.comment().getDocumentHash()).isEqualTo(OLD_HASH);
+        assertThat(result.outdated()).isTrue();
+    }
+
+    @Test
+    void createCommentWithDocumentHashEqualToCurrentIsNotOutdated() {
+        givenHtmlDocument("<p>funnel: 20 of 26 signed up</p>");
+        givenSaveAssignsIds();
+
+        CommentService.CommentResult result = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Fresh view", null, ANCHOR, document.getContentHash(), author);
+
+        assertThat(result.comment().getDocumentHash()).isEqualTo(document.getContentHash());
+        assertThat(result.outdated()).isFalse();
+    }
+
+    @Test
+    void createCommentWithoutDocumentHashFallsBackToTheCurrentHash() {
+        givenHtmlDocument("<p>funnel: 20 of 26 signed up</p>");
+        givenSaveAssignsIds();
+
+        CommentService.CommentResult result = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Old client", null, ANCHOR, null, author);
+
+        assertThat(result.comment().getDocumentHash()).isEqualTo(document.getContentHash());
+        assertThat(result.outdated()).isFalse();
+    }
+
+    @Test
+    void createLineCommentWithDocumentHashStampsIt() {
+        givenMarkdownDocument("line one\nline two");
+        givenSaveAssignsIds();
+
+        CommentService.CommentResult result = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Line", 2, null, OLD_HASH, author);
+
+        assertThat(result.comment().getDocumentHash()).isEqualTo(OLD_HASH);
+        assertThat(result.outdated()).isTrue();
+    }
+
+    @Test
+    void createCommentWithADocumentHashButADocumentWithoutOneIsNotOutdated() {
+        document.setContent(null);
+        document.setContentHash(null);
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(document));
+        givenSaveAssignsIds();
+
+        CommentService.CommentResult result = commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "No content", 1, null, OLD_HASH, author);
+
+        assertThat(result.outdated()).isFalse();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {
+            "",
+            "abc",
+            "2CF24DBA5FB0A30E26E83B2AC5B9E29E1B161E5C1FA7425E73043362938B9824",   // uppercase
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b982",    // 63 chars
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b98244",  // 65 chars
+            "zcf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",   // non-hex
+            "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"})
+    void createCommentWithAMalformedDocumentHashIsRejected(String malformed) {
+        assertThatThrownBy(() -> commentService.createComment(
+                "proj-1", "issue-1", "doc-1", "Bad hash", null, ANCHOR, malformed, author))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("documentHash");
+        verify(commentRepository, never()).save(any());
+    }
+
+    @Test
+    void createCommentDoesNotQueryTheDocumentHashSeparately() {
+        // The document is already loaded on the create path, so outdated needs no extra query.
+        givenHtmlDocument("<p>funnel: 20 of 26 signed up</p>");
+        givenSaveAssignsIds();
+
+        commentService.createComment("proj-1", "issue-1", "doc-1", "One query", null, ANCHOR, OLD_HASH, author);
+
+        verify(documentRepository, never()).findContentHashById(any());
     }
 
     @Test
@@ -573,7 +672,7 @@ class CommentServiceTest {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
         when(commentRepository.save(any(Comment.class))).thenReturn(comment);
 
-        Comment response = commentService.resolveComment("proj-1", "issue-1", "comment-1", author);
+        Comment response = commentService.resolveComment("proj-1", "issue-1", "comment-1", author).comment();
 
         assertThat(comment.getResolvedAt()).isNotNull();
         assertThat(comment.getResolvedBy()).isEqualTo(author);
@@ -762,7 +861,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", longContent, 1, null, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", longContent, 1, null, null, author);
 
         ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(captor.capture());

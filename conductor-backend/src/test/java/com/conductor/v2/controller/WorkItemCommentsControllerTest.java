@@ -14,6 +14,7 @@ import com.conductor.service.CommentService;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.view.CommentAnchor;
+import com.conductor.service.CommentService.CommentResult;
 import com.conductor.service.view.CommentWithRepliesView;
 import com.conductor.workflow.RunTokenService;
 import org.junit.jupiter.api.BeforeEach;
@@ -105,8 +106,8 @@ class WorkItemCommentsControllerTest {
     void createWithAnchor_passesTheAnchorToTheServiceAndReturnsItWithOutdatedFalse() throws Exception {
         Comment comment = savedComment(true);
         when(commentService.createComment(eq("proj-1"), eq("wi-1"), eq("doc-1"), eq("Check this"),
-                isNull(), any(CommentAnchor.class), any(User.class))).thenReturn(comment);
-        when(commentService.isOutdated(comment)).thenReturn(false);
+                isNull(), any(CommentAnchor.class), isNull(), any(User.class)))
+                .thenReturn(new CommentResult(comment, false));
 
         mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -123,7 +124,7 @@ class WorkItemCommentsControllerTest {
                 .andExpect(jsonPath("$.outdated").value(false));
 
         ArgumentCaptor<CommentAnchor> anchor = ArgumentCaptor.forClass(CommentAnchor.class);
-        verify(commentService).createComment(any(), any(), any(), any(), isNull(), anchor.capture(), any());
+        verify(commentService).createComment(any(), any(), any(), any(), isNull(), anchor.capture(), isNull(), any());
         assertThat(anchor.getValue()).isEqualTo(
                 new CommentAnchor("20 of 26", "funnel: ", " signed up", "funnel", "Funnel"));
     }
@@ -132,7 +133,7 @@ class WorkItemCommentsControllerTest {
     void createWithLineNumber_stillWorksAndReturnsNullAnchor() throws Exception {
         Comment comment = savedComment(false);
         when(commentService.createComment(eq("proj-1"), eq("wi-1"), eq("doc-1"), eq("Check this"),
-                eq(4), isNull(), any(User.class))).thenReturn(comment);
+                eq(4), isNull(), isNull(), any(User.class))).thenReturn(new CommentResult(comment, false));
 
         mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"documentId\":\"doc-1\",\"content\":\"Check this\",\"lineNumber\":4}"))
@@ -145,7 +146,7 @@ class WorkItemCommentsControllerTest {
     @Test
     void createWithNeitherLineNumberNorAnchor_isNoLongerRejectedBySchemaValidation() throws Exception {
         // lineNumber is optional in the spec now; the service decides per document kind.
-        when(commentService.createComment(any(), any(), any(), any(), isNull(), isNull(), any()))
+        when(commentService.createComment(any(), any(), any(), any(), isNull(), isNull(), any(), any()))
                 .thenThrow(new BusinessException("anchor is required on HTML documents"));
 
         mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
@@ -156,7 +157,7 @@ class WorkItemCommentsControllerTest {
 
     @Test
     void createWithLineNumberOnHtml_returns400ProblemDetail() throws Exception {
-        when(commentService.createComment(any(), any(), any(), any(), eq(4), isNull(), any()))
+        when(commentService.createComment(any(), any(), any(), any(), eq(4), isNull(), any(), any()))
                 .thenThrow(new BusinessException("lineNumber is not supported on HTML documents; send an anchor"));
 
         mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
@@ -168,7 +169,7 @@ class WorkItemCommentsControllerTest {
 
     @Test
     void createWithAnchorOnMarkdown_returns400ProblemDetail() throws Exception {
-        when(commentService.createComment(any(), any(), any(), any(), isNull(), any(CommentAnchor.class), any()))
+        when(commentService.createComment(any(), any(), any(), any(), isNull(), any(CommentAnchor.class), any(), any()))
                 .thenThrow(new BusinessException("anchor is only supported on HTML documents; send a lineNumber"));
 
         mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
@@ -182,7 +183,7 @@ class WorkItemCommentsControllerTest {
         mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"documentId\":\"doc-1\",\"content\":\"c\",\"anchor\":{\"exact\":\"\"}}"))
                 .andExpect(status().isBadRequest());
-        verify(commentService, never()).createComment(any(), any(), any(), any(), any(), any(), any());
+        verify(commentService, never()).createComment(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -190,7 +191,7 @@ class WorkItemCommentsControllerTest {
         mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"documentId\":\"doc-1\",\"content\":\"c\",\"anchor\":{\"prefix\":\"p\"}}"))
                 .andExpect(status().isBadRequest());
-        verify(commentService, never()).createComment(any(), any(), any(), any(), any(), any(), any());
+        verify(commentService, never()).createComment(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -199,7 +200,7 @@ class WorkItemCommentsControllerTest {
         mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"documentId\":\"doc-1\",\"content\":\"c\",\"anchor\":{\"exact\":\"" + tooLong + "\"}}"))
                 .andExpect(status().isBadRequest());
-        verify(commentService, never()).createComment(any(), any(), any(), any(), any(), any(), any());
+        verify(commentService, never()).createComment(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -209,7 +210,31 @@ class WorkItemCommentsControllerTest {
                         .content("{\"documentId\":\"doc-1\",\"content\":\"c\",\"anchor\":{\"exact\":\"x\",\"prefix\":\""
                                 + tooLong + "\"}}"))
                 .andExpect(status().isBadRequest());
-        verify(commentService, never()).createComment(any(), any(), any(), any(), any(), any(), any());
+        verify(commentService, never()).createComment(any(), any(), any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void createWithADocumentHash_passesItToTheServiceAndReportsOutdated() throws Exception {
+        String hash = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
+        Comment comment = savedComment(true);
+        when(commentService.createComment(eq("proj-1"), eq("wi-1"), eq("doc-1"), eq("Check this"),
+                isNull(), any(CommentAnchor.class), eq(hash), any(User.class)))
+                .thenReturn(new CommentResult(comment, true));
+
+        mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"documentId\":\"doc-1\",\"content\":\"Check this\",\"documentHash\":\""
+                                + hash + "\",\"anchor\":{\"exact\":\"20 of 26\"}}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.outdated").value(true));
+    }
+
+    @Test
+    void createWithAMalformedDocumentHash_isRejectedBeforeTheService() throws Exception {
+        mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"documentId\":\"doc-1\",\"content\":\"c\",\"documentHash\":\"NOT-A-HASH\","
+                                + "\"anchor\":{\"exact\":\"x\"}}"))
+                .andExpect(status().isBadRequest());
+        verify(commentService, never()).createComment(any(), any(), any(), any(), any(), any(), any(), any());
     }
 
     @Test

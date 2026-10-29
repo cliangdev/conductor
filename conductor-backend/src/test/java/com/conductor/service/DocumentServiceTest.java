@@ -468,6 +468,44 @@ class DocumentServiceTest {
         assertThat(line.isLineStale()).isFalse();
     }
 
+    @Test
+    void getDocumentReturnsTheContentHash() {
+        testDocument.setContentHash("abc123");
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByIdAndWorkItemId("doc-1", "issue-1")).thenReturn(Optional.of(testDocument));
+        when(gcpStorageService.generateSignedUrl(anyString(), anyInt())).thenReturn("https://signed");
+
+        assertThat(documentService.getDocument("proj-1", "issue-1", "doc-1").contentHash()).isEqualTo("abc123");
+    }
+
+    @Test
+    void getDocumentByFilenameReturnsTheContentHash() {
+        testDocument.setContentHash("abc123");
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+
+        assertThat(documentService.getDocumentByFilename("proj-1", "issue-1", "spec.md").contentHash())
+                .isEqualTo("abc123");
+    }
+
+    @Test
+    void listDocumentsReturnsTheContentHashWithoutTheBody() {
+        DocumentRepository.Summary summary = org.mockito.Mockito.mock(DocumentRepository.Summary.class);
+        when(summary.getId()).thenReturn("doc-1");
+        when(summary.getWorkItemId()).thenReturn("issue-1");
+        when(summary.getFilename()).thenReturn("prd.html");
+        when(summary.getContentType()).thenReturn("text/html");
+        when(summary.getContentHash()).thenReturn("abc123");
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findSummariesByWorkItemId("issue-1")).thenReturn(List.of(summary));
+
+        List<DocumentView> views = documentService.listDocuments("proj-1", "issue-1");
+
+        assertThat(views).hasSize(1);
+        assertThat(views.get(0).contentHash()).isEqualTo("abc123");
+        assertThat(views.get(0).content()).isNull();
+    }
+
     // --- delete by filename tests ---
 
     @Test

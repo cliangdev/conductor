@@ -16,5 +16,6 @@ public record DocumentView(
         String storagePath,
         String storageUrl,
         OffsetDateTime storageUrlExpiresAt,
-        OffsetDateTime updatedAt) {
+        OffsetDateTime updatedAt,
+        String contentHash) {
 }

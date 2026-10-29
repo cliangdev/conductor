@@ -95,6 +95,61 @@ class HtmlDocumentCommentAnchorsE2ETest extends AbstractE2ETest {
     }
 
     @Test
+    void contentHashIsOnTheGetAndListDocumentResponsesAndChangesWithTheContent() {
+        String docId = putDocument("prd.html", "<p>one</p>", "text/html");
+        String expected = com.conductor.service.DocumentContent.sha256Hex("<p>one</p>");
+
+        Map<String, Object> got = rest.exchange(url(base + "/documents/" + docId), HttpMethod.GET,
+                new HttpEntity<>(headers), Map.class).getBody();
+        assertThat(got).containsEntry("contentHash", expected);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> listed = rest.exchange(url(base + "/documents"), HttpMethod.GET,
+                new HttpEntity<>(headers), List.class).getBody();
+        assertThat(listed.get(0)).containsEntry("contentHash", expected);
+
+        putDocument("prd.html", "<p>two</p>", "text/html");
+        Map<String, Object> after = rest.exchange(url(base + "/documents/" + docId), HttpMethod.GET,
+                new HttpEntity<>(headers), Map.class).getBody();
+        assertThat(after.get("contentHash")).isEqualTo(com.conductor.service.DocumentContent.sha256Hex("<p>two</p>"));
+    }
+
+    @Test
+    void documentHashOfAnOlderVersion_isStampedAndTheNewCommentIsOutdatedImmediately() {
+        String docId = putDocument("prd.html", "<p>funnel: 19 of 26 signed up</p>", "text/html");
+        String hashTheReviewerSaw = com.conductor.service.DocumentContent.sha256Hex("<p>funnel: 19 of 26 signed up</p>");
+        putDocument("prd.html", "<p>funnel: 20 of 26 signed up</p>", "text/html");
+
+        var created = postComment(Map.of("documentId", docId, "content", "Stale view", "anchor", ANCHOR,
+                "documentHash", hashTheReviewerSaw));
+
+        assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        assertThat(created.getBody().get("outdated")).isEqualTo(true);
+        assertThat(listComments().get(0)).containsEntry("outdated", true);
+    }
+
+    @Test
+    void documentHashEqualToTheCurrentOne_isNotOutdated() {
+        String docId = putDocument("prd.html", "<p>funnel: 20 of 26 signed up</p>", "text/html");
+        String current = com.conductor.service.DocumentContent.sha256Hex("<p>funnel: 20 of 26 signed up</p>");
+
+        var created = postComment(Map.of("documentId", docId, "content", "Fresh", "anchor", ANCHOR,
+                "documentHash", current));
+
+        assertThat(created.getBody().get("outdated")).isEqualTo(false);
+    }
+
+    @Test
+    void malformedDocumentHash_returns400() {
+        String docId = putDocument("prd.html", "<p>hi</p>", "text/html");
+
+        var resp = postComment(Map.of("documentId", docId, "content", "Bad", "anchor", ANCHOR,
+                "documentHash", "ABC"));
+
+        assertThat(resp.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
     void lineNumberOnHtml_returns400() {
         String docId = putDocument("prd.html", "<p>hi</p>", "text/html");
 

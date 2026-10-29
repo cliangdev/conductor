@@ -43,10 +43,10 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
     public ResponseEntity<CommentResponse> createWorkItemComment(String projectId, String workItemId,
                                                                  CreateCommentRequest request) {
         User caller = currentUser();
-        Comment comment = commentService.createComment(
+        CommentService.CommentResult created = commentService.createComment(
                 projectId, workItemId, request.getDocumentId(), request.getContent(), request.getLineNumber(),
-                toDomain(request.getAnchor()), caller);
-        return ResponseEntity.status(201).body(toV2(comment, commentService.isOutdated(comment)));
+                toDomain(request.getAnchor()), request.getDocumentHash(), caller);
+        return ResponseEntity.status(201).body(toV2(created.comment(), created.outdated()));
     }
 
     @Override
@@ -74,8 +74,8 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
     public ResponseEntity<CommentResponse> resolveWorkItemComment(String projectId, String workItemId,
                                                                   String commentId) {
         User caller = currentUser();
-        Comment comment = commentService.resolveComment(projectId, workItemId, commentId, caller);
-        return ResponseEntity.ok(toV2(comment, commentService.isOutdated(comment)));
+        CommentService.CommentResult resolved = commentService.resolveComment(projectId, workItemId, commentId, caller);
+        return ResponseEntity.ok(toV2(resolved.comment(), resolved.outdated()));
     }
 
     @Override

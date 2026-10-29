@@ -31,9 +31,16 @@ import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 @Service
 public class CommentService {
+
+    /** A SHA-256 as {@link DocumentContent#sha256Hex} writes it. */
+    private static final Pattern DOCUMENT_HASH = Pattern.compile("[0-9a-f]{64}");
+
+    /** A comment together with whether its document changed since the version it was written against. */
+    public record CommentResult(Comment comment, boolean outdated) {}
 
     private final CommentRepository commentRepository;
     private final CommentReplyRepository commentReplyRepository;
@@ -67,9 +74,13 @@ public class CommentService {
     }
 
     @Transactional
-    public Comment createComment(String projectId, String workItemId, String documentId, String content,
-                                 Integer lineNumber, CommentAnchor anchor, User caller) {
+    public CommentResult createComment(String projectId, String workItemId, String documentId, String content,
+                                       Integer lineNumber, CommentAnchor anchor, String documentHash, User caller) {
         verifyMembership(projectId, caller.getId());
+
+        if (documentHash != null && !DOCUMENT_HASH.matcher(documentHash).matches()) {
+            throw new BusinessException("documentHash must be 64 lowercase hex characters");
+        }
 
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
@@ -112,7 +123,8 @@ public class CommentService {
             comment.setLineNumber(lineNumber);
             comment.setQuotedText(extractLineFromDocument(document, lineNumber));
         }
-        comment.setDocumentHash(document.getContentHash());
+        // The version the reviewer was looking at, when the client says so; otherwise the document as it is now.
+        comment.setDocumentHash(documentHash != null ? documentHash : document.getContentHash());
 
         commentRepository.save(comment);
 
@@ -131,7 +143,8 @@ public class CommentService {
                 ),
                 new SignalOrigin("comment", workItem.getId())));
 
-        return comment;
+        // The document is already loaded here, so no extra query is needed to compare against its current hash.
+        return new CommentResult(comment, comment.isOutdatedAgainst(document.getContentHash()));
     }
 
     String extractLineFromDocument(Document document, int lineNumber) {
@@ -239,7 +252,7 @@ public class CommentService {
     }
 
     @Transactional
-    public Comment resolveComment(String projectId, String workItemId, String commentId, User caller) {
+    public CommentResult resolveComment(String projectId, String workItemId, String commentId, User caller) {
         verifyMembership(projectId, caller.getId());
         findWorkItemInProject(projectId, workItemId);
 
@@ -248,7 +261,7 @@ public class CommentService {
         comment.setResolvedBy(caller);
 
         commentRepository.save(comment);
-        return comment;
+        return new CommentResult(comment, isOutdated(comment));
     }
 
     @Transactional
@@ -281,11 +294,11 @@ public class CommentService {
     }
 
     /**
-     * Whether the document changed after this comment was written. Reads the document's current hash on its own
-     * (the hash column only, never {@code content}); either hash missing reads as not outdated.
+     * Whether the document changed after this comment was written. The comment's document is a lazy reference
+     * here, so this reads the current hash on its own (the hash column only, never {@code content}), and not at
+     * all when the comment has no hash; either hash missing reads as not outdated.
      */
-    @Transactional(readOnly = true)
-    public boolean isOutdated(Comment comment) {
+    private boolean isOutdated(Comment comment) {
         if (comment.getDocumentHash() == null) {
             return false;
         }

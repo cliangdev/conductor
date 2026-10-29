@@ -6146,6 +6146,14 @@ components:
           type: string
           nullable: true
           description: Inline content for text/markdown, text/plain and text/html; null for binary types
+        contentHash:
+          type: string
+          nullable: true
+          description: |
+            SHA-256 of the document's current inline content (its UTF-8 bytes), as 64 lowercase hex characters.
+            Null when the document has no inline content (for example a binary file). It changes whenever the
+            content changes, so a client that sends it back as `documentHash` when commenting records the
+            version of the document the reviewer was looking at.
         storagePath:
           type: string
         storageUrl:
@@ -6180,6 +6188,14 @@ components:
           type: string
         contentType:
           type: string
+        contentHash:
+          type: string
+          nullable: true
+          description: |
+            SHA-256 of the document's current inline content (its UTF-8 bytes), as 64 lowercase hex characters.
+            Null when the document has no inline content (for example a binary file). It changes whenever the
+            content changes, so a client that sends it back as `documentHash` when commenting records the
+            version of the document the reviewer was looking at.
         storagePath:
           type: string
         createdAt:
@@ -6254,6 +6270,15 @@ components:
           type: integer
         anchor:
           $ref: "#/components/schemas/TextQuoteAnchor"
+        documentHash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: |
+            The `contentHash` of the document version the reviewer was looking at when they wrote the comment
+            (64 lowercase hex characters; anything else is a 400). The comment is stamped with it, so the
+            response and later reads report `outdated: true` if the document has changed since. Omit it and
+            the comment is stamped with the document's current `contentHash` instead, which is right only if
+            the reviewer's copy is current; clients that cache a document should send it.
 
     CommentResponse:
       type: object
@@ -6284,7 +6309,12 @@ components:
           description: Text-selection anchor; null for line comments.
         outdated:
           type: boolean
-          description: True when the document changed after this comment was written. False when either hash is unknown.
+          description: |
+            True when the document's current `contentHash` differs from the hash this comment was stamped with
+            (the `documentHash` the client sent when commenting, or the document's hash at that moment if it
+            sent none). False when they match, and also false when either hash is unknown (a comment written
+            before hashing existed, or a document without inline content): the server then cannot tell, so it
+            does not claim the comment is outdated.
         lineStale:
           type: boolean
         resolvedAt:
@@ -6349,7 +6379,12 @@ components:
           description: Text-selection anchor; null for line comments.
         outdated:
           type: boolean
-          description: True when the document changed after this comment was written. False when either hash is unknown.
+          description: |
+            True when the document's current `contentHash` differs from the hash this comment was stamped with
+            (the `documentHash` the client sent when commenting, or the document's hash at that moment if it
+            sent none). False when they match, and also false when either hash is unknown (a comment written
+            before hashing existed, or a document without inline content): the server then cannot tell, so it
+            does not claim the comment is outdated.
         lineStale:
           type: boolean
         documentName:
