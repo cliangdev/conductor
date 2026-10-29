@@ -572,6 +572,22 @@ public class MetaGraphClient {
      * retried one metric at a time and keeps whatever answers. A 403 means the connection lacks
      * {@code read_insights}; any other 4xx leaves a gap. A 5xx/IO failure still propagates.
      */
+    /**
+     * Graph often answers a missing permission as a 400 rather than a 403, carrying error code 10 or 200
+     * ("(#10) Requires read_insights permission"). Read as forbidden, it gets the reconnect hint instead of
+     * a silent gap, and the per-metric retry is skipped, because every metric would be refused the same way.
+     */
+    private static boolean isPermissionError(HttpClientErrorException e) {
+        JsonNode body;
+        try {
+            body = parseJson(e.getResponseBodyAsString());
+        } catch (IllegalStateException ignored) {
+            return false;
+        }
+        int code = body == null ? 0 : body.path("error").path("code").asInt(0);
+        return code == 10 || code == 200;
+    }
+
     private InsightValues readInsightValues(String nodeId, String edge, String metricsCsv, String token) {
         URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + nodeId + "/" + edge)
                 .queryParam("metric", metricsCsv)
@@ -601,7 +617,7 @@ public class MetaGraphClient {
             int status = e.getStatusCode().value();
             log.debug("Facebook insights [{}] unavailable for {} {}: {} {}", metricsCsv, edge, nodeId, status,
                     e.getResponseBodyAsString());
-            if (status == 403) {
+            if (status == 403 || isPermissionError(e)) {
                 return InsightValues.FORBIDDEN;
             }
             if (status == 400 && metricsCsv.indexOf(',') >= 0) {

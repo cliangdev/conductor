@@ -327,6 +327,26 @@ class MetaGraphClientTest {
         server.verify();
     }
 
+    /** Graph often answers a missing read_insights as a 400 (#10): forbidden, and no per-metric retry. */
+    @Test
+    void readPostMetrics_insightsPermissionErrorAs400_marksForbiddenWithoutRetry() {
+        server.expect(requestTo(containsString("/v21.0/pg_g?fields=")))
+                .andRespond(withSuccess("{\"id\":\"pg_g\",\"reactions\":{\"summary\":{\"total_count\":2}},"
+                        + "\"comments\":{\"summary\":{\"total_count\":0}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/pg_g/insights?metric=")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withBadRequest()
+                        .body("{\"error\":{\"message\":\"(#10) Requires read_insights permission\",\"code\":10}}")
+                        .contentType(MediaType.APPLICATION_JSON));
+
+        assertThat(client.readPostMetrics(java.util.List.of("pg_g"), "t")).singleElement().satisfies(m -> {
+            assertThat(m.likes()).isEqualTo(2L);
+            assertThat(m.views()).isNull();
+            assertThat(m.insightsForbidden()).isTrue();
+        });
+        server.verify();
+    }
+
     /** Meta fails the whole insights call when one metric is retired; the other must still be read. */
     @Test
     void readPostMetrics_insightsBadRequest_retriesEachMetricOnItsOwn() {
