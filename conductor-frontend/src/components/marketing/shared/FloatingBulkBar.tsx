@@ -24,7 +24,7 @@ export function FloatingBulkBar({
     <div
       role="toolbar"
       aria-label="Selection actions"
-      className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-2 rounded-lg border border-border bg-popover px-4 py-2.5 shadow-lg"
+      className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-4xl flex-wrap items-center gap-2 rounded-lg border border-border bg-popover px-4 py-2.5 shadow-lg"
     >
       <span className="text-sm font-medium text-foreground">{count} selected</span>
       {hiddenCount > 0 && <span className="text-xs text-muted-foreground">({hiddenCount} hidden by filters)</span>}

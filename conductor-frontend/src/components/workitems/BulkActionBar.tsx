@@ -49,7 +49,7 @@ export function BulkActionBar({
 }) {
   return (
     <FloatingBulkBar count={count} hiddenCount={hiddenCount} onClear={onClear}>
-      <div className="flex items-center gap-2">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button ref={statusTriggerRef} variant="outline" size="sm" disabled={disabled}>

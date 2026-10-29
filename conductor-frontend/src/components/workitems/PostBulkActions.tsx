@@ -130,7 +130,7 @@ export function PostBulkActions({ projectId, token, selected, disabled, run }: P
         Delete
       </Button>
       {disabledReasons.length > 0 && (
-        <p className="basis-full text-xs text-muted-foreground" role="status" data-testid="disabled-reasons">
+        <p className="w-full text-xs text-muted-foreground" role="status" data-testid="disabled-reasons">
           {disabledReasons.join(' · ')}
         </p>
       )}
