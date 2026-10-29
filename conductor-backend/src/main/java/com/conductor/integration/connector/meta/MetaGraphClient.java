@@ -763,6 +763,29 @@ public class MetaGraphClient {
         return body == null || body.success() == null || body.success();
     }
 
+    /**
+     * Permissions the user token currently holds ({@code /me/permissions}), keeping only entries whose
+     * {@code status} is {@code granted}; a declined or expired permission is listed by Meta but not held.
+     */
+    public List<String> listGrantedPermissions(String userAccessToken) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/me/permissions")
+                .encode().build().toUri());
+        ResponseEntity<String> response = restTemplate.exchange(
+                uri, HttpMethod.GET, new HttpEntity<>(bearer(userAccessToken)), String.class);
+        JsonNode root = parseJson(response.getBody());
+        JsonNode data = root == null ? null : root.path("data");
+        List<String> granted = new ArrayList<>();
+        if (data != null && data.isArray()) {
+            for (JsonNode entry : data) {
+                String name = entry.path("permission").asText("");
+                if (!name.isBlank() && "granted".equals(entry.path("status").asText())) {
+                    granted.add(name);
+                }
+            }
+        }
+        return granted;
+    }
+
     // ---- Account-level stats (channel metrics) ----------------------------------------------------
 
     /**

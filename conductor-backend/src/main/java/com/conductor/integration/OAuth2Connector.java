@@ -288,6 +288,17 @@ public interface OAuth2Connector extends Connector {
     }
 
     /**
+     * The scopes the provider actually granted, when the token response does not say (Meta reports
+     * grants only through {@code /me/permissions}, and a user can decline some). Called with the
+     * <em>user</em> access token the code exchange returned, before any completion swap. Empty (the
+     * default) makes the flow fall back to the token response's {@code scope}, then to the requested
+     * scopes. Implementations must not throw: a failure here must never fail the authorization.
+     */
+    default Optional<List<String>> grantedScopes(String userAccessToken) {
+        return Optional.empty();
+    }
+
+    /**
      * Whether this connector authorizes against no provider at all: the flow service then skips the
      * client-credential requirement, sends the browser straight back to its own callback with a
      * synthetic code, and answers the code-for-token exchange with canned tokens instead of a POST.

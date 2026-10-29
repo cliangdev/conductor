@@ -105,6 +105,11 @@ public class Connection implements EnvelopeEncrypted {
     @ColumnTransformer(write = "?::jsonb")
     private String toolMetadata;
 
+    /** JSON array of the OAuth scopes the last authorization granted; null when unknown (pre-V165 rows). */
+    @Column(name = "granted_scopes", columnDefinition = "JSONB")
+    @ColumnTransformer(write = "?::jsonb")
+    private String grantedScopes;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -203,4 +208,7 @@ public class Connection implements EnvelopeEncrypted {
 
     public String getToolMetadata() { return toolMetadata; }
     public void setToolMetadata(String toolMetadata) { this.toolMetadata = toolMetadata; }
+
+    public String getGrantedScopes() { return grantedScopes; }
+    public void setGrantedScopes(String grantedScopes) { this.grantedScopes = grantedScopes; }
 }

@@ -273,6 +273,7 @@ export default function GenericConnectorPage({
               disconnecting={disconnecting === conn.id}
               onDisconnect={setConfirmingDisconnect}
               onChooseAccount={setPendingAccountConnectionId}
+              onReconnect={item.authType === 'OAUTH2' ? handleOAuth : undefined}
               onEditSettings={editableFields.length > 0 ? openEdit : undefined}
             />
           ))}

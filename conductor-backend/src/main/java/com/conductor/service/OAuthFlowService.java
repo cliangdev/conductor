@@ -111,6 +111,62 @@ public class OAuthFlowService {
                 .orElse(DEFAULT_GOOGLE_SCOPES);
     }
 
+    /**
+     * The scopes an authorization granted, best evidence first: the connector's own hook (Meta's
+     * {@code /me/permissions}), then the token response's {@code scope}, then what was requested. Never
+     * throws; the grant record must not be able to fail an authorization.
+     */
+    List<String> resolveGrantedScopes(OAuth2Connector connector, Map<String, Object> tokenResponse,
+                                      String userAccessToken) {
+        List<String> requested = scopesFor(connector.getId());
+        if (connector.usesStubAuthorization()) {
+            return requested;
+        }
+        try {
+            Optional<List<String>> fromHook = connector.grantedScopes(userAccessToken);
+            if (fromHook != null && fromHook.isPresent()) {
+                return fromHook.get();
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not read granted scopes for connector={}: {}", connector.getId(), e.getMessage());
+        }
+        Object scope = tokenResponse == null ? null : tokenResponse.get("scope");
+        List<String> fromToken = new java.util.ArrayList<>();
+        if (scope instanceof String s) {
+            // The connector's delimiter first, then whitespace/commas in case the provider differs.
+            for (String part : s.split(java.util.regex.Pattern.quote(connector.scopeDelimiter()) + "|[\\s,]+")) {
+                if (!part.isBlank() && !fromToken.contains(part.trim())) {
+                    fromToken.add(part.trim());
+                }
+            }
+        }
+        return fromToken.isEmpty() ? requested : fromToken;
+    }
+
+    /**
+     * Scopes the connector now asks for that this connection's recorded grant lacks. Empty when the
+     * grant is unknown (connections authorized before scopes were recorded: never prompt on unknown),
+     * for non-OAuth connections, and for a connector that no longer exists. Case and order are ignored.
+     */
+    public List<String> missingScopes(Connection conn) {
+        if (!AuthType.OAUTH2.name().equals(conn.getAuthType())) {
+            return List.of();
+        }
+        List<String> granted = connectionService.readGrantedScopes(conn);
+        if (granted == null) {
+            return List.of();
+        }
+        return connectorRegistry.findOAuth2(conn.getConnectorId())
+                .map(c -> missingScopes(c.oauthScopes(), granted))
+                .orElse(List.of());
+    }
+
+    static List<String> missingScopes(List<String> wanted, List<String> granted) {
+        java.util.Set<String> have = new java.util.HashSet<>();
+        granted.forEach(g -> have.add(g.toLowerCase(java.util.Locale.ROOT)));
+        return wanted.stream().filter(w -> !have.contains(w.toLowerCase(java.util.Locale.ROOT))).toList();
+    }
+
     private OAuth2Connector requireOAuth2Connector(String connectorId) {
         return connectorRegistry.findOAuth2(connectorId)
                 .orElseThrow(() -> new IllegalStateException(
@@ -248,12 +304,16 @@ public class OAuthFlowService {
                 : null;
 
         Connection conn = resolveConnection(projectId, connectorId, connector);
+        // Resolved against the user token, before any completion hook swaps in a Page token.
+        List<String> grantedScopes = resolveGrantedScopes(connector, tokenResponse, accessToken);
 
         if (connector.requiresAccountSelection()) {
             // The grant covers several accounts and a human still has to pick one. Persist the grant
             // so the picker can enumerate against it, and hand the browser back to the connector page
             // with the connection to finish — the completion hook runs on that selection instead.
             connectionService.storeTokens(conn, accessToken, refreshToken, expiresAt);
+            // Parked on the row itself: completeAccountSelection runs in a later request and reads it back.
+            connectionService.updateGrantedScopes(conn, grantedScopes);
             oAuthStateRepository.delete(oauthState);
             log.info("OAuth callback awaiting account selection for connector={} project={} connection={}",
                     connectorId, projectId, conn.getId());
@@ -265,7 +325,7 @@ public class OAuthFlowService {
                 new OAuth2Connector.OAuthCompletionRequest(accessToken, refreshToken, null,
                         creds == null ? null : creds.clientId(),
                         creds == null ? null : creds.clientSecret()));
-        applyCompletion(conn, connector, completion, accessToken, refreshToken, expiresAt);
+        applyCompletion(conn, connector, completion, accessToken, refreshToken, expiresAt, grantedScopes);
 
         oAuthStateRepository.delete(oauthState);
 
@@ -331,7 +391,7 @@ public class OAuthFlowService {
     private Connection applyCompletion(Connection conn, OAuth2Connector connector,
                                        OAuth2Connector.OAuthCompletion completion,
                                        String exchangedAccessToken, String exchangedRefreshToken,
-                                       OffsetDateTime expiresAt) {
+                                       OffsetDateTime expiresAt, List<String> grantedScopes) {
         String accessToken = completion.accessToken() != null ? completion.accessToken() : exchangedAccessToken;
         String refreshToken = completion.refreshToken() != null ? completion.refreshToken() : exchangedRefreshToken;
 
@@ -346,6 +406,11 @@ public class OAuthFlowService {
         }
         if (completion.label() != null && !completion.label().isBlank()) {
             connectionService.updateLabel(target, completion.label());
+        }
+        // Written to the surviving row, so a re-authorization folded into an older connection updates it.
+        // Unknown (null) leaves whatever the target already recorded.
+        if (grantedScopes != null) {
+            connectionService.updateGrantedScopes(target, grantedScopes);
         }
         if (existing != null) {
             collapseAndDiscard(conn, existing, connector, identity.get());
@@ -483,7 +548,7 @@ public class OAuthFlowService {
                         appCreds == null ? null : appCreds.clientId(),
                         appCreds == null ? null : appCreds.clientSecret()));
         Connection result = applyCompletion(conn, connector, completion, creds.accessToken(),
-                creds.refreshToken(), conn.getTokenExpiresAt());
+                creds.refreshToken(), conn.getTokenExpiresAt(), connectionService.readGrantedScopes(conn));
         log.info("OAuth account selection completed for connection={} account={}", result.getId(), accountId);
         return result;
     }
