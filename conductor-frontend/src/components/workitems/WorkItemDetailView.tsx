@@ -34,7 +34,7 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { TikTokPublishGateProvider } from '@/components/marketing/TikTokConsentStep'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
 import { toastError, toastSuccess } from '@/components/ui/toast'
-import { ExternalLink, FileText, FileX2 } from 'lucide-react'
+import { ExternalLink, FileText, FileX2, Maximize2, Minimize2 } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { ReviewBar } from '@/components/reviews/ReviewBar'
 import { StatusBadge } from '@/components/ui/status-badge'
@@ -262,6 +262,8 @@ export function WorkItemDetailView({
 
   // ── Batch review mode (COND-22) ────────────────────────────────────────────
   const [reviewMode, setReviewMode] = useState(false)
+  // The selected document shown on its own, over the whole window.
+  const [fullView, setFullView] = useState(false)
   const [pendingComments, setPendingComments] = useState<PendingCommentDraft[]>([])
   const [reviewSubmitting, setReviewSubmitting] = useState(false)
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false)
@@ -476,6 +478,25 @@ export function WorkItemDetailView({
   }, [activeTab, selectedDocId])
 
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null
+  const fullViewOpen = fullView && !!selectedDoc && activeTab === selectedDoc.id
+
+  // Full view: Escape closes it, and the page behind does not scroll.
+  useEffect(() => {
+    if (!fullViewOpen) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      const target = e.target as HTMLElement | null
+      if (target?.closest('textarea,input,[contenteditable="true"]')) return
+      setFullView(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [fullViewOpen])
 
   // Content is fetched on demand for the selected document (the list endpoint omits it).
   const requestedContentRef = useRef(new Set<string>())
@@ -881,8 +902,9 @@ export function WorkItemDetailView({
       : undefined
 
   let mainContent: React.ReactNode
-  // An HTML document gets the full width of the reading column: it brings its own layout, plus a comment rail.
-  let htmlDocShown = false
+  // A document gets the full width of the main column rather than the 45rem reading cap: documents are
+  // the thing being reviewed, and an HTML document brings its own layout and a comment rail.
+  let documentShown = false
   if (activeTab === 'activity') {
     mainContent = commentsLoading ? (
       <div className="space-y-3" aria-busy="true" aria-label="Loading activity">
@@ -934,6 +956,7 @@ export function WorkItemDetailView({
       />
     )
   } else if (selectedDoc && isMarkdown(selectedDoc) && selectedDoc.content) {
+    documentShown = true
     mainContent = (
       <CommentableDocument
         content={selectedDoc.content}
@@ -963,9 +986,10 @@ export function WorkItemDetailView({
   } else if (selectedDoc && isMarkdown(selectedDoc) && !selectedDoc.content) {
     mainContent = <p className="text-sm text-muted-foreground">Document content is empty.</p>
   } else if (selectedDoc && isHtml(selectedDoc) && selectedDoc.content) {
-    htmlDocShown = true
+    documentShown = true
     mainContent = (
       <CommentableHtmlDocument
+        fullView={fullViewOpen}
         content={selectedDoc.content}
         documentId={selectedDoc.id}
         issueId={issueId}
@@ -988,6 +1012,17 @@ export function WorkItemDetailView({
   } else {
     mainContent = <p className="text-sm text-muted-foreground">Select a document to view its contents.</p>
   }
+
+  const reviewBar = (
+    <ReviewBar
+      pendingCount={pendingComments.length}
+      commentable={documents.length > 0}
+      reviewOutcomes={reviewOutcomes}
+      submitting={reviewSubmitting}
+      onSubmit={handleSubmitReview}
+      onCancel={handleCancelReview}
+    />
+  )
 
   // All tab ids in DOM order (roving tabindex + Arrow key navigation walk this array). 'details' is
   // a mobile-only alias that reveals the properties panel rather than changing the main content, so
@@ -1213,12 +1248,20 @@ export function WorkItemDetailView({
             Details
           </button>
         </div>
-        {userRole !== 'REVIEWER' && !publishing && !documentsLoading && (
-          <div className="flex items-center border-b border-border pl-3 pb-1">
-            <DocumentUploadButton
-              existingFilenames={documents.map((d) => d.filename)}
-              onUpload={uploadDocument}
-            />
+        {((documentShown && selectedDoc) || (userRole !== 'REVIEWER' && !publishing && !documentsLoading)) && (
+          <div className="flex items-center gap-1 border-b border-border pl-3 pb-1">
+            {documentShown && selectedDoc && (
+              <Button variant="ghost" size="sm" onClick={() => setFullView(true)}>
+                <Maximize2 className="h-4 w-4 mr-1.5" />
+                Full view
+              </Button>
+            )}
+            {userRole !== 'REVIEWER' && !publishing && !documentsLoading && (
+              <DocumentUploadButton
+                existingFilenames={documents.map((d) => d.filename)}
+                onUpload={uploadDocument}
+              />
+            )}
           </div>
         )}
         </div>
@@ -1230,7 +1273,7 @@ export function WorkItemDetailView({
             aria-labelledby={tabButtonId(contentTabId)}
             className={cn('flex-1 min-w-0', activeTab === 'details' ? 'hidden md:block' : 'block')}
           >
-            <div className={cn('mx-auto space-y-6', htmlDocShown ? 'max-w-none' : 'max-w-[45rem]')}>
+            <div className={cn('mx-auto space-y-6', documentShown ? 'max-w-none' : 'max-w-[45rem]')}>
               {/* Quiet, inline notices for the two loaders that gate which actions show: a role read
                   that silently fell back to REVIEWER, or a reviews list that silently stayed empty,
                   would otherwise hide actions with no visible reason. */}
@@ -1254,7 +1297,16 @@ export function WorkItemDetailView({
                   </div>
                 </Alert>
               )}
-              {mainContent}
+              {fullViewOpen ? (
+                <p className="text-sm text-muted-foreground">
+                  {selectedDoc!.filename} is open in full view.{' '}
+                  <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setFullView(false)}>
+                    Close it
+                  </Button>
+                </p>
+              ) : (
+                mainContent
+              )}
               {/* A Post: where it goes and where each destination is, then what it says and shows.
                   Everything Post-specific lives in PostDetailBody; the engineering column below is
                   untouched by it. */}
@@ -1409,15 +1461,41 @@ export function WorkItemDetailView({
           </aside>
         </div>
 
-        {reviewMode && (
-          <ReviewBar
-            pendingCount={pendingComments.length}
-            commentable={documents.length > 0}
-            reviewOutcomes={reviewOutcomes}
-            submitting={reviewSubmitting}
-            onSubmit={handleSubmitReview}
-            onCancel={handleCancelReview}
-          />
+        {reviewMode && !fullViewOpen && reviewBar}
+
+        {fullViewOpen && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`${selectedDoc!.filename}, full view`}
+            className="fixed inset-0 z-50 flex flex-col bg-background"
+          >
+            <div className="flex items-center gap-3 border-b border-border px-4 py-2">
+              <span className="text-sm text-muted-foreground shrink-0">{issue.displayId}</span>
+              <div className="flex items-center gap-1 min-w-0 overflow-x-auto" role="group" aria-label="Documents">
+                {documents.map((d) => (
+                  <Button
+                    key={d.id}
+                    variant={d.id === selectedDoc!.id ? 'secondary' : 'ghost'}
+                    size="sm"
+                    aria-pressed={d.id === selectedDoc!.id}
+                    onClick={() => selectDocument(d)}
+                  >
+                    <FileText className="h-4 w-4 mr-1.5" />
+                    <span className="truncate max-w-[12rem]">{d.filename}</span>
+                  </Button>
+                ))}
+              </div>
+              <Button variant="ghost" size="sm" className="ml-auto shrink-0" onClick={() => setFullView(false)}>
+                <Minimize2 className="h-4 w-4 mr-1.5" />
+                Exit full view
+              </Button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
+              {mainContent}
+              {reviewMode && reviewBar}
+            </div>
+          </div>
         )}
 
         <ConfirmModal

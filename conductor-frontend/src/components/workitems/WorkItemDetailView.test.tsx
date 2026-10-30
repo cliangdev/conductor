@@ -1190,3 +1190,61 @@ describe('HTML documents', () => {
     })
   })
 })
+
+describe('reading a document', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetFixtures()
+    failMembers = false
+    failReviews = false
+    holdSecondary = false
+    getUrls.length = 0
+    DOCS = [
+      { id: 'doc-1', filename: 'prd.md', contentType: 'text/markdown', content: 'line one\nline two' },
+      { id: 'doc-2', filename: 'design.md', contentType: 'text/markdown', content: 'design content here' },
+    ]
+  })
+
+  it('gives a document the full width of the main column, not the 45rem reading cap', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    const panel = document.getElementById('wi-tabpanel-main')!
+    expect(panel.firstElementChild!.className).toContain('max-w-none')
+    expect(panel.firstElementChild!.className).not.toContain('max-w-[45rem]')
+  })
+
+  it('opens the document in full view, switches documents there, and closes with Escape', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+
+    await userEvent.click(screen.getByRole('button', { name: 'Full view' }))
+    const dialog = screen.getByRole('dialog', { name: 'prd.md, full view' })
+    expect(within(dialog).getByText('line one', { exact: false })).toBeInTheDocument()
+    expect(document.body.style.overflow).toBe('hidden')
+    // The document is shown once: the page behind points at full view instead of rendering it again.
+    expect(screen.getAllByText('line one', { exact: false })).toHaveLength(1)
+
+    await userEvent.click(within(dialog).getByRole('button', { name: /design\.md/ }))
+    expect(await within(screen.getByRole('dialog')).findByText('design content here')).toBeInTheDocument()
+
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(document.body.style.overflow).toBe('')
+    expect(screen.getByText('design content here')).toBeInTheDocument()
+  })
+
+  it('closes full view from its Exit button', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    await userEvent.click(screen.getByRole('button', { name: 'Full view' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Exit full view' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('offers no full view on the Activity tab', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    await userEvent.click(screen.getByRole('tab', { name: /activity/i }))
+    expect(screen.queryByRole('button', { name: 'Full view' })).not.toBeInTheDocument()
+  })
+})

@@ -22,6 +22,8 @@ import {
 
 interface Props {
   content: string
+  /** Shown on its own over the whole window, so the frame can take the window's height. */
+  fullView?: boolean
   /** Hash of `content`, sent with a new comment so the server can tell which version it was written against. */
   contentHash?: string | null
   documentId: string
@@ -80,6 +82,7 @@ export function CommentableHtmlDocument(props: Props) {
 
 function HtmlDocumentFrame({
   content,
+  fullView = false,
   contentHash,
   documentId,
   issueId,
@@ -377,7 +380,12 @@ function HtmlDocumentFrame({
         )}
       </div>
 
-      <div className="relative flex gap-4 h-[70vh] lg:h-[calc(100vh-17rem)] min-h-[28rem]">
+      <div
+        className={cn(
+          'relative flex gap-4 min-h-[28rem]',
+          fullView ? 'h-[calc(100vh-9rem)]' : 'h-[70vh] lg:h-[calc(100vh-17rem)]'
+        )}
+      >
         {composing && (
           <div className="fixed inset-0 z-40" onClick={() => setComposing(null)} aria-hidden="true" />
         )}
