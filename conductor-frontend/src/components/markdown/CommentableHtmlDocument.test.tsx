@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react'
 
 const { apiPost } = vi.hoisted(() => ({ apiPost: vi.fn() }))
@@ -344,5 +344,82 @@ describe('CommentableHtmlDocument', () => {
       { type: 'anchors', anchors: [{ id: 'draft:d1', exact: 'draft quote' }] },
       '*'
     )
+  })
+
+  describe('layout', () => {
+    it('gives the document the full width when there are no comments: no rail, just a hint', () => {
+      render(<CommentableHtmlDocument {...baseProps} />)
+      expect(screen.queryByRole('complementary', { name: 'Comments' })).not.toBeInTheDocument()
+      expect(screen.getByText('Select text in the document to comment on it.')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /comments/i })).not.toBeInTheDocument()
+    })
+
+    it('docks the rail when there are comments, and lets the reader hide and show it', () => {
+      render(
+        <CommentableHtmlDocument {...baseProps} comments={[comment({ id: 'c1', anchor: { exact: 'a' } })]} />
+      )
+      expect(screen.getByRole('complementary', { name: 'Comments' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Hide comments · 1' }))
+      expect(screen.queryByRole('complementary', { name: 'Comments' })).not.toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: 'Comments · 1' }))
+      expect(screen.getByRole('complementary', { name: 'Comments' })).toBeInTheDocument()
+    })
+
+    it('places the Comment button above the selection so it does not cover the text', async () => {
+      const { container } = render(<CommentableHtmlDocument {...baseProps} />)
+      fromFrame(
+        frameWindow(container),
+        bridge({ ...selection, rect: { top: 200, left: 100, right: 300, bottom: 220, width: 200, height: 20 } })
+      )
+      const button = await screen.findByRole('button', { name: 'Comment' })
+      // Centred on the selection (200 - 112/2 = 144) and 8px above it (200 - 32 - 8 = 160).
+      expect(button.style.left).toBe('144px')
+      expect(button.style.top).toBe('160px')
+    })
+
+    it('drops the Comment button below a selection at the top edge of the frame', async () => {
+      const { container } = render(<CommentableHtmlDocument {...baseProps} />)
+      fromFrame(frameWindow(container), bridge(selection)) // RECT.top is 10
+      const button = await screen.findByRole('button', { name: 'Comment' })
+      expect(button.style.top).toBe(`${RECT.bottom + 8}px`)
+    })
+
+    describe('in a narrow space', () => {
+      const original = globalThis.ResizeObserver
+      beforeEach(() => {
+        globalThis.ResizeObserver = class {
+          constructor(private cb: ResizeObserverCallback) {}
+          observe() {
+            this.cb([{ contentRect: { width: 720 } } as ResizeObserverEntry], this as unknown as ResizeObserver)
+          }
+          unobserve() {}
+          disconnect() {}
+        } as unknown as typeof ResizeObserver
+      })
+      afterEach(() => {
+        globalThis.ResizeObserver = original
+      })
+
+      it('keeps the rail closed so it does not squeeze the document, and floats it when opened', () => {
+        render(
+          <CommentableHtmlDocument {...baseProps} comments={[comment({ id: 'c1', anchor: { exact: 'a' } })]} />
+        )
+        expect(screen.queryByRole('complementary', { name: 'Comments' })).not.toBeInTheDocument()
+        fireEvent.click(screen.getByRole('button', { name: 'Comments · 1' }))
+        const rail = screen.getByRole('complementary', { name: 'Comments' })
+        expect(rail.className).toContain('absolute')
+        fireEvent.click(screen.getByRole('button', { name: 'Close comments' }))
+        expect(screen.queryByRole('complementary', { name: 'Comments' })).not.toBeInTheDocument()
+      })
+
+      it('opens the rail and focuses the thread when its highlight is clicked', () => {
+        const { container } = render(
+          <CommentableHtmlDocument {...baseProps} comments={[comment({ id: 'c1', anchor: { exact: 'a' } })]} />
+        )
+        fromFrame(frameWindow(container), bridge({ type: 'open', id: 'c1' }))
+        expect(screen.getByRole('complementary', { name: 'Comments' })).toBeInTheDocument()
+        expect(document.querySelector('[data-comment-id="c1"]')).toHaveFocus()
+      })
+    })
   })
 })

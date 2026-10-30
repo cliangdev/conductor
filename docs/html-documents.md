@@ -24,6 +24,10 @@ What this does and does not guarantee:
 - It can still load `https:` images and media and navigate its own frame, so the sandbox is **not a confidentiality boundary for the document's own content**. Do not put secrets in a document that you would not want an embedded script to leak.
 - The script host list above is the single written source. Two places must stay in sync with it: `conductor-frontend/src/components/markdown/htmlDocument.ts` (the policy) and the allowlist in `conductor-tools/src/commands/lint.ts`.
 
+## Commenting in the app
+
+The document gets the full width. Selecting text shows a **Comment** button just above the selection; the form opens below it, so the quoted text stays visible. The comment rail appears only once the document has comments: it docks beside the document when there is room (1024px or more), and otherwise floats over the document's right edge, closed until the reader opens it with **Comments · N**. Clicking a highlight opens the rail and focuses that thread.
+
 ## Comment bridge
 
 A bridge script is added to the document at render time (never stored). It runs inside the frame after the page's own scripts and talks to the app with `postMessage`. The app accepts a message only when `event.source` is the frame's window, `event.origin === 'null'` and `source === 'conductor-bridge'`, and it validates each message's shape. The page's own scripts can send fake messages, so messages only drive UI; the comment body is always typed in the app.
