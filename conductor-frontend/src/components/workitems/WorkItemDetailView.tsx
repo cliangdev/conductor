@@ -34,13 +34,21 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { TikTokPublishGateProvider } from '@/components/marketing/TikTokConsentStep'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
 import { toastError, toastSuccess } from '@/components/ui/toast'
-import { ExternalLink, FileText, FileX2, Maximize2, Minimize2 } from 'lucide-react'
+import { FileX2, Maximize2, Minimize2 } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { ReviewBar } from '@/components/reviews/ReviewBar'
 import { StatusBadge } from '@/components/ui/status-badge'
-import { CommentCount } from '@/components/ui/comment-count'
 import { CommentableHtmlDocument } from '@/components/markdown/CommentableHtmlDocument'
 import { DocumentUploadButton } from '@/components/workitems/DocumentUploadButton'
+import {
+  DocumentTabs,
+  TAB_CLASSES,
+  commentSuffix,
+  handleTabListKeyDown,
+  tabCommentCount,
+  tabStateClasses,
+  type DocumentTab,
+} from '@/components/workitems/DocumentTabs'
 import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
 import { Modal } from '@/components/ui/modal'
@@ -154,9 +162,6 @@ function nextPendingId(): string {
   return `pending-${Date.now()}-${pendingIdCounter}`
 }
 
-const TAB_CLASSES =
-  'inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap'
-
 function unresolvedCountForDocument(comments: Comment[], documentId: string): number {
   return comments.filter((c) => c.documentId === documentId && !c.resolvedAt).length
 }
@@ -164,19 +169,6 @@ function unresolvedCountForDocument(comments: Comment[], documentId: string): nu
 /** Comments on the item itself rather than a line of one of its documents — these live in Activity. */
 function unresolvedItemLevelCount(comments: Comment[]): number {
   return comments.filter((c) => c.lineNumber == null && !c.resolvedAt).length
-}
-
-/**
- * Unresolved comment count on a document tab — without it there's no way to tell which of an item's
- * documents someone commented on short of opening each and scanning its gutter. The count is repeated
- * in the tab's accessible name, so this copy is `aria-hidden` and never the sole carrier.
- */
-function tabCommentCount(count: number, active: boolean) {
-  return (
-    <span aria-hidden="true">
-      <CommentCount count={count} className={active ? 'text-primary' : 'text-muted-foreground'} />
-    </span>
-  )
 }
 
 /**
@@ -192,6 +184,10 @@ const CONTENT_TAB = 'content'
 // tab button's id and the panel it controls, so the two stay in sync without a second id map.
 function tabButtonId(tabId: string): string {
   return `wi-tab-${tabId}`
+}
+
+function fullViewTabId(documentId: string): string {
+  return `wi-fullview-tab-${documentId}`
 }
 
 /**
@@ -561,23 +557,11 @@ export function WorkItemDetailView({
     }
   }
 
-  // ── Document tabs: roving tabindex + ArrowLeft/Right (WAI-ARIA tabs pattern) ────────────────────
-  const tabButtonRefs = useRef(new Map<string, HTMLButtonElement>())
-
+  // ── Tabs: Arrow keys are handled on each tablist (handleTabListKeyDown), which activates by id ─────
   function activateTab(tabId: string) {
     const doc = documents.find((d) => d.id === tabId)
     if (doc) selectDocument(doc)
     else setActiveTab(tabId)
-  }
-
-  function handleTabKeyDown(e: React.KeyboardEvent, tabIds: string[], currentId: string) {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-    e.preventDefault()
-    const idx = tabIds.indexOf(currentId)
-    const delta = e.key === 'ArrowRight' ? 1 : -1
-    const nextId = tabIds[(idx + delta + tabIds.length) % tabIds.length]
-    tabButtonRefs.current.get(nextId)?.focus()
-    activateTab(nextId)
   }
 
   const mediaAssets = useMemo(() => assets.filter((a) => a.kind === 'file'), [assets])
@@ -1024,20 +1008,20 @@ export function WorkItemDetailView({
     />
   )
 
-  // All tab ids in DOM order (roving tabindex + Arrow key navigation walk this array). 'details' is
-  // a mobile-only alias that reveals the properties panel rather than changing the main content, so
-  // the main content panel's aria-labelledby tracks the last content-bearing tab instead of it.
   // With no documents there are no document tabs, so Activity used to be the only one on the bar —
   // and clicking it was a dead end: the media, caption and accounts all hide on Activity, and there was
   // nothing left to click to bring them back. A content tab stands in for the documents that are not
-  // there yet, so the bar always offers a way back.
+  // there yet, so the bar always offers a way back. 'details' is a mobile-only alias that reveals the
+  // properties panel rather than changing the main content, so the main content panel's
+  // aria-labelledby tracks the last content-bearing tab instead of it.
   const showContentTab = documents.length === 0 && !documentsLoading
-  const tabIds = [
-    ...(showContentTab ? [CONTENT_TAB] : []),
-    ...documents.map((d) => d.id),
-    'activity',
-    'details',
-  ]
+  const documentTabs: DocumentTab[] = documents.map((d) => ({
+    id: d.id,
+    filename: d.filename,
+    commentCount: unresolvedCountForDocument(comments, d.id),
+    external: !isMarkdown(d) && !isHtml(d),
+  }))
+  const activeDocumentId = documents.some((d) => d.id === activeTab) ? activeTab : null
   const itemLevelCommentCount = unresolvedItemLevelCount(comments)
   const contentTabId = activeTab === 'details' || activeTab === '' ? (selectedDocId ?? 'activity') : activeTab
 
@@ -1154,104 +1138,74 @@ export function WorkItemDetailView({
             primitive (src/components/ui/tabs.tsx) — the tab set is dynamic (one per document, plus
             Activity, plus a mobile-only Details tab with its own tabpanel/aria-controls), and the
             "Details" tab reveals a second panel rather than swapping the same one, which the primitive
-            doesn't model. Revisit if Tabs grows multi-panel support. */}
+            doesn't model. Revisit if Tabs grows multi-panel support.
+            Documents that don't fit collapse into a "+N more" tab (DocumentTabs); Activity is pinned
+            after them so it never scrolls out of sight, and the actions sit behind a divider. */}
         <div className="flex items-stretch mb-4">
         <div
           role="tablist"
           aria-label="Work item content"
-          className="flex flex-1 min-w-0 items-center gap-1 border-b border-border overflow-x-auto overflow-y-hidden"
+          onKeyDown={(e) => handleTabListKeyDown(e, activateTab)}
+          className="flex flex-1 min-w-0 items-center gap-1 border-b border-border"
         >
           {showContentTab && (
             <button
               id={tabButtonId(CONTENT_TAB)}
-              ref={(el) => {
-                if (el) tabButtonRefs.current.set(CONTENT_TAB, el)
-                else tabButtonRefs.current.delete(CONTENT_TAB)
-              }}
               role="tab"
+              data-tab-id={CONTENT_TAB}
               aria-selected={activeTab !== 'activity'}
               aria-controls="wi-tabpanel-main"
               tabIndex={activeTab !== 'activity' ? 0 : -1}
               onClick={() => setActiveTab(CONTENT_TAB)}
-              onKeyDown={(e) => handleTabKeyDown(e, tabIds, CONTENT_TAB)}
-              className={cn(TAB_CLASSES, activeTab !== 'activity' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
+              className={cn(TAB_CLASSES, tabStateClasses(activeTab !== 'activity'))}
             >
               {workflowView?.noun ?? 'Content'}
             </button>
           )}
           {documentsLoading && <Skeleton className="h-5 w-24 mx-3 my-2.5" aria-hidden="true" />}
-          {documents.map((doc) => {
-            const binary = !isMarkdown(doc) && !isHtml(doc)
-            const active = activeTab === doc.id
-            const commentCount = unresolvedCountForDocument(comments, doc.id)
-            const countSuffix = commentCount > 0
-              ? `, ${commentCount} unresolved comment${commentCount !== 1 ? 's' : ''}`
-              : ''
-            return (
-              <button
-                key={doc.id}
-                id={tabButtonId(doc.id)}
-                ref={(el) => {
-                  if (el) tabButtonRefs.current.set(doc.id, el)
-                  else tabButtonRefs.current.delete(doc.id)
-                }}
-                role="tab"
-                aria-selected={active}
-                aria-controls="wi-tabpanel-main"
-                tabIndex={active ? 0 : -1}
-                onClick={() => selectDocument(doc)}
-                onKeyDown={(e) => handleTabKeyDown(e, tabIds, doc.id)}
-                className={cn(TAB_CLASSES, active ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
-                title={`${doc.filename}${countSuffix}`}
-                aria-label={`${doc.filename}${countSuffix}`}
-              >
-                <FileText className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate max-w-[10rem]">{doc.filename}</span>
-                {binary && <ExternalLink className="h-3 w-3 shrink-0 opacity-60" />}
-                {tabCommentCount(commentCount, active)}
-              </button>
-            )
-          })}
+          <DocumentTabs
+            documents={documentTabs}
+            activeId={activeDocumentId}
+            keepVisibleId={selectedDocId}
+            onSelect={activateTab}
+            tabId={tabButtonId}
+            panelId="wi-tabpanel-main"
+          />
+          {documentTabs.length > 0 && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-border" />}
           <button
             id={tabButtonId('activity')}
-            ref={(el) => {
-              if (el) tabButtonRefs.current.set('activity', el)
-              else tabButtonRefs.current.delete('activity')
-            }}
             role="tab"
+            data-tab-id="activity"
             aria-selected={activeTab === 'activity'}
             aria-controls="wi-tabpanel-main"
             tabIndex={activeTab === 'activity' ? 0 : -1}
             onClick={() => setActiveTab('activity')}
-            onKeyDown={(e) => handleTabKeyDown(e, tabIds, 'activity')}
-            className={cn(TAB_CLASSES, activeTab === 'activity' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
-            title={itemLevelCommentCount > 0 ? `Activity, ${itemLevelCommentCount} unresolved comment${itemLevelCommentCount !== 1 ? 's' : ''}` : undefined}
-            aria-label={itemLevelCommentCount > 0 ? `Activity, ${itemLevelCommentCount} unresolved comment${itemLevelCommentCount !== 1 ? 's' : ''}` : undefined}
+            className={cn(TAB_CLASSES, 'shrink-0', tabStateClasses(activeTab === 'activity'))}
+            title={itemLevelCommentCount > 0 ? `Activity${commentSuffix(itemLevelCommentCount)}` : undefined}
+            aria-label={itemLevelCommentCount > 0 ? `Activity${commentSuffix(itemLevelCommentCount)}` : undefined}
           >
             Activity
             {tabCommentCount(itemLevelCommentCount, activeTab === 'activity')}
           </button>
           <button
             id={tabButtonId('details')}
-            ref={(el) => {
-              if (el) tabButtonRefs.current.set('details', el)
-              else tabButtonRefs.current.delete('details')
-            }}
             role="tab"
+            data-tab-id="details"
             aria-selected={activeTab === 'details'}
             aria-controls="wi-tabpanel-details"
             tabIndex={activeTab === 'details' ? 0 : -1}
             onClick={() => setActiveTab('details')}
-            onKeyDown={(e) => handleTabKeyDown(e, tabIds, 'details')}
-            className={cn(TAB_CLASSES, 'md:hidden', activeTab === 'details' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}
+            className={cn(TAB_CLASSES, 'shrink-0 md:hidden', tabStateClasses(activeTab === 'details'))}
           >
             Details
           </button>
         </div>
         {((documentShown && selectedDoc) || (userRole !== 'REVIEWER' && !publishing && !documentsLoading)) && (
-          <div className="flex items-center gap-1 border-b border-border pl-3 pb-1">
+          <div className="flex shrink-0 items-center gap-1 border-b border-border">
+            <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
             {documentShown && selectedDoc && (
-              <Button variant="ghost" size="sm" onClick={() => setFullView(true)}>
+              // Not on a phone: the document already fills the screen there, and the tabs need the room.
+              <Button variant="ghost" size="sm" className="hidden sm:inline-flex" onClick={() => setFullView(true)}>
                 <Maximize2 className="h-4 w-4 mr-1.5" />
                 Full view
               </Button>
@@ -1470,28 +1424,40 @@ export function WorkItemDetailView({
             aria-label={`${selectedDoc!.filename}, full view`}
             className="fixed inset-0 z-50 flex flex-col bg-background"
           >
-            <div className="flex items-center gap-3 border-b border-border px-4 py-2">
-              <span className="text-sm text-muted-foreground shrink-0">{issue.displayId}</span>
-              <div className="flex items-center gap-1 min-w-0 overflow-x-auto" role="group" aria-label="Documents">
-                {documents.map((d) => (
-                  <Button
-                    key={d.id}
-                    variant={d.id === selectedDoc!.id ? 'secondary' : 'ghost'}
-                    size="sm"
-                    aria-pressed={d.id === selectedDoc!.id}
-                    onClick={() => selectDocument(d)}
-                  >
-                    <FileText className="h-4 w-4 mr-1.5" />
-                    <span className="truncate max-w-[12rem]">{d.filename}</span>
-                  </Button>
-                ))}
+            <div className="flex items-stretch gap-3 border-b border-border px-4">
+              <span className="self-center text-sm text-muted-foreground shrink-0">{issue.displayId}</span>
+              <div
+                role="tablist"
+                aria-label="Documents"
+                onKeyDown={(e) => handleTabListKeyDown(e, activateTab)}
+                className="flex flex-1 min-w-0 items-center"
+              >
+                <DocumentTabs
+                  documents={documentTabs}
+                  activeId={selectedDoc!.id}
+                  onSelect={activateTab}
+                  tabId={fullViewTabId}
+                  panelId="wi-fullview-panel"
+                />
               </div>
-              <Button variant="ghost" size="sm" className="ml-auto shrink-0" onClick={() => setFullView(false)}>
-                <Minimize2 className="h-4 w-4 mr-1.5" />
-                Exit full view
+              <Button
+                variant="ghost"
+                size="sm"
+                className="self-center shrink-0"
+                onClick={() => setFullView(false)}
+                aria-label="Exit full view"
+                title="Exit full view"
+              >
+                <Minimize2 className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline">Exit full view</span>
               </Button>
             </div>
-            <div className="flex-1 overflow-y-auto px-4 md:px-8 py-6">
+            <div
+              id="wi-fullview-panel"
+              role="tabpanel"
+              aria-labelledby={fullViewTabId(selectedDoc!.id)}
+              className="flex-1 overflow-y-auto px-4 md:px-8 py-6"
+            >
               {mainContent}
               {reviewMode && reviewBar}
             </div>

@@ -87,9 +87,12 @@ export function DocumentUploadButton({ existingFilenames, onUpload }: Props) {
         className="h-8"
         disabled={busy}
         onClick={() => inputRef.current?.click()}
+        aria-label={busy ? 'Uploading…' : 'Upload document'}
+        title={busy ? 'Uploading…' : 'Upload document'}
       >
-        <Upload className="h-3.5 w-3.5 mr-1.5" />
-        {busy ? 'Uploading…' : 'Upload document'}
+        <Upload className="h-3.5 w-3.5 sm:mr-1.5" />
+        {/* Icon only on a phone, where the tab bar needs the room. */}
+        <span className="hidden sm:inline">{busy ? 'Uploading…' : 'Upload document'}</span>
       </Button>
 
       <ConfirmModal

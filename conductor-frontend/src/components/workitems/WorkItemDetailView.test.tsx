@@ -1224,7 +1224,7 @@ describe('reading a document', () => {
     // The document is shown once: the page behind points at full view instead of rendering it again.
     expect(screen.getAllByText('line one', { exact: false })).toHaveLength(1)
 
-    await userEvent.click(within(dialog).getByRole('button', { name: /design\.md/ }))
+    await userEvent.click(within(dialog).getByRole('tab', { name: /design\.md/ }))
     expect(await within(screen.getByRole('dialog')).findByText('design content here')).toBeInTheDocument()
 
     await userEvent.keyboard('{Escape}')
@@ -1239,6 +1239,28 @@ describe('reading a document', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Full view' }))
     await userEvent.click(screen.getByRole('button', { name: 'Exit full view' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('walks the document tabs and then Activity with the arrow keys', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    screen.getByRole('tab', { name: /^prd\.md/ }).focus()
+
+    await userEvent.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: /^design\.md/ })).toHaveFocus()
+    expect(await screen.findByText('design content here')).toBeInTheDocument()
+
+    await userEvent.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: /^Activity/ })).toHaveFocus()
+    expect(screen.getByRole('tab', { name: /^Activity/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('labels the full view document panel by its tab', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    await userEvent.click(screen.getByRole('button', { name: 'Full view' }))
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByRole('tabpanel', { name: /^prd\.md/ })).toBeInTheDocument()
   })
 
   it('offers no full view on the Activity tab', async () => {

@@ -78,7 +78,7 @@ Inter (existing `--font-sans`), weights 400/500/600–650 only.
 | 11.5px / caps / +0.06em | 600 | Section labels, table headers |
 | 12px mono | 400 | Display IDs (`COND-142`), keys, code |
 
-Reading columns cap at ~720px (`max-w-[45rem]`); dense views go full width. Work Item documents (markdown and HTML) are the exception: they fill the main column, and **Full view** shows the selected document over the whole window with its comments and the review bar.
+Reading columns cap at ~720px (`max-w-[45rem]`); dense views go full width. Work Item documents (markdown and HTML) are the exception: they fill the main column, and **Full view** shows the selected document over the whole window with its comments and the review bar. Document tabs show as many as fit and collapse the rest into a **+N more** tab whose menu lists every document (`DocumentTabs`, the priority+ pattern). The open document always keeps a tab. Activity is pinned after the documents, and the page actions sit behind a divider. Never let a tab row scroll sideways, because a hidden scrollbar hides the tabs.
 
 ## Spacing & radius
 
