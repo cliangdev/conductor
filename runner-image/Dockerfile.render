@@ -13,7 +13,7 @@
 #    loudly instead of hanging;
 #  - a BYO Cloud Run Job (runtime target) sets its command to `conductor-step-entrypoint`, which
 #    runs the same script from CONDUCTOR_STEP_RUN and reports logs and the result to the backend.
-FROM mcr.microsoft.com/playwright:v1.63.0-noble
+FROM mcr.microsoft.com/playwright:v1.64.1-noble
 
 ARG CONDUCTOR_VERSION
 RUN test -n "$CONDUCTOR_VERSION" || (echo "build-arg CONDUCTOR_VERSION is required" >&2; exit 1)
