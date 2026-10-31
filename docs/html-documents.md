@@ -26,7 +26,7 @@ What this does and does not guarantee:
 
 ## Commenting in the app
 
-The document gets the full width. Selecting text shows a **Comment** button just above the selection; the form opens below it, so the quoted text stays visible. The comment rail appears only once the document has comments: it docks beside the document when there is room (1024px or more), and otherwise floats over the document's right edge, closed until the reader opens it with **Comments · N**. Clicking a highlight opens the rail and focuses that thread. **Full view** (beside **Upload document**) shows the document over the whole window, with the same commenting and, in review mode, the review bar; Escape closes it.
+The document gets the full width. Selecting text shows a **Comment** button just above the selection; the form opens below it, so the quoted text stays visible. The comment rail appears only once the document has comments: it docks beside the document when there is room (1024px or more), and otherwise floats over the document's right edge, closed until the reader opens it with **Comments · N**. Clicking a highlight opens the rail and focuses that thread. **Full view** (beside **Upload document**, and hidden on phones) shows the document over the whole window, with the same commenting and, in review mode, the review bar. Escape closes it. Its header uses the same document tabs as the page.
 
 ## Comment bridge
 
