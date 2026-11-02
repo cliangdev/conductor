@@ -77,7 +77,7 @@ class DeliveryOverviewServiceTest {
         });
         when(hierarchyService.progressFor(eq(PROJECT), anyCollection()))
                 .thenReturn(Map.of());
-        when(forecastService.forecast(eq(PROJECT), any(WorkItem.class)))
+        when(forecastService.forecast(eq(PROJECT), any(WorkItem.class), any(), any(), any()))
                 .thenReturn(new Forecast(State.NO_PLAN, null, 0, 0, null, null, null, null, null, null, null));
         when(healthService.current(eq(PROJECT), anyCollection(), anyMap())).thenReturn(Map.of());
         when(milestoneService.list(PROJECT)).thenReturn(List.of());
@@ -116,8 +116,7 @@ class DeliveryOverviewServiceTest {
     }
 
     private void load(WorkItem... items) {
-        when(workItemRepository.findByProjectFiltered(eq(PROJECT), any(), any(), any(), any(), any(),
-                eq(false), any(), any(), any())).thenReturn(new ArrayList<>(List.of(items)));
+        when(workItemRepository.findDeliveryCandidates(PROJECT, "PRD")).thenReturn(new ArrayList<>(List.of(items)));
     }
 
     @Test
@@ -168,7 +167,8 @@ class DeliveryOverviewServiceTest {
         WorkItem finishedBlocked = item("finished", "TASK", "TASK", "DONE", "prd");
         WorkItem post = item("post", "POST", "ENGINEERING", "DRAFT", null);
         load(prd, blocked, stale, asking, finishedBlocked, post);
-        signals.put("blocked", new Signals(true, List.of(), false, false, false, null));
+        signals.put("blocked", new Signals(true, List.of(new WorkItemSignalService.Blocker("b1", "COND-1", "x"),
+                new WorkItemSignalService.Blocker("b2", "COND-2", "y")), false, false, false, null));
         signals.put("stale", new Signals(false, List.of(), false, true, false, null));
         signals.put("asking", new Signals(false, List.of(), false, false, true,
                 session("asking", WorkItemAgentSession.ACTIVITY_NEEDS_INPUT)));
@@ -180,6 +180,7 @@ class DeliveryOverviewServiceTest {
         Overview overview = service.overview(PROJECT);
 
         assertThat(overview.attention().blocked()).extracting(s -> s.item().getId()).containsExactly("blocked");
+        assertThat(overview.attention().blocked().get(0).blockedByCount()).isEqualTo(2);
         assertThat(overview.attention().stale()).extracting(s -> s.item().getId()).containsExactly("stale");
         assertThat(overview.attention().needsInput()).extracting(s -> s.item().getId()).containsExactly("asking");
     }
@@ -195,5 +196,37 @@ class DeliveryOverviewServiceTest {
 
         assertThat(service.overview(PROJECT).activeItems()).extracting(a -> a.item().item().getId())
                 .containsExactly("urgent", "low", "none");
+    }
+
+    @Test
+    void tenPrdsWidenToTheProjectSamplesAtMostOnce() {
+        ThroughputForecastService real = new ThroughputForecastService(workItemRepository,
+                org.mockito.Mockito.mock(com.conductor.repository.WorkItemAgentSessionRepository.class),
+                hierarchyService, java.time.Clock.systemUTC(), java.util.Random::new);
+        DeliveryOverviewService overviewService = new DeliveryOverviewService(workItemRepository, hierarchyService,
+                signalService, healthService, real, milestoneService, workflowService);
+        List<WorkItem> items = new ArrayList<>();
+        Map<String, Progress> progress = new HashMap<>();
+        List<Object[]> subtreeRows = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            items.add(item("prd" + i, "PRD", "ENGINEERING", "DRAFT", null));
+            progress.put("prd" + i, new Progress(4, 1, 25, 0, 0));
+            subtreeRows.add(new Object[] {"prd" + i, "prd" + i});
+        }
+        load(items.toArray(new WorkItem[0]));
+        when(hierarchyService.progressFor(eq(PROJECT), anyCollection())).thenReturn(progress);
+        when(workItemRepository.findSubtreeIdsFor(anyCollection())).thenReturn(subtreeRows);
+        when(workItemRepository.findLeafCompletionStamps(anyCollection(), any(), anyCollection()))
+                .thenReturn(List.of());
+        when(workItemRepository.findProjectLeafCompletionStamps(eq(PROJECT), any(), anyCollection()))
+                .thenReturn(List.of());
+
+        Overview overview = overviewService.overview(PROJECT);
+
+        assertThat(overview.activeItems()).hasSize(10);
+        verify(workItemRepository, org.mockito.Mockito.times(1))
+                .findProjectLeafCompletionStamps(eq(PROJECT), any(), anyCollection());
+        verify(workItemRepository, org.mockito.Mockito.times(1)).findSubtreeIdsFor(anyCollection());
+        verify(workItemRepository, org.mockito.Mockito.never()).findSubtreeIds(anyString());
     }
 }

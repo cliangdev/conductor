@@ -231,6 +231,56 @@ class WorkItemHierarchyRepositoryTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void deliveryCandidatesSkipPlainChildlessTopLevelItems() {
+        WorkItem parent = item(null);
+        WorkItem child = item(parent.getId());
+        WorkItem plain = item(null);
+        WorkItem prd = item(null);
+        prd.setType("PRD");
+        workItemRepository.saveAndFlush(prd);
+        WorkItem other = projectOther();
+        WorkItem otherChild = otherChild(other);
+
+        List<WorkItem> found = workItemRepository.findDeliveryCandidates(project.getId(), "PRD");
+
+        assertThat(found).extracting(WorkItem::getId)
+                .containsExactlyInAnyOrder(parent.getId(), child.getId(), prd.getId())
+                .doesNotContain(plain.getId(), otherChild.getId());
+    }
+
+    private WorkItem projectOther() {
+        Project p = new Project();
+        p.setName("Other");
+        p.setKey("OTH" + UUID.randomUUID().toString().substring(0, 6).toUpperCase());
+        p.setCreatedBy(user);
+        projectRepository.save(p);
+        WorkItem w = new WorkItem();
+        w.setProject(p);
+        w.setType("TASK");
+        w.setTitle("o");
+        w.setCurrentStatus("TODO");
+        w.setWorkflow("TASK");
+        w.setWorkflowVersion(1);
+        w.setCreatedByLabel("test-actor");
+        w.setSequenceNumber(1);
+        return workItemRepository.saveAndFlush(w);
+    }
+
+    private WorkItem otherChild(WorkItem parent) {
+        WorkItem w = new WorkItem();
+        w.setProject(parent.getProject());
+        w.setType("TASK");
+        w.setTitle("oc");
+        w.setCurrentStatus("TODO");
+        w.setWorkflow("TASK");
+        w.setWorkflowVersion(1);
+        w.setCreatedByLabel("test-actor");
+        w.setSequenceNumber(2);
+        w.setParentWorkItemId(parent.getId());
+        return workItemRepository.saveAndFlush(w);
+    }
+
+    @Test
     void childrenComeBackInCreationOrder() {
         WorkItem prd = item(null);
         WorkItem first = item(prd.getId());

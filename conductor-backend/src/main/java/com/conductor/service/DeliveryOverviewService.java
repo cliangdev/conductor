@@ -6,6 +6,7 @@ import com.conductor.repository.WorkItemRepository;
 import com.conductor.service.MilestoneService.MilestoneView;
 import com.conductor.service.ProgressRollup.Progress;
 import com.conductor.service.ThroughputForecastService.Forecast;
+import com.conductor.service.ThroughputForecastService.Sample;
 import com.conductor.service.WorkItemHealthService.Health;
 import com.conductor.service.WorkItemSignalService.Signals;
 import org.springframework.stereotype.Service;
@@ -14,18 +15,19 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  * The one-call delivery overview behind the Overview page: the PRDs in flight with their progress, health,
  * forecast and signals, the milestones, and what needs a person's attention. Everything is derived on read.
  *
- * <p>Reads: one load of the project's items, one signals pass, one health pass, one progress pass and one
- * milestone listing; a forecast per active item (bounded by the number of active PRDs).
+ * <p>Reads: one load of the candidate items (those in a tree, with sub-items, or PRDs; childless top-level
+ * items are never loaded), one signals pass, one health pass, one progress pass, one batched subtree walk, one
+ * milestone listing, and per active item only its own completion stamps; the project-wide widening query runs
+ * at most once however many items need it.
  *
  * <p>The "delivery" items are the non-terminal ones that sit in a tree (have a parent or sub-items) or are
  * PRDs. Plain childless top-level items (Posts, standalone issues) are not part of delivery tracking and stay
@@ -59,7 +61,11 @@ public class DeliveryOverviewService {
     }
 
     /** An item with its status label, as the overview lists it. */
-    public record ItemSummary(WorkItem item, String statusLabel) {
+    public record ItemSummary(WorkItem item, String statusLabel, int blockedByCount) {
+
+        public ItemSummary(WorkItem item, String statusLabel) {
+            this(item, statusLabel, 0);
+        }
     }
 
     public record ActiveItem(ItemSummary item, Progress progress, Health health, Forecast forecast,
@@ -74,8 +80,8 @@ public class DeliveryOverviewService {
 
     @Transactional(readOnly = true)
     public Overview overview(String projectId) {
-        List<WorkItem> all = workItemRepository.findByProjectFiltered(projectId, null, null, null, null, null,
-                false, null, null, null);
+        List<WorkItem> all = workItemRepository.findDeliveryCandidates(projectId, PRD_TYPE);
+        // Every child is a candidate (it has a parent), so the counts are complete from this list alone.
         Map<String, Integer> childCounts = new HashMap<>();
         for (WorkItem w : all) {
             if (w.getParentWorkItemId() != null) {
@@ -108,9 +114,18 @@ public class DeliveryOverviewService {
         Map<String, Signals> signals = signalService.signalsFor(projectId, delivery);
         List<String> activeIds = active.stream().map(WorkItem::getId).toList();
         Map<String, Progress> progress = hierarchyService.progressFor(projectId, activeIds);
+        Map<String, List<String>> subtrees = new HashMap<>();
+        if (!activeIds.isEmpty()) {
+            for (Object[] row : workItemRepository.findSubtreeIdsFor(activeIds)) {
+                subtrees.computeIfAbsent((String) row[0], k -> new ArrayList<>()).add((String) row[1]);
+            }
+        }
+        Supplier<List<Sample>> projectSamples = forecastService.projectSamples(projectId);
         Map<String, Forecast> forecasts = new LinkedHashMap<>();
         for (WorkItem w : active) {
-            forecasts.put(w.getId(), forecastService.forecast(projectId, w));
+            forecasts.put(w.getId(), forecastService.forecast(projectId, w,
+                    progress.getOrDefault(w.getId(), Progress.EMPTY), subtrees.getOrDefault(w.getId(), List.of()),
+                    projectSamples));
         }
         Map<String, Health> health = healthService.current(projectId, active, forecasts);
 
@@ -123,14 +138,13 @@ public class DeliveryOverviewService {
         List<ItemSummary> blocked = new ArrayList<>();
         List<ItemSummary> stale = new ArrayList<>();
         List<ItemSummary> needsInput = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
         for (WorkItem w : delivery) {
             Signals s = signals.get(w.getId());
-            if (s == null || !seen.add(w.getId())) {
+            if (s == null) {
                 continue;
             }
             if (s.blocked()) {
-                blocked.add(summary(charts, w));
+                blocked.add(summary(charts, w, s.blockedBy().size()));
             }
             if (s.stale()) {
                 stale.add(summary(charts, w));
@@ -146,7 +160,11 @@ public class DeliveryOverviewService {
     }
 
     private static ItemSummary summary(StatechartCache charts, WorkItem item) {
+        return summary(charts, item, 0);
+    }
+
+    private static ItemSummary summary(StatechartCache charts, WorkItem item, int blockedByCount) {
         String label = charts.statusOf(item).map(s -> s.displayLabel()).orElse(item.getCurrentStatus());
-        return new ItemSummary(item, label);
+        return new ItemSummary(item, label, blockedByCount);
     }
 }

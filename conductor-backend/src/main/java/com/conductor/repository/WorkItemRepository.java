@@ -52,6 +52,24 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
                                       @Param("assigneeId") String assigneeId);
 
     /**
+     * The items delivery tracking can care about: anything inside a tree (has a parent), any item with
+     * sub-items, and any top-level item of {@code prdType}. Plain childless top-level items (Posts, standalone
+     * issues) are left unloaded. Same fetch shape as {@link #findByProjectFiltered}; rows come back unordered.
+     */
+    @Query("""
+            SELECT i FROM WorkItem i
+            JOIN FETCH i.project
+            LEFT JOIN FETCH i.assignee
+            LEFT JOIN FETCH i.milestone
+            WHERE i.project.id = :projectId
+              AND (i.parentWorkItemId IS NOT NULL
+                   OR i.type = :prdType
+                   OR EXISTS (SELECT 1 FROM WorkItem c WHERE c.parentWorkItemId = i.id))
+            """)
+    List<WorkItem> findDeliveryCandidates(@Param("projectId") String projectId,
+                                          @Param("prdType") String prdType);
+
+    /**
      * The ids of an item and everything beneath it, the item itself first. A recursive CTE rather than lazy
      * walks, depth-capped at 10 (the service allows 5; the slack is only a guard against a corrupt cycle
      * looping forever).

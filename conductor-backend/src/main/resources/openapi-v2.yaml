@@ -7090,6 +7090,20 @@ components:
         appetite:
           type: string
           nullable: true
+        appetiteDays:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        blockedByCount:
+          type: integer
+          description: How many unfinished blockers hold the item up; set on the blocked attention list, 0 elsewhere.
 
     DeliveryActiveItem:
       type: object

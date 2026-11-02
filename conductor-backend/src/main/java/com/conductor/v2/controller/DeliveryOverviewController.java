@@ -63,6 +63,10 @@ public class DeliveryOverviewController implements DeliveryApi {
                 .parentWorkItemId(item.getParentWorkItemId())
                 .milestoneId(item.getMilestone() == null ? null : item.getMilestone().getId())
                 .milestoneName(item.getMilestone() == null ? null : item.getMilestone().getName())
-                .appetite(item.getAppetite());
+                .appetite(item.getAppetite())
+                .appetiteDays(item.getAppetiteDays())
+                .createdAt(item.getCreatedAt())
+                .startedAt(item.getStartedAt())
+                .blockedByCount(s.blockedByCount());
     }
 }

@@ -273,6 +273,9 @@ class WorkItemForecastHealthControllersTest {
         prd.setWorkflow("ENGINEERING");
         prd.setCurrentStatus("IN_PROGRESS");
         prd.setPriority(1);
+        prd.setAppetiteDays(14);
+        prd.setCreatedAt(OffsetDateTime.parse("2026-10-01T00:00:00Z"));
+        prd.setStartedAt(OffsetDateTime.parse("2026-10-05T00:00:00Z"));
         DeliveryOverviewService.ItemSummary summary = new DeliveryOverviewService.ItemSummary(prd, "In progress");
         Forecast forecast = new Forecast(State.INSUFFICIENT_DATA, null, 5, 3, 8, null, null, null, null, null, null);
         WorkItemHealthService.Health health = new WorkItemHealthService.Health("AT_RISK", "slipping",
@@ -282,7 +285,9 @@ class WorkItemForecastHealthControllersTest {
                 List.of(new DeliveryOverviewService.ActiveItem(summary, new Progress(10, 4, 40, 6, 2), health,
                         forecast, signals)),
                 List.of(),
-                new DeliveryOverviewService.Attention(List.of(), List.of(summary), List.of())));
+                new DeliveryOverviewService.Attention(
+                        List.of(new DeliveryOverviewService.ItemSummary(prd, "In progress", 2)),
+                        List.of(summary), List.of())));
 
         mockMvc.perform(get("/api/v2/projects/proj-1/delivery-overview").header("Authorization", AUTH))
                 .andExpect(status().isOk())
@@ -296,7 +301,11 @@ class WorkItemForecastHealthControllersTest {
                 .andExpect(jsonPath("$.activeItems[0].forecast.needed").value(8))
                 .andExpect(jsonPath("$.activeItems[0].signals.stale").value(true))
                 .andExpect(jsonPath("$.milestones.length()").value(0))
-                .andExpect(jsonPath("$.attention.blocked.length()").value(0))
+                .andExpect(jsonPath("$.activeItems[0].item.appetiteDays").value(14))
+                .andExpect(jsonPath("$.activeItems[0].item.startedAt").exists())
+                .andExpect(jsonPath("$.activeItems[0].item.createdAt").exists())
+                .andExpect(jsonPath("$.attention.blocked[0].blockedByCount").value(2))
+                .andExpect(jsonPath("$.attention.stale[0].blockedByCount").value(0))
                 .andExpect(jsonPath("$.attention.stale[0].id").value("prd"));
     }
 }
