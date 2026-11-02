@@ -252,8 +252,16 @@ public class WorkItemWorkflowService {
 
     /** Resolve the {@link Statechart} for the workflow a Work Item is bound to, honoring its pinned version. */
     public Statechart resolveFor(String projectId, WorkItem workItem) {
-        String slug = workItem.getWorkflow() != null ? workItem.getWorkflow() : DEFAULT_WORKFLOW;
-        return resolver.resolveRequired(projectId, slug, workItem.getWorkflowVersion());
+        return resolveFor(projectId, workItem.getWorkflow(), workItem.getWorkflowVersion());
+    }
+
+    /**
+     * {@link #resolveFor(String, WorkItem)} for a Work Item known only by its Workflow slug (null reads as the
+     * default Workflow) and pinned version -- e.g. a blocker described by a joined row, never loaded.
+     */
+    public Statechart resolveFor(String projectId, String workflow, Integer workflowVersion) {
+        String slug = workflow != null ? workflow : DEFAULT_WORKFLOW;
+        return resolver.resolveRequired(projectId, slug, workflowVersion);
     }
 
     /**

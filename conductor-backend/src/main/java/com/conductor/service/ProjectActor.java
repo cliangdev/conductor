@@ -25,6 +25,17 @@ public record ProjectActor(User user, String label) {
         return user == null;
     }
 
+    /** A name to record beside an action: the machine label, or the person's name (falling back to their email). */
+    public String displayName() {
+        if (user == null) {
+            return label;
+        }
+        if (user.getName() != null && !user.getName().isBlank()) {
+            return user.getName();
+        }
+        return user.getEmail();
+    }
+
     /** Null for a machine actor — callers comparing authorship must handle that. */
     public String userId() {
         return user == null ? null : user.getId();
