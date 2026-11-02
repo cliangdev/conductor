@@ -1,6 +1,6 @@
 import { Config } from '../config.js'
 import { apiGet, apiPost, isClientError } from '../api.js'
-import { createWorkItem, updateWorkItem, listWorkItems } from './issues.js'
+import { createWorkItem, updateWorkItem, listWorkItemsRaw } from './issues.js'
 import { listWorkflows, transitionWorkItem } from './workflows.js'
 import { listPublishTargets, setPublishTargets, uploadAsset, PublishTargetSelection } from './marketing.js'
 import { stateLabel, statusLabel } from './labels.js'
@@ -563,7 +563,7 @@ export async function listPosts(
   const until = params.until ? new Date(params.until).getTime() : null
   const rows: Array<{ item: WorkItemRow; workflowStatuses: unknown[] }> = []
   for (const workflow of publishing) {
-    const items = (await listWorkItems({ workflow: workflow.slug, status: params.status }, config)) as WorkItemRow[]
+    const items = (await listWorkItemsRaw({ workflow: workflow.slug, status: params.status }, config)) as unknown as WorkItemRow[]
     for (const item of items) {
       const at = item.scheduledFor ? new Date(item.scheduledFor).getTime() : null
       if (since !== null && (at === null || at < since)) continue
