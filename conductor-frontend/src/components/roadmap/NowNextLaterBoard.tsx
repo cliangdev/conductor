@@ -4,12 +4,12 @@
 // priority and milestone are edited on the item itself, so there is no drag-and-drop.
 
 import Link from 'next/link'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { ProgressBar } from '@/components/roadmap/ProgressBar'
 import type { Issue } from '@/components/workitems/listTypes'
-import { parseTargetOn, roadmapBucket, type RoadmapBucket } from '@/lib/roadmap'
+import { nextOpenMilestoneId, parseTargetOn, roadmapBucket, startOfToday, type RoadmapBucket } from '@/lib/roadmap'
 import type { Milestone } from '@/types/workItem'
 
 const COLUMNS: { bucket: RoadmapBucket; title: string; hint: string }[] = [
@@ -78,7 +78,7 @@ export function NowNextLaterBoard({
   milestones,
   categoryOf,
   hrefOf,
-  today = new Date(),
+  today: todayProp,
 }: {
   items: Issue[]
   milestones: Milestone[]
@@ -86,11 +86,15 @@ export function NowNextLaterBoard({
   hrefOf: (item: Issue) => string | null
   today?: Date
 }) {
+  // Once per mount: a fresh `new Date()` each render would defeat the memo below.
+  const [mountedToday] = useState(startOfToday)
+  const today = todayProp ?? mountedToday
   const columns = useMemo(() => {
     const milestonesById = Object.fromEntries(milestones.map((m) => [m.id, m]))
+    const nextMilestoneId = nextOpenMilestoneId(milestonesById, today)
     const buckets: Record<RoadmapBucket, Issue[]> = { now: [], next: [], later: [] }
     for (const item of items) {
-      const bucket = roadmapBucket(item, milestonesById, today, categoryOf)
+      const bucket = roadmapBucket(item, milestonesById, today, categoryOf, nextMilestoneId)
       if (bucket) buckets[bucket].push(item)
     }
     return COLUMNS.map((c) => ({ ...c, groups: groupByMilestone(buckets[c.bucket], milestonesById), count: buckets[c.bucket].length }))

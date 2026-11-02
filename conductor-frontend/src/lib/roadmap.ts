@@ -28,6 +28,11 @@ function startOfDay(date: Date): number {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
 }
 
+/** Local midnight today. Components take this once per mount so memoised bucketing keeps a stable input. */
+export function startOfToday(): Date {
+  return new Date(startOfDay(new Date()))
+}
+
 /** The open milestone with the earliest target date that is not in the past; falls back to the earliest dated open one. */
 export function nextOpenMilestoneId(milestonesById: Record<string, Milestone>, today: Date): string | null {
   const todayMs = startOfDay(today)
@@ -47,19 +52,22 @@ export function roadmapBucket<T extends RoadmapItem>(
   item: T,
   milestonesById: Record<string, Milestone>,
   today: Date,
-  statusCategoryOf: (item: T) => string
+  statusCategoryOf: (item: T) => string,
+  /** Pass {@link nextOpenMilestoneId} when bucketing many items, so it is computed once rather than per item. */
+  nextMilestoneId: string | null = nextOpenMilestoneId(milestonesById, today)
 ): RoadmapBucket | null {
   const category = statusCategoryOf(item)
   if (category === 'terminal') return null
   if (category === 'in_progress') return 'now'
 
+  // Only an OPEN milestone's date can pull an item into Now; a closed one counts as no milestone.
   const milestone = item.milestoneId ? milestonesById[item.milestoneId] : undefined
-  const targetMs = parseTargetOn(milestone?.targetOn)
+  const targetMs = milestone?.state === 'OPEN' ? parseTargetOn(milestone.targetOn) : null
   if (targetMs !== null && targetMs - startOfDay(today) <= NOW_WINDOW_DAYS * DAY_MS) return 'now'
 
   if (item.signals?.ready) {
     const urgent = item.priority === 'P0' || item.priority === 'P1'
-    const inNextMilestone = !!item.milestoneId && item.milestoneId === nextOpenMilestoneId(milestonesById, today)
+    const inNextMilestone = !!item.milestoneId && item.milestoneId === nextMilestoneId
     if (urgent || inNextMilestone) return 'next'
   }
   return 'later'
