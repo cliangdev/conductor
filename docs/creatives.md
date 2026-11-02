@@ -134,7 +134,8 @@ last step. Two MCP tools (`conductor-tools/src/mcp/tools/creative-drafts.ts`) ca
 - **`commit_creative_draft`** runs only after the person approved the image: it uploads each local file
   (the `upload_creative_media` code path), swaps `local:<key>` for the returned ids, calls
   `create_creative` (or `update_creative` at the current `version` when the draft has a
-  `baseCreativeId`), then runs the full local render. It refuses a draft that is already committed.
+  `baseCreativeId`), then runs the full local render. It refuses a draft that is already committed. A CAROUSEL
+  draft also carries its slideshow spec to the Creative; see [Organic slideshows](#organic-slideshows).
 
 The local render uses `conductor-creative/job/file-transport.mjs`, a fourth transport beside the API one:
 `run()` is unchanged. `getSpec()` rewrites each `local:<key>` to a loopback URL served by a small
@@ -428,8 +429,66 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   (patterns such as `texts[].t` and `rows[].items[]`, plus the 500-character limit), mirrored by
   `SlideshowTextFields` in the backend, which lists, applies and diffs them (parity test
   `SlideshowTextFieldsParityTest`).
+- **Spec through preview and commit (CLI).** `compose_slideshow` writes `spec.json` beside the slides (the
+  input spec plus `resolvedStyle`). `preview_creative_draft` keeps it with a CAROUSEL draft: pass
+  `slideshowSpecPath`, or leave it out and the `spec.json` in the folder of `slidePaths` is used when it is the
+  one that composed them (its `id` prefixes the slide file names). It is validated with `validateSlideshowSpec`
+  and its slide count must equal every `slides` list; a mismatch, or an auto-detected spec that cannot be read,
+  warns in the preview's `note` and drops the spec, never blocking the slides (an explicit
+  `slideshowSpecPath` that is unusable is an error). The draft records `slideshowSpecPath` and its own copy of
+  the spec (`draft.json`: images as absolute paths, `resolvedStyle` stripped), so editing the file afterwards
+  cannot change what is committed. The spec is not sent to `draft-spec` (that call knows uploaded media, not
+  local files). `commit_creative_draft` uploads each distinct input image once (`bg`, `shot`,
+  `photos[].src`, `days[].img`; deduped by absolute path, each file's `.provenance.json` sidecar winning over
+  the call's `source`/`licence`/`aiGenerated`, and never marked `photoChecked`), rewrites the references to
+  `media:<id>`, and sends `slideshowSpec` in the create or update body; uploaded spec images are remembered in
+  `draft.json` (`specImages`) so a retry never re-uploads. A draft over `baseCreativeId` whose new slides come
+  with no spec warns that committing will clear the base's spec. `get_creative` returns `slideshowSpec` and a
+  compact `textFields` list (`[{slide, path, text}]`, slides from 1, from `listTextFields`); above 8000 JSON
+  characters the spec is summarised and `textFields` carries the text.
+- **Text-field registry (TS).** `conductor-tools/src/lib/slideshow/text-fields.ts` holds the patterns from
+  `slideshow-text-fields.json` and `listTextFields(spec)`, `applyTextEdits(spec, edits)` (throws on a slide
+  out of range, a path outside the registry, an absent path, a non-string target or text over the maximum;
+  never adds or removes entries) and `diffText(a, b)` (the `text_diff` shape, over the slides both have). A
+  parity test asserts the constants equal the JSON, as the backend's does.
+- **Backfill: `attach_slideshow_spec` / `conductor creative attach-spec <creativeId> <specPath> [--force]`.**
+  For a CAROUSEL committed before specs were kept. `specPath` is a source spec (relative image paths resolve
+  against its folder) or a compose_slideshow output `spec.json` (absolute paths and `resolvedStyle`). It
+  refuses a Creative that is not a CAROUSEL, one that already has a spec (without `force`), and a spec whose
+  slide count differs from a stored list (not even `force` overrides that: the backend would answer
+  `slideshowSpecSlideCount`). It then re-composes the spec into a temp folder at each ratio the Creative has a
+  list for (`9x16`, `4x5`; `default` or `1x1` by the shape of its images, 1080x1920 or 1080x1350, anything else
+  is skipped with a note), downloads the stored slides and scores each pair. The score is the **lowest tile
+  SSIM** over a 6x8 grid (ffmpeg's `ssim` filter, already resolved for media probing; no image library): a
+  changed headline is a small area, so a whole-frame score would average it away (0.98 on a busy photo) while
+  the tiles under the text drop to 0.77-0.83. Measured with this composer: the same spec re-composed scores
+  1.0; a PNG re-saved as a JPEG 0.99 (0.96 on a worst-case synthetic test card); a changed box colour 0.999
+  (luminance-based, so not caught). Any slide below **0.95** refuses the attach and names the slides, unless
+  `force`, since it means these slides are not what this spec makes (edited since, or composed before the
+  bundled fonts below). Otherwise it uploads the spec's images as commit does, and PATCHes `slideshowSpec` (plus
+  `slideStyle` from `resolvedStyle` when the Creative has none) at the Creative's current `version`. The result
+  reports what was attached, the compared count, the lowest similarities and any skipped lists; verify with
+  `get_creative`.
 - **Fonts:** the bundled TikTok Sans (600, 700, 800) under the SIL Open Font License, in
-  `conductor-tools/assets/fonts/` with `OFL.txt`.
+  `conductor-tools/assets/fonts/` with `OFL.txt`. The slide types that imitate a system UI (`notes`,
+  `messages`, `week`, a `grid` photo's `badge`, `receipt`, `placard`) used Apple system fonts (SF Pro,
+  Helvetica Neue, Georgia, Courier New) that do not exist on the Linux render image, so they now use bundled
+  OFL families in the same folder, each with its licence file: Inter 400/600/700 (`OFL-inter.txt`), Source
+  Serif 4 400/700 (`OFL-source-serif-4.txt`) and Courier Prime 400/700 (`OFL-courier-prime.txt`). Only those
+  families plus a generic keyword are named, so the output is the same on every machine. A slide declares only
+  the faces its type uses (a photo or screen slide's HTML is unchanged apart from the measuring script and the
+  unused font-family declarations, which `slideshow-html-stability.test.ts` pins against golden HTML), and the
+  in-page `font` check treats a bundled face that will not load as an error (the package files ship through
+  `assets/` in `package.json` `files`). Slides composed before this change look different on those types, which
+  is why `attach_slideshow_spec` may refuse older notes, messages, week, receipt or placard slides.
+- **Contrast (`contrast` check, a warning).** For each text element (`[data-fg][data-ts]`) the in-page rule
+  compares the text colour with what is behind it, by the WCAG relative-luminance ratio (the formula of
+  `conductor-creative/assertions.js`), and warns below 3:1 naming the slide and the ratio. Boxed text and the
+  callout pill are judged against their box; outlined text (`stroke`, `sub`: a text stroke or shadow blur of
+  2px or more) against the outline colour; text with neither against the mean luminance of the pixels behind
+  it. A `file:` image taints a canvas, so for that case the composer shoots the slide again with its text
+  hidden and the page measures that screenshot (it includes the dim layer, grade and any `bgColor`); any
+  failure skips the check. It never fails a slideshow in this version.
 - **Style.** The native look is the default. A `SlideshowStyle` (`fontFamily`, a name or comma list such as `Inter, sans-serif`; `fontUrl` for an https CSS
   stylesheet such as Google Fonts, `boxBg`, `boxInk`, `darkBg`, `darkInk`, `strokeInk` (the colour of outlined text and sub text; white when a stored style has none), `outline`, `accent` as
   `#RRGGBB`, `defaultText` of `box|dark|stroke`, `textSize` 24-120, `subSize` 16-96; all optional)
@@ -438,7 +497,7 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   `compose_slideshow`. Resolution is native, then the kit's style (`brandKitId`; refused with a clear
   error when the kit has none; unknown fields in a kit's style are ignored), then the spec's own top-level `style` (`null` = no layer), then the inline `style` on top. In the spec's and the inline `style` a field left out inherits from the layer below, while a field set to `null` resets it to the native value (`fontFamily: null` = bundled TikTok Sans and no `fontUrl`); in a kit, null and absent both mean "not set by the kit". `fontUrl` is checked only against the shared pattern (https only, no whitespace or quotes, at most 2048 characters) and `fontFamily` needs at least one family name; an invalid kit style is reported naming the kit. A new `fontFamily` keeps the inherited `fontUrl` only when its first family is the same (case-insensitive). The font check loads the list's first non-keyword family (generic and system keywords such as `sans-serif`, `-apple-system` and `BlinkMacSystemFont` are emitted unquoted and never checked; a list of only keywords has no custom-font check) even on slides with no styled text, and checks the bundled TikTok Sans whenever any text uses it (no custom font, or any placard slide). A custom font loads from `fontUrl`;
   a font that fails to load, or a `fontFamily` that is not installed when there is no `fontUrl`, is a blocking `font` check naming the family; notes, week, receipt,
-  placard and messages slides keep their system-UI fonts. The resolved (full) style is written to
+  placard and messages slides keep their own bundled fonts (Inter, Source Serif 4, Courier Prime; see Fonts). The resolved (full) style is written to
   `spec.json` as `resolvedStyle` (the spec's own `style` is kept as given and a re-compose ignores `resolvedStyle`), returned by the tool as `style`, and recorded on the Creative as `slideStyle`
   (CAROUSEL only; native slides record the native defaults) so a look can be reused later. The rules
   (native values, keyword list, bounds, patterns) live once in `conductor-creative/slideshow-style.json`; the
