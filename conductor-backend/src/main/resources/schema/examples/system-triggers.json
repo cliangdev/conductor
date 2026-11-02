@@ -9,6 +9,7 @@
     {
       "id": "children_done",
       "bypassReviewGate": true,
+      "systemOnly": true,
       "description": "Fired on a parent Work Item when its last direct child reaches a terminal status. Completion rolls up automatically, so this transition bypasses the Review gate; it only ever moves a parent forward and never reopens one."
     },
     {

@@ -139,8 +139,10 @@ public class WorkItemWorkflowService {
             throw new BusinessException(
                     "Unknown status '" + newStatus + "' for workflow " + statechart.slug());
         }
-        Optional<StatechartTransition> transition =
-                statechart.transition(workItem.getCurrentStatus(), newStatus);
+        // A system-only edge (TASK's children_done roll-up) is not a person's move, so it does not count here.
+        Optional<StatechartTransition> transition = statechart.transitionsFrom(workItem.getCurrentStatus()).stream()
+                .filter(t -> t.to().equals(newStatus) && !isSystemOnly(t))
+                .findFirst();
         if (transition.isEmpty()) {
             throw new BusinessException(
                     "Invalid status transition from " + workItem.getCurrentStatus() + " to " + newStatus);
@@ -161,6 +163,15 @@ public class WorkItemWorkflowService {
         // apply to, so calling it unconditionally is safe — see PublishingWorkflow.isGateEdge for the
         // definition-driven rule that decides when it applies.
         publishGateEvaluator.enforce(workItem, statechart, newStatus);
+    }
+
+    /**
+     * True for an edge only the system takes: it declares a {@link SystemTriggerRegistry#isSystemOnly system-only}
+     * trigger and no Review gate. {@link #applySystemTransition} still takes it; people neither see it nor can
+     * PATCH through it. An edge with a Review gate (ENGINEERING's {@code pr_merged} Merge) stays a person's move.
+     */
+    private boolean isSystemOnly(StatechartTransition t) {
+        return t.trigger() != null && !t.requiresReview() && systemTriggerRegistry.isSystemOnly(t.trigger());
     }
 
     /**
@@ -191,9 +202,8 @@ public class WorkItemWorkflowService {
                 if (PublishingWorkflow.isPipelineOutcomeEdge(statechart, currentStatus, t.to())) {
                     continue;
                 }
-                // Two edges to one status (TASK's manual "Finish" and its children_done roll-up) are one
-                // move to a person: offer the first declared.
-                if (transitions.stream().anyMatch(existing -> existing.toStatus().equals(t.to()))) {
+                // A system-only edge (TASK's children_done roll-up) is the system's to take, not offered.
+                if (isSystemOnly(t)) {
                     continue;
                 }
                 transitions.add(new AvailableTransitionsView.Transition(t.to(), t.label(), t.requiresReview()));
