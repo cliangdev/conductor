@@ -271,15 +271,19 @@ export function useWorkflowView(
   return view
 }
 
-/** React hook: resolve several Workflows' views at once (issues list spans whatever slugs are present). */
-export function useWorkflowViews(
+/**
+ * React hook: resolve several Workflows' views at once. `settled` is true once every requested slug has
+ * been tried (a slug that failed to load is simply absent from `views`), so callers can hold back
+ * view-dependent decisions until then rather than acting on an empty record.
+ */
+export function useWorkflowViewsSettled(
   projectId: string | undefined,
   slugs: string[],
   token: string | null | undefined,
-): Record<string, WorkflowView> {
+): { views: Record<string, WorkflowView>; settled: boolean } {
   // Stable key so the effect only re-runs when the *set* of slugs changes.
   const slugKey = [...new Set(slugs)].sort().join(',')
-  const [views, setViews] = useState<Record<string, WorkflowView>>({})
+  const [state, setState] = useState<{ key: string; views: Record<string, WorkflowView> }>({ key: '', views: {} })
 
   useEffect(() => {
     if (!projectId || !token || !slugKey) return
@@ -295,14 +299,23 @@ export function useWorkflowViews(
       if (cancelled) return
       const next: Record<string, WorkflowView> = {}
       for (const entry of entries) if (entry) next[entry[0]] = entry[1]
-      setViews(next)
+      setState({ key: slugKey, views: next })
     })
     return () => {
       cancelled = true
     }
   }, [projectId, token, slugKey])
 
-  return views
+  return { views: state.views, settled: !slugKey || state.key === slugKey }
+}
+
+/** React hook: resolve several Workflows' views at once (issues list spans whatever slugs are present). */
+export function useWorkflowViews(
+  projectId: string | undefined,
+  slugs: string[],
+  token: string | null | undefined,
+): Record<string, WorkflowView> {
+  return useWorkflowViewsSettled(projectId, slugs, token).views
 }
 
 // ── Render helpers (the single source of label + color) ─────────────────────
