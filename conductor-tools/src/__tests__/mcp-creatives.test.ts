@@ -681,6 +681,27 @@ describe('get_creative', () => {
 
     expect(result['experiment']).toBeNull()
   })
+
+  it('lists a stored slideshow spec\'s editable text beside the spec, and nothing for a Creative without one', async () => {
+    const spec = { id: 'ss', slides: [{ type: 'photo', bg: 'media:123e4567-e89b-12d3-a456-426614174000', texts: [{ t: 'Hook', y: 30 }] }] }
+    const rest = () =>
+      mocked(apiGet)
+        .mockResolvedValueOnce({ ready: true, items: [] })
+        .mockResolvedValueOnce([{ id: 'c1', number: 1 }])
+        .mockResolvedValueOnce({ creativeId: 'c1', family: [] })
+        .mockResolvedValueOnce([])
+    mocked(apiGet).mockResolvedValueOnce({ id: 'c1', number: 1, slideshowSpec: spec })
+    rest()
+    const withSpec = await getCreative({ creativeId: 'c1' }, config)
+    expect(withSpec['slideshowSpec']).toEqual(spec)
+    expect(withSpec['textFields']).toEqual([{ slide: 1, path: 'texts[0].t', text: 'Hook' }])
+
+    mocked(apiGet).mockResolvedValueOnce({ id: 'c2', number: 2, slideshowSpec: null })
+    rest()
+    const without = await getCreative({ creativeId: 'c2' }, config)
+    expect(without['slideshowSpec']).toBeNull()
+    expect(without).not.toHaveProperty('textFields')
+  })
 })
 
 describe('create_experiment', () => {

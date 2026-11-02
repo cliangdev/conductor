@@ -58,7 +58,7 @@ function resolveImage(value: string | undefined, specDir: string, where: string)
 }
 
 /** Maps every image reference in the spec through `fn`, returning a copy. */
-function mapImages(spec: SlideshowSpec, fn: (value: string | undefined, where: string) => string | undefined): SlideshowSpec {
+export function mapSpecImages(spec: SlideshowSpec, fn: (value: string | undefined, where: string) => string | undefined): SlideshowSpec {
   const copy = structuredClone(spec)
   copy.slides.forEach((sl, i) => {
     const at = `slides[${i}]`
@@ -75,7 +75,7 @@ const toUrl = (value: string | undefined): string | undefined =>
 
 /** Resolves relative image paths against `specDir`; refuses http(s). Exported for the MCP tool and tests. */
 export function resolveSpecImages(spec: SlideshowSpec, specDir: string): SlideshowSpec {
-  return mapImages(spec, (v, where) => resolveImage(v, specDir, where))
+  return mapSpecImages(spec, (v, where) => resolveImage(v, specDir, where))
 }
 
 
@@ -158,7 +158,7 @@ export async function composeSlideshow(specInput: unknown, outDir: string, optio
   const { resolvedStyle: _ignored, ...input } = specInput as SlideshowSpec & { resolvedStyle?: unknown }
   void _ignored
   const resolved: SlideshowSpec & { resolvedStyle: ResolvedSlideshowStyle } = { ...resolveSpecImages(input, specDir), resolvedStyle: style }
-  const htmlSpec = mapImages(resolved, (v) => toUrl(v))
+  const htmlSpec = mapSpecImages(resolved, (v) => toUrl(v))
   const out = resolve(outDir)
   await mkdir(out, { recursive: true })
   const specPath = join(out, 'spec.json')

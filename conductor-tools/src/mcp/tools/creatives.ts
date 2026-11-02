@@ -8,6 +8,7 @@ import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/media-probe.js'
 import { composePosterSheet } from '../../lib/poster-sheet.js'
+import { slideshowSpecView } from '../../lib/slideshow/spec-transport.js'
 import { readProvenanceSidecar } from '../../lib/provenance-sidecar.js'
 import { renderCreative as runLocalRender, renderViaApi } from '../../lib/creative-render.js'
 import { needsLocalRender } from '../../lib/creative-local-render.js'
@@ -357,8 +358,11 @@ export async function getCreative(params: { creativeId: string }, config: Config
   }
 
   const family = (performance['family'] as Array<Record<string, unknown>> | undefined) ?? []
+  // A stored slideshow spec: shown while small, with the editable text fields listed beside it (not the spec twice).
+  const specView = slideshowSpecView(creative['slideshowSpec'])
   return {
     ...creative,
+    ...(specView ?? {}),
     readiness,
     variants,
     performance: family.map(trimPerformanceEntry),
@@ -421,6 +425,9 @@ export interface CreativeFields {
   slideshow?: Record<string, unknown>
   /** CAROUSEL only: the look the slides were composed with (compose_slideshow's `style`), so it can be reused as a kit style. */
   slideStyle?: Record<string, unknown> | null
+  /** CAROUSEL only: the editable slideshow spec the slides were composed from, every image a `media:<id>`. Sent by
+   * commit_creative_draft and attach_slideshow_spec, which upload the images and rewrite the references. */
+  slideshowSpec?: Record<string, unknown> | null
   focalOverride?: Record<string, string>
   headline?: string
   body?: string

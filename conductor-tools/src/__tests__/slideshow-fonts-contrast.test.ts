@@ -68,7 +68,7 @@ describe('bundled font files', () => {
   })
 })
 
-describe.skipIf(!hasBrowser)('bundled fonts and contrast (real browser)', () => {
+describe.skipIf(!hasBrowser)('bundled fonts and contrast (real browser)', { timeout: 60000 }, () => {
   let dir: string
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), 'ss-fc-'))

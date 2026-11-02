@@ -147,6 +147,18 @@
           "description": "Attribute this render to a Workflow run"
         }
       ]
+    },
+    {
+      "name": "creative attach-spec",
+      "syntax": "conductor creative attach-spec <creativeId> <specPath>",
+      "description": "Backfill a slideshow spec onto a CAROUSEL Creative committed without one, so its text becomes editable. Re-composes the spec locally, compares each slide with the stored image and refuses on a mismatch unless forced; then uploads the spec's images and saves the spec.",
+      "category": "marketing",
+      "options": [
+        {
+          "flag": "--force",
+          "description": "Attach even when slides differ from a fresh render, or when the Creative already has a spec"
+        }
+      ]
     }
   ],
   "claudeIntegration": {
@@ -886,8 +898,17 @@
     },
     {
       "name": "compose_slideshow",
-      "description": "Compose organic slideshow slides (TikTok/Reels style) from a spec on this machine, with layout checks. Native look by default; brandKitId applies a kit's slideshow style and style overrides on top. Returns the resolved style to pass as slideStyle to preview_creative_draft as a CAROUSEL.",
+      "description": "Compose organic slideshow slides (TikTok/Reels style) from a spec on this machine, with layout checks. Native look by default; brandKitId applies a kit's slideshow style and style overrides on top. Returns the resolved style to pass as slideStyle to preview_creative_draft as a CAROUSEL; its spec.json travels with the Creative at commit, making the text editable later.",
       "category": "marketing"
+    },
+    {
+      "name": "attach_slideshow_spec",
+      "description": "Backfill a slideshow spec onto a CAROUSEL Creative committed without one: re-composes it locally, compares every slide with the stored image (SSIM, refuses below 0.95 unless force), uploads the spec's images and saves the spec. Call get_creative to verify slideshowSpec and textFields.",
+      "category": "marketing",
+      "requiredParams": [
+        "creativeId",
+        "specPath"
+      ]
     },
     {
       "name": "preview_creative_draft",
