@@ -3,7 +3,6 @@
 import { SearchIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { FilterPills } from "@/components/workitems/FilterPills";
 import {
   SORT_OPTIONS,
@@ -25,8 +24,6 @@ export function ListToolbar({
   showSort = true,
   query,
   onQueryChange,
-  showSubItems,
-  onShowSubItemsChange,
 }: {
   typeOptions: string[];
   statusOptions: { id: string; label: string }[];
@@ -42,9 +39,6 @@ export function ListToolbar({
   /** Text search over title, tags and display id. Omit `onQueryChange` to hide the box. */
   query?: string;
   onQueryChange?: (query: string) => void;
-  /** Lists show top-level items by default; this lifts the sub-items (tasks under a PRD) into the list. Omit `onShowSubItemsChange` to hide the toggle. */
-  showSubItems?: boolean;
-  onShowSubItemsChange?: (show: boolean) => void;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
@@ -74,12 +68,6 @@ export function ListToolbar({
           onAdd={onAddFilter}
           onRemove={onRemoveFilter}
         />
-        {onShowSubItemsChange && (
-          <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-            <Switch checked={!!showSubItems} onCheckedChange={onShowSubItemsChange} aria-label="Show sub-items" />
-            Show sub-items
-          </label>
-        )}
       </div>
       {showSort && (
         <div className="flex items-center gap-2 shrink-0">

@@ -27,7 +27,7 @@ import { PageContainer } from '@/components/layout/PageContainer'
 import { PageHeader, type Crumb } from '@/components/layout/PageHeader'
 import { VerdictIcon } from '@/components/reviews/verdict'
 import { timeAgo } from '@/lib/format'
-import { readPersisted, readPersistedFlag, usePersistedState, writePersisted } from '@/lib/persisted'
+import { readPersisted, readPersistedFlag, writePersisted } from '@/lib/persisted'
 import {
   categoriesForView,
   fetchMembersCached,
@@ -111,15 +111,6 @@ export function WorkItemListView({
 
   const [issues, setIssues] = useState<IssueWithReviewers[]>([])
 
-  // The server lists top-level items only (a PRD's tasks stay under the PRD). This lifts the sub-items
-  // into the list too, remembered per Workflow like the sort choice.
-  const [subItemsPref, setSubItemsPref] = usePersistedState<'on' | 'off'>(
-    `wv_subitems_${projectId}_${slug}`,
-    (v): v is 'on' | 'off' => v === 'on' || v === 'off',
-    'off'
-  )
-  const showSubItems = subItemsPref === 'on'
-
   // Seed members synchronously from the shared two-tier cache (module → localStorage) so that
   // the assignee dropdown and role-gated UI don't flash empty on revisit or cross-component mount.
   const [members, setMembers] = useState<Member[]>(() => getMembersCacheEntry(projectId) ?? [])
@@ -169,7 +160,6 @@ export function WorkItemListView({
         // Always workflow-scoped — this page renders exactly one Workflow's Work Items.
         apiGet<IssueWithReviewers[]>(
           `/api/v2/projects/${projectId}/work-items?workflow=${slug}&enrich=true` +
-            (showSubItems ? '&parentId=any' : '') +
             (creativeFilter ? `&creativeId=${encodeURIComponent(creativeFilter)}` : '') +
             (mediaFilter ? `&mediaId=${encodeURIComponent(mediaFilter)}` : ''),
           accessToken
@@ -188,7 +178,7 @@ export function WorkItemListView({
       setError(apiErrorMessage(err, `Failed to load ${title.toLowerCase()}`))
       setLoading(false)
     }
-  }, [accessToken, projectId, slug, user?.id, title, creativeFilter, mediaFilter, showSubItems])
+  }, [accessToken, projectId, slug, user?.id, title, creativeFilter, mediaFilter])
 
   useEffect(() => {
     void loadIssues()
@@ -503,8 +493,6 @@ export function WorkItemListView({
         showSort={mode === 'list' || mode === 'grid'}
         query={listState.query}
         onQueryChange={listState.setQuery}
-        showSubItems={showSubItems}
-        onShowSubItemsChange={(show) => setSubItemsPref(show ? 'on' : 'off')}
       />
 
       {mode === 'calendar' ? (

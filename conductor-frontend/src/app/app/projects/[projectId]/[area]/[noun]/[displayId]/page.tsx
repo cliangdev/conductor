@@ -84,6 +84,7 @@ export default function WorkItemAreaNounDetailPage() {
       workItemId={item.id}
       initialItem={item}
       slug={slug}
+      hiddenWorkflow={!workflow}
     />
   )
 }

@@ -180,16 +180,20 @@ function Chip({ children }: { children: ReactNode }) {
 export function OverviewPanel({ projectId }: { projectId: string }) {
   const prds = useFetched<Issue[]>(workItemsPath(projectId, 'type=PRD&withProgress=true'))
   const milestones = useMilestones(projectId)
-  const blocked = useFetched<Issue[]>(workItemsPath(projectId, 'parentId=any&blocked=true'))
-  const stale = useFetched<Issue[]>(workItemsPath(projectId, 'parentId=any&stale=true'))
-  // No server filter for "waiting on a person", so take every item and filter on its signals.
-  const all = useFetched<Issue[]>(workItemsPath(projectId, 'parentId=any'))
+  // One backlog fetch (every item, sub-items included); blocked, stale and needs-input are read off each
+  // item's `signals`. Tranche 3 replaces this with `GET /delivery-overview`, which returns them directly.
+  const backlog = useFetched<Issue[]>(workItemsPath(projectId, 'parentId=any'))
 
-  // The detail links and the terminal check need each item's Workflow, so look them up across every list.
-  const lookupSource = [...(prds.data ?? []), ...(blocked.data ?? []), ...(stale.data ?? []), ...(all.data ?? [])]
-  const { categoryOf, hrefOf } = useItemWorkflowLookups(projectId, lookupSource.length ? lookupSource : null)
+  // The detail links and the terminal check need each item's Workflow, so look them up across both lists.
+  const listsLoading = prds.loading || backlog.loading
+  const { categoryOf, hrefOf, ready } = useItemWorkflowLookups(
+    projectId,
+    listsLoading ? null : [...(prds.data ?? []), ...(backlog.data ?? [])]
+  )
+  // Until the Workflow views are in every item reads as "open", so finished PRDs would flash as active.
+  const gate = <T,>(f: Fetched<T>): Fetched<T> => (ready ? f : { ...f, loading: true })
 
-  const activePrds: Fetched<Issue[]> = { ...prds, data: prds.data?.filter((i) => categoryOf(i) !== 'terminal') ?? null }
+  const activePrds: Fetched<Issue[]> = gate({ ...prds, data: prds.data?.filter((i) => categoryOf(i) !== 'terminal') ?? null })
   const upcoming: Fetched<Milestone[]> = {
     ...milestones,
     data:
@@ -197,7 +201,11 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
         ?.filter((m) => m.state === 'OPEN')
         .sort((a, b) => (parseTargetOn(a.targetOn) ?? Infinity) - (parseTargetOn(b.targetOn) ?? Infinity)) ?? null,
   }
-  const needsInput: Fetched<Issue[]> = { ...all, data: all.data?.filter((i) => i.signals?.needsInput) ?? null }
+  const fromBacklog = (keep: (i: Issue) => boolean | undefined): Fetched<Issue[]> =>
+    gate({ ...backlog, data: backlog.data?.filter(keep) ?? null })
+  const blocked = fromBacklog((i) => i.signals?.blocked)
+  const stale = fromBacklog((i) => i.signals?.stale)
+  const needsInput = fromBacklog((i) => i.signals?.needsInput)
 
   return (
     <div className="space-y-6">

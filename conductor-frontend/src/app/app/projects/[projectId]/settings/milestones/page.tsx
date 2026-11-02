@@ -20,6 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { toastError, toastSuccess } from '@/components/ui/toast'
 import { ProgressBar } from '@/components/roadmap/ProgressBar'
 import { useAuth } from '@/contexts/AuthContext'
+import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiErrorMessage } from '@/lib/api'
 import { createMilestone, deleteMilestone, fetchMilestones, patchMilestone } from '@/lib/delivery'
 import { settingsBreadcrumbs } from '@/lib/navigation'
@@ -34,6 +35,8 @@ function formatTarget(targetOn: string | null | undefined): string {
 export default function MilestonesSettingsPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const { accessToken } = useAuth()
+  // The backend rejects milestone writes from anyone below CREATOR, so the controls are hidden for them.
+  const canManage = usePermissions().can('milestone.manage')
 
   const [milestones, setMilestones] = useState<Milestone[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -126,7 +129,7 @@ export default function MilestonesSettingsPage() {
       <PageHeader
         title="Milestones"
         description="Dated goals that PRDs are grouped under. They set the Now and Next columns on the roadmap."
-        actions={<Button size="sm" onClick={() => openForm(null)}>Add milestone</Button>}
+        actions={canManage ? <Button size="sm" onClick={() => openForm(null)}>Add milestone</Button> : undefined}
         breadcrumbs={settingsBreadcrumbs(projectId, 'settings-milestones')}
       />
 
@@ -153,6 +156,7 @@ export default function MilestonesSettingsPage() {
                     {m.progress?.leafDone ?? 0}/{m.progress?.leafTotal ?? 0}
                   </span>
                 </span>
+                {canManage && (
                 <span className="flex items-center gap-1">
                   <Button variant="ghost" size="sm" onClick={() => openForm(m)}>Edit</Button>
                   <Button variant="ghost" size="sm" onClick={() => void toggleState(m)}>
@@ -168,6 +172,7 @@ export default function MilestonesSettingsPage() {
                     Delete
                   </Button>
                 </span>
+                )}
               </div>
             ))}
           </CardContent>

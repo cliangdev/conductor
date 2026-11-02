@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 
 const apiGet = vi.fn()
+const viewsState = vi.hoisted(() => ({ settled: true }))
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'proj-1' }),
@@ -16,7 +17,9 @@ vi.mock('@/lib/workflows', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/workflows')>()
   return {
     ...actual,
-    useWorkflowViews: () => ({
+    useWorkflowViewsSettled: () => ({
+      settled: viewsState.settled,
+      views: {
       PRDS: {
         slug: 'PRDS', noun: 'PRD', area: 'ENGINEERING', defaultView: 'active', version: 1, types: ['PRD'], transitions: [],
         statuses: [
@@ -25,15 +28,18 @@ vi.mock('@/lib/workflows', async (importOriginal) => {
           { id: 'DONE', label: 'Done', category: 'terminal', terminal: true },
         ],
       },
+      },
     }),
   }
 })
 
 import RoadmapPage from './page'
+import { RoadmapPanel } from '@/components/roadmap/RoadmapPanel'
 
 const base = { type: 'PRD', workflow: 'PRDS', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z' }
 
 beforeEach(() => {
+  viewsState.settled = true
   apiGet.mockReset()
   apiGet.mockImplementation(async (path: string) => {
     if (path.endsWith('/milestones')) return []
@@ -57,6 +63,30 @@ describe('roadmap page', () => {
     expect(screen.queryByText('Finished one')).not.toBeInTheDocument()
     // nothing is dated, so the timeline strip stays hidden
     expect(screen.queryByLabelText('Milestone timeline')).not.toBeInTheDocument()
+  })
+
+  it('holds a skeleton until the Workflow views are in, then excludes finished PRDs', async () => {
+    viewsState.settled = false
+    const { rerender } = render(<RoadmapPage />)
+    await new Promise((r) => setTimeout(r, 20))
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument()
+    expect(screen.queryByText('Active one')).not.toBeInTheDocument()
+    expect(document.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
+
+    viewsState.settled = true
+    rerender(<RoadmapPage />)
+    expect(await screen.findByText('Active one')).toBeInTheDocument()
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument()
+  })
+
+  it('shows a skeleton, not the previous workspace, after the workspace changes', async () => {
+    const { rerender } = render(<RoadmapPanel projectId="proj-1" />)
+    expect(await screen.findByText('Active one')).toBeInTheDocument()
+
+    apiGet.mockImplementation(() => new Promise(() => {})) // the new workspace never answers
+    rerender(<RoadmapPanel projectId="proj-2" />)
+    expect(screen.queryByText('Active one')).not.toBeInTheDocument()
+    expect(document.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
   })
 
   it('shows an empty state when there are no open PRDs', async () => {

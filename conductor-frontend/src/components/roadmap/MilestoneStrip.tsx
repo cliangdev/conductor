@@ -3,9 +3,9 @@
 // One bar per active PRD on a shared time axis, with a tick per milestone and a marker for today.
 // CSS only: positions are percentages of the shared min/max span.
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { Issue } from '@/components/workitems/listTypes'
-import { milestoneBarSpan, parseTargetOn } from '@/lib/roadmap'
+import { milestoneBarSpan, parseTargetOn, startOfToday } from '@/lib/roadmap'
 import type { Milestone } from '@/types/workItem'
 
 const fmt = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
@@ -13,13 +13,16 @@ const fmt = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: 
 export function MilestoneStrip({
   items,
   milestones,
-  today = new Date(),
+  today: todayProp,
 }: {
   /** The PRDs to draw; the caller has already dropped finished ones. */
   items: Issue[]
   milestones: Milestone[]
   today?: Date
 }) {
+  // Once per mount: a fresh `new Date()` each render would defeat the memo below.
+  const [mountedToday] = useState(startOfToday)
+  const today = todayProp ?? mountedToday
   const layout = useMemo(() => {
     const byId = Object.fromEntries(milestones.map((m) => [m.id, m]))
     // A bar built only from createdAt and today says nothing about the plan, so it does not count as dated.

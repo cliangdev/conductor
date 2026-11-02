@@ -200,11 +200,17 @@ export function WorkItemDetailView({
   projectId,
   workItemId,
   slug,
+  hiddenWorkflow = false,
   initialItem,
 }: {
   projectId: string
   workItemId: string
   slug: string
+  /**
+   * The item's Workflow is not in the sidebar list (a child under a PRD), so no list route exists for
+   * it: the breadcrumb drops the Workflow crumb and the parent crumb is the way back.
+   */
+  hiddenWorkflow?: boolean
   /**
    * The Work Item as the route already fetched it (by-display returns the same view as by-id). When it
    * is for this `workItemId`, the item is not fetched a second time; edits still re-read it.
@@ -257,7 +263,7 @@ export function WorkItemDetailView({
   const [membersLoading, setMembersLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   // A child Work Item names its parent in the breadcrumb.
-  const parentRef = useWorkItemRef(projectId, issue?.parentWorkItemId, accessToken ?? '')
+  const parent = useWorkItemRef(projectId, issue?.parentWorkItemId, accessToken ?? '')
   useEffect(() => { if (!loading && !error && issue) markPageReady('work-item-detail') }, [loading, error, issue])
 
   // ── Batch review mode (COND-22) ────────────────────────────────────────────
@@ -874,14 +880,15 @@ export function WorkItemDetailView({
 
   // Breadcrumb trail: area (non-link) › pluralized noun (link to the Workflow list) › this Work Item's id.
   const crumbs: Crumb[] = []
-  if (workflowView?.area) crumbs.push({ label: humanizeId(workflowView.area) })
-  if (workflowView?.noun) {
+  if (!hiddenWorkflow && workflowView?.area) crumbs.push({ label: humanizeId(workflowView.area) })
+  if (!hiddenWorkflow && workflowView?.noun) {
     crumbs.push({
       label: pluralizeNoun(workflowView.noun),
       href: workItemListPath(projectId, workflowView.area ?? slug, workflowView.noun),
     })
   }
-  if (parentRef) crumbs.push({ label: `↳ ${parentRef.displayId}`, href: parentRef.href })
+  // Dropped only when the parent failed to load; while it loads the crumb just arrives later.
+  if (parent.ref) crumbs.push({ label: `↳ ${parent.ref.displayId}`, href: parent.ref.href })
   crumbs.push({ label: issue.displayId ?? issue.title })
 
   const byline = creatorName
@@ -1438,6 +1445,7 @@ export function WorkItemDetailView({
               onDelete={() => setDeleteOpen(true)}
               showSchedule={!publishing}
               delivery={issue}
+              deliveryParent={parent}
               onDeliveryChanged={(patch) => setIssue((prev) => (prev ? { ...prev, ...patch } : prev))}
             />
           </aside>

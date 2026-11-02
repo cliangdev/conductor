@@ -31,6 +31,12 @@ describe('roadmapBucket', () => {
     const m = { old: ms('old', '2026-10-01') }
     expect(roadmapBucket(item({ milestoneId: 'old' }), m, today, cat('open'))).toBe('now')
   })
+  it('does not let a closed milestone pull an item into Now', () => {
+    const m = { done: ms('done', '2026-11-10', 'CLOSED') }
+    expect(roadmapBucket(item({ milestoneId: 'done' }), m, today, cat('open'))).toBe('later')
+    const overdue = { done: ms('done', '2026-10-01', 'CLOSED') }
+    expect(roadmapBucket(item({ milestoneId: 'done' }), overdue, today, cat('open'))).toBe('later')
+  })
   it('puts a ready P0 item in Next', () => {
     expect(roadmapBucket(item({ priority: 'P0', signals: sig(true) }), {}, today, cat('open'))).toBe('next')
   })
