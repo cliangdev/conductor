@@ -9,7 +9,7 @@ vi.mock('./api', () => ({
   apiDelete: vi.fn(),
 }))
 
-import { addDependency, patchDelivery, priorityLabel, PRIORITIES } from './delivery'
+import { addDependency, forecastLine, patchDelivery, priorityLabel, PRIORITIES } from './delivery'
 
 describe('priorityLabel', () => {
   it('names each priority', () => {
@@ -52,6 +52,36 @@ describe('patchDelivery', () => {
   it('leaves out fields that are undefined', async () => {
     await patchDelivery('p1', 'wi-1', { priority: 'P0', milestoneId: undefined }, 'tok')
     expect(apiPatch.mock.calls[0][1]).toEqual({ priority: 'P0' })
+  })
+})
+
+describe('forecastLine', () => {
+  const fmt = (d: string) => `<${d}>`
+  const base = { state: 'OK' as const, remaining: 4, samples: 12, p50Date: '2026-11-12', p85Date: '2026-11-20' }
+
+  it('names the terminal states', () => {
+    expect(forecastLine({ state: 'DONE', remaining: 0, samples: 0 }, fmt)).toBe('Done')
+    expect(forecastLine({ state: 'NO_PLAN', remaining: 0, samples: 0 }, fmt)).toBe('No plan yet')
+  })
+
+  it('says how many more completed tasks are needed', () => {
+    expect(forecastLine({ state: 'INSUFFICIENT_DATA', remaining: 5, samples: 3, needed: 8 }, fmt)).toBe(
+      'Needs 8 completed tasks (3 so far), 5 more'
+    )
+  })
+
+  it('shows both percentiles and the appetite fit', () => {
+    expect(forecastLine({ ...base, appetiteFit: 'FITS' }, fmt)).toBe('P50 <2026-11-12> · P85 <2026-11-20> · fits appetite')
+    expect(forecastLine({ ...base, appetiteFit: 'TIGHT' }, fmt)).toBe('P50 <2026-11-12> · P85 <2026-11-20> · tight for the appetite')
+  })
+
+  it('counts the days over the appetite', () => {
+    expect(forecastLine({ ...base, appetiteFit: 'EXCEEDS', appetiteEndsOn: '2026-11-15' }, fmt)).toContain('exceeds the appetite by 5 days')
+    expect(forecastLine({ ...base, appetiteFit: 'EXCEEDS', appetiteEndsOn: '2026-11-19' }, fmt)).toContain('by 1 day')
+  })
+
+  it('omits P85 in cycle-time mode and the fit when there is none', () => {
+    expect(forecastLine({ state: 'OK', mode: 'CYCLE_TIME', remaining: 2, samples: 4, p50Date: '2026-11-12' }, fmt)).toBe('P50 <2026-11-12>')
   })
 })
 

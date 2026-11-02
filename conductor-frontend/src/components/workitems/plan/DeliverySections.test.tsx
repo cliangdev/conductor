@@ -3,7 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { WorkItemDeliveryFields } from '@/types/workItem'
 
-const { patchDelivery, fetchMilestones, fetchDependencies, addDependency, removeDependency, apiGet, toastError } = vi.hoisted(() => ({
+const { patchDelivery, fetchMilestones, fetchDependencies, addDependency, removeDependency, fetchForecast, apiGet, toastError } = vi.hoisted(() => ({
+  fetchForecast: vi.fn(),
   patchDelivery: vi.fn(),
   fetchMilestones: vi.fn(),
   fetchDependencies: vi.fn(),
@@ -15,7 +16,7 @@ const { patchDelivery, fetchMilestones, fetchDependencies, addDependency, remove
 
 vi.mock('@/lib/delivery', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/delivery')>()
-  return { ...actual, patchDelivery, fetchMilestones, fetchDependencies, addDependency, removeDependency }
+  return { ...actual, patchDelivery, fetchMilestones, fetchDependencies, addDependency, removeDependency, fetchForecast }
 })
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>()
@@ -57,6 +58,7 @@ describe('DeliverySections', () => {
     fetchDependencies.mockResolvedValue({ blocks: [], blockedBy: [], discoveredFrom: [], discovered: [] })
     addDependency.mockResolvedValue({})
     removeDependency.mockResolvedValue(undefined)
+    fetchForecast.mockResolvedValue({ state: 'NO_PLAN', remaining: 0, samples: 0 })
   })
 
   describe('priority', () => {

@@ -9,7 +9,7 @@ import { apiErrorMessage, apiGet } from '@/lib/api'
 import { fetchMilestones } from '@/lib/delivery'
 import { statusMeta, useWorkflowViewsSettled, workItemDetailPath } from '@/lib/workflows'
 import type { Issue } from '@/components/workitems/listTypes'
-import type { Milestone } from '@/types/workItem'
+import type { DeliveryOverview, Milestone } from '@/types/workItem'
 
 export interface Fetched<T> {
   data: T | null
@@ -45,6 +45,11 @@ export function workItemsPath(projectId: string, query: string): string {
   return `/api/v2/projects/${projectId}/work-items?${query}`
 }
 
+/** GET /delivery-overview: active items with health and forecast, milestones, and the attention lists. */
+export function useDeliveryOverview(projectId: string): Fetched<DeliveryOverview> {
+  return useFetched<DeliveryOverview>(`/api/v2/projects/${projectId}/delivery-overview`)
+}
+
 /** The project's milestones; `null` data until loaded. */
 export function useMilestones(projectId: string): Fetched<Milestone[]> {
   const { accessToken } = useAuth()
@@ -63,6 +68,20 @@ export function useMilestones(projectId: string): Fetched<Milestone[]> {
 
   if (!result || result.key !== projectId) return LOADING
   return { data: result.data, loading: false, error: result.error }
+}
+
+/** Detail-page links for items that only carry a Workflow slug (null until that Workflow's view loads). */
+export function useWorkflowHrefs(projectId: string, slugs: string[]) {
+  const { accessToken } = useAuth()
+  const { views } = useWorkflowViewsSettled(projectId, slugs, accessToken)
+  return useCallback(
+    (item: { workflow?: string | null; displayId?: string | null }): string | null => {
+      const view = item.workflow ? views[item.workflow] : undefined
+      if (!view || !item.displayId) return null
+      return workItemDetailPath(projectId, view.area ?? 'engineering', view.noun, item.displayId)
+    },
+    [views, projectId]
+  )
 }
 
 /**

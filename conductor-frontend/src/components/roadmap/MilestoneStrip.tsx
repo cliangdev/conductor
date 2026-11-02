@@ -14,11 +14,14 @@ export function MilestoneStrip({
   items,
   milestones,
   today: todayProp,
+  forecastP85ById,
 }: {
   /** The PRDs to draw; the caller has already dropped finished ones. */
   items: Issue[]
   milestones: Milestone[]
   today?: Date
+  /** Forecast P85 date (`YYYY-MM-DD`) by Work Item id; ends a bar that has no completion date. */
+  forecastP85ById?: Record<string, string | null | undefined>
 }) {
   // Once per mount: a fresh `new Date()` each render would defeat the memo below.
   const [mountedToday] = useState(startOfToday)
@@ -27,7 +30,7 @@ export function MilestoneStrip({
     const byId = Object.fromEntries(milestones.map((m) => [m.id, m]))
     // A bar built only from createdAt and today says nothing about the plan, so it does not count as dated.
     const hasDate = (i: Issue) => !!(i.startedAt || i.completedAt || parseTargetOn(byId[i.milestoneId ?? '']?.targetOn) !== null)
-    const rows = items.map((item) => ({ item, span: milestoneBarSpan(item, byId[item.milestoneId ?? ''], today), dated: hasDate(item) }))
+    const rows = items.map((item) => ({ item, span: milestoneBarSpan(item, byId[item.milestoneId ?? ''], today, forecastP85ById?.[item.id]), dated: hasDate(item) }))
     if (!rows.some((r) => r.dated)) return null
 
     const ticks = milestones
@@ -41,7 +44,7 @@ export function MilestoneStrip({
     const max = Math.max(...points)
     const pct = (ms: number) => (max === min ? 0 : ((ms - min) / (max - min)) * 100)
     return { rows, ticks, pct, todayPct: pct(today.getTime()) }
-  }, [items, milestones, today])
+  }, [items, milestones, today, forecastP85ById])
 
   if (!layout) return null
 
