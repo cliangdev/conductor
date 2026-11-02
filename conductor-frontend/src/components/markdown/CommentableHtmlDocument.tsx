@@ -24,6 +24,8 @@ interface Props {
   content: string
   /** Shown on its own over the whole window, so the frame can take the window's height. */
   fullView?: boolean
+  /** A control for the right end of the toolbar, after the comments toggle (the Full view button). */
+  toolbarAction?: React.ReactNode
   /** Hash of `content`, sent with a new comment so the server can tell which version it was written against. */
   contentHash?: string | null
   documentId: string
@@ -83,6 +85,7 @@ export function CommentableHtmlDocument(props: Props) {
 function HtmlDocumentFrame({
   content,
   fullView = false,
+  toolbarAction,
   contentHash,
   documentId,
   issueId,
@@ -366,18 +369,21 @@ function HtmlDocumentFrame({
     <div ref={wrapperRef} className="space-y-2">
       <div className="flex items-center justify-between gap-3 min-h-8">
         <p className="text-xs text-muted-foreground">Select text in the document to comment on it.</p>
-        {total > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-expanded={railOpen}
-            aria-controls="html-comment-rail"
-            onClick={() => setRailChoice(!railOpen)}
-          >
-            <MessageSquare className="h-4 w-4 mr-1.5" />
-            {railOpen ? 'Hide comments' : 'Comments'} · {total}
-          </Button>
-        )}
+        <div className="flex items-center gap-1">
+          {total > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              aria-expanded={railOpen}
+              aria-controls="html-comment-rail"
+              onClick={() => setRailChoice(!railOpen)}
+            >
+              <MessageSquare className="h-4 w-4 mr-1.5" />
+              {railOpen ? 'Hide comments' : 'Comments'} · {total}
+            </Button>
+          )}
+          {toolbarAction}
+        </div>
       </div>
 
       <div
