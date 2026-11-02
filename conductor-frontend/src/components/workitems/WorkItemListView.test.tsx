@@ -908,23 +908,16 @@ describe('delivery tracking', () => {
     return [...rowList().querySelectorAll('[id^="wi-row-"] .font-mono')].map((el) => el.textContent)
   }
 
-  it('fetches top-level items by default and refetches with parentId=any when sub-items are shown', async () => {
+  it('lists top-level items only, with no sub-items toggle', async () => {
     await renderList()
     expect(listUrls[0]).not.toContain('parentId')
-    listUrls.length = 0
-
-    fireEvent.click(screen.getByRole('switch', { name: 'Show sub-items' }))
-
-    await waitFor(() => expect(listUrls.length).toBeGreaterThan(0))
-    expect(listUrls[0]).toContain('&parentId=any')
-    expect(localStorage.getItem('wv_subitems_proj-1_ENGINEERING')).toBe('on')
+    expect(screen.queryByRole('switch', { name: 'Show sub-items' })).not.toBeInTheDocument()
   })
 
-  it('remembers the toggle per workflow', async () => {
+  it('ignores a leftover sub-items preference from the removed toggle', async () => {
     localStorage.setItem('wv_subitems_proj-1_ENGINEERING', 'on')
     await renderList()
-    expect(listUrls[0]).toContain('&parentId=any')
-    expect(screen.getByRole('switch', { name: 'Show sub-items' })).toHaveAttribute('aria-checked', 'true')
+    expect(listUrls[0]).not.toContain('parentId')
   })
 
   it('shows a sub-items chip, a priority chip and blocked / needs input badges on rows', async () => {
