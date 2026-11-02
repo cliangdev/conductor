@@ -408,7 +408,7 @@ public class CreativeExperimentService {
 
     private void requireEditor(String projectId, User caller) {
         requireMember(projectId, caller);
-        if (!projectSecurityService.isAdminOrCreator(projectId, caller.getId())) {
+        if (!projectSecurityService.isEditor(projectId, caller.getId())) {
             throw new ForbiddenException("Only ADMIN or CREATOR can manage Creative experiments");
         }
     }

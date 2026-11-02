@@ -12,8 +12,11 @@ import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import org.hibernate.annotations.ColumnTransformer;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
+import java.util.Set;
 import java.util.UUID;
 
 @Entity
@@ -40,6 +43,11 @@ public class ProjectMember {
     @ColumnTransformer(write = "?::member_role")
     private MemberRole role;
 
+    /** The role set, stored as {@code varchar[]}; read and written through {@link MemberRoles}. */
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "roles", nullable = false, columnDefinition = "varchar(16)[]")
+    private String[] roles = new String[0];
+
     @Column(name = "joined_at", nullable = false, updatable = false)
     private OffsetDateTime joinedAt;
 
@@ -60,8 +68,20 @@ public class ProjectMember {
     public User getUser() { return user; }
     public void setUser(User user) { this.user = user; }
 
+    /** The primary role (legacy column): ADMIN if held, else CREATOR, else REVIEWER. */
     public MemberRole getRole() { return role; }
-    public void setRole(MemberRole role) { this.role = role; }
+
+    /** Convenience for a member holding exactly one role. */
+    public void setRole(MemberRole role) { setRoles(role == null ? Set.of() : Set.of(role)); }
+
+    /** The stored roles (not the effective ones: ADMIN is not expanded here). */
+    public Set<MemberRole> getRoles() { return MemberRoles.fromStored(roles); }
+
+    /** Replaces the role set and keeps the legacy {@code role} column on the primary role. */
+    public void setRoles(Set<MemberRole> newRoles) {
+        this.roles = MemberRoles.toStored(newRoles);
+        this.role = MemberRoles.primary(newRoles);
+    }
 
     public OffsetDateTime getJoinedAt() { return joinedAt; }
     public void setJoinedAt(OffsetDateTime joinedAt) { this.joinedAt = joinedAt; }

@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
+import com.conductor.entity.MemberRoles;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.Review;
 import com.conductor.entity.User;
@@ -104,8 +105,8 @@ public class ReviewService {
         ProjectMember callerMember = projectMemberRepository.findByProjectIdAndUserId(projectId, currentUser.getId())
                 .orElseThrow(() -> new ForbiddenException("You must be a project member to perform this action"));
 
-        if (callerMember.getRole() == MemberRole.CREATOR) {
-            throw new ForbiddenException("CREATOR role cannot submit reviews");
+        if (!MemberRoles.effective(callerMember.getRoles()).contains(MemberRole.REVIEWER)) {
+            throw new ForbiddenException("Only members with the Reviewer role (or Admins) can submit reviews");
         }
 
         boolean isAssignedReviewer = workItemReviewerRepository

@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
+import com.conductor.entity.MemberRoles;
 import com.conductor.entity.Review;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
@@ -159,13 +160,13 @@ public class WorkItemWorkflowService {
 
     /**
      * The doer projection: the valid next transitions for this actor from the Work Item's current status,
-     * computed from the bound Workflow definition. REVIEWERs cannot change status, so they see none.
+     * computed from the bound Workflow definition. Members who cannot edit (reviewers, viewers) see none.
      */
     @Transactional(readOnly = true)
     public AvailableTransitionsView availableTransitions(String projectId, String workItemId, User caller) {
-        // One membership read answers both "is a member" and "is a REVIEWER" (which sees no transitions).
-        MemberRole callerRole = projectMemberRepository.findByProjectIdAndUserId(projectId, caller.getId())
-                .map(m -> m.getRole())
+        // One membership read answers both "is a member" and "may edit" (a member who cannot edit sees none).
+        Set<MemberRole> callerRoles = projectMemberRepository.findByProjectIdAndUserId(projectId, caller.getId())
+                .map(m -> MemberRoles.effective(m.getRoles()))
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
         WorkItem workItem = workItemRepository.findById(workItemId)
                 .filter(i -> i.getProject() != null && projectId.equals(i.getProject().getId()))
@@ -175,7 +176,7 @@ public class WorkItemWorkflowService {
         String currentStatus = workItem.getCurrentStatus();
 
         List<AvailableTransitionsView.Transition> transitions = new ArrayList<>();
-        if (callerRole != MemberRole.REVIEWER) {
+        if (callerRoles.contains(MemberRole.CREATOR)) {
             for (StatechartTransition t : statechart.transitionsFrom(currentStatus)) {
                 // Doer projection: a review-gated edge stays hidden until its Review is satisfied.
                 if (t.requiresReview() && !isReviewSatisfied(projectId, workItem, t)) {
@@ -303,12 +304,6 @@ public class WorkItemWorkflowService {
         stampItemContext(meta, projectId, workItem, null, true);
     }
 
-    private boolean isReviewer(String projectId, String callerId) {
-        return projectMemberRepository.findByProjectIdAndUserId(projectId, callerId)
-                .map(m -> m.getRole() == MemberRole.REVIEWER)
-                .orElse(false);
-    }
-
     /**
      * A review-gated transition is satisfied when an APPROVED Review is recorded on the Work Item by a member
      * holding the transition's {@code reviewerRole} (or an ADMIN, who outranks any review role). When the
@@ -357,9 +352,13 @@ public class WorkItemWorkflowService {
         String currentBundleHash = null;
         List<Review> reviews = reviewRepository.findAllByWorkItemId(workItem.getId());
         // The review authors' roles in one query, not one membership lookup per review.
-        Map<String, MemberRole> roleByReviewer = reviewerRoles(projectId, reviews);
+        Map<String, Set<MemberRole>> roleByReviewer = reviewerRoles(projectId, reviews);
+        String excludedReviewer = excludedReviewerId(workItem, transition);
         for (Review review : reviews) {
             if (!APPROVED_VERDICT.equals(review.getVerdict())) {
+                continue;
+            }
+            if (excludedReviewer != null && excludedReviewer.equals(review.getReviewerId())) {
                 continue;
             }
             if (review.getReviewRound() != null && review.getReviewRound() != currentRound) {
@@ -389,23 +388,23 @@ public class WorkItemWorkflowService {
         return false;
     }
 
-    private Map<String, MemberRole> reviewerRoles(String projectId, List<Review> reviews) {
+    private Map<String, Set<MemberRole>> reviewerRoles(String projectId, List<Review> reviews) {
         Set<String> ids = new HashSet<>();
         for (Review review : reviews) {
             if (review.getReviewerId() != null) {
                 ids.add(review.getReviewerId());
             }
         }
-        Map<String, MemberRole> roles = new HashMap<>();
+        Map<String, Set<MemberRole>> roles = new HashMap<>();
         if (!ids.isEmpty()) {
             projectMemberRepository.findByProjectIdAndUserIdIn(projectId, ids)
-                    .forEach(m -> roles.put(m.getUser().getId(), m.getRole()));
+                    .forEach(m -> roles.put(m.getUser().getId(), m.getRoles()));
         }
         return roles;
     }
 
     /** The per-review form of the role rule the {@code existsApprovedByReviewerRole} query applies in SQL. */
-    private boolean satisfiesReviewerRole(Map<String, MemberRole> roleByReviewer, String reviewerId,
+    private boolean satisfiesReviewerRole(Map<String, Set<MemberRole>> roleByReviewer, String reviewerId,
                                           StatechartTransition transition) {
         String role = transition.reviewerRole();
         if (role == null || role.isBlank()) {
@@ -417,11 +416,33 @@ public class WorkItemWorkflowService {
         } catch (IllegalArgumentException e) {
             return true;
         }
-        MemberRole actual = roleByReviewer.get(reviewerId);
-        return actual != null && (actual == reviewerRole || actual == MemberRole.ADMIN);
+        Set<MemberRole> actual = roleByReviewer.get(reviewerId);
+        return actual != null && (actual.contains(reviewerRole) || actual.contains(MemberRole.ADMIN));
+    }
+
+    /**
+     * The reviewer whose approvals must not count on this gate: the item's creator when the transition sets
+     * {@code requireIndependentReviewer}. Null when the flag is off or the creator is unknown (an agent run
+     * token creates items with no user), in which case every approval counts.
+     */
+    private static String excludedReviewerId(WorkItem workItem, StatechartTransition transition) {
+        if (!transition.requireIndependentReviewer() || workItem.getCreatedBy() == null) {
+            return null;
+        }
+        return workItem.getCreatedBy().getId();
     }
 
     private boolean hasApprovedReview(String projectId, WorkItem workItem, StatechartTransition transition) {
+        String excluded = excludedReviewerId(workItem, transition);
+        if (excluded != null) {
+            // Independent-reviewer gate: weigh each approval on its own, ignoring the creator's.
+            List<Review> reviews = reviewRepository.findAllByWorkItemId(workItem.getId());
+            Map<String, Set<MemberRole>> roleByReviewer = reviewerRoles(projectId, reviews);
+            return reviews.stream()
+                    .filter(r -> APPROVED_VERDICT.equals(r.getVerdict()))
+                    .filter(r -> !excluded.equals(r.getReviewerId()))
+                    .anyMatch(r -> satisfiesReviewerRole(roleByReviewer, r.getReviewerId(), transition));
+        }
         String role = transition.reviewerRole();
         if (role == null || role.isBlank()) {
             return reviewRepository.existsByWorkItemIdAndVerdict(workItem.getId(), APPROVED_VERDICT);
@@ -432,7 +453,7 @@ public class WorkItemWorkflowService {
         } catch (IllegalArgumentException e) {
             return reviewRepository.existsByWorkItemIdAndVerdict(workItem.getId(), APPROVED_VERDICT);
         }
-        // Pass the validated enum NAME — the native query casts it to the member_role PG enum.
+        // Pass the validated enum NAME; the native query tests it against the member's roles array.
         return reviewRepository.existsApprovedByReviewerRole(
                 workItem.getId(), projectId, APPROVED_VERDICT, reviewerRole.name());
     }

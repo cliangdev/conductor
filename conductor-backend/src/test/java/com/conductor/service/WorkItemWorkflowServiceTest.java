@@ -511,4 +511,145 @@ class WorkItemWorkflowServiceTest {
 
         assertThat(response.transitions()).isEmpty();
     }
+
+    // --- multi-role sets and requireIndependentReviewer ---
+
+    private ProjectMember memberOf(String userId, MemberRole... roles) {
+        User u = new User();
+        u.setId(userId);
+        ProjectMember m = new ProjectMember();
+        m.setUser(u);
+        m.setRoles(roles.length == 0 ? java.util.Set.of() : java.util.EnumSet.copyOf(java.util.List.of(roles)));
+        return m;
+    }
+
+    private com.conductor.entity.Review approvalBy(String reviewerId) {
+        com.conductor.entity.Review r = new com.conductor.entity.Review();
+        r.setWorkItemId("issue-1");
+        r.setReviewerId(reviewerId);
+        r.setVerdict("APPROVED");
+        return r;
+    }
+
+    private static String independentLifecycle(boolean independent) {
+        return STATUS_CHANGED_LIFECYCLE
+                .replace(", \"trigger\": \"status_changed\"", "")
+                .replace("\"reviewOutcomes\": [\"APPROVED\"]",
+                        "\"reviewOutcomes\": [\"APPROVED\"], \"requireIndependentReviewer\": " + independent);
+    }
+
+    private WorkItem independentItem(boolean independent, String creatorId) {
+        WorkflowDefinitionVersion snapshot = new WorkflowDefinitionVersion();
+        snapshot.setVersion(1);
+        try {
+            snapshot.setDefinition(new ObjectMapper().readTree(independentLifecycle(independent)));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+        when(versionRepository.findLatestPublished(any(), eq("LC_TEST"))).thenReturn(Optional.of(snapshot));
+        when(versionRepository.findByProjectSlugAndVersion(any(), eq("LC_TEST"), eq(1)))
+                .thenReturn(Optional.of(snapshot));
+        WorkItem item = workItemAt("REVIEW");
+        item.setWorkflow("LC_TEST");
+        if (creatorId != null) {
+            User creator = new User();
+            creator.setId(creatorId);
+            item.setCreatedBy(creator);
+        }
+        return item;
+    }
+
+    private StatechartTransition gateOf(WorkItem item) {
+        return service.resolveFor(PROJECT_ID, item).transitionsFrom("REVIEW").get(0);
+    }
+
+    @Test
+    void transitionParsesRequireIndependentReviewer() {
+        assertThat(gateOf(independentItem(true, "creator")).requireIndependentReviewer()).isTrue();
+    }
+
+    @Test
+    void transitionRequireIndependentReviewerDefaultsToFalse() {
+        assertThat(gateOf(independentItem(false, "creator")).requireIndependentReviewer()).isFalse();
+    }
+
+    @Test
+    void selfApprovalIsIgnoredWhenAnIndependentReviewerIsRequired() {
+        WorkItem item = independentItem(true, "creator");
+        when(reviewRepository.findAllByWorkItemId("issue-1")).thenReturn(java.util.List.of(approvalBy("creator")));
+        when(projectMemberRepository.findByProjectIdAndUserIdIn(eq(PROJECT_ID), any()))
+                .thenReturn(java.util.List.of(memberOf("creator", MemberRole.CREATOR, MemberRole.REVIEWER)));
+
+        assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isFalse();
+    }
+
+    @Test
+    void anotherMembersApprovalCountsWhenAnIndependentReviewerIsRequired() {
+        WorkItem item = independentItem(true, "creator");
+        when(reviewRepository.findAllByWorkItemId("issue-1"))
+                .thenReturn(java.util.List.of(approvalBy("creator"), approvalBy("other")));
+        when(projectMemberRepository.findByProjectIdAndUserIdIn(eq(PROJECT_ID), any()))
+                .thenReturn(java.util.List.of(
+                        memberOf("creator", MemberRole.CREATOR, MemberRole.REVIEWER),
+                        memberOf("other", MemberRole.CREATOR, MemberRole.REVIEWER)));
+
+        assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isTrue();
+    }
+
+    @Test
+    void anotherMembersApprovalStillNeedsTheGatesReviewerRole() {
+        WorkItem item = independentItem(true, "creator");
+        when(reviewRepository.findAllByWorkItemId("issue-1")).thenReturn(java.util.List.of(approvalBy("other")));
+        when(projectMemberRepository.findByProjectIdAndUserIdIn(eq(PROJECT_ID), any()))
+                .thenReturn(java.util.List.of(memberOf("other", MemberRole.CREATOR)));
+
+        assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isFalse();
+    }
+
+    @Test
+    void anAdminsApprovalCountsForAReviewerRoleGate() {
+        WorkItem item = independentItem(true, "creator");
+        when(reviewRepository.findAllByWorkItemId("issue-1")).thenReturn(java.util.List.of(approvalBy("boss")));
+        when(projectMemberRepository.findByProjectIdAndUserIdIn(eq(PROJECT_ID), any()))
+                .thenReturn(java.util.List.of(memberOf("boss", MemberRole.ADMIN)));
+
+        assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isTrue();
+    }
+
+    @Test
+    void everyApprovalCountsWhenTheItemHasNoCreatorUser() {
+        WorkItem item = independentItem(true, null);
+        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER"))
+                .thenReturn(true);
+
+        assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isTrue();
+        verify(reviewRepository, never()).findAllByWorkItemId(any());
+    }
+
+    @Test
+    void selfApprovalCountsByDefault() {
+        WorkItem item = independentItem(false, "creator");
+        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER"))
+                .thenReturn(true);
+
+        assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isTrue();
+    }
+
+    @Test
+    void availableTransitionsAreOfferedToAMemberHoldingCreatorAndReviewer() {
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("DRAFT")));
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(memberOf("user-1", MemberRole.CREATOR, MemberRole.REVIEWER)));
+
+        assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).transitions()).isNotEmpty();
+    }
+
+    @Test
+    void availableTransitionsAreEmptyForAViewerWithNoRoles() {
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("DRAFT")));
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(memberOf("user-1")));
+
+        assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).transitions()).isEmpty();
+    }
 }

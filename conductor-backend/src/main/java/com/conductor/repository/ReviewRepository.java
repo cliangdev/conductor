@@ -23,10 +23,8 @@ public interface ReviewRepository extends JpaRepository<Review, String> {
      * (or an ADMIN, who outranks any review role). Backs the Workflow's role-scoped review gate (Wave 4):
      * a transition with {@code reviewerRole: REVIEWER} is satisfied only by a REVIEWER (or ADMIN) approval.
      *
-     * <p>Native because {@code project_members.role} is a native PostgreSQL enum ({@code member_role}); a
-     * JPQL/bound comparison binds the role as {@code varchar}, which Postgres won't compare to the enum
-     * ("operator does not exist: member_role = character varying"). The bound, caller-validated role string is
-     * cast explicitly. {@code role} must be a valid {@code MemberRole} name.
+     * <p>Native because the member's roles are a {@code varchar[]} column tested with {@code = ANY(...)}.
+     * {@code role} must be a valid {@code MemberRole} name.
      */
     @Query(value = """
             SELECT EXISTS (
@@ -35,7 +33,7 @@ public interface ReviewRepository extends JpaRepository<Review, String> {
                 WHERE r.work_item_id = :workItemId
                   AND r.verdict = :verdict
                   AND m.project_id = :projectId
-                  AND (m.role = CAST(:role AS member_role) OR m.role = CAST('ADMIN' AS member_role))
+                  AND (:role = ANY(m.roles) OR 'ADMIN' = ANY(m.roles))
             )
             """, nativeQuery = true)
     boolean existsApprovedByReviewerRole(@Param("workItemId") String workItemId,

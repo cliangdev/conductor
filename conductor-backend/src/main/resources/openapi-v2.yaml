@@ -8151,6 +8151,9 @@ components:
           type: string
           nullable: true
           description: The project role the gate asks its approval from, or null when any approval satisfies it.
+        requireIndependentReviewer:
+          type: boolean
+          description: When true, the gate ignores approvals by the item's own creator (self-approval does not count).
 
     PublishTargetResponse:
       type: object

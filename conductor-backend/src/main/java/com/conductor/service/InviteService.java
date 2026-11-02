@@ -2,6 +2,7 @@ package com.conductor.service;
 
 import com.conductor.entity.Invite;
 import com.conductor.entity.MemberRole;
+import java.util.Set;
 import com.conductor.entity.Project;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
@@ -53,12 +54,13 @@ public class InviteService {
     }
 
     @Transactional
-    public InviteResponse createInvite(String projectId, String email, String roleStr, User inviter) {
+    public InviteResponse createInvite(String projectId, String email, java.util.List<com.conductor.generated.model.MemberRoleName> roleNames,
+                                       String legacyRole, User inviter) {
         if (!projectSecurityService.isProjectAdmin(projectId, inviter.getId())) {
             throw new AccessDeniedException("Only project admins can send invites");
         }
 
-        MemberRole role = parseInviteRole(roleStr);
+        Set<MemberRole> roles = parseInviteRoles(roleNames, legacyRole);
 
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
@@ -76,7 +78,7 @@ public class InviteService {
         Invite invite = new Invite();
         invite.setProject(project);
         invite.setEmail(email);
-        invite.setRole(role);
+        invite.setRoles(roles);
         invite.setToken(UUID.randomUUID().toString());
         invite.setInvitedBy(inviter);
         invite.setExpiresAt(OffsetDateTime.now().plusHours(72));
@@ -133,7 +135,7 @@ public class InviteService {
         ProjectMember member = new ProjectMember();
         member.setProject(project);
         member.setUser(currentUser);
-        member.setRole(invite.getRole());
+        member.setRoles(invite.getRoles());
         projectMemberRepository.save(member);
 
         invite.setStatus("ACCEPTED");
@@ -142,16 +144,12 @@ public class InviteService {
         return new AcceptInviteResponse(project.getId(), project.getName(), invite.getRole().name());
     }
 
-    private MemberRole parseInviteRole(String roleStr) {
-        try {
-            MemberRole role = MemberRole.valueOf(roleStr.toUpperCase());
-            if (role == MemberRole.ADMIN) {
-                throw new BusinessException("Cannot invite with ADMIN role");
-            }
-            return role;
-        } catch (IllegalArgumentException e) {
-            throw new BusinessException("Invalid role: " + roleStr);
+    private Set<MemberRole> parseInviteRoles(java.util.List<com.conductor.generated.model.MemberRoleName> roleNames, String legacyRole) {
+        Set<MemberRole> roles = ProjectService.resolveRequestedRoles(roleNames, legacyRole);
+        if (roles.contains(MemberRole.ADMIN)) {
+            throw new BusinessException("Cannot invite with ADMIN role");
         }
+        return roles;
     }
 
     private InviteResponse toInviteResponse(Invite invite) {
@@ -160,6 +158,8 @@ public class InviteService {
                 invite.getEmail(),
                 invite.getRole().name(),
                 invite.getExpiresAt())
+                .roles(invite.getRoles().stream()
+                        .map(r -> com.conductor.generated.model.MemberRoleName.fromValue(r.name())).toList())
                 .token(invite.getToken())
                 .status(invite.getStatus());
     }

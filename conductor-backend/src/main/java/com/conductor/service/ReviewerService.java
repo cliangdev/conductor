@@ -3,6 +3,7 @@ package com.conductor.service;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.WorkItemReviewer;
 import com.conductor.entity.MemberRole;
+import com.conductor.entity.MemberRoles;
 import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
@@ -68,8 +69,8 @@ public class ReviewerService {
 
         // An ADMIN already outranks every review role at the gate (WorkItemWorkflowService); refusing to
         // assign one only meant a workspace with no dedicated reviewer could never approve anything.
-        if (targetMember.getRole() != MemberRole.REVIEWER && targetMember.getRole() != MemberRole.ADMIN) {
-            throw new BusinessException("Only REVIEWER or ADMIN members can be assigned as reviewers");
+        if (!MemberRoles.effective(targetMember.getRoles()).contains(MemberRole.REVIEWER)) {
+            throw new BusinessException("Only members with the Reviewer role (or Admins) can be assigned as reviewers");
         }
 
         if (workItemReviewerRepository.findByWorkItemIdAndUserId(workItemId, targetUserId).isPresent()) {
@@ -163,7 +164,7 @@ public class ReviewerService {
     }
 
     private void verifyCallerCanManageReviewers(String projectId, String callerId) {
-        if (!projectSecurityService.isAdminOrCreator(projectId, callerId)) {
+        if (!projectSecurityService.isEditor(projectId, callerId)) {
             throw new ForbiddenException("Only ADMIN or CREATOR can manage reviewers");
         }
     }

@@ -1087,7 +1087,7 @@ public class IntegrationController implements IntegrationsApi {
     private void requireAdminOrCreator(String projectId) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         Object principal = auth != null ? auth.getPrincipal() : null;
-        if (!(principal instanceof User user) || !projectSecurityService.isAdminOrCreator(projectId, user.getId())) {
+        if (!(principal instanceof User user) || !projectSecurityService.isEditor(projectId, user.getId())) {
             throw new AccessDeniedException("Requires ADMIN or CREATOR role");
         }
     }

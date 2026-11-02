@@ -108,7 +108,7 @@ class ReviewerServiceTest {
 
     @Test
     void assignReviewerSuccessCase() {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerMember));
         when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
@@ -137,7 +137,7 @@ class ReviewerServiceTest {
     /** An approval request on a Post carries the publishing marker, so it lands in the marketing channel. */
     @Test
     void assignReviewerOnAPostMarksTheSignalAsPublishing() {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerMember));
         when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
@@ -158,7 +158,7 @@ class ReviewerServiceTest {
 
     @Test
     void assignReviewerAlreadyAssignedThrows409() {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(reviewerMember));
 
@@ -180,20 +180,20 @@ class ReviewerServiceTest {
         creatorMember.setRole(MemberRole.CREATOR);
         creatorMember.setUser(reviewerUser);
 
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(creatorMember));
 
         assertThatThrownBy(() -> reviewerService.assignReviewer(
                 PROJECT_ID, ISSUE_ID, reviewerUser.getId(), adminUser))
                 .isInstanceOf(BusinessException.class)
-                .hasMessageContaining("Only REVIEWER or ADMIN members can be assigned");
+                .hasMessageContaining("Only members with the Reviewer role (or Admins) can be assigned");
     }
 
     /** An ADMIN outranks every review role at the gate, so a workspace of admins must be able to approve. */
     @Test
     void assignReviewerAcceptsAnAdmin() {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, adminUser.getId())).thenReturn(true);
         ProjectMember otherAdmin = new ProjectMember();
         otherAdmin.setRole(MemberRole.ADMIN);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "admin-2"))
@@ -209,7 +209,7 @@ class ReviewerServiceTest {
 
     @Test
     void assignReviewerNonMemberTargetThrows400() {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
                 .thenReturn(Optional.empty());
 
@@ -221,7 +221,7 @@ class ReviewerServiceTest {
 
     @Test
     void assignReviewerByReviewerRoleThrows403() {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, reviewerUser.getId())).thenReturn(false);
+        when(projectSecurityService.isEditor(PROJECT_ID, reviewerUser.getId())).thenReturn(false);
 
         assertThatThrownBy(() -> reviewerService.assignReviewer(
                 PROJECT_ID, ISSUE_ID, "some-user", reviewerUser))
@@ -254,7 +254,7 @@ class ReviewerServiceTest {
 
     @Test
     void unassignReviewerSuccess() {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, adminUser.getId())).thenReturn(true);
 
         WorkItemReviewer existing = new WorkItemReviewer();
         existing.setWorkItemId(ISSUE_ID);
@@ -269,7 +269,7 @@ class ReviewerServiceTest {
 
     @Test
     void unassignReviewerNotFoundThrows404() {
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, adminUser.getId())).thenReturn(true);
         when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.empty());
 
@@ -277,5 +277,30 @@ class ReviewerServiceTest {
                 PROJECT_ID, ISSUE_ID, reviewerUser.getId(), adminUser))
                 .isInstanceOf(EntityNotFoundException.class)
                 .hasMessageContaining("Reviewer assignment not found");
+    }
+
+    @Test
+    void assignReviewerAcceptsAMemberHoldingCreatorAndReviewer() {
+        when(projectSecurityService.isEditor(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        ProjectMember both = new ProjectMember();
+        both.setRoles(java.util.Set.of(MemberRole.CREATOR, MemberRole.REVIEWER));
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "both-1")).thenReturn(Optional.of(both));
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, "both-1")).thenReturn(Optional.empty());
+        when(workItemReviewerRepository.save(any(WorkItemReviewer.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(reviewerService.assignReviewer(PROJECT_ID, ISSUE_ID, "both-1", adminUser).getUserId())
+                .isEqualTo("both-1");
+    }
+
+    @Test
+    void assignReviewerRefusesAViewerWithNoRoles() {
+        when(projectSecurityService.isEditor(PROJECT_ID, adminUser.getId())).thenReturn(true);
+        ProjectMember viewer = new ProjectMember();
+        viewer.setRoles(java.util.Set.of());
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "viewer-1")).thenReturn(Optional.of(viewer));
+
+        assertThatThrownBy(() -> reviewerService.assignReviewer(PROJECT_ID, ISSUE_ID, "viewer-1", adminUser))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Reviewer role");
     }
 }

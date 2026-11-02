@@ -97,7 +97,7 @@ class InviteServiceTest {
             return inv;
         });
 
-        InviteResponse response = inviteService.createInvite("proj-1", "invitee@example.com", "CREATOR", admin);
+        InviteResponse response = inviteService.createInvite("proj-1", "invitee@example.com", null, "CREATOR", admin);
 
         assertThat(response.getEmail()).isEqualTo("invitee@example.com");
         assertThat(response.getRole()).isEqualTo("CREATOR");
@@ -121,7 +121,7 @@ class InviteServiceTest {
         doThrow(new RuntimeException("Resend connection refused"))
                 .when(emailService).sendInviteEmail(any(), any(), any(), any());
 
-        InviteResponse response = inviteService.createInvite("proj-1", "invitee@example.com", "CREATOR", admin);
+        InviteResponse response = inviteService.createInvite("proj-1", "invitee@example.com", null, "CREATOR", admin);
 
         assertThat(response.getEmail()).isEqualTo("invitee@example.com");
         assertThat(response.getRole()).isEqualTo("CREATOR");
@@ -139,7 +139,7 @@ class InviteServiceTest {
         when(inviteRepository.findByProjectIdAndEmailAndStatus("proj-1", "invitee@example.com", "PENDING"))
                 .thenReturn(Optional.of(existing));
 
-        assertThatThrownBy(() -> inviteService.createInvite("proj-1", "invitee@example.com", "CREATOR", admin))
+        assertThatThrownBy(() -> inviteService.createInvite("proj-1", "invitee@example.com", null, "CREATOR", admin))
                 .isInstanceOf(ConflictException.class)
                 .hasMessage("Invite already pending for this email");
     }
@@ -148,7 +148,7 @@ class InviteServiceTest {
     void createInviteByNonAdminReturnsWith403() {
         when(projectSecurityService.isProjectAdmin("proj-1", "admin-id")).thenReturn(false);
 
-        assertThatThrownBy(() -> inviteService.createInvite("proj-1", "invitee@example.com", "CREATOR", admin))
+        assertThatThrownBy(() -> inviteService.createInvite("proj-1", "invitee@example.com", null, "CREATOR", admin))
                 .isInstanceOf(AccessDeniedException.class);
     }
 
@@ -156,7 +156,7 @@ class InviteServiceTest {
     void createInviteWithAdminRoleReturnsWith400() {
         when(projectSecurityService.isProjectAdmin("proj-1", "admin-id")).thenReturn(true);
 
-        assertThatThrownBy(() -> inviteService.createInvite("proj-1", "invitee@example.com", "ADMIN", admin))
+        assertThatThrownBy(() -> inviteService.createInvite("proj-1", "invitee@example.com", null, "ADMIN", admin))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("Cannot invite with ADMIN role");
     }
@@ -168,7 +168,7 @@ class InviteServiceTest {
         when(userRepository.findByEmail("invitee@example.com")).thenReturn(Optional.of(invitee));
         when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "invitee-id")).thenReturn(true);
 
-        assertThatThrownBy(() -> inviteService.createInvite("proj-1", "invitee@example.com", "CREATOR", admin))
+        assertThatThrownBy(() -> inviteService.createInvite("proj-1", "invitee@example.com", null, "CREATOR", admin))
                 .isInstanceOf(ConflictException.class)
                 .hasMessage("User is already a project member");
     }
@@ -324,5 +324,67 @@ class InviteServiceTest {
         invite.setExpiresAt(expiresAt);
         invite.setCreatedAt(OffsetDateTime.now());
         return invite;
+    }
+
+    // ─── multi-role invites ───────────────────────────────────────────────────
+
+    @Test
+    void createInviteWithRolesStoresTheWholeSet() {
+        when(projectSecurityService.isProjectAdmin("proj-1", "admin-id")).thenReturn(true);
+        when(projectRepository.findById("proj-1")).thenReturn(Optional.of(project));
+        when(userRepository.findByEmail("invitee@example.com")).thenReturn(Optional.empty());
+        when(inviteRepository.findByProjectIdAndEmailAndStatus("proj-1", "invitee@example.com", "PENDING"))
+                .thenReturn(Optional.empty());
+        when(inviteRepository.save(any(Invite.class))).thenAnswer(i -> i.getArgument(0));
+
+        InviteResponse response = inviteService.createInvite("proj-1", "invitee@example.com",
+                java.util.List.of(com.conductor.generated.model.MemberRoleName.CREATOR,
+                        com.conductor.generated.model.MemberRoleName.REVIEWER), null, admin);
+
+        assertThat(response.getRoles()).hasSize(2);
+        assertThat(response.getRole()).isEqualTo("CREATOR");
+    }
+
+    @Test
+    void createInviteRejectsRolesTogetherWithLegacyRole() {
+        when(projectSecurityService.isProjectAdmin("proj-1", "admin-id")).thenReturn(true);
+
+        assertThatThrownBy(() -> inviteService.createInvite("proj-1", "invitee@example.com",
+                java.util.List.of(com.conductor.generated.model.MemberRoleName.CREATOR), "CREATOR", admin))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void createInviteRejectsNeitherRolesNorRole() {
+        when(projectSecurityService.isProjectAdmin("proj-1", "admin-id")).thenReturn(true);
+
+        assertThatThrownBy(() -> inviteService.createInvite("proj-1", "invitee@example.com", null, null, admin))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void createInviteRejectsAdminInsideTheSet() {
+        when(projectSecurityService.isProjectAdmin("proj-1", "admin-id")).thenReturn(true);
+
+        assertThatThrownBy(() -> inviteService.createInvite("proj-1", "invitee@example.com",
+                java.util.List.of(com.conductor.generated.model.MemberRoleName.ADMIN), null, admin))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void acceptInviteCopiesTheInvitesWholeRoleSetToTheMember() {
+        Invite invite = buildPendingInvite("multi-token", MemberRole.CREATOR, OffsetDateTime.now().plusHours(24));
+        invite.setRoles(java.util.Set.of(MemberRole.CREATOR, MemberRole.REVIEWER));
+        User acceptor = new User();
+        acceptor.setId("acceptor-id");
+        when(inviteRepository.findByToken("multi-token")).thenReturn(Optional.of(invite));
+        when(projectMemberRepository.save(any(ProjectMember.class))).thenAnswer(i -> i.getArgument(0));
+        when(inviteRepository.save(any(Invite.class))).thenAnswer(i -> i.getArgument(0));
+
+        inviteService.acceptInvite("multi-token", acceptor);
+
+        ArgumentCaptor<ProjectMember> captor = ArgumentCaptor.forClass(ProjectMember.class);
+        verify(projectMemberRepository).save(captor.capture());
+        assertThat(captor.getValue().getRoles()).containsExactlyInAnyOrder(MemberRole.CREATOR, MemberRole.REVIEWER);
     }
 }

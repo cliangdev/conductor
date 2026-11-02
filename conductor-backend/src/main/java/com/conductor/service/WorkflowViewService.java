@@ -211,6 +211,7 @@ public class WorkflowViewService {
         view.setLabel(t.label());
         view.setRequiresReview(t.requiresReview());
         view.setReviewerRole(t.reviewerRole());
+        view.setRequireIndependentReviewer(t.requireIndependentReviewer());
         // Without these the review bar has nothing to offer and renders nothing — a reviewer saw
         // "Reviewing…" and no Approve button.
         view.setReviewOutcomes(t.requiresReview() ? t.reviewOutcomes() : null);

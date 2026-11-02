@@ -1138,7 +1138,7 @@ public class CreativeRenderService {
         switch (java.util.Objects.requireNonNull(caller, "caller")) {
             case RenderCaller.UserCaller u -> {
                 requireMember(projectId, creativeId, caller);
-                if (!projectSecurityService.isAdminOrCreator(projectId, u.user().getId())) {
+                if (!projectSecurityService.isEditor(projectId, u.user().getId())) {
                     throw new ForbiddenException("Only ADMIN or CREATOR can manage Creative renders");
                 }
             }

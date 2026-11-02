@@ -244,7 +244,7 @@ class ReviewServiceTest {
         assertThatThrownBy(() -> reviewService.submitReview(
                 PROJECT_ID, ISSUE_ID, "APPROVED", null, creatorUser))
                 .isInstanceOf(ForbiddenException.class)
-                .hasMessageContaining("CREATOR role cannot submit reviews");
+                .hasMessageContaining("Only members with the Reviewer role (or Admins) can submit reviews");
     }
 
     // --- review_approved: an approval runs the cascade the Workflow declares, and reports the outcome ---
@@ -321,5 +321,35 @@ class ReviewServiceTest {
 
         assertThat(submission.autoTransition()).isEmpty();
         verify(lifecycleTriggerDispatcher, never()).onReviewApproved(any(), any());
+    }
+
+    @Test
+    void submitReviewAllowsAMemberHoldingCreatorAndReviewer() {
+        creatorMember.setRoles(java.util.Set.of(MemberRole.CREATOR, MemberRole.REVIEWER));
+        WorkItemReviewer assignment = new WorkItemReviewer();
+        assignment.setWorkItemId(ISSUE_ID);
+        assignment.setUserId(creatorUser.getId());
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, creatorUser.getId()))
+                .thenReturn(Optional.of(creatorMember));
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, creatorUser.getId()))
+                .thenReturn(Optional.of(assignment));
+        when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, creatorUser.getId()))
+                .thenReturn(Optional.empty());
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
+        when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Review review = reviewService.submitReview(PROJECT_ID, ISSUE_ID, "APPROVED", "ok", creatorUser);
+
+        assertThat(review.getVerdict()).isEqualTo("APPROVED");
+    }
+
+    @Test
+    void submitReviewRefusesAViewerWithNoRoles() {
+        creatorMember.setRoles(java.util.Set.of());
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, creatorUser.getId()))
+                .thenReturn(Optional.of(creatorMember));
+
+        assertThatThrownBy(() -> reviewService.submitReview(PROJECT_ID, ISSUE_ID, "APPROVED", null, creatorUser))
+                .isInstanceOf(ForbiddenException.class);
     }
 }

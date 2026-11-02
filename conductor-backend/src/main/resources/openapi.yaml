@@ -7225,7 +7225,13 @@ components:
           type: string
         role:
           type: string
-          description: Caller's role in this project (null if not explicit member)
+          deprecated: true
+          description: Caller's primary role in this project (null if not explicit member). Use `roles`.
+        roles:
+          type: array
+          description: The roles the caller holds in this project (ADMIN implies the other two; empty = read-only viewer)
+          items:
+            $ref: '#/components/schemas/MemberRoleName'
         memberCount:
           type: integer
         createdAt:
@@ -7271,6 +7277,10 @@ components:
           type: string
           description: New workspace description
 
+    MemberRoleName:
+      type: string
+      enum: [ADMIN, CREATOR, REVIEWER]
+
     MemberResponse:
       type: object
       required:
@@ -7288,32 +7298,52 @@ components:
           type: string
         role:
           type: string
+          deprecated: true
+          description: Primary role (ADMIN if held, else CREATOR, else REVIEWER). Use `roles`.
+        roles:
+          type: array
+          description: The roles the member holds. ADMIN implies CREATOR and REVIEWER; empty = read-only viewer.
+          items:
+            $ref: '#/components/schemas/MemberRoleName'
         joinedAt:
           type: string
           format: date-time
 
     UpdateMemberRoleRequest:
       type: object
-      required:
-        - role
+      description: Send `roles` (preferred) or the legacy `role`; both or neither is a 400.
       properties:
+        roles:
+          type: array
+          nullable: true
+          description: The member's new role set (may be empty for a read-only viewer)
+          items:
+            $ref: '#/components/schemas/MemberRoleName'
         role:
           type: string
-          description: New role for the member
+          deprecated: true
+          description: Legacy single role; equivalent to a one-element `roles`
 
     CreateInviteRequest:
       type: object
+      description: Send `roles` (preferred) or the legacy `role`; both or neither is a 400. ADMIN cannot be invited.
       required:
         - email
-        - role
       properties:
         email:
           type: string
           format: email
           description: Email address to invite
+        roles:
+          type: array
+          nullable: true
+          description: Roles to assign (CREATOR and/or REVIEWER; may be empty for a read-only viewer)
+          items:
+            $ref: '#/components/schemas/MemberRoleName'
         role:
           type: string
-          description: Role to assign (CREATOR or REVIEWER)
+          deprecated: true
+          description: Legacy single role (CREATOR or REVIEWER); equivalent to a one-element `roles`
 
     InviteResponse:
       type: object
@@ -7332,6 +7362,12 @@ components:
           type: string
         role:
           type: string
+          deprecated: true
+          description: Primary role. Use `roles`.
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemberRoleName'
         status:
           type: string
         expiresAt:
@@ -7785,6 +7821,9 @@ components:
         reviewerRole:
           type: string
           nullable: true
+        requireIndependentReviewer:
+          type: boolean
+          description: When true, an approval by the Work Item's own creator does not count toward this gate.
         reviewOutcomes:
           type: array
           description: >-

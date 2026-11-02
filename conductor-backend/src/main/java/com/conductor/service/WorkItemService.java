@@ -4,6 +4,7 @@ import com.conductor.notification.ChannelGroup;
 import com.conductor.entity.Asset;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
+import com.conductor.entity.MemberRoles;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
@@ -991,8 +992,8 @@ public class WorkItemService {
     private void verifyCallerCanChangeStatus(String projectId, String callerId) {
         projectMemberRepository.findByProjectIdAndUserId(projectId, callerId)
                 .ifPresent(member -> {
-                    if (member.getRole() == MemberRole.REVIEWER) {
-                        throw new ForbiddenException("REVIEWER role cannot change Work Item status");
+                    if (!MemberRoles.effective(member.getRoles()).contains(MemberRole.CREATOR)) {
+                        throw new ForbiddenException("Only members with the Editor role (or Admins) can change Work Item status");
                     }
                 });
     }

@@ -68,7 +68,7 @@ public class ProjectSkillService {
     /** Register (or update) a project-scoped bindable skill. Idempotent on the skill id. */
     @Transactional
     public SkillRegistration registerSkill(String projectId, RegisterSkillRequest request, String callerId) {
-        if (!projectSecurityService.isAdminOrCreator(projectId, callerId)) {
+        if (!projectSecurityService.isEditor(projectId, callerId)) {
             throw new ForbiddenException("Only ADMIN or CREATOR can register skills");
         }
         String skillId = request.getId() == null ? null : request.getId().trim();

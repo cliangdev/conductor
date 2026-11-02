@@ -69,7 +69,7 @@ public class WorkflowDefinitionLifecycleService {
      */
     @Transactional
     public WorkflowDefinition publish(String projectId, String workflowId, String callerId) {
-        if (!projectSecurityService.isAdminOrCreator(projectId, callerId)) {
+        if (!projectSecurityService.isEditor(projectId, callerId)) {
             throw new ForbiddenException("Only ADMIN or CREATOR can publish workflows");
         }
 
@@ -172,7 +172,7 @@ public class WorkflowDefinitionLifecycleService {
     }
 
     private void requireAdminOrCreator(String projectId, String callerId) {
-        if (!projectSecurityService.isAdminOrCreator(projectId, callerId)) {
+        if (!projectSecurityService.isEditor(projectId, callerId)) {
             throw new ForbiddenException("Only ADMIN or CREATOR can manage workflows");
         }
     }

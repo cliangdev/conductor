@@ -85,7 +85,8 @@ public class PublishTargetController implements PublishTargetsApi {
                 new PublishPreflightConsent(preflight.consent().required(),
                         PublishPreflightConsent.VerdictEnum.fromValue(preflight.consent().verdict().name())),
                 new PublishPreflightReview(preflight.review().gated(), preflight.review().assignedReviewers(),
-                        preflight.review().satisfied()).reviewerRole(preflight.review().reviewerRole()))
+                        preflight.review().satisfied()).reviewerRole(preflight.review().reviewerRole())
+                        .requireIndependentReviewer(preflight.review().requireIndependentReviewer()))
                 .earliestFireTime(preflight.earliestFireTime());
         if (preflight.nextTransition() != null) {
             body.nextTransition(new PublishPreflightTransition(preflight.nextTransition().to(),
