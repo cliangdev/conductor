@@ -25,12 +25,13 @@ vi.mock('@/components/ui/toast', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/components/ui/toast')>()
   return { ...actual, toastError }
 })
-vi.mock('@/components/workitems/plan/useWorkItemRef', () => ({
-  useWorkItemRef: (_p: string, id: string | null | undefined) =>
-    id ? { id, displayId: 'COND-120', title: 'The PRD', href: '/app/projects/p1/engineering/prds/COND-120' } : null,
-}))
+const PARENT_READY: WorkItemRefState = {
+  status: 'ready',
+  ref: { id: 'prd', displayId: 'COND-120', title: 'The PRD', href: '/app/projects/p1/engineering/prds/COND-120' },
+}
 
 import { DeliverySections } from './DeliverySections'
+import type { WorkItemRefState } from './useWorkItemRef'
 
 const MILESTONES = [
   { id: 'm1', projectId: 'p1', name: 'Beta', state: 'OPEN', sortOrder: 0, createdAt: '', updatedAt: '' },
@@ -42,9 +43,9 @@ function serverError(detail: string) {
   return Object.assign(new Error(detail), { status: 400, detail })
 }
 
-function setup(delivery: WorkItemDeliveryFields = {}, canEdit = true) {
+function setup(delivery: WorkItemDeliveryFields = {}, canEdit = true, parent: WorkItemRefState = PARENT_READY) {
   const onChanged = vi.fn()
-  render(<DeliverySections projectId="p1" issueId="wi-1" token="tok" canEdit={canEdit} delivery={delivery} onChanged={onChanged} />)
+  render(<DeliverySections projectId="p1" issueId="wi-1" token="tok" canEdit={canEdit} delivery={delivery} parent={parent} onChanged={onChanged} />)
   return { onChanged, user: userEvent.setup() }
 }
 
@@ -144,6 +145,17 @@ describe('DeliverySections', () => {
   })
 
   describe('parent', () => {
+    it('shows the loading skeleton only while the parent is loading', () => {
+      setup({ parentWorkItemId: 'prd' }, true, { status: 'loading', ref: null })
+      expect(screen.getByLabelText('Loading parent')).toBeInTheDocument()
+    })
+
+    it('shows plain error text, not the skeleton, when the parent failed to load', () => {
+      setup({ parentWorkItemId: 'prd' }, true, { status: 'error', ref: null })
+      expect(screen.getByText('Could not load the parent.')).toBeInTheDocument()
+      expect(screen.queryByLabelText('Loading parent')).not.toBeInTheDocument()
+    })
+
     it('links the parent and counts sub-items', () => {
       setup({ parentWorkItemId: 'prd', childCount: 3 })
       expect(screen.getByRole('link', { name: /COND-120/ })).toHaveAttribute('href', '/app/projects/p1/engineering/prds/COND-120')

@@ -15,14 +15,24 @@ export interface WorkItemRef {
   href: string
 }
 
-export function useWorkItemRef(projectId: string, workItemId: string | null | undefined, token: string): WorkItemRef | null {
-  const [ref, setRef] = useState<WorkItemRef | null>(null)
+export type ParentRefStatus = 'loading' | 'ready' | 'error'
+
+export interface WorkItemRefState {
+  status: ParentRefStatus
+  /** Set once `status` is `ready` and an id was asked for. */
+  ref: WorkItemRef | null
+}
+
+/** No id to resolve: nothing to wait for and nothing to show. */
+export const NO_REF: WorkItemRefState = { status: 'ready', ref: null }
+
+export function useWorkItemRef(projectId: string, workItemId: string | null | undefined, token: string): WorkItemRefState {
+  // The key a result belongs to, so a result for a previous id is never shown for the current one.
+  const key = workItemId && token ? `${projectId}:${workItemId}` : null
+  const [result, setResult] = useState<{ key: string; ref: WorkItemRef | null; failed: boolean } | null>(null)
 
   useEffect(() => {
-    if (!workItemId || !token) {
-      setRef(null)
-      return
-    }
+    if (!key || !workItemId) return
     let cancelled = false
     const redirect = `/app/projects/${projectId}/issues/${workItemId}`
     apiGet<{ id: string; displayId: string; title: string; workflow?: string }>(
@@ -32,23 +42,29 @@ export function useWorkItemRef(projectId: string, workItemId: string | null | un
       .then(async (item) => {
         if (cancelled) return
         const base = { id: item.id, displayId: item.displayId, title: item.title }
-        setRef({ ...base, href: redirect })
+        setResult({ key, ref: { ...base, href: redirect }, failed: false })
         if (!item.workflow) return
         try {
           const view = await fetchWorkflowView(projectId, item.workflow, token)
           if (cancelled) return
-          setRef({ ...base, href: workItemDetailPath(projectId, view.area ?? item.workflow, view.noun, item.displayId) })
+          setResult({
+            key,
+            ref: { ...base, href: workItemDetailPath(projectId, view.area ?? item.workflow, view.noun, item.displayId) },
+            failed: false,
+          })
         } catch {
           /* the redirect href already works */
         }
       })
       .catch(() => {
-        if (!cancelled) setRef(null)
+        if (!cancelled) setResult({ key, ref: null, failed: true })
       })
     return () => {
       cancelled = true
     }
-  }, [projectId, workItemId, token])
+  }, [key, projectId, workItemId, token])
 
-  return ref
+  if (!workItemId) return NO_REF
+  if (!key || !result || result.key !== key) return { status: 'loading', ref: null }
+  return result.failed ? { status: 'error', ref: null } : { status: 'ready', ref: result.ref }
 }

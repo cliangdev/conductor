@@ -225,6 +225,7 @@ vi.mock('@/lib/api', () => ({
   apiGet: (url: string) => {
     getUrls.push(url)
     if (holdSecondary && /\/(documents|comments|reviews|assets|members)(\?|$)/.test(url)) return NEVER
+    if (url.endsWith('/work-items/wi-broken')) return Promise.reject(new Error('parent down'))
     if (/\/work-items\/[^/]+$/.test(url) && !url.includes('?')) return Promise.resolve(ISSUE)
     if (url.endsWith('/tree')) return Promise.resolve({ id: 'wi-1', displayId: 'COND-42', title: 'My PRD', type: 'PRD', status: 'IN_REVIEW', childCount: 0, criteriaTotal: 0, criteriaMet: 0, children: [] })
     if (url.includes('/documents')) return Promise.resolve(DOCS)
@@ -1278,6 +1279,32 @@ describe('reading a document', () => {
     ISSUE = { ...ISSUE, type: 'TASK', parentWorkItemId: 'wi-parent' }
     await renderView()
     expect(await screen.findByRole('link', { name: '↳ COND-42' })).toHaveAttribute('href', expect.stringContaining('/issues/wi-parent'))
+  })
+
+  it('drops the parent crumb and shows an inline error when the parent cannot be loaded', async () => {
+    ISSUE = { ...ISSUE, type: 'TASK', parentWorkItemId: 'wi-broken' }
+    await renderView()
+    expect(await screen.findByText('Could not load the parent.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Loading parent')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /↳/ })).not.toBeInTheDocument()
+  })
+
+  it('fetches the parent once for the crumb and the Parent section together', async () => {
+    ISSUE = { ...ISSUE, type: 'TASK', parentWorkItemId: 'wi-parent' }
+    await renderView()
+    await screen.findByRole('link', { name: '↳ COND-42' })
+    expect(getUrls.filter((u) => u.endsWith('/work-items/wi-parent'))).toHaveLength(1)
+  })
+
+  it('links the Workflow crumb normally, and drops it for a child whose Workflow is hidden', async () => {
+    ISSUE = { ...ISSUE, type: 'TASK', parentWorkItemId: 'wi-parent' }
+    const { unmount } = await renderView()
+    expect(await screen.findByRole('link', { name: /^prds?$/i })).toBeInTheDocument()
+    unmount()
+
+    render(<WorkItemDetailView projectId="proj-1" workItemId="wi-1" slug="ENGINEERING" hiddenWorkflow />)
+    expect(await screen.findByRole('link', { name: '↳ COND-42' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^prds?$/i })).not.toBeInTheDocument()
   })
 
   it('labels the full view document panel by its tab', async () => {

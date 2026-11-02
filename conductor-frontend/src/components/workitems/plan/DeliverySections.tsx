@@ -23,7 +23,7 @@ import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toastError } from '@/components/ui/toast'
 import { PanelSection } from '@/components/workitems/PanelSection'
-import { useWorkItemRef } from '@/components/workitems/plan/useWorkItemRef'
+import { NO_REF, type WorkItemRefState } from '@/components/workitems/plan/useWorkItemRef'
 import type {
   Milestone,
   WorkItemDeliveryFields,
@@ -39,6 +39,7 @@ export function DeliverySections({
   token,
   canEdit,
   delivery,
+  parent = NO_REF,
   onChanged,
 }: {
   projectId: string
@@ -46,6 +47,8 @@ export function DeliverySections({
   token: string
   canEdit: boolean
   delivery: WorkItemDeliveryFields
+  /** The parent, resolved once by the page (its breadcrumb needs it too). */
+  parent?: WorkItemRefState
   /** The fields that changed, as the server now holds them, for the page to merge into its copy. */
   onChanged: (patch: DeliveryPatchResult) => void
 }) {
@@ -62,7 +65,7 @@ export function DeliverySections({
         onChanged={onChanged}
       />
       <AppetiteSection projectId={projectId} issueId={issueId} token={token} canEdit={canEdit} appetite={delivery.appetite} onChanged={onChanged} />
-      <ParentSection projectId={projectId} token={token} parentWorkItemId={delivery.parentWorkItemId} childCount={delivery.childCount} />
+      <ParentSection parent={parent} parentWorkItemId={delivery.parentWorkItemId} childCount={delivery.childCount} />
       <BlockedBySection projectId={projectId} issueId={issueId} token={token} canEdit={canEdit} />
     </>
   )
@@ -247,27 +250,26 @@ function AppetiteSection({
 }
 
 function ParentSection({
-  projectId,
-  token,
+  parent,
   parentWorkItemId,
   childCount,
 }: {
-  projectId: string
-  token: string
+  parent: WorkItemRefState
   parentWorkItemId?: string | null
   childCount?: number
 }) {
-  const parent = useWorkItemRef(projectId, parentWorkItemId, token)
   const subItems = childCount ?? 0
   if (!parentWorkItemId && subItems === 0) return null
   return (
     <PanelSection label="Parent">
       <div className="space-y-1 text-sm">
         {parentWorkItemId &&
-          (parent ? (
-            <Link prefetch={false} href={parent.href} className="flex min-w-0 items-baseline gap-2 text-foreground hover:underline">
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">{parent.displayId}</span>
-              <span className="truncate">{parent.title}</span>
+          (parent.status === 'error' ? (
+            <p className="text-sm text-muted-foreground">Could not load the parent.</p>
+          ) : parent.ref ? (
+            <Link prefetch={false} href={parent.ref.href} className="flex min-w-0 items-baseline gap-2 text-foreground hover:underline">
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">{parent.ref.displayId}</span>
+              <span className="truncate">{parent.ref.title}</span>
             </Link>
           ) : (
             <Skeleton className="h-4 w-2/3" aria-label="Loading parent" />

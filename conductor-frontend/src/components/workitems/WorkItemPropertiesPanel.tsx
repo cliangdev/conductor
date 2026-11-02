@@ -8,6 +8,7 @@ import { StatusDropdown, type ReviewVerdictOption } from '@/components/issues/St
 import { PanelSection } from '@/components/workitems/PanelSection'
 import { ChildProgressPanel } from '@/components/workitems/plan/ChildProgressPanel'
 import { DeliverySections, type DeliveryPatchResult } from '@/components/workitems/plan/DeliverySections'
+import type { WorkItemRefState } from '@/components/workitems/plan/useWorkItemRef'
 import { AssigneeCell } from '@/components/workitems/AssigneeCell'
 import { EmptyAvatarSlot, UserAvatar } from '@/components/workitems/UserAvatar'
 import { VerdictIcon } from '@/components/reviews/verdict'
@@ -105,6 +106,7 @@ export function WorkItemPropertiesPanel({
   noun = 'item',
   showSchedule = true,
   delivery,
+  deliveryParent,
   onDeliveryChanged,
 }: {
   projectId: string
@@ -157,6 +159,8 @@ export function WorkItemPropertiesPanel({
   showSchedule?: boolean
   /** Priority, milestone, appetite, parent and progress as the page holds them. Omit to hide those sections. */
   delivery?: WorkItemDeliveryFields
+  /** The delivery parent, resolved once by the page. */
+  deliveryParent?: WorkItemRefState
   /** The delivery fields a save changed, for the page to merge into its copy of the item. */
   onDeliveryChanged?: (patch: DeliveryPatchResult) => void
 }) {
@@ -262,6 +266,7 @@ export function WorkItemPropertiesPanel({
           token={token}
           canEdit={userRole !== 'REVIEWER'}
           delivery={delivery}
+          parent={deliveryParent}
           onChanged={(patch) => onDeliveryChanged?.(patch)}
         />
       )}
