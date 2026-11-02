@@ -123,7 +123,8 @@ interface Member {
   userId: string
   name?: string | null
   email?: string | null
-  role: string
+  role?: string
+  roles?: string[]
 }
 
 interface WorkflowSummary {
@@ -231,7 +232,7 @@ function errorText(err: unknown): string {
 }
 
 /**
- * Assigns reviewers by name, email or id. Only members holding the REVIEWER or ADMIN role can be assigned —
+ * Assigns reviewers by name, email or id. Only members holding the Reviewer role (or Admins) can be assigned —
  * the backend refuses anyone else — so a wrong role is reported by name rather than as a bare 4xx.
  */
 export async function assignReviewers(
@@ -254,9 +255,10 @@ export async function assignReviewers(
       problems.push(`No project member matches "${wanted}".`)
       continue
     }
-    if (match.role !== 'REVIEWER' && match.role !== 'ADMIN') {
+    const held = match.roles ?? (match.role ? [match.role] : [])
+    if (!held.includes('REVIEWER') && !held.includes('ADMIN')) {
       problems.push(
-        `${match.name ?? match.userId} holds the ${match.role} role; only REVIEWER or ADMIN members can be assigned.`
+        `${match.name ?? match.userId} doesn't hold the Reviewer role; only members with the Reviewer role (or Admins) can be assigned.`
       )
       continue
     }
@@ -603,7 +605,7 @@ export async function listPosts(
 
 /**
  * Records a review verdict as the caller's user. The backend requires an assigned reviewer holding the
- * REVIEWER or ADMIN role — a project API key cannot review, and a user key without
+ * Reviewer role (or Admin) — a project API key cannot review, and a user key without
  * the role is refused; both come back as the server's own message. Approval on MARKETING schedules the
  * Post in the same request; `autoTransition` says how far it got.
  */
