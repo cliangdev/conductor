@@ -467,7 +467,7 @@ export const TOOLS = [
   },
   {
     name: 'get_forecast',
-    description: 'Throughput forecast for a Work Item and its subtasks. Returns {state: DONE|INSUFFICIENT_DATA|OK, mode, remaining, samples, weeklyThroughputMedian, p50Date, p85Date, appetiteEndsOn, appetiteFit: FITS|TIGHT|EXCEEDS|null, milestoneFit}. INSUFFICIENT_DATA until enough tasks have completed.',
+    description: 'Throughput forecast for a Work Item and its subtasks. Returns {state: DONE|NO_PLAN|INSUFFICIENT_DATA|OK, mode, remaining, samples, weeklyThroughputMedian, p50Date, p85Date, appetiteEndsOn, appetiteFit: FITS|TIGHT|EXCEEDS|null, milestoneFit}. NO_PLAN when the item has no sub-items to forecast. INSUFFICIENT_DATA until enough tasks have completed.',
     inputSchema: {
       type: 'object',
       properties: {
