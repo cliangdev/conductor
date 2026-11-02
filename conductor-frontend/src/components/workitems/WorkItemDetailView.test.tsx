@@ -226,6 +226,7 @@ vi.mock('@/lib/api', () => ({
     getUrls.push(url)
     if (holdSecondary && /\/(documents|comments|reviews|assets|members)(\?|$)/.test(url)) return NEVER
     if (/\/work-items\/[^/]+$/.test(url) && !url.includes('?')) return Promise.resolve(ISSUE)
+    if (url.endsWith('/tree')) return Promise.resolve({ id: 'wi-1', displayId: 'COND-42', title: 'My PRD', type: 'PRD', status: 'IN_REVIEW', childCount: 0, criteriaTotal: 0, criteriaMet: 0, children: [] })
     if (url.includes('/documents')) return Promise.resolve(DOCS)
     if (url.includes('/comments')) return Promise.resolve(COMMENTS)
     if (url.includes('/reviewers')) return Promise.resolve(REVIEWERS)
@@ -1250,9 +1251,33 @@ describe('reading a document', () => {
     expect(screen.getByRole('tab', { name: /^design\.md/ })).toHaveFocus()
     expect(await screen.findByText('design content here')).toBeInTheDocument()
 
+    // A PRD has a Plan tab between its documents and Activity.
+    await userEvent.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'Plan' })).toHaveFocus()
+    expect(await screen.findByText(/No plan yet/)).toBeInTheDocument()
+
     await userEvent.keyboard('{ArrowRight}')
     expect(screen.getByRole('tab', { name: /^Activity/ })).toHaveFocus()
     expect(screen.getByRole('tab', { name: /^Activity/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('offers the Plan tab to a PRD or an item with children, and to nothing else', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    expect(screen.getByRole('tab', { name: 'Plan' })).toBeInTheDocument()
+  })
+
+  it('offers no Plan tab on a plain item', async () => {
+    ISSUE = { ...ISSUE, type: 'TASK', childCount: 0 }
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    expect(screen.queryByRole('tab', { name: 'Plan' })).not.toBeInTheDocument()
+  })
+
+  it('shows the parent id in the breadcrumb of a child', async () => {
+    ISSUE = { ...ISSUE, type: 'TASK', parentWorkItemId: 'wi-parent' }
+    await renderView()
+    expect(await screen.findByRole('link', { name: '↳ COND-42' })).toHaveAttribute('href', expect.stringContaining('/issues/wi-parent'))
   })
 
   it('labels the full view document panel by its tab', async () => {

@@ -33,6 +33,8 @@ import { WorkItemMoreMenu } from '@/components/workitems/WorkItemMoreMenu'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { TikTokPublishGateProvider } from '@/components/marketing/TikTokConsentStep'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
+import { PlanTab } from '@/components/workitems/plan/PlanTab'
+import { useWorkItemRef } from '@/components/workitems/plan/useWorkItemRef'
 import { toastError, toastSuccess } from '@/components/ui/toast'
 import { FileX2, Maximize2, Minimize2 } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
@@ -254,6 +256,8 @@ export function WorkItemDetailView({
   const [commentsLoading, setCommentsLoading] = useState(true)
   const [membersLoading, setMembersLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // A child Work Item names its parent in the breadcrumb.
+  const parentRef = useWorkItemRef(projectId, issue?.parentWorkItemId, accessToken ?? '')
   useEffect(() => { if (!loading && !error && issue) markPageReady('work-item-detail') }, [loading, error, issue])
 
   // ── Batch review mode (COND-22) ────────────────────────────────────────────
@@ -877,6 +881,7 @@ export function WorkItemDetailView({
       href: workItemListPath(projectId, workflowView.area ?? slug, workflowView.noun),
     })
   }
+  if (parentRef) crumbs.push({ label: `↳ ${parentRef.displayId}`, href: parentRef.href })
   crumbs.push({ label: issue.displayId ?? issue.title })
 
   const byline = creatorName
@@ -884,6 +889,11 @@ export function WorkItemDetailView({
     : issue.updatedAt
       ? `Updated ${timeAgo(issue.updatedAt)}`
       : undefined
+
+  // The Plan tab: a PRD's children as a tree or a dependency graph. Offered once there is a plan to show,
+  // and for any PRD so the empty state can point at /conductor:breakdown.
+  const showPlan = (issue.childCount ?? 0) > 0 || issue.type === 'PRD'
+  const onPlan = showPlan && activeTab === 'plan'
 
   let mainContent: React.ReactNode
   // A document gets the full width of the main column rather than the 45rem reading cap: documents are
@@ -898,6 +908,8 @@ export function WorkItemDetailView({
     ) : (
       <ActivityTab comments={comments} reviews={reviews} />
     )
+  } else if (onPlan) {
+    mainContent = <PlanTab projectId={projectId} workItemId={issueId} token={accessToken!} canEdit={userRole !== 'REVIEWER'} />
   } else if (documentsLoading) {
     mainContent = (
       <div className="space-y-3" aria-busy="true" aria-label="Loading documents">
@@ -1153,11 +1165,11 @@ export function WorkItemDetailView({
               id={tabButtonId(CONTENT_TAB)}
               role="tab"
               data-tab-id={CONTENT_TAB}
-              aria-selected={activeTab !== 'activity'}
+              aria-selected={activeTab !== 'activity' && !onPlan}
               aria-controls="wi-tabpanel-main"
-              tabIndex={activeTab !== 'activity' ? 0 : -1}
+              tabIndex={activeTab !== 'activity' && !onPlan ? 0 : -1}
               onClick={() => setActiveTab(CONTENT_TAB)}
-              className={cn(TAB_CLASSES, tabStateClasses(activeTab !== 'activity'))}
+              className={cn(TAB_CLASSES, tabStateClasses(activeTab !== 'activity' && !onPlan))}
             >
               {workflowView?.noun ?? 'Content'}
             </button>
@@ -1172,6 +1184,20 @@ export function WorkItemDetailView({
             panelId="wi-tabpanel-main"
           />
           {documentTabs.length > 0 && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-border" />}
+          {showPlan && (
+            <button
+              id={tabButtonId('plan')}
+              role="tab"
+              data-tab-id="plan"
+              aria-selected={onPlan}
+              aria-controls="wi-tabpanel-main"
+              tabIndex={onPlan ? 0 : -1}
+              onClick={() => setActiveTab('plan')}
+              className={cn(TAB_CLASSES, 'shrink-0', tabStateClasses(onPlan))}
+            >
+              Plan
+            </button>
+          )}
           <button
             id={tabButtonId('activity')}
             role="tab"
@@ -1264,7 +1290,7 @@ export function WorkItemDetailView({
               {/* A Post: where it goes and where each destination is, then what it says and shows.
                   Everything Post-specific lives in PostDetailBody; the engineering column below is
                   untouched by it. */}
-              {activeTab !== 'activity' && publishing && (
+              {activeTab !== 'activity' && !onPlan && publishing && (
                 <PostDetailBody
                   projectId={projectId}
                   workItemId={issueId}
@@ -1301,7 +1327,7 @@ export function WorkItemDetailView({
               {/* The description, and the file assets that live with the copy they ship alongside — offered
                   only where the bound Workflow declares asset types, since the mint validates `type`
                   against exactly that list. */}
-              {activeTab !== 'activity' && !publishing && (
+              {activeTab !== 'activity' && !onPlan && !publishing && (
                 <>
                   <WorkItemDescriptionCard
                     projectId={projectId}
@@ -1411,6 +1437,8 @@ export function WorkItemDetailView({
               noun={workflowView?.noun ?? 'item'}
               onDelete={() => setDeleteOpen(true)}
               showSchedule={!publishing}
+              delivery={issue}
+              onDeliveryChanged={(patch) => setIssue((prev) => (prev ? { ...prev, ...patch } : prev))}
             />
           </aside>
         </div>
