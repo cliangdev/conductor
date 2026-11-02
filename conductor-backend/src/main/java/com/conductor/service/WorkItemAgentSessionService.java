@@ -75,8 +75,8 @@ public class WorkItemAgentSessionService {
         if (sessionKey == null || sessionKey.isBlank() || sessionKey.length() > 128) {
             throw new BusinessException("sessionKey is required and at most 128 characters");
         }
-        if (agentLabel == null || agentLabel.isBlank()) {
-            throw new BusinessException("agentLabel is required");
+        if (agentLabel == null || agentLabel.isBlank() || agentLabel.strip().length() > 128) {
+            throw new BusinessException("agentLabel is required and at most 128 characters");
         }
         String resolvedMode = mode == null || mode.isBlank()
                 ? WorkItemAgentSession.MODE_DELEGATE : mode.trim().toUpperCase(Locale.ROOT);
