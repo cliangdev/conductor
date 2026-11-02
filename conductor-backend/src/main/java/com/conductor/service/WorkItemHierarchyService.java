@@ -24,7 +24,9 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.HashSet;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * The Work Item tree: who is whose parent, how far a branch has got, and rolling completion up.
@@ -168,17 +170,7 @@ public class WorkItemHierarchyService {
      */
     @Transactional(readOnly = true)
     public Progress progress(String projectId, String rootId) {
-        List<String> ids = workItemRepository.findSubtreeIds(rootId);
-        if (ids.size() <= 1) {
-            return Progress.EMPTY;
-        }
-        StatechartCache charts = new StatechartCache(workItemWorkflowService, projectId);
-        List<Node> nodes = new ArrayList<>();
-        for (WorkItem w : workItemRepository.findAllById(ids)) {
-            nodes.add(new Node(w.getId(), w.getId().equals(rootId) ? null : w.getParentWorkItemId(),
-                    charts.isTerminal(w)));
-        }
-        return ProgressRollup.of(rootId, nodes, criteriaCounts(ids));
+        return progressFor(projectId, List.of(rootId)).get(rootId);
     }
 
     /** Met and total acceptance criteria for these items in one query; items with none are absent. */
@@ -194,12 +186,46 @@ public class WorkItemHierarchyService {
         return counts;
     }
 
-    /** {@link #progress} for each of these roots, keyed by id. */
+    /**
+     * {@link #progress} for each of these roots, keyed by id, in a fixed number of reads however many roots
+     * there are: one subtree walk, one load of the items, one criteria count. A root with no children (or no
+     * such item) yields {@link Progress#EMPTY}.
+     */
     @Transactional(readOnly = true)
     public Map<String, Progress> progressFor(String projectId, Collection<String> rootIds) {
         Map<String, Progress> byRoot = new LinkedHashMap<>();
+        if (rootIds == null || rootIds.isEmpty()) {
+            return byRoot;
+        }
+        Map<String, List<String>> subtrees = new HashMap<>();
+        for (Object[] row : workItemRepository.findSubtreeIdsFor(rootIds)) {
+            subtrees.computeIfAbsent((String) row[0], k -> new ArrayList<>()).add((String) row[1]);
+        }
+        Set<String> allIds = new HashSet<>();
+        subtrees.values().stream().filter(ids -> ids.size() > 1).forEach(allIds::addAll);
+
+        Map<String, WorkItem> items = new HashMap<>();
+        Map<String, CriteriaCount> criteria = Map.of();
+        if (!allIds.isEmpty()) {
+            workItemRepository.findAllById(allIds).forEach(w -> items.put(w.getId(), w));
+            criteria = criteriaCounts(allIds);
+        }
+        StatechartCache charts = new StatechartCache(workItemWorkflowService, projectId);
         for (String rootId : rootIds) {
-            byRoot.put(rootId, progress(projectId, rootId));
+            List<String> ids = subtrees.getOrDefault(rootId, List.of());
+            if (ids.size() <= 1) {
+                byRoot.put(rootId, Progress.EMPTY);
+                continue;
+            }
+            List<Node> nodes = new ArrayList<>();
+            for (String id : ids) {
+                WorkItem w = items.get(id);
+                if (w != null) {
+                    nodes.add(new Node(id, id.equals(rootId) ? null : w.getParentWorkItemId(),
+                            charts.isTerminal(w)));
+                }
+            }
+            byRoot.put(rootId, ProgressRollup.of(rootId, nodes, criteria));
         }
         return byRoot;
     }

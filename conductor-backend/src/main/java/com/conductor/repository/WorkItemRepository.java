@@ -68,6 +68,23 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
             """, nativeQuery = true)
     List<String> findSubtreeIds(@Param("rootId") String rootId);
 
+    /**
+     * {@link #findSubtreeIds} for many roots in one walk, as {@code [rootId, id]} rows: every id beneath each
+     * root, the root itself included, parents before children within a root. A root that does not exist yields
+     * no rows. An item under two of the roots appears once for each.
+     */
+    @Query(value = """
+            WITH RECURSIVE subtree(root_id, id, depth) AS (
+                SELECT id, id, 0 FROM work_items WHERE id IN (:rootIds)
+                UNION ALL
+                SELECT s.root_id, w.id, s.depth + 1
+                FROM work_items w JOIN subtree s ON w.parent_work_item_id = s.id
+                WHERE s.depth < 10
+            )
+            SELECT root_id, id FROM subtree ORDER BY root_id, depth, id
+            """, nativeQuery = true)
+    List<Object[]> findSubtreeIdsFor(@Param("rootIds") Collection<String> rootIds);
+
     /** Direct-child counts for a batch of parents, as {@code [parentId, count]} rows; childless ids are absent. */
     @Query("SELECT i.parentWorkItemId, COUNT(i) FROM WorkItem i WHERE i.parentWorkItemId IN :ids "
             + "GROUP BY i.parentWorkItemId")

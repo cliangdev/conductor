@@ -31,6 +31,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /** The derived signals against the real TASK and ENGINEERING statecharts, a fixed clock and mocked reads. */
@@ -220,7 +223,8 @@ class WorkItemSignalServiceTest {
         WorkItem prd = task("prd", "TODO", NOW);
         when(workItemRepository.countChildrenGrouped(anyCollection()))
                 .thenReturn(List.<Object[]>of(new Object[] {"prd", 1L}));
-        when(workItemRepository.findSubtreeIds("prd")).thenReturn(List.of("prd", "epic", "leaf"));
+        when(workItemRepository.findSubtreeIdsFor(anyCollection())).thenReturn(List.<Object[]>of(
+                new Object[] {"prd", "prd"}, new Object[] {"prd", "epic"}, new Object[] {"prd", "leaf"}));
         when(sessionRepository.findLatestOpenByWorkItem(anyCollection())).thenReturn(List.of(
                 session("leaf", "NEEDS_INPUT", NOW)));
 
@@ -236,11 +240,32 @@ class WorkItemSignalServiceTest {
         WorkItem prd = task("prd", "TODO", NOW);
         when(workItemRepository.countChildrenGrouped(anyCollection()))
                 .thenReturn(List.<Object[]>of(new Object[] {"prd", 1L}));
-        when(workItemRepository.findSubtreeIds("prd")).thenReturn(List.of("prd", "leaf"));
+        when(workItemRepository.findSubtreeIdsFor(anyCollection())).thenReturn(List.<Object[]>of(
+                new Object[] {"prd", "prd"}, new Object[] {"prd", "leaf"}));
         when(sessionRepository.findLatestOpenByWorkItem(anyCollection())).thenReturn(List.of(
                 session("leaf", "WORKING", NOW)));
 
         assertThat(signals(prd).needsInput()).isFalse();
+    }
+
+    @Test
+    void manyParentsOnAPageShareOneSubtreeQuery() {
+        WorkItem prd1 = task("prd1", "TODO", NOW);
+        WorkItem prd2 = task("prd2", "TODO", NOW);
+        when(workItemRepository.countChildrenGrouped(anyCollection())).thenReturn(List.<Object[]>of(
+                new Object[] {"prd1", 1L}, new Object[] {"prd2", 1L}));
+        when(workItemRepository.findSubtreeIdsFor(anyCollection())).thenReturn(List.<Object[]>of(
+                new Object[] {"prd1", "prd1"}, new Object[] {"prd1", "a"},
+                new Object[] {"prd2", "prd2"}, new Object[] {"prd2", "b"}));
+        when(sessionRepository.findLatestOpenByWorkItem(anyCollection())).thenReturn(List.of(
+                session("b", "NEEDS_INPUT", NOW)));
+
+        Map<String, Signals> result = service.signalsFor(PROJECT, List.of(prd1, prd2));
+
+        assertThat(result.get("prd1").needsInput()).isFalse();
+        assertThat(result.get("prd2").needsInput()).isTrue();
+        verify(workItemRepository, times(1)).findSubtreeIdsFor(anyCollection());
+        verify(workItemRepository, never()).findSubtreeIds(anyString());
     }
 
     @Test

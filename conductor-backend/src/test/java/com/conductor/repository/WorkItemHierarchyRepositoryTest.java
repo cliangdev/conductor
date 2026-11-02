@@ -86,6 +86,42 @@ class WorkItemHierarchyRepositoryTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void batchedSubtreesPairEachRootWithItsOwnBranchOnly() {
+        WorkItem prd1 = item(null);
+        WorkItem epic = item(prd1.getId());
+        WorkItem leaf = item(epic.getId());
+        WorkItem prd2 = item(null);
+        WorkItem other = item(prd2.getId());
+        WorkItem lone = item(null);
+        item(null); // not asked for
+
+        List<Object[]> rows = workItemRepository.findSubtreeIdsFor(
+                List.of(prd1.getId(), prd2.getId(), lone.getId(), epic.getId()));
+
+        java.util.Map<String, List<String>> byRoot = new java.util.LinkedHashMap<>();
+        for (Object[] row : rows) {
+            byRoot.computeIfAbsent((String) row[0], k -> new java.util.ArrayList<>()).add((String) row[1]);
+        }
+        assertThat(byRoot.keySet()).containsExactlyInAnyOrder(prd1.getId(), prd2.getId(), lone.getId(),
+                epic.getId());
+        assertThat(byRoot.get(prd1.getId())).containsExactly(prd1.getId(), epic.getId(), leaf.getId());
+        assertThat(byRoot.get(prd2.getId())).containsExactly(prd2.getId(), other.getId());
+        assertThat(byRoot.get(lone.getId())).containsExactly(lone.getId());
+        // A root nested under another root still gets its own branch, with the same ids as findSubtreeIds.
+        assertThat(byRoot.get(epic.getId())).containsExactly(epic.getId(), leaf.getId());
+        assertThat(byRoot.get(prd1.getId())).isEqualTo(workItemRepository.findSubtreeIds(prd1.getId()));
+    }
+
+    @Test
+    void batchedSubtreesSkipARootThatDoesNotExist() {
+        WorkItem real = item(null);
+
+        List<Object[]> rows = workItemRepository.findSubtreeIdsFor(List.of(real.getId(), "no-such-id"));
+
+        assertThat(rows).extracting(r -> (String) r[0]).containsOnly(real.getId());
+    }
+
+    @Test
     void subtreeOfALeafIsJustItself() {
         WorkItem leaf = item(null);
 

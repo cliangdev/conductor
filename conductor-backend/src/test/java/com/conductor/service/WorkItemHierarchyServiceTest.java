@@ -32,6 +32,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -78,6 +79,15 @@ class WorkItemHierarchyServiceTest {
         when(workItemRepository.findChildren(anyString())).thenAnswer(inv -> store.values().stream()
                 .filter(w -> inv.getArgument(0).equals(w.getParentWorkItemId())).toList());
         when(workItemRepository.findSubtreeIds(anyString())).thenAnswer(inv -> subtreeIds(inv.getArgument(0)));
+        when(workItemRepository.findSubtreeIdsFor(any())).thenAnswer(inv -> {
+            List<Object[]> rows = new ArrayList<>();
+            for (Object root : (Iterable<?>) inv.getArgument(0)) {
+                if (store.containsKey((String) root)) {
+                    subtreeIds((String) root).forEach(id -> rows.add(new Object[] {root, id}));
+                }
+            }
+            return rows;
+        });
         when(workItemRepository.findAllById(any())).thenAnswer(inv -> {
             List<WorkItem> found = new ArrayList<>();
             for (Object id : (Iterable<?>) inv.getArgument(0)) {
@@ -376,6 +386,26 @@ class WorkItemHierarchyServiceTest {
         assertThat(p.done()).isEqualTo(2);
         assertThat(p.percent()).isEqualTo(67);
         assertThat(p.criteriaTotal()).isZero();
+    }
+
+    @Test
+    void progressForManyRootsReadsTheSubtreesAndCriteriaOnce() {
+        item("prd1", "ENGINEERING", "IN_PROGRESS", null);
+        item("a", "TASK", "DONE", "prd1");
+        item("b", "TASK", "TODO", "prd1");
+        item("prd2", "ENGINEERING", "IN_PROGRESS", null);
+        item("c", "TASK", "DONE", "prd2");
+        item("solo", "ENGINEERING", "DRAFT", null);
+
+        Map<String, Progress> byRoot = service.progressFor(PROJECT, List.of("prd1", "prd2", "solo", "ghost"));
+
+        assertThat(byRoot.get("prd1").percent()).isEqualTo(50);
+        assertThat(byRoot.get("prd2").percent()).isEqualTo(100);
+        assertThat(byRoot.get("solo")).isEqualTo(Progress.EMPTY);
+        assertThat(byRoot.get("ghost")).isEqualTo(Progress.EMPTY);
+        verify(workItemRepository, times(1)).findSubtreeIdsFor(any());
+        verify(workItemRepository, never()).findSubtreeIds(anyString());
+        verify(criterionRepository, times(1)).countsByWorkItem(any());
     }
 
     @Test

@@ -38,9 +38,8 @@ import java.util.Set;
  * </ul>
  *
  * <p>Cost: one query for the blockers, one for the open sessions, one for the child counts, and -- only for
- * items that have children -- one subtree walk per such item to find descendants. Statecharts are resolved
- * once per {@code workflow@version}. A single-item read therefore stays cheap for a task and costs one extra
- * query for a PRD.
+ * items that have children -- one batched subtree walk for all of them to find descendants. Statecharts are
+ * resolved once per {@code workflow@version}. The query count is fixed however long the page is.
  */
 @Service
 public class WorkItemSignalService {
@@ -114,12 +113,15 @@ public class WorkItemSignalService {
         }
         Map<String, List<String>> descendants = new HashMap<>();
         Set<String> sessionIds = new HashSet<>(ids);
-        for (String id : ids) {
-            if (childCounts.getOrDefault(id, 0) > 0) {
-                List<String> below = new ArrayList<>(workItemRepository.findSubtreeIds(id));
-                below.remove(id);
-                descendants.put(id, below);
-                sessionIds.addAll(below);
+        List<String> parents = ids.stream().filter(id -> childCounts.getOrDefault(id, 0) > 0).toList();
+        if (!parents.isEmpty()) {
+            for (Object[] row : workItemRepository.findSubtreeIdsFor(parents)) {
+                String rootId = (String) row[0];
+                String id = (String) row[1];
+                if (!rootId.equals(id)) {
+                    descendants.computeIfAbsent(rootId, k -> new ArrayList<>()).add(id);
+                    sessionIds.add(id);
+                }
             }
         }
 
