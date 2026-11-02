@@ -8,6 +8,7 @@ import type {
   DeliveryOverview,
   DependencyGraph,
   DependencyKind,
+  ForecastFit,
   HealthStatus,
   HealthUpdate,
   Milestone,
@@ -162,10 +163,15 @@ export function formatForecastDate(date: string): string {
 }
 
 /**
- * One line for a forecast: "P50 Nov 12 · P85 Nov 20 · fits appetite". `formatDate` renders a
- * `YYYY-MM-DD` string (injected so tests and locales stay in the caller's hands).
+ * One line for a forecast: "P50 Nov 12 · P85 Nov 20 · fits appetite · fits the milestone". `formatDate`
+ * renders a `YYYY-MM-DD` string (injected so tests and locales stay in the caller's hands).
+ * `milestoneTargetOn` lets a missed milestone say by how many days.
  */
-export function forecastLine(forecast: WorkItemForecast, formatDate: (date: string) => string): string {
+export function forecastLine(
+  forecast: WorkItemForecast,
+  formatDate: (date: string) => string,
+  milestoneTargetOn?: string | null
+): string {
   switch (forecast.state) {
     case 'DONE':
       return 'Done'
@@ -180,25 +186,34 @@ export function forecastLine(forecast: WorkItemForecast, formatDate: (date: stri
       const parts: string[] = []
       if (forecast.p50Date) parts.push(`P50 ${formatDate(forecast.p50Date)}`)
       if (forecast.p85Date) parts.push(`P85 ${formatDate(forecast.p85Date)}`)
-      const fit = fitText(forecast)
+      const appetite = fitText(forecast.appetiteFit, { fits: 'fits appetite', tight: 'tight for the appetite', over: 'exceeds the appetite' }, forecast, forecast.appetiteEndsOn)
+      const milestone = fitText(forecast.milestoneFit, { fits: 'fits the milestone', tight: 'tight for the milestone', over: 'misses the milestone' }, forecast, milestoneTargetOn)
+      // Both explain at-risk, so both show, appetite first.
+      const fit = [appetite, milestone].filter((t): t is string => !!t).join(' · ')
       if (fit) parts.push(fit)
       return parts.length > 0 ? parts.join(' · ') : 'No forecast'
     }
   }
 }
 
-function fitText(f: WorkItemForecast): string | null {
-  switch (f.appetiteFit) {
+function fitText(
+  fit: ForecastFit | null | undefined,
+  words: { fits: string; tight: string; over: string },
+  f: WorkItemForecast,
+  targetOn: string | null | undefined
+): string | null {
+  switch (fit) {
     case 'FITS':
-      return 'fits appetite'
+      return words.fits
     case 'TIGHT':
-      return 'tight for the appetite'
+      return words.tight
     case 'EXCEEDS': {
-      const end = f.p85Date ?? f.p50Date
-      if (!end || !f.appetiteEndsOn) return 'exceeds the appetite'
-      const ms = (d: string) => Date.parse(`${d.slice(0, 10)}T00:00:00Z`)
-      const over = Math.round((ms(end) - ms(f.appetiteEndsOn)) / 86_400_000)
-      return over > 0 ? `exceeds the appetite by ${over} day${over === 1 ? '' : 's'}` : 'exceeds the appetite'
+      const endMs = parseTargetOn(f.p85Date ?? f.p50Date)
+      const targetMs = parseTargetOn(targetOn)
+      if (endMs === null || targetMs === null) return words.over
+      // Whole calendar days between two local midnights; rounding absorbs a 23 or 25 hour day.
+      const over = Math.round((endMs - targetMs) / 86_400_000)
+      return over > 0 ? `${words.over} by ${over} day${over === 1 ? '' : 's'}` : words.over
     }
     default:
       return null

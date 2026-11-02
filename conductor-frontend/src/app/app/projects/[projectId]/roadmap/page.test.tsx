@@ -36,19 +36,31 @@ vi.mock('@/lib/workflows', async (importOriginal) => {
 import RoadmapPage from './page'
 import { RoadmapPanel } from '@/components/roadmap/RoadmapPanel'
 
-const base = { type: 'PRD', workflow: 'PRDS', createdAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z' }
+const base = { type: 'PRD', workflow: 'PRDS', createdAt: '2026-10-01T00:00:00Z' }
+const noSignals = { blocked: false, blockedBy: [], ready: false, stale: false, needsInput: false }
+const row = (item: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+  item: { ...base, ...item },
+  progress: { total: 0, done: 0, percent: 0, criteriaTotal: 0, criteriaMet: 0 },
+  forecast: { state: 'NO_PLAN', remaining: 0, samples: 0 },
+  signals: noSignals,
+  ...extra,
+})
+
+// The one delivery-overview call carries the open items (the server leaves finished ones out) and the milestones.
+const overview = (activeItems: unknown[], milestones: unknown[] = []) => ({
+  activeItems,
+  milestones,
+  attention: { blocked: [], stale: [], needsInput: [] },
+})
+const OPEN_ITEMS = [
+  row({ id: 'a', displayId: 'PRD-1', title: 'Active one', status: 'IN_PROGRESS', priority: 'P1' }),
+  row({ id: 'b', displayId: 'PRD-2', title: 'Backlog one', status: 'DRAFT' }),
+]
 
 beforeEach(() => {
   viewsState.settled = true
   apiGet.mockReset()
-  apiGet.mockImplementation(async (path: string) => {
-    if (path.endsWith('/milestones')) return []
-    return [
-      { ...base, id: 'a', displayId: 'PRD-1', title: 'Active one', status: 'IN_PROGRESS', priority: 'P1' },
-      { ...base, id: 'b', displayId: 'PRD-2', title: 'Backlog one', status: 'DRAFT' },
-      { ...base, id: 'c', displayId: 'PRD-3', title: 'Finished one', status: 'DONE' },
-    ]
-  })
+  apiGet.mockImplementation(async () => overview(OPEN_ITEMS))
 })
 
 describe('roadmap page', () => {
@@ -60,23 +72,56 @@ describe('roadmap page', () => {
     expect(within(screen.getByRole('region', { name: 'Now' })).getByText('Active one')).toBeInTheDocument()
     expect(within(screen.getByRole('region', { name: 'Later' })).getByText('Backlog one')).toBeInTheDocument()
     expect(within(screen.getByRole('region', { name: 'Later' })).getByText('No milestone')).toBeInTheDocument()
-    expect(screen.queryByText('Finished one')).not.toBeInTheDocument()
     // nothing is dated, so the timeline strip stays hidden
     expect(screen.queryByLabelText('Milestone timeline')).not.toBeInTheDocument()
+  })
+
+  it('makes one call, and drops an item whose status is finished in its Workflow view', async () => {
+    apiGet.mockImplementation(async () =>
+      overview([...OPEN_ITEMS, row({ id: 'c', displayId: 'PRD-3', title: 'Finished one', status: 'DONE' })])
+    )
+    render(<RoadmapPage />)
+    expect(await screen.findByText('Active one')).toBeInTheDocument()
+
+    expect(screen.queryByText('Finished one')).not.toBeInTheDocument()
+    expect(apiGet).toHaveBeenCalledTimes(1)
+    expect(apiGet.mock.calls[0][0]).toBe('/api/v2/projects/proj-1/delivery-overview')
+  })
+
+  it('groups items under their milestone and ends a bar at the forecast P85', async () => {
+    apiGet.mockImplementation(async () =>
+      overview(
+        [
+          row(
+            { id: 'a', displayId: 'PRD-1', title: 'Active one', status: 'IN_PROGRESS', milestoneId: 'm1', startedAt: '2026-10-05T00:00:00Z' },
+            { forecast: { state: 'OK', remaining: 3, samples: 12, p50Date: '2026-12-01', p85Date: '2026-12-15' } }
+          ),
+        ],
+        [{ id: 'm1', name: 'Launch', state: 'OPEN', targetOn: '2026-12-31' }]
+      )
+    )
+    render(<RoadmapPage />)
+
+    expect(await screen.findByText('Launch', { selector: 'h3' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Milestone timeline')).toBeInTheDocument()
+  })
+
+  it('surfaces a failed load instead of an empty board', async () => {
+    apiGet.mockRejectedValue(new Error('boom'))
+    render(<RoadmapPage />)
+    expect(await screen.findByText('Could not load the roadmap')).toBeInTheDocument()
   })
 
   it('holds a skeleton until the Workflow views are in, then excludes finished PRDs', async () => {
     viewsState.settled = false
     const { rerender } = render(<RoadmapPage />)
     await new Promise((r) => setTimeout(r, 20))
-    expect(screen.queryByText('Finished one')).not.toBeInTheDocument()
     expect(screen.queryByText('Active one')).not.toBeInTheDocument()
     expect(document.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
 
     viewsState.settled = true
     rerender(<RoadmapPage />)
     expect(await screen.findByText('Active one')).toBeInTheDocument()
-    expect(screen.queryByText('Finished one')).not.toBeInTheDocument()
   })
 
   it('shows a skeleton, not the previous workspace, after the workspace changes', async () => {
@@ -90,7 +135,7 @@ describe('roadmap page', () => {
   })
 
   it('shows an empty state when there are no open PRDs', async () => {
-    apiGet.mockImplementation(async (path: string) => (path.endsWith('/milestones') ? [] : []))
+    apiGet.mockImplementation(async () => overview([]))
     render(<RoadmapPage />)
     expect(await screen.findByText('No open PRDs')).toBeInTheDocument()
   })

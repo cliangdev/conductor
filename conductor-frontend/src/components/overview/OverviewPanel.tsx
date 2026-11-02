@@ -84,7 +84,7 @@ function ItemLink({ id, href, children }: { id: string; href: string | null; chi
   )
 }
 
-function ActivePrdRow({ active, href }: { active: DeliveryActiveItem; href: string | null }) {
+function ActivePrdRow({ active, href, milestoneTargetOn }: { active: DeliveryActiveItem; href: string | null; milestoneTargetOn?: string | null }) {
   const { item, progress, health, forecast } = active
   return (
     <ItemLink id={item.id} href={href}>
@@ -110,7 +110,7 @@ function ActivePrdRow({ active, href }: { active: DeliveryActiveItem; href: stri
         <HealthBadge health={health?.health} />
       </span>
       <span className="text-xs text-muted-foreground" title="Forecast">
-        {forecast ? forecastLine(forecast, formatForecastDate) : '—'}
+        {forecast ? forecastLine(forecast, formatForecastDate, milestoneTargetOn) : '—'}
       </span>
     </ItemLink>
   )
@@ -150,6 +150,8 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
   ].filter((s): s is string => !!s)
   const hrefOf = useWorkflowHrefs(projectId, slugs)
 
+  const targetOnByMilestone = Object.fromEntries((data?.milestones ?? []).map((m) => [m.id, m.targetOn]))
+
   const upcoming =
     data?.milestones
       .filter((m) => m.state === 'OPEN')
@@ -178,7 +180,7 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-6">
       <Section title="Active PRDs" icon={TargetIcon} rows={data?.activeItems ?? null} loading={loading} error={error} emptyCopy="No active PRDs.">
-        {(items) => items.map((a) => <ActivePrdRow key={a.item.id} active={a} href={hrefOf(a.item)} />)}
+        {(items) => items.map((a) => <ActivePrdRow key={a.item.id} active={a} href={hrefOf(a.item)} milestoneTargetOn={targetOnByMilestone[a.item.milestoneId ?? '']} />)}
       </Section>
 
       <Section title="Upcoming milestones" icon={FlagIcon} rows={upcoming} loading={loading} error={error} emptyCopy="No open milestones.">
@@ -186,7 +188,7 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
       </Section>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {attention('Blocked', AlertTriangleIcon, data?.attention.blocked, 'Nothing blocked', () => <Chip>Blocked</Chip>)}
+        {attention('Blocked', AlertTriangleIcon, data?.attention.blocked, 'Nothing blocked', (i) => <Chip>{i.blockedByCount ? `Blocked by ${i.blockedByCount}` : 'Blocked'}</Chip>)}
         {attention('Stale', ClockIcon, data?.attention.stale, 'Nothing stale', () => <Chip>Stale</Chip>)}
         {attention('Needs input', HandIcon, data?.attention.needsInput, 'Nobody is waiting on you', () => <Chip>Needs input</Chip>)}
       </div>

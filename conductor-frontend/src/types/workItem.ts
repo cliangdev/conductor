@@ -360,6 +360,11 @@ export interface DeliveryItemSummary {
   milestoneId?: string | null
   milestoneName?: string | null
   appetite?: string | null
+  appetiteDays?: number | null
+  createdAt?: string | null
+  startedAt?: string | null
+  /** How many unfinished blockers hold the item up; set on the blocked attention list, 0 elsewhere. */
+  blockedByCount?: number
 }
 
 export interface DeliveryActiveItem {

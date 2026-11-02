@@ -80,6 +80,26 @@ describe('forecastLine', () => {
     expect(forecastLine({ ...base, appetiteFit: 'EXCEEDS', appetiteEndsOn: '2026-11-19' }, fmt)).toContain('by 1 day')
   })
 
+  it('counts whole days across a clock change', () => {
+    // 2026-11-01 is the US fall-back day: a UTC-based or hour-based count would be off by one there.
+    expect(forecastLine({ ...base, p85Date: '2026-11-03', appetiteFit: 'EXCEEDS', appetiteEndsOn: '2026-10-31' }, fmt)).toContain('by 3 days')
+    expect(forecastLine({ ...base, p85Date: '2026-03-10', appetiteFit: 'EXCEEDS', appetiteEndsOn: '2026-03-07' }, fmt)).toContain('by 3 days')
+  })
+
+  it('says whether the milestone fits, alone or beside the appetite', () => {
+    expect(forecastLine({ ...base, milestoneFit: 'FITS' }, fmt)).toBe('P50 <2026-11-12> · P85 <2026-11-20> · fits the milestone')
+    expect(forecastLine({ ...base, milestoneFit: 'TIGHT' }, fmt)).toContain('tight for the milestone')
+    expect(forecastLine({ ...base, appetiteFit: 'FITS', milestoneFit: 'TIGHT' }, fmt)).toBe(
+      'P50 <2026-11-12> · P85 <2026-11-20> · fits appetite · tight for the milestone'
+    )
+  })
+
+  it('counts the days a milestone is missed by when its target is known', () => {
+    expect(forecastLine({ ...base, milestoneFit: 'EXCEEDS' }, fmt, '2026-11-18')).toContain('misses the milestone by 2 days')
+    expect(forecastLine({ ...base, milestoneFit: 'EXCEEDS' }, fmt, '2026-11-19')).toContain('misses the milestone by 1 day')
+    expect(forecastLine({ ...base, milestoneFit: 'EXCEEDS' }, fmt)).toMatch(/misses the milestone$/)
+  })
+
   it('omits P85 in cycle-time mode and the fit when there is none', () => {
     expect(forecastLine({ state: 'OK', mode: 'CYCLE_TIME', remaining: 2, samples: 4, p50Date: '2026-11-12' }, fmt)).toBe('P50 <2026-11-12>')
   })
