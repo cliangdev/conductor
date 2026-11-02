@@ -10,6 +10,7 @@ import {
   BookOpenIcon,
   BotIcon,
   BrainIcon,
+  FlagIcon,
   GitBranchIcon,
   KeyIcon,
   LibraryIcon,
@@ -69,6 +70,7 @@ export const SETTINGS_NAV: StaticNavEntry[] = [
   { key: 'settings-api-keys', label: 'API Keys', icon: KeyIcon, path: (id) => `/app/projects/${id}/settings/api-keys` },
   { key: 'settings-providers', label: 'AI Providers', icon: SparklesIcon, path: (id) => `/app/projects/${id}/settings/providers`, permission: 'agent.manage' },
   { key: 'settings-secrets', label: 'Secrets', icon: LockIcon, path: (id) => `/app/projects/${id}/settings/secrets`, permission: 'workflow.manage' },
+  { key: 'settings-milestones', label: 'Milestones', icon: FlagIcon, path: (id) => `/app/projects/${id}/settings/milestones` },
   { key: 'settings-notifications', label: 'Notifications', icon: BellIcon, path: (id) => `/app/projects/${id}/settings/notifications` },
   { key: 'settings-cli', label: 'CLI', icon: TerminalIcon, path: (id) => `/app/projects/${id}/settings/cli` },
 ]
