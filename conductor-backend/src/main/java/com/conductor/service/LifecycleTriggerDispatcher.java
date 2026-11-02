@@ -10,6 +10,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.time.OffsetDateTime;
 import java.util.HashSet;
 import java.util.Optional;
 import java.util.Set;
@@ -156,6 +157,9 @@ public class LifecycleTriggerDispatcher {
 
         for (int hops = 0; hops < MAX_CASCADE_HOPS; hops++) {
             String fromStatus = workItem.getCurrentStatus();
+            // A hop also stamps started_at / completed_at, so a reverted hop restores them with the status.
+            OffsetDateTime startedAtBefore = workItem.getStartedAt();
+            OffsetDateTime completedAtBefore = workItem.getCompletedAt();
             Optional<StatechartTransition> applied;
             try {
                 applied = workItemWorkflowService.applySystemTransition(projectId, workItem, trigger);
@@ -175,6 +179,8 @@ public class LifecycleTriggerDispatcher {
             // flush at commit) and stop — a cyclic edge must not persist or publish a hop.
             if (!visited.add(toStatus)) {
                 workItem.setCurrentStatus(fromStatus);
+                workItem.setStartedAt(startedAtBefore);
+                workItem.setCompletedAt(completedAtBefore);
                 log.warn("Lifecycle cascade for Work Item {} halted: revisited status {} (statechart cycle)",
                         workItemId, toStatus);
                 return new AutoTransition(trigger, startStatus, fromStatus, false, null);
@@ -185,6 +191,8 @@ public class LifecycleTriggerDispatcher {
                 workItemService.applyScheduledExit(projectId, workItem, fromStatus);
             } catch (RuntimeException revokeFailed) {
                 workItem.setCurrentStatus(fromStatus);
+                workItem.setStartedAt(startedAtBefore);
+                workItem.setCompletedAt(completedAtBefore);
                 throw revokeFailed;
             }
             workItemRepository.save(workItem);
