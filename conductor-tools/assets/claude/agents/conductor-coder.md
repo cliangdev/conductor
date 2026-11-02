@@ -1,7 +1,7 @@
 ---
 name: conductor-coder
 description: Implements one Conductor task test-first. Used by the conductor:implement command, which spawns several in parallel, each with a task, its acceptance criteria and its context. Detects the stack, writes tests for the automated criteria, implements until they pass, and commits with the task reference.
-tools: Read, Write, Edit, Bash, Glob, Grep
+tools: Read, Write, Edit, Bash, Glob, Grep, mcp__conductor__report_agent_activity
 model: sonnet
 ---
 
@@ -18,6 +18,7 @@ You will be given:
 - **Task description** — what to build
 - **Acceptance criteria** — tagged `[auto]` (must have automated test) or `[manual]` (document verification steps)
 - **Epic context** — background and goals
+- **workItemId and sessionKey** (when the plan lives in Conductor) — the task's Work Item id and the agent-session key to report under
 - **PRD path (.html or .md)** — for deeper context if needed. In an HTML PRD, a feature is an `<article data-feature>` and each acceptance criterion an `<li data-ac="AC-...">`
 
 Read all of it before writing any code.
@@ -236,6 +237,8 @@ Commits:
 Manual Verification Needed:
 - {criterion}: {verification steps}
 ```
+
+**If you hit a decision you cannot make** from the task and the PRD (a product choice, a contradiction between criteria, an unstated interface) and you were given a `workItemId`: do not guess. Call `report_agent_activity({issueId: workItemId, sessionKey, activity: "NEEDS_INPUT", note: <the question, one or two sentences>})`, then stop and report BLOCKED with the same question as the blocker. Without a `workItemId`, report BLOCKED only.
 
 **If blocked:**
 
