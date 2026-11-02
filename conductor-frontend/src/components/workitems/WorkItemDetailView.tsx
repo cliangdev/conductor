@@ -77,6 +77,7 @@ import type { DetailDocument, DetailIssue, DetailReview, DetailReviewer } from '
 import type { Member } from '@/components/workitems/listTypes'
 import type { Verdict } from '@/components/reviews/verdict'
 import type { MemberRole } from '@/types'
+import { can, memberRoles } from '@/lib/permissions'
 
 const isMarkdown = isMarkdownDocument
 const isHtml = isHtmlDocument
@@ -234,11 +235,11 @@ export function WorkItemDetailView({
   const [knownTags, setKnownTags] = useState<string[]>([])
   const [reviewers, setReviewers] = useState<DetailReviewer[]>([])
   const [reviews, setReviews] = useState<DetailReview[]>([])
-  const [userRole, setUserRole] = useState<MemberRole>(
-    () => getMembersCacheEntry(projectId)?.find((m) => m.userId === user?.id)?.role ?? 'REVIEWER'
+  const [roles, setRoles] = useState<MemberRole[]>(
+    () => memberRoles(getMembersCacheEntry(projectId)?.find((m) => m.userId === user?.id))
   )
   // Non-fatal on their own — the page still renders — but a role read that silently fell back to
-  // REVIEWER, or a reviews list that silently stayed empty, would hide actions with no visible reason.
+  // no roles, or a reviews list that silently stayed empty, would hide actions with no visible reason.
   // Both get a quiet inline notice at the top of the reading column instead.
   const [roleLoadError, setRoleLoadError] = useState(false)
   const [reviewsLoadError, setReviewsLoadError] = useState(false)
@@ -413,10 +414,10 @@ export function WorkItemDetailView({
       const members = (await fetchMembersFresh(projectId, accessToken)) as Member[]
       setAllMembers(members)
       const currentMember = members.find((m) => m.userId === user?.id)
-      if (currentMember) setUserRole(currentMember.role)
+      if (currentMember) setRoles(memberRoles(currentMember))
       setRoleLoadError(false)
     } catch {
-      // Defaults to REVIEWER - the narrowest role - but that fallback hides actions with no visible
+      // Defaults to no roles - the narrowest set - but that fallback hides actions with no visible
       // reason unless it is said out loud.
       setRoleLoadError(true)
     } finally {
@@ -589,8 +590,14 @@ export function WorkItemDetailView({
 
   const mediaAssets = useMemo(() => assets.filter((a) => a.kind === 'file'), [assets])
 
-  const isAssignedReviewer = reviewers.some((r) => r.userId === user?.id)
-  const canManage = userRole === 'CREATOR' || userRole === 'ADMIN'
+  const canReview = can(roles, 'review.submit')
+  // Assigned AND still able to review: a member who lost the Reviewer role keeps the assignment row
+  // but no longer gets the review actions.
+  const isAssignedReviewer = reviewers.some((r) => r.userId === user?.id) && canReview
+  // False until the role resolves (or if it failed to load), which hides actions - roleLoadError says
+  // so out loud rather than leaving a silent gap.
+  const canEdit = can(roles, 'issue.edit')
+  const canManage = can(roles, 'issue.assignReviewers')
 
   // Review is only relevant when the current status has an outgoing review-gated transition. When it
   // doesn't, the review bar and the assign-reviewer affordance are both hidden.
@@ -600,7 +607,7 @@ export function WorkItemDetailView({
 
   const assignedIds = new Set(reviewers.map((r) => r.userId))
   const assignableReviewers = allMembers.filter(
-    (m) => (m.role === 'REVIEWER' || m.role === 'ADMIN') && !assignedIds.has(m.userId)
+    (m) => can(memberRoles(m), 'review.submit') && !assignedIds.has(m.userId)
   )
 
   // Whether this Workflow publishes anywhere. Decided from the Workflow's own declaration, so the page
@@ -615,7 +622,7 @@ export function WorkItemDetailView({
     workItemId: issueId,
     token: accessToken ?? '',
     status: issue?.status ?? '',
-    userRole,
+    canEdit,
     workflowView,
     // Not before the item is in: its status is an input, and asking with an empty one then again with
     // the real one doubled the request on mount.
@@ -842,10 +849,10 @@ export function WorkItemDetailView({
 
   useEffect(() => {
     if (!issue) return
-    // Both triggers live in the properties panel; a REVIEWER only ever sees a read-only status
+    // Both triggers live in the properties panel; a read-only member only ever sees a read-only status
     // indicator and no AssigneeCell at all (see WorkItemPropertiesPanel), so neither action has a
     // live target to open for that role.
-    const canChangeStatusOrAssign = userRole !== 'REVIEWER'
+    const canChangeStatusOrAssign = canEdit
     return registerPaletteActions({
       group: 'Work item',
       actions: [
@@ -871,7 +878,7 @@ export function WorkItemDetailView({
       ],
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [issue, userRole, reviewActive, isAssignedReviewer, reviewMode, documents.length])
+  }, [issue, canEdit, reviewActive, isAssignedReviewer, reviewMode, documents.length])
 
   const creatorName = issue?.createdBy
     ? allMembers.find((m) => m.userId === issue.createdBy)?.name
@@ -1102,7 +1109,7 @@ export function WorkItemDetailView({
       projectId={projectId}
       issueId={issueId}
       currentStatus={issue.status}
-      userRole={userRole}
+      canEdit={canEdit}
       token={accessToken!}
       workflowView={workflowView}
       blockedMoves={gateBlock}
@@ -1111,7 +1118,7 @@ export function WorkItemDetailView({
         setIssue((prev) => (prev ? { ...prev, status: s } : prev))
         void refreshIssueStatus()
       }}
-      onDelete={userRole !== 'REVIEWER' ? () => setDeleteOpen(true) : undefined}
+      onDelete={canEdit ? () => setDeleteOpen(true) : undefined}
       noun={workflowView?.noun ?? 'item'}
       extraItems={
         destinations.failedCount > 0 ? (
@@ -1241,7 +1248,7 @@ export function WorkItemDetailView({
             Details
           </button>
         </div>
-        {userRole !== 'REVIEWER' && !publishing && !documentsLoading && (
+        {canEdit && !publishing && !documentsLoading && (
           <div className="flex shrink-0 items-center gap-1 border-b border-border">
             <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
             <DocumentUploadButton
@@ -1261,7 +1268,7 @@ export function WorkItemDetailView({
           >
             <div className={cn('mx-auto space-y-6', documentShown ? 'max-w-none' : 'max-w-[45rem]')}>
               {/* Quiet, inline notices for the two loaders that gate which actions show: a role read
-                  that silently fell back to REVIEWER, or a reviews list that silently stayed empty,
+                  that silently fell back to no roles, or a reviews list that silently stayed empty,
                   would otherwise hide actions with no visible reason. */}
               {roleLoadError && (
                 <Alert variant="warning">
@@ -1303,7 +1310,7 @@ export function WorkItemDetailView({
                   token={accessToken!}
                   status={issue.status}
                   workflowView={workflowView}
-                  userRole={userRole}
+                  canEdit={canEdit}
                   description={issue.description}
                   scheduledFor={issue.scheduledFor}
                   scheduleTimezone={issue.scheduleTimezone}
@@ -1343,7 +1350,7 @@ export function WorkItemDetailView({
                     status={issue.status}
                     workflowView={workflowView}
                     isCaption={false}
-                    canEdit={userRole !== 'REVIEWER'}
+                    canEdit={canEdit}
                     onSaved={(description) => {
                       setIssue((prev) => (prev ? { ...prev, description } : prev))
                       void refreshIssueStatus()
@@ -1358,7 +1365,7 @@ export function WorkItemDetailView({
                       status={issue.status}
                       fields={issue.fields}
                       dueOn={issue.dueOn}
-                      canEdit={userRole !== 'REVIEWER'}
+                      canEdit={canEdit}
                       missing={missingFields}
                       onSaved={(patch) => {
                         setIssue((prev) => (prev ? { ...prev, ...patch } : prev))
@@ -1396,7 +1403,7 @@ export function WorkItemDetailView({
               projectId={projectId}
               issueId={issueId}
               status={issue.status}
-              userRole={userRole}
+              canEdit={canEdit}
               token={accessToken!}
               workflowSlug={workflowSlug}
               onStatusChanged={(s) => setIssue((prev) => (prev ? { ...prev, status: s } : prev))}

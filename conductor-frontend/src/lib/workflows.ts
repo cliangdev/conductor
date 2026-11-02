@@ -895,7 +895,7 @@ export function publishWorkflow(
 // PermissionsContext (mounted at project layout level) and WorkItemListView both call
 // GET /members on every work-item page mount — two identical concurrent requests. Sharing
 // a module-scope cache with in-flight deduplication collapses them to one. The result is
-// also written to localStorage so the member list (and therefore userRole resolution) is
+// also written to localStorage so the member list (and therefore canEdit resolution) is
 // available synchronously on the next page refresh.
 
 const membersCache = new Map<string, Member[]>()

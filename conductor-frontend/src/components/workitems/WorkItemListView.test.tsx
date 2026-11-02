@@ -471,6 +471,30 @@ describe('keyboard nav + bulk actions', () => {
       MEMBERS.splice(0, MEMBERS.length, ...originalMembers)
     }
   })
+
+  async function selectWithX(me: Record<string, unknown>) {
+    const originalMembers = [...MEMBERS]
+    MEMBERS.splice(0, MEMBERS.length, me as (typeof MEMBERS)[number], MEMBERS[1])
+    try {
+      await renderList()
+      const firstLink = within(rowList()).getAllByRole('link')[0]
+      act(() => firstLink.focus())
+      fireEvent.keyDown(document.activeElement as Element, { key: 'x' })
+      return () => rowFor('i1').getAttribute('data-selected')
+    } finally {
+      MEMBERS.splice(0, MEMBERS.length, ...originalMembers)
+    }
+  }
+
+  it('lets a member holding {Editor, Reviewer} select rows', async () => {
+    const selected = await selectWithX({ ...MEMBERS[0], role: 'CREATOR', roles: ['CREATOR', 'REVIEWER'] })
+    expect(selected()).toBe('true')
+  })
+
+  it('gates selection off for a member with no roles (Viewer)', async () => {
+    const selected = await selectWithX({ ...MEMBERS[0], role: 'REVIEWER', roles: [] })
+    expect(selected()).toBeNull()
+  })
 })
 
 describe('empty states', () => {

@@ -18,7 +18,7 @@ export interface PostDetailBodyProps {
   token: string
   status: string
   workflowView?: WorkflowView
-  userRole: 'ADMIN' | 'CREATOR' | 'REVIEWER'
+  canEdit: boolean
   description?: string | null
   scheduledFor?: string | null
   scheduleTimezone?: string | null
@@ -36,7 +36,7 @@ export function PostDetailBody({
   token,
   status,
   workflowView,
-  userRole,
+  canEdit,
   description,
   scheduledFor,
   scheduleTimezone,
@@ -47,7 +47,6 @@ export function PostDetailBody({
   onAssetsChanged,
   onScheduleChanged,
 }: PostDetailBodyProps) {
-  const canEdit = userRole !== 'REVIEWER'
   const meta = statusMeta(workflowView, status)
   const noun = workflowView?.noun ?? 'Post'
   // "Went out" once the Post is done or anything has published; "Goes out" while it is still ahead.

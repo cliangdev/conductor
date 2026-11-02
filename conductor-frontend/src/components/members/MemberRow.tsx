@@ -4,33 +4,36 @@ import * as React from 'react'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Select } from '@/components/ui/select'
+import { RoleCheckboxes } from '@/components/members/RoleCheckboxes'
 import { humanizeId } from '@/lib/workflows'
+import { memberRoles, ROLE_LABELS } from '@/lib/permissions'
 import type { Member, MemberRole } from '@/types'
 
 /** Single source of role display labels — reused by the invite modal and the role dropdown. */
-export const ROLE_LABELS: Record<MemberRole, string> = {
-  ADMIN: 'Admin',
-  CREATOR: 'Creator',
-  REVIEWER: 'Reviewer',
-}
+export { ROLE_LABELS }
 
-/** Display label for a role, falling back to a humanized id for any role outside the known set. */
-export function roleLabel(role: MemberRole | string): string {
+/** Display label for one role, falling back to a humanized id for any role outside the known set. */
+function singleRoleLabel(role: MemberRole | string): string {
   return ROLE_LABELS[role as MemberRole] ?? humanizeId(role)
 }
 
-const ROLE_BADGE_VARIANTS: Record<MemberRole, 'default' | 'secondary' | 'outline'> = {
-  ADMIN: 'default',
-  CREATOR: 'secondary',
-  REVIEWER: 'outline',
+/**
+ * Display label for a set of roles: the held roles joined with " · ", and "Viewer" for an empty
+ * (read-only) set. A bare string is accepted for callers that still hold one legacy role.
+ */
+export function roleLabel(roles: readonly (MemberRole | string)[] | MemberRole | string | null | undefined): string {
+  const list = typeof roles === 'string' ? [roles] : roles ? [...roles] : []
+  if (list.length === 0) return 'Viewer'
+  const order = ['ADMIN', 'CREATOR', 'REVIEWER']
+  const sorted = [...list].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99))
+  return sorted.map(singleRoleLabel).join(' · ')
 }
 
 interface MemberRowProps {
   member: Member
   isAdmin: boolean
   currentUserId: string
-  onRoleChange: (userId: string, role: MemberRole) => void
+  onRoleChange: (userId: string, roles: MemberRole[]) => void
   onRemove: (userId: string, name: string) => void
 }
 
@@ -49,6 +52,7 @@ export function MemberRow({ member, isAdmin, currentUserId, onRoleChange, onRemo
   })
 
   const isCurrentUser = member.userId === currentUserId
+  const roles = memberRoles(member)
 
   return (
     <div className="flex items-center justify-between py-3">
@@ -70,20 +74,16 @@ export function MemberRow({ member, isAdmin, currentUserId, onRoleChange, onRemo
         <p className="text-xs text-muted-foreground hidden sm:block">Joined {joinedDate}</p>
 
         {isAdmin && !isCurrentUser ? (
-          <Select
-            value={member.role}
-            onChange={(e) => onRoleChange(member.userId, e.target.value as MemberRole)}
-            className="w-auto"
-            aria-label={`Role for ${member.name}`}
-          >
-            {(Object.keys(ROLE_LABELS) as MemberRole[]).map((role) => (
-              <option key={role} value={role}>
-                {roleLabel(role)}
-              </option>
-            ))}
-          </Select>
+          <RoleCheckboxes
+            roles={roles}
+            onChange={(next) => onRoleChange(member.userId, next)}
+            label={member.name}
+            idPrefix={`member-${member.userId}`}
+          />
         ) : (
-          <Badge variant={ROLE_BADGE_VARIANTS[member.role] ?? 'outline'}>{roleLabel(member.role)}</Badge>
+          <Badge variant={roles.includes('ADMIN') ? 'default' : roles.length ? 'secondary' : 'outline'}>
+            {roleLabel(roles)}
+          </Badge>
         )}
 
         {isAdmin && !isCurrentUser && (

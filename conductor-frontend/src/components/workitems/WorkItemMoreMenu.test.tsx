@@ -53,7 +53,7 @@ function renderMenu(props: Partial<React.ComponentProps<typeof WorkItemMoreMenu>
         projectId="project-1"
         issueId="post-1"
         currentStatus="SCHEDULED"
-        userRole="CREATOR"
+        canEdit
         token="tok"
         workflowView={MARKETING_VIEW}
         onStatusChanged={onStatusChanged}
@@ -119,7 +119,7 @@ describe('WorkItemMoreMenu', () => {
   it('renders nothing at all when there is nothing to offer', async () => {
     transitions = []
     const { container } = render(
-      <WorkItemMoreMenu projectId="p" issueId="i" currentStatus="PUBLISHED" userRole="REVIEWER" token="tok" onStatusChanged={vi.fn()} />
+      <WorkItemMoreMenu projectId="p" issueId="i" currentStatus="PUBLISHED" canEdit={false} token="tok" onStatusChanged={vi.fn()} />
     )
     await waitFor(() => expect(container).toBeEmptyDOMElement())
   })

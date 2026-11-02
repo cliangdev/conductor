@@ -26,6 +26,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPatch } from '@/lib/api'
+import { ROLE_LABELS } from '@/lib/permissions'
 import { statusMeta, statusHasReviewGate } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
 
@@ -92,6 +93,11 @@ export function dedupeFindings(list: PublishFinding[] | undefined | null): Publi
   return out
 }
 
+/** The UI name for a stored role string (CREATOR reads "Editor"); unknown strings pass through. */
+function roleName(role: string): string {
+  return (ROLE_LABELS as Record<string, string>)[role] ?? role
+}
+
 export interface PublishPreflight {
   publishing: boolean
   ready: boolean
@@ -99,7 +105,7 @@ export interface PublishPreflight {
   warnings: PublishFinding[]
   nextTransition?: { to: string; label?: string | null; requiresReview: boolean } | null
   consent: { required: boolean; verdict: string }
-  review: { gated: boolean; assignedReviewers: number; satisfied: boolean; reviewerRole?: string | null }
+  review: { gated: boolean; assignedReviewers: number; satisfied: boolean; reviewerRole?: string | null; requireIndependentReviewer?: boolean }
   earliestFireTime?: string | null
 }
 
@@ -114,7 +120,7 @@ export interface UsePublishReadinessArgs {
   workItemId: string
   token: string
   status: string
-  userRole: 'ADMIN' | 'CREATOR' | 'REVIEWER'
+  canEdit: boolean
   workflowView?: WorkflowView
   /**
    * Whether the item's Workflow publishes at all. False means the server is never asked: a preflight on
@@ -177,10 +183,11 @@ function summary(preflight: PublishPreflight, view: WorkflowView | undefined, st
   }
   if (preflight.nextTransition.requiresReview) {
     if (preflight.review.satisfied) return 'Approved and ready to move on.'
+    const independent = preflight.review.requireIndependentReviewer ? ' The author\'s own approval doesn\'t count.' : ''
     if (preflight.review.assignedReviewers === 0) {
-      return `Everything checks out. It needs a reviewer${preflight.review.reviewerRole ? ` (${preflight.review.reviewerRole.toLowerCase()} role)` : ''} to be assigned and to approve.`
+      return `Everything checks out. It needs a reviewer${preflight.review.reviewerRole ? ` (${roleName(preflight.review.reviewerRole).toLowerCase()} role)` : ''} to be assigned and to approve.${independent}`
     }
-    return `Everything checks out. Waiting on ${preflight.review.assignedReviewers} reviewer${preflight.review.assignedReviewers === 1 ? '' : 's'}; approval schedules it automatically.`
+    return `Everything checks out. Waiting on ${preflight.review.assignedReviewers} reviewer${preflight.review.assignedReviewers === 1 ? '' : 's'}; approval schedules it automatically.${independent}`
   }
   if (preflight.review.gated && preflight.review.assignedReviewers === 0) {
     return 'Everything checks out. Assign a reviewer so it can be approved once you submit it.'
@@ -198,7 +205,7 @@ export function usePublishReadiness({
   workItemId,
   token,
   status,
-  userRole,
+  canEdit,
   workflowView,
   enabled = true,
   refreshKey,
@@ -242,7 +249,7 @@ export function usePublishReadiness({
   }, [enabled, load, status, refreshKey])
 
   const next = preflight?.nextTransition ?? undefined
-  const canMove = userRole !== 'REVIEWER' && next !== null && next !== undefined
+  const canMove = canEdit && next !== null && next !== undefined
   // A review-gated move is the reviewer's to make with their verdict, not a button here — and after an
   // approval the Workflow takes it on its own. What this button offers is the author's own move.
   const offersButton = canMove && !next?.requiresReview
@@ -386,7 +393,7 @@ export function PublishReadinessAction({
             if (!state.moving) state.setPicking(open)
           }}
           title="Who should review it?"
-          description={`Pick the people to approve this ${(workflowView?.noun ?? 'item').toLowerCase()}. Only members with the ${state.gateRole ? state.gateRole.toLowerCase() : 'reviewer'} or admin role can.`}
+          description={`Pick the people to approve this ${(workflowView?.noun ?? 'item').toLowerCase()}. Only members with the ${state.gateRole ? roleName(state.gateRole).toLowerCase() : 'reviewer'} or admin role can.${state.preflight?.review?.requireIndependentReviewer ? ' The author\'s own approval doesn\'t count.' : ''}`}
           footer={
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm text-muted-foreground" aria-live="polite">

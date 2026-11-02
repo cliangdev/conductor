@@ -9,18 +9,19 @@ import { Modal } from '@/components/ui/modal'
 import { useToast } from '@/components/ui/toast'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
 import { Card, CardContent } from '@/components/ui/card'
-import { MemberRow, ROLE_LABELS, roleLabel } from '@/components/members/MemberRow'
+import { MemberRow, roleLabel } from '@/components/members/MemberRow'
+import { RoleCheckboxes } from '@/components/members/RoleCheckboxes'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useAuth } from '@/contexts/AuthContext'
 import { useProject } from '@/contexts/ProjectContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiDelete, apiGet, apiPatch, apiPost, apiErrorMessage } from '@/lib/api'
+import { memberRoles } from '@/lib/permissions'
 import { settingsBreadcrumbs } from '@/lib/navigation'
 import type { Invite, Member, MemberRole } from '@/types'
 
-const INVITE_ROLES: MemberRole[] = ['CREATOR', 'REVIEWER']
+const DEFAULT_INVITE_ROLES: MemberRole[] = ['CREATOR', 'REVIEWER']
 
 function inviteLink(token: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
@@ -43,7 +44,7 @@ export default function MembersPage() {
 
   const [inviteOpen, setInviteOpen] = useState(false)
   const [inviteEmail, setInviteEmail] = useState('')
-  const [inviteRole, setInviteRole] = useState<MemberRole>('CREATOR')
+  const [inviteRoles, setInviteRoles] = useState<MemberRole[]>(DEFAULT_INVITE_ROLES)
   const [inviteError, setInviteError] = useState<string | null>(null)
   const [inviteSubmitting, setInviteSubmitting] = useState(false)
   const [createdLink, setCreatedLink] = useState<string | null>(null)
@@ -86,15 +87,15 @@ export default function MembersPage() {
     if (isAdmin) fetchInvites()
   }, [isAdmin, fetchInvites])
 
-  async function handleRoleChange(userId: string, role: MemberRole) {
+  async function handleRoleChange(userId: string, roles: MemberRole[]) {
     if (!accessToken) return
     try {
       const updated = await apiPatch<Member>(
         `/api/v1/projects/${projectId}/members/${userId}`,
-        { role },
+        { roles },
         accessToken,
       )
-      setMembers((prev) => prev.map((m) => (m.userId === userId ? { ...m, role: updated?.role ?? role } : m)))
+      setMembers((prev) => prev.map((m) => (m.userId === userId ? { ...m, roles: updated && (updated.roles || updated.role) ? memberRoles(updated) : roles } : m)))
       showToast('Role updated successfully')
     } catch (err) {
       showToast(apiErrorMessage(err, 'Failed to update role. Please try again.'), 'error')
@@ -122,7 +123,7 @@ export default function MembersPage() {
 
   function openInviteModal() {
     setInviteEmail('')
-    setInviteRole('CREATOR')
+    setInviteRoles(DEFAULT_INVITE_ROLES)
     setInviteError(null)
     setCreatedLink(null)
     setCopied(false)
@@ -141,7 +142,7 @@ export default function MembersPage() {
     try {
       const invite = await apiPost<Invite>(
         `/api/v1/projects/${projectId}/invites`,
-        { email: inviteEmail.trim(), role: inviteRole },
+        { email: inviteEmail.trim(), roles: inviteRoles },
         accessToken,
       )
       if (invite.token) setCreatedLink(inviteLink(invite.token))
@@ -226,7 +227,7 @@ export default function MembersPage() {
                 <div key={invite.id} className="flex items-center justify-between px-4 py-3">
                   <div className="min-w-0">
                     <p className="text-sm text-foreground truncate">{invite.email}</p>
-                    <p className="text-xs text-muted-foreground">{roleLabel(invite.role)}</p>
+                    <p className="text-xs text-muted-foreground">{roleLabel(memberRoles(invite))}</p>
                   </div>
                   <Button
                     variant="ghost"
@@ -286,18 +287,14 @@ export default function MembersPage() {
             </div>
 
             <div>
-              <Label htmlFor="invite-role">Role</Label>
-              <Select
-                id="invite-role"
-                value={inviteRole}
-                onChange={(e) => setInviteRole(e.target.value as MemberRole)}
-              >
-                {INVITE_ROLES.map((role) => (
-                  <option key={role} value={role}>
-                    {ROLE_LABELS[role]}
-                  </option>
-                ))}
-              </Select>
+              <Label>Roles</Label>
+              <RoleCheckboxes
+                roles={inviteRoles}
+                onChange={setInviteRoles}
+                idPrefix="invite-role"
+                showHints
+                className="mt-1.5"
+              />
             </div>
 
             {inviteError && (

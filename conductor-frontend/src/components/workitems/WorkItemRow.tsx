@@ -14,7 +14,6 @@ import { timeAgo } from '@/lib/format'
 import { workItemDetailPath } from '@/lib/workflows'
 import { cn } from '@/lib/utils'
 import type { IssueAssignee, IssueReviewer, IssueWithReviewers, Member } from '@/components/workitems/listTypes'
-import type { MemberRole } from '@/types'
 
 /** "SCHEDULED" / "In_review" -> "Scheduled" / "In review". */
 function statusText(status: string): string {
@@ -48,10 +47,9 @@ export function WorkItemRow({
   slug,
   detailArea,
   noun,
-  userRole,
+  canEdit,
   accessToken,
   members,
-  canEdit,
   selected,
   focused,
   publishing,
@@ -70,10 +68,9 @@ export function WorkItemRow({
   slug: string
   detailArea: string
   noun: string
-  userRole: MemberRole
+  canEdit: boolean
   accessToken: string
   members: Member[]
-  canEdit: boolean
   selected: boolean
   focused: boolean
   /** Publishing/marketing workflow: adds a 40px thumbnail, destination marks and the scheduled time. */
@@ -121,7 +118,7 @@ export function WorkItemRow({
           projectId={projectId}
           issueId={issue.id}
           currentStatus={issue.status}
-          userRole={userRole}
+          canEdit={canEdit}
           token={accessToken}
           workflowSlug={slug}
           trigger="ring"

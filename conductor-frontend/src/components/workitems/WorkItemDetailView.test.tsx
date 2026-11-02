@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { WorkflowView } from '@/types/workItem'
@@ -1311,5 +1311,76 @@ describe('reading a document', () => {
     await screen.findByText('line one', { exact: false })
     await userEvent.click(screen.getByRole('tab', { name: /activity/i }))
     expect(screen.queryByRole('button', { name: 'Full view' })).not.toBeInTheDocument()
+  })
+})
+
+describe('a member who holds a set of roles', () => {
+  type Held = { roles?: string[]; role?: string }
+  const original = { ...MEMBERS[0] } as Record<string, unknown>
+  const holding = (held: Held) => {
+    delete (MEMBERS[0] as Record<string, unknown>).roles
+    Object.assign(MEMBERS[0], { role: 'REVIEWER' }, held)
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetFixtures()
+    failMembers = false
+    failReviews = false
+    holdSecondary = false
+    getUrls.length = 0
+    DOCS = []
+  })
+  afterEach(() => {
+    for (const k of Object.keys(MEMBERS[0])) delete (MEMBERS[0] as Record<string, unknown>)[k]
+    Object.assign(MEMBERS[0], original)
+  })
+
+  it('{Editor, Reviewer} gets both the edit controls and the review actions', async () => {
+    holding({ role: 'CREATOR', roles: ['CREATOR', 'REVIEWER'] })
+    await renderView()
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Request changes' })).toBeInTheDocument()
+    expect(screen.getByTestId('document-upload-input')).toBeInTheDocument()
+  })
+
+  it('{Editor} edits but gets no review actions, even when assigned', async () => {
+    holding({ role: 'CREATOR', roles: ['CREATOR'] })
+    await renderView()
+    expect(await screen.findByTestId('document-upload-input')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Request changes' })).not.toBeInTheDocument()
+  })
+
+  it('{} is a read-only Viewer: no edit controls and no review actions', async () => {
+    holding({ role: 'REVIEWER', roles: [] })
+    await renderView()
+    await new Promise((r) => setTimeout(r, 50)) // let the role read settle
+    expect(screen.queryByTestId('document-upload-input')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+  })
+
+  it('a server that sends only the legacy role still gates correctly', async () => {
+    holding({ role: 'CREATOR' })
+    await renderView()
+    expect(await screen.findByTestId('document-upload-input')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+  })
+
+  it('only offers members who can review in the reviewer picker', async () => {
+    // user-2 holds Editor + Reviewer; user-3 is a plain Editor now.
+    Object.assign(MEMBERS[1], { roles: ['CREATOR', 'REVIEWER'] })
+    Object.assign(MEMBERS[2], { roles: ['CREATOR'] })
+    try {
+      REVIEWERS = []
+      await renderView()
+      const panel = within(screen.getByTestId('properties-panel'))
+      await userEvent.click(panel.getByRole('button', { name: /add reviewer/i }))
+      expect(await screen.findByText('Cara Creator')).toBeInTheDocument()
+      expect(screen.queryByText('Rita Reviewer')).not.toBeInTheDocument()
+    } finally {
+      delete (MEMBERS[1] as Record<string, unknown>).roles
+      delete (MEMBERS[2] as Record<string, unknown>).roles
+    }
   })
 })

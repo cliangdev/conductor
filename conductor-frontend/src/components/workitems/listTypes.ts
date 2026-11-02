@@ -86,7 +86,9 @@ export interface Member {
   name: string
   email: string
   avatarUrl?: string | null
-  role: MemberRole
+  roles?: MemberRole[]
+  /** @deprecated Read through `memberRoles()`. */
+  role?: MemberRole
 }
 
 export type ListView = 'active' | 'done' | 'all'
