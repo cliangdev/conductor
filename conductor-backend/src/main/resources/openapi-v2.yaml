@@ -5388,7 +5388,9 @@ paths:
         targets; sequences in index order, never sorted) through the same target media-selection path a
         person uses, so the approval gate and bundle hash treat it exactly like any other customisation.
         A target with `custom_media = true` is reported in `targetsSkipped` and left untouched. Requires
-        ADMIN or CREATOR, and the Work Item must be a Post in this project the caller can edit.
+        ADMIN or CREATOR, and the Work Item must be a Post in this project the caller can edit. A DRAFT
+        Creative that passes its readiness checklist becomes READY as part of the attach (`creativeState`);
+        one that does not stays DRAFT and `stateNote` says why. READY and ARCHIVED Creatives are left as they are.
       operationId: attachCreative
       security:
         - bearerAuth: []
@@ -10897,6 +10899,17 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/AttachCreativeTargetSkip"
+        creativeState:
+          $ref: "#/components/schemas/CreativeState"
+          description: >-
+            The Creative's state once the attach is done. A DRAFT Creative that passes the readiness
+            checklist is promoted to READY by the attach; any other state is left as it was.
+        stateNote:
+          type: string
+          nullable: true
+          description: >-
+            Null, or one plain-English sentence saying why the Creative stayed DRAFT (names the first
+            blocking readiness issue).
 
     CreativePerformancePlatform:
       type: object

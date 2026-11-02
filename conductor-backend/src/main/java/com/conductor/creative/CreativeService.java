@@ -576,12 +576,41 @@ public class CreativeService {
     @Transactional(readOnly = true)
     public Readiness readiness(String projectId, String creativeId, User caller) {
         requireMember(projectId, caller);
-        Creative creative = findCreative(projectId, creativeId);
-        MediaResolver media = new MediaResolver(projectId, null);
+        return readinessOf(findCreative(projectId, creativeId));
+    }
+
+    private Readiness readinessOf(Creative creative) {
+        MediaResolver media = new MediaResolver(creative.getProjectId(), null);
         media.preload(referencedMediaIds(creative.getPhotoId(), toSequenceBeats(creative.getSequence()),
                 toClipMediaMap(creative.getClipMedia()), toSlidesMap(creative.getSlides()),
                 toMotion(creative.getMotion()), toAudio(creative.getAudio())));
         return computeReadiness(creative, media);
+    }
+
+    /** A Creative's state after an attach, and (null unless it stayed DRAFT) why. */
+    public record AttachStateOutcome(String state, String note) {
+    }
+
+    /**
+     * Called by attach once a Creative is on a Post: a DRAFT that passes the readiness checklist becomes READY
+     * (saved in the caller's transaction, {@code version} bumped by JPA); one that does not stays DRAFT and the
+     * first blocking item is reported as the reason. Any other state is left as it is. The checklist's own
+     * {@code state} item ("still a draft") is ignored: it is what this promotion resolves.
+     */
+    public AttachStateOutcome promoteOnAttach(Creative creative) {
+        if (!Creative.STATE_DRAFT.equals(creative.getState())) {
+            return new AttachStateOutcome(creative.getState(), null);
+        }
+        ReadinessItem blocker = readinessOf(creative).items().stream()
+                .filter(i -> i.blocking() && !i.ok() && !"state".equals(i.key()))
+                .findFirst().orElse(null);
+        if (blocker != null) {
+            return new AttachStateOutcome(creative.getState(),
+                    "Stays a draft because " + blocker.message() + ".");
+        }
+        creative.setState(Creative.STATE_READY);
+        Creative saved = creativeRepository.save(creative);
+        return new AttachStateOutcome(saved.getState(), null);
     }
 
     /**
