@@ -159,6 +159,19 @@ class WorkItemHierarchyServiceTest {
     }
 
     @Test
+    void aParentWhoseChildrenWereAllCancelledIsLeftForAPersonToDecide() {
+        WorkItem epic = item("epic", "TASK", "IN_PROGRESS", null);
+        item("t1", "TASK", "CANCELLED", "epic");
+        WorkItem t2 = item("t2", "TASK", "CANCELLED", "epic");
+
+        assertThat(service.onChildStatusChanged(PROJECT, t2)).isEmpty();
+
+        assertThat(epic.getCurrentStatus()).isEqualTo("IN_PROGRESS");
+        verify(workItemWorkflowService, never()).applySystemTransition(any(), any(), anyString());
+        verify(workItemRepository, never()).save(any());
+    }
+
+    @Test
     void parentStaysOpenWhileAnyChildIsUnfinished() {
         WorkItem epic = item("epic", "TASK", "IN_PROGRESS", null);
         item("t1", "TASK", "IN_PROGRESS", "epic");

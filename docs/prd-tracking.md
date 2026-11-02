@@ -31,8 +31,17 @@ PRD (ENGINEERING, type PRD)
 - **`TASK` lifecycle** — a built-in, sidebar-hidden Workflow seeded for every project:
   `TODO` (open, initial) → `IN_PROGRESS` → `DONE` (terminal); `CANCELLED` (terminal); `IN_PROGRESS → TODO`
   (Stop), `DONE → TODO` (Reopen). The system trigger `children_done` moves a Task to `DONE` when all of its
-  direct children are terminal. Completion rolls **up only**: reopening a child never reopens its parent, and
-  a PRD (on ENGINEERING, which has no `children_done` edge) is completed by its PR merge as before.
+  direct children are terminal **and at least one of them finished in a status other than `CANCELLED` or
+  `CLOSED`** (matched on status id, the cancel-style ids the built-in Workflows use). A Task whose children
+  were all cancelled stays where it is, for a person to finish or cancel. Completion rolls **up only**:
+  reopening a child never reopens its parent, and a PRD (on ENGINEERING, which has no `children_done` edge)
+  is completed by its PR merge as before.
+- **System-only edges** — the `children_done` edges (`TODO → DONE`, `IN_PROGRESS → DONE`) are the system's,
+  not a person's: `available-transitions` does not list them and a `PATCH` of `status` through one is refused
+  like any other invalid transition (400). A person finishes a Task with the manual `IN_PROGRESS → DONE`
+  (Finish). The rule is a trigger flag, not "has a trigger": an edge that also carries a Review gate
+  (ENGINEERING's `CODE_REVIEW → DONE`, trigger `pr_merged`) stays a person's move once approved, and
+  MARKETING's `APPROVED → SCHEDULED` stays a click even though `review_approved` also fires it.
 - **Dependencies** — `work_item_dependencies(work_item_id, related_work_item_id, kind)`; a row reads
   "*work_item* **kind** *related*": `A BLOCKS B`, `C DISCOVERED_FROM D`. Same project on both ends, no
   self-links, no `BLOCKS` cycles (checked transitively on write, 409), at most 25 outgoing and 25 incoming

@@ -46,6 +46,14 @@ public class WorkItemHierarchyService {
     /** The deepest a branch may go, counting the top of the tree as level 1. */
     public static final int MAX_DEPTH = 5;
 
+    /**
+     * Terminal statuses that mean "abandoned", not "delivered", matched on status id: the cancel-style ids the
+     * built-in Workflows use ({@code CANCELLED} on TASK, {@code CLOSED} on ENGINEERING). The statechart cannot
+     * say so itself -- {@code terminal} covers both -- so this is a naming convention; a custom Workflow that
+     * wants the same treatment names its cancel status one of these.
+     */
+    static final java.util.Set<String> CANCEL_STYLE_STATUSES = java.util.Set.of("CANCELLED", "CLOSED");
+
     /** The Workflow a child lands on when its creator names none. */
     public static final String TASK_WORKFLOW = "TASK";
     public static final String TASK_TYPE = "TASK";
@@ -279,6 +287,10 @@ public class WorkItemHierarchyService {
      * {@code children_done} edge (normally to DONE), and the same check repeats on the grandparent, and so
      * on upward. Returns the moves made, in order, for the caller to publish.
      *
+     * <p>At least one child must have finished in a status other than the cancel-style ones
+     * ({@link #CANCEL_STYLE_STATUSES}): a parent whose children were all cancelled is left as it is, for a
+     * person to finish or cancel.
+     *
      * <p>Only ever forward and only ever upward: a parent already finished is left alone (the edge does not
      * leave a terminal status), a child reopening never reopens its parent, and nothing here touches a
      * child. A parent on any other Workflow -- a PRD on ENGINEERING completes when its pull request merges --
@@ -297,6 +309,10 @@ public class WorkItemHierarchyService {
             }
             List<WorkItem> siblings = workItemRepository.findChildren(parent.getId());
             if (siblings.isEmpty() || !siblings.stream().allMatch(charts::isTerminal)) {
+                break;
+            }
+            // All children cancelled: nothing was delivered, so whether the parent is done is a person's call.
+            if (siblings.stream().allMatch(s -> CANCEL_STYLE_STATUSES.contains(s.getCurrentStatus()))) {
                 break;
             }
             String from = parent.getCurrentStatus();
