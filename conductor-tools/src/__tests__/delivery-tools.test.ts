@@ -171,7 +171,12 @@ describe('delivery tools', () => {
   })
 
   it('add/remove dependency', async () => {
-    mock(apiPost).mockResolvedValue({ dependencyId: 'd1' })
+    mock(apiPost).mockResolvedValue({
+      blocks: [{ dependencyId: 'd0', id: 'z' }, { dependencyId: 'd1', id: 'b' }],
+      blockedBy: [],
+      discoveredFrom: [],
+      discovered: [],
+    })
     expect(await addDependency({ issueId: 'a', kind: 'BLOCKS', relatedIssueId: 'b' }, config)).toEqual({ dependencyId: 'd1' })
     expect(apiPost).toHaveBeenCalledWith(`${P}/work-items/a/dependencies`, { kind: 'BLOCKS', relatedWorkItemId: 'b' }, config)
     expect(await removeDependency({ issueId: 'a', dependencyId: 'd1' }, config)).toEqual({ removed: true })
@@ -183,8 +188,8 @@ describe('delivery tools', () => {
     const out = await setCriteria({ issueId: 'a', criteria: [{ text: 'x', externalRef: 'AC-1' }, { text: 'y' }] }, config)
     expect(out).toEqual([{ criterionId: 'c1', externalRef: 'AC-1' }, { criterionId: 'c2', externalRef: null }])
     expect(mock(apiPut).mock.calls[0]![1]).toEqual([
-      { text: 'x', kind: 'manual', externalRef: 'AC-1' },
-      { text: 'y', kind: 'manual', externalRef: undefined },
+      { text: 'x', kind: 'auto', externalRef: 'AC-1' },
+      { text: 'y', kind: 'auto', externalRef: undefined },
     ])
   })
 
@@ -229,7 +234,7 @@ describe('delivery tools', () => {
 
     it('PATCHes when the name exists', async () => {
       mock(apiGet).mockResolvedValue([{ id: 'm1', name: 'Beta' }])
-      const out = await setMilestone({ name: 'Beta', state: 'CLOSED' }, config)
+      const out = await setMilestone({ name: 'beta', state: 'CLOSED' }, config)
       expect(apiPatch).toHaveBeenCalledWith(`${P}/milestones/m1`, { state: 'CLOSED' }, config)
       expect(apiPost).not.toHaveBeenCalled()
       expect(out).toEqual({ id: 'm1', name: 'Beta' })

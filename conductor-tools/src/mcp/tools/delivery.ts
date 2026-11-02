@@ -36,12 +36,30 @@ export async function addDependency(
   params: { issueId: string; kind: string; relatedIssueId: string },
   config: Config
 ): Promise<Record<string, unknown>> {
-  const res = await apiPost<{ dependencyId?: string; id?: string }>(
+  // The backend answers with the item's grouped dependency listing; the new row sits in the group
+  // for the direction we just asserted ("issueId BLOCKS related" lands in `blocks`).
+  const res = await apiPost<DependencyListing>(
     `${item(config, params.issueId)}/dependencies`,
     { kind: params.kind, relatedWorkItemId: params.relatedIssueId },
     config
   )
-  return { dependencyId: res.dependencyId ?? res.id }
+  const group = params.kind === 'DISCOVERED_FROM' ? res.discoveredFrom : res.blocks
+  const row = group?.find((d) => d.id === params.relatedIssueId)
+  return { dependencyId: row?.dependencyId ?? res.dependencyId ?? res.id }
+}
+
+interface DependencyEntry {
+  dependencyId?: string
+  id?: string
+}
+
+interface DependencyListing {
+  blocks?: DependencyEntry[]
+  blockedBy?: DependencyEntry[]
+  discoveredFrom?: DependencyEntry[]
+  discovered?: DependencyEntry[]
+  dependencyId?: string
+  id?: string
 }
 
 export async function removeDependency(
@@ -66,7 +84,7 @@ export async function setCriteria(
 ): Promise<Record<string, unknown>[]> {
   const body = params.criteria.map((c) => ({
     text: c.text,
-    kind: c.kind ?? 'manual',
+    kind: c.kind ?? 'auto',
     externalRef: c.externalRef,
   }))
   const rows = await apiPut<Criterion[]>(`${item(config, params.issueId)}/criteria`, body, config)
@@ -135,7 +153,8 @@ export async function setMilestone(
 ): Promise<Record<string, unknown>> {
   const name = params.name.trim()
   const rows = await apiGet<Milestone[]>(`${base(config)}/milestones`, config)
-  const existing = rows.find((m) => m.name === name)
+  // The backend refuses names that collide case-insensitively, so match the same way.
+  const existing = rows.find((m) => m.name.trim().toLowerCase() === name.toLowerCase())
 
   const fields: Record<string, unknown> = {}
   if (params.targetOn !== undefined) fields['targetOn'] = params.targetOn
