@@ -170,6 +170,34 @@ public class WorkItem {
     @Column(name = "current_review_round", nullable = false)
     private int currentReviewRound = 0;
 
+    // --- Delivery tracking (V167/V168). Workflow-agnostic: any Work Item can carry these. ---
+
+    /** P0..P3 stored as 0..3; null means no priority. */
+    @JdbcTypeCode(SqlTypes.SMALLINT)
+    @Column(name = "priority")
+    private Integer priority;
+
+    /** The milestone this item is grouped under; null when it has none. Lazy, like the other associations. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "milestone_id")
+    private Milestone milestone;
+
+    /** The time box as the author wrote it, normalised (e.g. {@code 2 weeks}); null when none is set. */
+    @Column(name = "appetite", length = 32)
+    private String appetite;
+
+    /** {@link #appetite} in days (a week is 7, a month 30); null when none is set. */
+    @Column(name = "appetite_days")
+    private Integer appetiteDays;
+
+    /** When the item first moved into an in-progress status; null until then. Never reset by a reopen. */
+    @Column(name = "started_at")
+    private OffsetDateTime startedAt;
+
+    /** When the item entered a terminal status; cleared again if it is reopened. */
+    @Column(name = "completed_at")
+    private OffsetDateTime completedAt;
+
     @PrePersist
     protected void onCreate() {
         if (id == null) {
@@ -254,6 +282,24 @@ public class WorkItem {
 
     public int getCurrentReviewRound() { return currentReviewRound; }
     public void setCurrentReviewRound(int currentReviewRound) { this.currentReviewRound = currentReviewRound; }
+
+    public Integer getPriority() { return priority; }
+    public void setPriority(Integer priority) { this.priority = priority; }
+
+    public Milestone getMilestone() { return milestone; }
+    public void setMilestone(Milestone milestone) { this.milestone = milestone; }
+
+    public String getAppetite() { return appetite; }
+    public void setAppetite(String appetite) { this.appetite = appetite; }
+
+    public Integer getAppetiteDays() { return appetiteDays; }
+    public void setAppetiteDays(Integer appetiteDays) { this.appetiteDays = appetiteDays; }
+
+    public OffsetDateTime getStartedAt() { return startedAt; }
+    public void setStartedAt(OffsetDateTime startedAt) { this.startedAt = startedAt; }
+
+    public OffsetDateTime getCompletedAt() { return completedAt; }
+    public void setCompletedAt(OffsetDateTime completedAt) { this.completedAt = completedAt; }
 
     public JsonNode getWorkItemTasks() { return workItemTasks; }
     public void setWorkItemTasks(JsonNode workItemTasks) { this.workItemTasks = workItemTasks; }

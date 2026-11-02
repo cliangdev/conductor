@@ -58,6 +58,12 @@ public class WorkItemWorkflowService {
      */
     public static final String TRIGGER_REVIEW_APPROVED = "review_approved";
 
+    /**
+     * System trigger fired on a parent when its last direct child reaches a terminal status; see
+     * {@code WorkItemHierarchyService#onChildStatusChanged}.
+     */
+    public static final String TRIGGER_CHILDREN_DONE = "children_done";
+
     private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
     private final ProjectMemberRepository projectMemberRepository;
@@ -185,6 +191,11 @@ public class WorkItemWorkflowService {
                 if (PublishingWorkflow.isPipelineOutcomeEdge(statechart, currentStatus, t.to())) {
                     continue;
                 }
+                // Two edges to one status (TASK's manual "Finish" and its children_done roll-up) are one
+                // move to a person: offer the first declared.
+                if (transitions.stream().anyMatch(existing -> existing.toStatus().equals(t.to()))) {
+                    continue;
+                }
                 transitions.add(new AvailableTransitionsView.Transition(t.to(), t.label(), t.requiresReview()));
             }
         }
@@ -228,7 +239,9 @@ public class WorkItemWorkflowService {
         // on any edge the gate does not guard, so pr_merged on ENGINEERING is untouched; a refusal throws,
         // leaving the status exactly where it was for the caller to report.
         publishGateEvaluator.enforce(workItem, statechart, t.to());
+        String previousStatus = workItem.getCurrentStatus();
         workItem.setCurrentStatus(t.to());
+        CycleTimestamps.stamp(statechart, workItem, previousStatus, t.to(), java.time.OffsetDateTime.now());
         return transition;
     }
 

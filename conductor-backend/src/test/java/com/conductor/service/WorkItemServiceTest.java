@@ -97,6 +97,12 @@ class WorkItemServiceTest {
     @Mock
     private PostScheduleValidator postScheduleValidator;
 
+    @Mock
+    private WorkItemHierarchyService hierarchyService;
+
+    @Mock
+    private MilestoneService milestoneService;
+
     @InjectMocks
     private WorkItemService workItemService;
 
@@ -431,7 +437,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByType() {
         when(projectRepository.existsById("proj-1")).thenReturn(true);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", null, null, null))
+        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", null, null, null, null, false, null, null, null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", "PRD", null, null, caller);
@@ -444,7 +450,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByStatus() {
         when(projectRepository.existsById("proj-1")).thenReturn(true);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", null, "DRAFT", null, null))
+        when(workItemRepository.findByProjectFiltered("proj-1", null, "DRAFT", null, null, null, false, null, null, null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", null, "DRAFT", null, caller);
@@ -457,7 +463,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByTypeAndStatus() {
         when(projectRepository.existsById("proj-1")).thenReturn(true);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", "DRAFT", null, null))
+        when(workItemRepository.findByProjectFiltered("proj-1", "PRD", "DRAFT", null, null, null, false, null, null, null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", "PRD", "DRAFT", null, caller);
@@ -469,7 +475,7 @@ class WorkItemServiceTest {
     void listIssuesFiltersByWorkflow() {
         when(projectRepository.existsById("proj-1")).thenReturn(true);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findByProjectFiltered("proj-1", null, null, "ENGINEERING", null))
+        when(workItemRepository.findByProjectFiltered("proj-1", null, null, "ENGINEERING", null, null, false, null, null, null))
                 .thenReturn(List.of(testIssue));
 
         List<WorkItem> results = workItemService.listWorkItemEntities("proj-1", null, null, "ENGINEERING", caller);
