@@ -70,6 +70,24 @@ public class WorkItemDependencyService {
     }
 
     /**
+     * Checks that every id names a Work Item of this project, for blockers named on a create: run before the
+     * item exists so a bad id is a 400 naming it, not a 404 for the item being created.
+     *
+     * @throws BusinessException 400 for the first blank, unknown or foreign id
+     */
+    @Transactional(readOnly = true)
+    public void requireBlockersInProject(String projectId, java.util.Collection<String> blockerIds) {
+        if (blockerIds == null) {
+            return;
+        }
+        for (String id : blockerIds) {
+            if (id == null || id.isBlank() || inProject(projectId, id).isEmpty()) {
+                throw new BusinessException("blockedBy Work Item " + id + " was not found in this project");
+            }
+        }
+    }
+
+    /**
      * Records "{@code itemId} {@code kind} {@code relatedId}" and returns the stored link, or the existing
      * one when the same link is already there.
      *

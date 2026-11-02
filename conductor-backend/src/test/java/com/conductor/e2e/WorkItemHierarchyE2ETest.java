@@ -178,6 +178,13 @@ class WorkItemHierarchyE2ETest extends AbstractE2ETest {
         // B is blocked by A from the moment it is created.
         String b = create(Map.of("title", "Task B", "parentWorkItemId", prd, "blockedBy", List.of(a)));
 
+        // An unknown blocker is a 400 naming it, and nothing is created.
+        int before = list("").size();
+        var rejected = call(HttpMethod.POST, items(), Map.of("title", "Task C", "parentWorkItemId", prd,
+                "blockedBy", List.of(a, "no-such-id")), HttpStatus.BAD_REQUEST);
+        assertThat(String.valueOf(rejected)).contains("no-such-id");
+        assertThat(list("")).hasSize(before);
+
         var bBody = get(b);
         assertThat(map(bBody, "signals")).containsEntry("blocked", true).containsEntry("ready", false);
         @SuppressWarnings("unchecked")

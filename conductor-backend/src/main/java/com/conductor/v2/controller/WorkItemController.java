@@ -108,6 +108,9 @@ public class WorkItemController implements WorkItemsApi {
         if ((request.getType() == null || request.getType().isBlank()) && !(subItem && noWorkflow)) {
             throw new BusinessException("type is required — a Workflow-defined type such as PRD");
         }
+        // Blockers are checked before the item exists: a bad id is a 400 naming it, not the 404 that adding
+        // it as a link to a not-yet-found item would raise.
+        dependencyService.requireBlockersInProject(projectId, request.getBlockedBy());
         WorkItemService.DeliveryInput delivery = new WorkItemService.DeliveryInput(
                 request.getParentWorkItemId(),
                 request.getPriority() == null ? null : PriorityScale.parse(request.getPriority().getValue()),
