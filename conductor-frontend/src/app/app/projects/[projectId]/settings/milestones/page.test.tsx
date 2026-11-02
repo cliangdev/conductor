@@ -18,11 +18,17 @@ vi.mock('@/lib/api', async (importOriginal) => {
   }
 })
 
+const perms = vi.hoisted(() => ({ canManage: true }))
+vi.mock('@/contexts/PermissionsContext', () => ({
+  usePermissions: () => ({ can: (cap: string) => cap === 'milestone.manage' && perms.canManage }),
+}))
+
 import MilestonesSettingsPage from './page'
 
 const beta = { id: 'm1', projectId: 'proj-1', name: 'Beta', targetOn: '2026-12-01', state: 'OPEN', sortOrder: 0, createdAt: '', updatedAt: '' }
 
 beforeEach(() => {
+  perms.canManage = true
   apiGet.mockReset().mockResolvedValue([beta])
   apiPost.mockReset().mockResolvedValue({ ...beta, id: 'm2', name: 'GA' })
   apiPatch.mockReset().mockResolvedValue(undefined)
@@ -51,6 +57,16 @@ describe('milestone settings page', () => {
     await waitFor(() => expect(apiPatch).toHaveBeenCalled())
     expect(apiPatch.mock.calls[0][0]).toBe('/api/v2/projects/proj-1/milestones/m1')
     expect(apiPatch.mock.calls[0][1]).toEqual({ state: 'CLOSED' })
+  })
+
+  it('hides Add, Edit, Close and Delete from a role the backend would reject', async () => {
+    perms.canManage = false
+    render(<MilestonesSettingsPage />)
+    expect(await screen.findByText('Beta')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add milestone' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete milestone Beta' })).not.toBeInTheDocument()
   })
 
   it('shows the empty state with no milestones', async () => {

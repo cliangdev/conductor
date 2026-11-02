@@ -62,7 +62,9 @@ export const AUTOMATION_NAV: StaticNavEntry[] = [
 // are capability-gated inside the page), and API Keys has no capability check at all — the keys are
 // personal, tied to the signed-in user, not the workspace. AI Providers and Secrets *are* gated:
 // both are credential/provisioning surfaces (the Configure layer's own definition) whose read-only
-// view (connection badges, secret key names) isn't the reason anyone would visit.
+// view (connection badges, secret key names) isn't the reason anyone would visit. Milestones is gated
+// too: its only job is editing (the backend's MilestoneController requires ADMIN/CREATOR), and the
+// dates are read on the roadmap.
 export const SETTINGS_NAV: StaticNavEntry[] = [
   { key: 'settings-general', label: 'General', icon: SlidersHorizontalIcon, path: (id) => `/app/projects/${id}/settings/general` },
   { key: 'settings-brand', label: 'Brand', icon: PaletteIcon, path: (id) => `/app/projects/${id}/settings/brand` },
@@ -70,7 +72,7 @@ export const SETTINGS_NAV: StaticNavEntry[] = [
   { key: 'settings-api-keys', label: 'API Keys', icon: KeyIcon, path: (id) => `/app/projects/${id}/settings/api-keys` },
   { key: 'settings-providers', label: 'AI Providers', icon: SparklesIcon, path: (id) => `/app/projects/${id}/settings/providers`, permission: 'agent.manage' },
   { key: 'settings-secrets', label: 'Secrets', icon: LockIcon, path: (id) => `/app/projects/${id}/settings/secrets`, permission: 'workflow.manage' },
-  { key: 'settings-milestones', label: 'Milestones', icon: FlagIcon, path: (id) => `/app/projects/${id}/settings/milestones` },
+  { key: 'settings-milestones', label: 'Milestones', icon: FlagIcon, path: (id) => `/app/projects/${id}/settings/milestones`, permission: 'milestone.manage' },
   { key: 'settings-notifications', label: 'Notifications', icon: BellIcon, path: (id) => `/app/projects/${id}/settings/notifications` },
   { key: 'settings-cli', label: 'CLI', icon: TerminalIcon, path: (id) => `/app/projects/${id}/settings/cli` },
 ]
