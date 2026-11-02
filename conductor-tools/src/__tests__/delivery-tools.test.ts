@@ -27,6 +27,8 @@ import {
   markCriterionMet,
   setMilestone,
   reportAgentActivity,
+  getForecast,
+  draftHealthUpdate,
 } from '../mcp/tools/delivery.js'
 
 const config: Config = {
@@ -250,5 +252,24 @@ describe('delivery tools', () => {
       config
     )
     expect(out).toEqual({ sessionKey: 's 1', activity: 'WORKING' })
+  })
+
+  it('get_forecast returns the backend forecast as-is', async () => {
+    const forecast = { state: 'OK', remaining: 4, p50Date: '2026-11-12', appetiteFit: 'FITS' }
+    mock(apiGet).mockResolvedValue(forecast)
+    const out = await getForecast({ issueId: 'a' }, config)
+    expect(apiGet).toHaveBeenCalledWith(`${P}/work-items/a/forecast`, config)
+    expect(out).toEqual(forecast)
+  })
+
+  it('draft_health_update posts a draft and reports it pending', async () => {
+    mock(apiPost).mockResolvedValue({ id: 'u1', health: 'AT_RISK', note: 'n', confirmedAt: null })
+    const out = await draftHealthUpdate({ issueId: 'a', health: 'AT_RISK', note: 'n' }, config)
+    expect(apiPost).toHaveBeenCalledWith(
+      `${P}/work-items/a/health-updates`,
+      { health: 'AT_RISK', note: 'n', draft: true },
+      config
+    )
+    expect(out).toEqual({ updateId: 'u1', health: 'AT_RISK', pendingConfirmation: true })
   })
 })

@@ -195,3 +195,29 @@ export async function reportAgentActivity(
   )
   return { sessionKey: params.sessionKey, activity: params.activity }
 }
+
+/** Throughput forecast for a Work Item subtree; the backend object is small, so it is returned as-is. */
+export async function getForecast(
+  params: { issueId: string },
+  config: Config
+): Promise<unknown> {
+  return apiGet<unknown>(`${item(config, params.issueId)}/forecast`, config)
+}
+
+interface HealthUpdate {
+  id: string
+  health: string
+}
+
+/** Drafts a health update; the owner confirms it in the web app. */
+export async function draftHealthUpdate(
+  params: { issueId: string; health: string; note: string },
+  config: Config
+): Promise<Record<string, unknown>> {
+  const res = await apiPost<HealthUpdate>(
+    `${item(config, params.issueId)}/health-updates`,
+    { health: params.health, note: params.note, draft: true },
+    config
+  )
+  return { updateId: res.id, health: res.health ?? params.health, pendingConfirmation: true }
+}
