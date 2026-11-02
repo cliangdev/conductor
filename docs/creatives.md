@@ -403,8 +403,31 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   sent to Conductor.
 - **Then a CAROUSEL.** The returned `slidePaths` go to `preview_creative_draft({kind: "CAROUSEL",
   slidePaths, caption, slideAltText})`, and after approval `commit_creative_draft`. The result is an
-  ordinary [CAROUSEL Creative](#finished-images-carousel); the backend never sees the spec, only the
-  finished images.
+  ordinary [CAROUSEL Creative](#finished-images-carousel) that can also keep the spec (below).
+- **The stored spec.** A CAROUSEL may carry `slideshowSpec` (`creative.slideshow_spec`, jsonb, nullable):
+  the spec its slides were composed from, in the same shape as above except that every image field
+  (`bg`, `shot`, `photos[].src`, `days[].img`) is `media:<id>`, the id of an IMAGE in the project's media
+  library, and a `resolvedStyle` key is stripped (the resolved style stays in `slideStyle`). Create, PATCH and
+  draft-spec accept it and `CreativeResponse` returns it. Validation answers 422 with a `ruleId`:
+  `slideshowSpecKind` (not a CAROUSEL), `slideshowSpecInvalid` (structure: `id` 1-80 characters, 1-35
+  slide objects, editable text at most 500 characters, finite numbers, a 256 KB cap; the CLI validates
+  fully before sending), `slideshowSpecMedia` (an image field is not `media:<id>` of an image in this
+  project; all refs are resolved in one query) and `slideshowSpecSlideCount` (every non-empty list in
+  `slides` must have as many entries as the spec has slides). Like `slideStyle`, it is cleared by a PATCH
+  that changes the slides (ids or order, any placement) without sending a spec, by changing the kind away
+  from CAROUSEL, and by an explicit `null` (or `{}`); resending identical slides keeps it, and a draft over
+  `baseCreativeId` inherits it on the same terms. A variant copies it.
+- **Revisions.** Setting or replacing the spec writes a `creative_revision` row in the same transaction as the
+  save: source `IMPORT` when the Creative had no spec, `COMMIT` when it replaced one or the spec was set at
+  create. A revision snapshots the spec, slides, alt text and style, the Creative `version` after the save,
+  the author, and a `text_diff` (`[{slide, path, old, new}]`, the editable strings that changed over the
+  slides both specs have; empty for `IMPORT` and for a create). Resending an identical spec, and clearing,
+  write none. `GET /api/v2/projects/{id}/marketing/creatives/{creativeId}/revisions` returns
+  `{revisions: [...]}`, newest first, at most 50, to any project member (no spec or slides in the list; read
+  the spec from the Creative). Which strings are editable is `conductor-creative/slideshow-text-fields.json`
+  (patterns such as `texts[].t` and `rows[].items[]`, plus the 500-character limit), mirrored by
+  `SlideshowTextFields` in the backend, which lists, applies and diffs them (parity test
+  `SlideshowTextFieldsParityTest`).
 - **Fonts:** the bundled TikTok Sans (600, 700, 800) under the SIL Open Font License, in
   `conductor-tools/assets/fonts/` with `OFL.txt`.
 - **Style.** The native look is the default. A `SlideshowStyle` (`fontFamily`, a name or comma list such as `Inter, sans-serif`; `fontUrl` for an https CSS

@@ -400,6 +400,40 @@ public class CreativeController implements CreativesApi {
         return ResponseEntity.ok(new AttachCreativeResponse(assets, updated, skipped));
     }
 
+    // ── Slideshow-spec revisions ─────────────────────────────────────────
+
+    @Override
+    public ResponseEntity<com.conductor.generated.v2.model.CreativeRevisionListResponse> listCreativeRevisions(
+            String projectId, String creativeId) {
+        List<com.conductor.generated.v2.model.CreativeRevision> revisions =
+                creativeService.listRevisions(projectId, creativeId, currentUser()).stream()
+                        .map(this::toResponse).toList();
+        return ResponseEntity.ok(new com.conductor.generated.v2.model.CreativeRevisionListResponse(revisions));
+    }
+
+    private com.conductor.generated.v2.model.CreativeRevision toResponse(com.conductor.creative.CreativeRevision r) {
+        List<com.conductor.generated.v2.model.CreativeRevisionTextChange> diff = new java.util.ArrayList<>();
+        if (r.getTextDiff() != null) {
+            r.getTextDiff().forEach(n -> diff.add(new com.conductor.generated.v2.model.CreativeRevisionTextChange(
+                    n.get("slide").asInt(), n.get("path").asText())
+                    .old(n.hasNonNull("old") ? n.get("old").asText() : null)
+                    ._new(n.hasNonNull("new") ? n.get("new").asText() : null)));
+        }
+        return new com.conductor.generated.v2.model.CreativeRevision(r.getId(), r.getRevisionNo(),
+                r.getCreativeVersion(),
+                com.conductor.generated.v2.model.CreativeRevision.StatusEnum.fromValue(r.getStatus()),
+                com.conductor.generated.v2.model.CreativeRevision.SourceEnum.fromValue(r.getSource()),
+                diff, r.getCreatedAt())
+                .checks(r.getChecks() != null ? objectMapper.convertValue(r.getChecks(),
+                        new TypeReference<List<java.util.Map<String, Object>>>() { }) : null)
+                .authorUserId(r.getAuthorUserId())
+                .postId(r.getPostId())
+                .reviewRound(r.getReviewRound())
+                .renderId(r.getRenderId())
+                .error(r.getError())
+                .appliedAt(r.getAppliedAt());
+    }
+
     // ── Performance + experiments (COND-24 T5) ──────────────────────────
 
     @Override
@@ -547,6 +581,9 @@ public class CreativeController implements CreativesApi {
                 .motion(toMotion(c.getMotion()))
                 .audio(toAudio(c.getAudio()))
                 .slideStyle(com.conductor.creative.SlideshowStyles.fromStored(objectMapper, c.getSlideStyle()))
+                .slideshowSpec(c.getSlideshowSpec() != null
+                        ? objectMapper.convertValue(c.getSlideshowSpec(),
+                                new TypeReference<LinkedHashMap<String, Object>>() { }) : null)
                 .slideshow(c.getSlideshow() != null
                         ? objectMapper.convertValue(c.getSlideshow(), CreativeSlideshow.class) : null)
                 .createdBy(c.getCreatedBy())

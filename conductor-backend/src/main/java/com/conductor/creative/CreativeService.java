@@ -81,6 +81,7 @@ public class CreativeService {
     private final CreativeRenderFrameRepository frameRepository;
     private final CreativeRenderRepository renderRepository;
     private final AssetRepository assetRepository;
+    private final CreativeRevisionRepository revisionRepository;
 
     public CreativeService(CreativeRepository creativeRepository,
                            CreativePhotoRepository photoRepository,
@@ -98,7 +99,8 @@ public class CreativeService {
                            CreativeExperimentRepository experimentRepository,
                            CreativeRenderFrameRepository frameRepository,
                            CreativeRenderRepository renderRepository,
-                           AssetRepository assetRepository) {
+                           AssetRepository assetRepository,
+                           CreativeRevisionRepository revisionRepository) {
         this.creativeRepository = creativeRepository;
         this.photoRepository = photoRepository;
         this.brandKitRepository = brandKitRepository;
@@ -116,6 +118,7 @@ public class CreativeService {
         this.frameRepository = frameRepository;
         this.renderRepository = renderRepository;
         this.assetRepository = assetRepository;
+        this.revisionRepository = revisionRepository;
     }
 
     /**
@@ -236,6 +239,9 @@ public class CreativeService {
         creative.setCreatedBy(caller.getId());
 
         creative = saveWithNextNumber(creative);
+        if (creative.getSlideshowSpec() != null) {
+            recordSpecRevision(creative, CreativeRevision.SOURCE_COMMIT, emptyDiff(), caller);
+        }
         return toView(projectId, creative, loadPhotos(List.of(creative)));
     }
 
@@ -296,6 +302,8 @@ public class CreativeService {
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput())));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         violations.addAll(slideStyleViolations(kind, request.getSlideStyle()));
+        JsonNode slideshowSpec = toSpecNode(request.getSlideshowSpec());
+        violations.addAll(slideshowSpecViolations(projectId, kind, slideshowSpec, slides));
         violations.addAll(0, media.violations());
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
@@ -332,6 +340,7 @@ public class CreativeService {
         creative.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
         creative.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
         creative.setSlideStyle(SlideshowStyles.toStored(objectMapper, request.getSlideStyle()));
+        creative.setSlideshowSpec(slideshowSpec);
         return new PreparedCreate(kit, creative, motionRes, sound);
     }
 
@@ -426,6 +435,8 @@ public class CreativeService {
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput()));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         violations.addAll(slideStyleViolations(kind, request.getSlideStyle()));
+        JsonNode requestedSpec = toSpecNode(request.getSlideshowSpec());
+        violations.addAll(slideshowSpecViolations(projectId, kind, requestedSpec, slides));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -478,8 +489,32 @@ public class CreativeService {
         } else if (slidesChanged) {
             current.setSlideStyle(null);
         }
+        // The slideshow spec follows the same rules as the style: sending one replaces it (null or {} clears it),
+        // changing the slides without sending one clears it, resending the same slides keeps it, and leaving
+        // CAROUSEL drops it. A revision is recorded only when the stored spec actually changes to another spec.
+        JsonNode priorSpec = current.getSlideshowSpec();
+        JsonNode newSpec;
+        if (!Creative.KIND_CAROUSEL.equals(kind)) {
+            newSpec = null;
+        } else if (request.getSlideshowSpec() != null) {
+            newSpec = requestedSpec;
+        } else if (slidesChanged) {
+            newSpec = null;
+        } else {
+            newSpec = priorSpec;
+        }
+        current.setSlideshowSpec(newSpec);
+        boolean specChanged = newSpec != null && !newSpec.equals(priorSpec);
 
-        current = creativeRepository.save(current);
+        current = specChanged ? creativeRepository.saveAndFlush(current) : creativeRepository.save(current);
+        if (specChanged) {
+            if (priorSpec == null) {
+                recordSpecRevision(current, CreativeRevision.SOURCE_IMPORT, emptyDiff(), caller);
+            } else {
+                recordSpecRevision(current, CreativeRevision.SOURCE_COMMIT,
+                        SlideshowTextFields.diffJson(priorSpec, newSpec), caller);
+            }
+        }
         return toView(projectId, current, loadPhotos(List.of(current)));
     }
 
@@ -546,12 +581,16 @@ public class CreativeService {
         variant.setAudio(sound.audio() != null ? objectMapper.valueToTree(sound.audio()) : null);
         variant.setSlideshow(root.getSlideshow());
         variant.setSlideStyle(root.getSlideStyle());
+        variant.setSlideshowSpec(root.getSlideshowSpec());
         variant.setTypeOverrides(objectMapper.createObjectNode());
         variant.setLayoutOverrides(root.getLayoutOverrides());
         variant.setLockup(root.getLockup());
         variant.setCreatedBy(caller.getId());
 
         variant = saveWithNextLetter(variant);
+        if (variant.getSlideshowSpec() != null) {
+            recordSpecRevision(variant, CreativeRevision.SOURCE_IMPORT, emptyDiff(), caller);
+        }
         return toView(projectId, variant, loadPhotos(List.of(variant)));
     }
 
@@ -1011,6 +1050,8 @@ public class CreativeService {
                     .audio(toAudio(base.getAudio()))
                     .slideshow(toSlideshow(base.getSlideshow()))
                     .slideStyle(SlideshowStyles.fromStored(objectMapper, base.getSlideStyle()))
+                    .slideshowSpec(base.getSlideshowSpec() != null
+                            ? objectMapper.convertValue(base.getSlideshowSpec(), SPEC_MAP) : null)
                     .layoutOverrides(base.getLayoutOverrides() != null
                             ? objectMapper.convertValue(base.getLayoutOverrides(), CreativeLayoutOverrides.class) : null);
         }
@@ -1039,6 +1080,11 @@ public class CreativeService {
                     && !draft.getSlides().equals(toSlidesMap(base.getSlides()))) {
                 merged.setSlideStyle(null);
             }
+            // Likewise the base's spec describes the base's slides: different slides need their own spec.
+            if (draft.getSlideshowSpec() == null && base != null
+                    && !draft.getSlides().equals(toSlidesMap(base.getSlides()))) {
+                merged.setSlideshowSpec(null);
+            }
         }
         if (draft.getSlideAltText() != null) merged.setSlideAltText(draft.getSlideAltText());
         if (draft.getMotion() != null) merged.setMotion(draft.getMotion());
@@ -1050,6 +1096,13 @@ public class CreativeService {
         } else if (merged.getKind() == null || !Creative.KIND_CAROUSEL.equals(merged.getKind().getValue())) {
             // The base style belongs to a CAROUSEL: another kind must not carry it (it would 422 on slideStyle).
             merged.setSlideStyle(null);
+        }
+        if (draft.getSlideshowSpec() != null) {
+            // An empty spec ({} or an explicit null) clears the base's.
+            merged.setSlideshowSpec(draft.getSlideshowSpec().isEmpty() ? null : draft.getSlideshowSpec());
+        } else if (merged.getKind() == null || !Creative.KIND_CAROUSEL.equals(merged.getKind().getValue())) {
+            // The base spec belongs to a CAROUSEL: another kind must not carry it (it would 422 on slideshowSpecKind).
+            merged.setSlideshowSpec(null);
         }
         if (draft.getLayoutOverrides() != null) merged.setLayoutOverrides(draft.getLayoutOverrides());
         // The base's pinned typeOverrides are deliberately not copied in (see buildDraftSpec): they are kept
@@ -1489,6 +1542,124 @@ public class CreativeService {
                 .forEach(p -> out.add(new Violation(p.field(), "bounds", p.message())));
         return out;
     }
+
+    private static final TypeReference<Map<String, Object>> SPEC_MAP = new TypeReference<>() { };
+
+    /**
+     * The spec to store for a request value: null for absent, null or empty ({@code {}} is how an explicit JSON
+     * null reaches us), otherwise a copy with any client-sent {@code resolvedStyle} removed.
+     */
+    private JsonNode toSpecNode(Map<String, Object> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return null;
+        }
+        JsonNode node = objectMapper.valueToTree(raw);
+        SlideshowSpecs.stripResolvedStyle((com.fasterxml.jackson.databind.node.ObjectNode) node);
+        return node;
+    }
+
+    /**
+     * A slideshow spec is CAROUSEL-only ({@code slideshowSpecKind}), structurally valid
+     * ({@code slideshowSpecInvalid}), names only IMAGE media of this project ({@code slideshowSpecMedia} — one
+     * query for all refs), and has one slide per entry of every non-empty {@code slides} list
+     * ({@code slideshowSpecSlideCount}).
+     */
+    private List<Violation> slideshowSpecViolations(String projectId, String kind, JsonNode spec,
+                                                    Map<String, List<String>> slides) {
+        List<Violation> out = new ArrayList<>();
+        if (spec == null) {
+            return out;
+        }
+        if (!Creative.KIND_CAROUSEL.equals(kind)) {
+            out.add(new Violation(SlideshowSpecs.FIELD, SlideshowSpecs.RULE_KIND,
+                    "slideshowSpec only applies to a CAROUSEL creative, not " + kind));
+            return out;
+        }
+        List<SlideshowSpecs.Problem> problems = new ArrayList<>(SlideshowSpecs.validate(spec));
+        boolean structural = problems.isEmpty();
+        List<SlideshowSpecs.ImageRef> refs = SlideshowSpecs.imageRefs(spec);
+        Set<String> wanted = new HashSet<>();
+        for (SlideshowSpecs.ImageRef ref : refs) {
+            String id = SlideshowSpecs.mediaId(ref.value());
+            if (id == null) {
+                problems.add(new SlideshowSpecs.Problem(ref.field(), SlideshowSpecs.RULE_MEDIA, ref.field()
+                        + " must be media:<id> of an image in this project's media library"));
+            } else {
+                wanted.add(id);
+            }
+        }
+        Map<String, CreativePhoto> found = new HashMap<>();
+        if (!wanted.isEmpty()) {
+            for (CreativePhoto photo : photoRepository.findAllByIdIn(wanted)) {
+                if (projectId.equals(photo.getProjectId())) {
+                    found.put(photo.getId(), photo);
+                }
+            }
+        }
+        for (SlideshowSpecs.ImageRef ref : refs) {
+            String id = SlideshowSpecs.mediaId(ref.value());
+            if (id == null) {
+                continue;
+            }
+            CreativePhoto photo = found.get(id);
+            if (photo == null) {
+                problems.add(new SlideshowSpecs.Problem(ref.field(), SlideshowSpecs.RULE_MEDIA,
+                        ref.field() + " " + ref.value() + " is not media in this project"));
+            } else if (!CreativePhoto.MEDIA_KIND_IMAGE.equals(photo.getMediaKind())) {
+                problems.add(new SlideshowSpecs.Problem(ref.field(), SlideshowSpecs.RULE_MEDIA,
+                        ref.field() + " " + ref.value() + " is not an image"));
+            }
+        }
+        if (structural) {
+            int count = spec.get("slides").size();
+            new java.util.TreeMap<>(slides).forEach((key, list) -> {
+                if (!list.isEmpty() && list.size() != count) {
+                    problems.add(new SlideshowSpecs.Problem(SlideshowSpecs.FIELD + ".slides", SlideshowSpecs.RULE_SLIDE_COUNT,
+                            "slideshowSpec has " + count + " slides but slides[\"" + key + "\"] has " + list.size()));
+                }
+            });
+        }
+        problems.forEach(p -> out.add(new Violation(p.field(), p.ruleId(), p.message())));
+        return out;
+    }
+
+    private static com.fasterxml.jackson.databind.node.ArrayNode emptyDiff() {
+        return com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+    }
+
+    /**
+     * Records an APPLIED revision of {@code saved}'s spec, in the caller's transaction. {@code saved} must
+     * already be flushed so {@code creative_version} is the version after the save.
+     */
+    private void recordSpecRevision(Creative saved, String source, JsonNode textDiff, User caller) {
+        Integer max = revisionRepository.findMaxRevisionNo(saved.getId());
+        CreativeRevision revision = new CreativeRevision();
+        revision.setProjectId(saved.getProjectId());
+        revision.setCreativeId(saved.getId());
+        revision.setRevisionNo((max == null ? 0 : max) + 1);
+        revision.setCreativeVersion(saved.getVersion());
+        revision.setStatus(CreativeRevision.STATUS_APPLIED);
+        revision.setSource(source);
+        revision.setSpec(saved.getSlideshowSpec());
+        revision.setSlides(saved.getSlides());
+        revision.setSlideAltText(saved.getSlideAltText());
+        revision.setSlideStyle(saved.getSlideStyle());
+        revision.setTextDiff(textDiff);
+        revision.setAuthorUserId(caller.getId());
+        revision.setAppliedAt(java.time.OffsetDateTime.now());
+        revisionRepository.save(revision);
+    }
+
+    /** The newest {@value #MAX_REVISIONS} slideshow-spec revisions of a Creative, newest first. */
+    @Transactional(readOnly = true)
+    public List<CreativeRevision> listRevisions(String projectId, String creativeId, User caller) {
+        requireMember(projectId, caller);
+        Creative creative = findCreative(projectId, creativeId);
+        return revisionRepository.findAllByCreativeIdOrderByRevisionNoDesc(creative.getId(),
+                org.springframework.data.domain.PageRequest.of(0, MAX_REVISIONS));
+    }
+
+    static final int MAX_REVISIONS = 50;
 
     /** {@code creative.slideshow} JSON -&gt; the typed DTO, or null when unset. */
     private CreativeSlideshow toSlideshow(JsonNode node) {
