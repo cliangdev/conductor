@@ -69,6 +69,10 @@ class WorkItemPatchBodyTest {
     @MockitoBean
     private com.conductor.service.WorkItemCriteriaService criteriaService;
     @MockitoBean
+    private com.conductor.service.WorkItemHealthService healthService;
+    @MockitoBean
+    private com.conductor.service.ThroughputForecastService forecastService;
+    @MockitoBean
     private JwtService jwtService;
     @MockitoBean
     private UserRepository userRepository;

@@ -185,4 +185,30 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
      */
     @Query("SELECT i FROM WorkItem i LEFT JOIN FETCH i.project LEFT JOIN FETCH i.assignee WHERE i.id = :workItemId")
     Optional<WorkItem> findByIdWithProjectAndAssignee(@Param("workItemId") String workItemId);
+
+    /**
+     * Completion and start stamps, as {@code [completedAt, startedAt]}, of the finished leaf TASK items among
+     * {@code ids} that completed at or after {@code since}. Cancelled-style statuses are left out: abandoning
+     * work is not throughput.
+     */
+    @Query("""
+            SELECT i.completedAt, i.startedAt FROM WorkItem i
+            WHERE i.id IN :ids AND i.type = 'TASK' AND i.completedAt >= :since
+              AND i.currentStatus NOT IN :cancelled
+              AND NOT EXISTS (SELECT 1 FROM WorkItem c WHERE c.parentWorkItemId = i.id)
+            """)
+    List<Object[]> findLeafCompletionStamps(@Param("ids") Collection<String> ids,
+                                            @Param("since") java.time.OffsetDateTime since,
+                                            @Param("cancelled") Collection<String> cancelled);
+
+    /** {@link #findLeafCompletionStamps} across a whole project. */
+    @Query("""
+            SELECT i.completedAt, i.startedAt FROM WorkItem i
+            WHERE i.project.id = :projectId AND i.type = 'TASK' AND i.completedAt >= :since
+              AND i.currentStatus NOT IN :cancelled
+              AND NOT EXISTS (SELECT 1 FROM WorkItem c WHERE c.parentWorkItemId = i.id)
+            """)
+    List<Object[]> findProjectLeafCompletionStamps(@Param("projectId") String projectId,
+                                                   @Param("since") java.time.OffsetDateTime since,
+                                                   @Param("cancelled") Collection<String> cancelled);
 }

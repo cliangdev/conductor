@@ -3,7 +3,17 @@ package com.conductor.v2.controller;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.WorkItemAgentSession;
 import com.conductor.entity.WorkItemCriterion;
+import com.conductor.entity.WorkItemHealthUpdate;
+import com.conductor.generated.v2.model.ForecastFit;
 import com.conductor.generated.v2.model.WorkItemAgentActivity;
+import com.conductor.generated.v2.model.WorkItemForecast;
+import com.conductor.generated.v2.model.WorkItemHealth;
+import com.conductor.generated.v2.model.WorkItemHealthDraft;
+import com.conductor.generated.v2.model.WorkItemHealthStatus;
+import com.conductor.generated.v2.model.WorkItemHealthUpdateResponse;
+import com.conductor.service.ThroughputForecastService;
+import com.conductor.service.WorkItemHealthService;
+import java.util.Map;
 import com.conductor.generated.v2.model.WorkItemAgentSessionResponse;
 import com.conductor.generated.v2.model.WorkItemBlocker;
 import com.conductor.generated.v2.model.WorkItemCriterionResponse;
@@ -58,5 +68,47 @@ final class DeliveryMappers {
                 .note(s.getNote())
                 .stepRunId(s.getStepRunId())
                 .endedAt(s.getEndedAt());
+    }
+
+    /** The item's health, or null when it has nothing to say (no update, no live draft, no risk). */
+    static WorkItemHealth health(WorkItemHealthService.Health h) {
+        if (h == null) {
+            return null;
+        }
+        WorkItemHealth out = new WorkItemHealth(h.stale(), h.atRisk())
+                .health(h.health() == null ? null : WorkItemHealthStatus.fromValue(h.health()))
+                .note(h.note())
+                .updatedAt(h.updatedAt());
+        if (h.pendingDraft() != null) {
+            WorkItemHealthService.PendingDraft d = h.pendingDraft();
+            out.setPendingDraft(new WorkItemHealthDraft(d.updateId(), WorkItemHealthStatus.fromValue(d.health()),
+                    d.note(), d.createdAt()).draftedByLabel(d.draftedByLabel()));
+        }
+        return out;
+    }
+
+    static WorkItemHealthUpdateResponse healthUpdate(WorkItemHealthUpdate u, Map<String, String> confirmerNames) {
+        return new WorkItemHealthUpdateResponse(u.getId(), WorkItemHealthStatus.fromValue(u.getHealth()),
+                u.getNote(), u.isConfirmed(), u.getCreatedAt())
+                .draftedByLabel(u.getDraftedByLabel())
+                .confirmedByName(u.getConfirmedBy() == null ? null : confirmerNames.get(u.getConfirmedBy()))
+                .confirmedAt(u.getConfirmedAt());
+    }
+
+    static WorkItemForecast forecast(ThroughputForecastService.Forecast f) {
+        return new WorkItemForecast(WorkItemForecast.StateEnum.fromValue(f.state().name()), f.remaining(),
+                f.samples())
+                .mode(f.mode() == null ? null : WorkItemForecast.ModeEnum.fromValue(f.mode().name()))
+                .needed(f.needed())
+                .weeklyThroughputMedian(f.weeklyThroughputMedian())
+                .p50Date(f.p50Date())
+                .p85Date(f.p85Date())
+                .appetiteEndsOn(f.appetiteEndsOn())
+                .appetiteFit(fit(f.appetiteFit()))
+                .milestoneFit(fit(f.milestoneFit()));
+    }
+
+    private static ForecastFit fit(ThroughputForecastService.Fit fit) {
+        return fit == null ? null : ForecastFit.fromValue(fit.name());
     }
 }
