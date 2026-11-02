@@ -2,6 +2,7 @@
 // useWorkItemListState hook all import from here instead of each redeclaring the same fields).
 
 import type { MemberRole } from '@/types'
+import type { WorkItemDeliveryFields } from '@/types/workItem'
 import type { Verdict } from '@/components/reviews/verdict'
 
 export interface IssueAssignee {
@@ -47,7 +48,7 @@ export interface WorkItemCreativeRef {
   name?: string | null
 }
 
-export interface Issue {
+export interface Issue extends WorkItemDeliveryFields {
   id: string
   title: string
   type: string

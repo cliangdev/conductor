@@ -120,6 +120,168 @@ export interface WorkItem {
   workflow?: string
 }
 
+// --- Delivery tracking (see docs/prd-tracking.md) -------------------------------------------------
+
+/** P0 is the most urgent; absent means the item has no priority. */
+export type WorkItemPriority = 'P0' | 'P1' | 'P2' | 'P3'
+
+/** Leaf-level rollup over an item's subtree: done = terminal in the leaf's own Workflow. */
+export interface WorkItemProgress {
+  total: number
+  done: number
+  percent: number
+  criteriaTotal: number
+  criteriaMet: number
+}
+
+export interface WorkItemBlocker {
+  id: string
+  displayId: string
+  title: string
+}
+
+/** Facts derived on read from dependencies, status and agent sessions; never typed by a person. */
+export interface WorkItemSignals {
+  blocked: boolean
+  /** Only the blockers that have not finished. */
+  blockedBy: WorkItemBlocker[]
+  ready: boolean
+  stale: boolean
+  needsInput: boolean
+}
+
+export type AgentSessionMode = 'DELEGATE' | 'ASSIGNEE'
+export type AgentSessionActivity = 'WORKING' | 'NEEDS_INPUT' | 'DONE' | 'ERRORED'
+
+/** The latest open agent session on an item. */
+export interface WorkItemAgentActivity {
+  agentLabel: string
+  mode: AgentSessionMode
+  activity: AgentSessionActivity
+  note?: string | null
+  updatedAt: string
+}
+
+/** The fields every Work Item response carries for delivery tracking. */
+export interface WorkItemDeliveryFields {
+  parentWorkItemId?: string | null
+  priority?: WorkItemPriority | null
+  milestoneId?: string | null
+  milestoneName?: string | null
+  /** Normalised time-box label, e.g. "2 weeks". */
+  appetite?: string | null
+  appetiteDays?: number | null
+  startedAt?: string | null
+  completedAt?: string | null
+  /** Direct children. Lists show "N sub-items" instead of the children themselves. */
+  childCount?: number
+  /** Present on single reads and on lists fetched with `withProgress=true`. */
+  progress?: WorkItemProgress | null
+  signals?: WorkItemSignals | null
+  agentActivity?: WorkItemAgentActivity | null
+}
+
+/** One node of GET .../work-items/{id}/tree. */
+export interface WorkItemTreeNode {
+  id: string
+  displayId: string
+  title: string
+  type: string
+  workflow?: string | null
+  status: string
+  statusLabel?: string | null
+  terminal?: boolean
+  priority?: WorkItemPriority | null
+  parentWorkItemId?: string | null
+  milestoneId?: string | null
+  assignee?: WorkItemAssignee | null
+  childCount: number
+  /** This node's own criteria, not a rollup. */
+  criteriaTotal: number
+  criteriaMet: number
+  signals?: WorkItemSignals | null
+  agentActivity?: WorkItemAgentActivity | null
+  children: WorkItemTreeNode[]
+}
+
+export type DependencyKind = 'BLOCKS' | 'DISCOVERED_FROM'
+
+export interface WorkItemDependencyEntry {
+  dependencyId: string
+  workItemId: string
+  displayId: string
+  title: string
+  status: string
+}
+
+/** GET .../work-items/{id}/dependencies, grouped by direction. */
+export interface WorkItemDependencies {
+  blocks: WorkItemDependencyEntry[]
+  blockedBy: WorkItemDependencyEntry[]
+  discoveredFrom: WorkItemDependencyEntry[]
+  discovered: WorkItemDependencyEntry[]
+}
+
+export interface DependencyGraphNode {
+  id: string
+  displayId: string
+  title: string
+  status: string
+  statusCategory?: WorkflowStatusCategory | string | null
+  /** A blocker outside the subtree being drawn. */
+  external: boolean
+}
+
+export interface DependencyGraphEdge {
+  id: string
+  /** The blocking item. */
+  from: string
+  to: string
+  kind: DependencyKind
+}
+
+export interface DependencyGraph {
+  nodes: DependencyGraphNode[]
+  edges: DependencyGraphEdge[]
+}
+
+export type CriterionKind = 'auto' | 'manual'
+
+export interface WorkItemCriterion {
+  criterionId: string
+  position: number
+  text: string
+  kind: CriterionKind
+  /** The PRD's AC id this came from, e.g. AC-P0-1.1. */
+  externalRef?: string | null
+  met: boolean
+  evidence?: string | null
+  metAt?: string | null
+  metByLabel?: string | null
+}
+
+export type MilestoneState = 'OPEN' | 'CLOSED'
+
+export interface MilestoneProgress {
+  topLevelTotal: number
+  topLevelDone: number
+  leafTotal: number
+  leafDone: number
+}
+
+export interface Milestone {
+  id: string
+  projectId: string
+  name: string
+  description?: string | null
+  targetOn?: string | null
+  state: MilestoneState
+  sortOrder: number
+  progress?: MilestoneProgress | null
+  createdAt: string
+  updatedAt: string
+}
+
 /** A produced output linked to a Work Item (GET .../issues/{issueId}/assets). */
 export interface WorkItemAsset {
   id: string
