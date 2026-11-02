@@ -38,8 +38,10 @@ PRD (ENGINEERING, type PRD)
   self-links, no `BLOCKS` cycles (checked transitively on write, 409), at most 25 outgoing and 25 incoming
   `BLOCKS` per item. The inverse (`blockedBy`, `discovered`) is a read projection, not a second row.
 - **Acceptance criteria** — `work_item_criteria`: ordered rows on a Task with `text`, `kind` (`auto` =
-  test-verified, `manual` = a person checks), `met`, `evidence`, and an optional `externalRef` linking back to
-  the PRD's `AC-P0-1.1` IDs. `met=true` stamps who and when.
+  test-verified and the default, `manual` = a person checks), `met`, `evidence`, and an optional
+  `externalRef` linking back to the PRD's `AC-P0-1.1` IDs. `met=true` stamps who and when; `met=false`
+  clears both. `PUT …/criteria` is replace-all, but a criterion sent again (matched by `externalRef`, or by
+  identical text when it has none) keeps its met state and evidence, so re-asserting a list never un-ticks it.
 - **Milestones** — `milestones(project_id, name, target_on, state)`; the only dated object. An item belongs to
   at most one; children inherit the nearest ancestor's milestone for progress rollups.
 - **Priority** — `P0`–`P3` or none; distinct from a PRD's internal P0/P1 feature tiers.
@@ -51,7 +53,8 @@ PRD (ENGINEERING, type PRD)
   last_heartbeat_at, ended_at)`: a liveness record per agent run on an item. `mode` is `DELEGATE` (a human
   stays assignee; the agent acts for them) or `ASSIGNEE`. `activity` is `WORKING`, `NEEDS_INPUT` (with the
   question in `note`), `DONE` or `ERRORED`. Upserts by `(work_item_id, session_key)` are idempotent, so a
-  skill can report freely. This is separate from `work_item_step_runs`, which records what a transition's Step
+  skill can report freely: `DONE` and `ERRORED` end the session, and a later `WORKING` or `NEEDS_INPUT` on
+  the same key reopens it. This is separate from `work_item_step_runs`, which records what a transition's Step
   produced for a Review gate.
 
 ## Derived signals
@@ -60,13 +63,16 @@ Computed on read by `WorkItemSignalService`, batched per page, and returned as `
 
 | Signal | Rule |
 |---|---|
-| `blocked` | at least one `BLOCKS` blocker whose status is not terminal in its own Workflow (a cancelled or closed blocker unblocks) |
+| `blocked` | at least one `BLOCKS` blocker whose status is not terminal in its own Workflow (a cancelled or closed blocker unblocks); `blockedBy` lists only those unfinished blockers |
 | `ready` | not blocked, status category `open`, not terminal — assignee is irrelevant |
 | `stale` | status category `in_progress`, `updated_at` older than 7 days, and no agent session `WORKING` with a heartbeat in the last 7 days |
 | `needsInput` | the latest open agent session on the item (or, for a PRD, on any descendant) is `NEEDS_INPUT` |
 
 `progress` on an item is `{total, done, percent, criteriaTotal, criteriaMet}` over the *leaves* of its
-subtree (items with no children), where done = terminal in the leaf's own Workflow.
+subtree (items with no children), where done = terminal in the leaf's own Workflow. A tree node's own
+`criteriaTotal`/`criteriaMet` count just that node's criteria. Signals cost three batched queries per page
+plus one subtree walk per item that has children (for the descendant `needsInput` check), so a PRD's single
+GET is one query dearer than a leaf's.
 
 ## Listing
 
