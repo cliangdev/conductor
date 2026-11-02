@@ -1263,6 +1263,49 @@ describe('reading a document', () => {
     expect(within(dialog).getByRole('tabpanel', { name: /^prd\.md/ })).toBeInTheDocument()
   })
 
+  it('puts Full view in the document, not the tab bar, and moves focus to Exit in the same corner', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    const tablist = screen.getByRole('tablist', { name: 'Work item content' })
+    expect(within(tablist.parentElement!).queryByRole('button', { name: 'Full view' })).not.toBeInTheDocument()
+    const panel = document.getElementById('wi-tabpanel-main')!
+    await userEvent.click(within(panel).getByRole('button', { name: 'Full view' }))
+
+    const dialog = screen.getByRole('dialog')
+    const exit = within(dialog).getByRole('button', { name: 'Exit full view' })
+    expect(exit).toHaveFocus()
+    // Exit lives in the document's corner, so the header doesn't repeat it.
+    expect(within(dialog).getAllByRole('button', { name: 'Exit full view' })).toHaveLength(1)
+
+    await userEvent.click(exit)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Full view' })).toHaveFocus()
+  })
+
+  it('opens full view with F, but not while typing', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    const field = document.createElement('textarea')
+    document.body.appendChild(field)
+    field.focus()
+    await userEvent.keyboard('f')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    field.remove()
+
+    await userEvent.keyboard('f')
+    expect(screen.getByRole('dialog', { name: 'prd.md, full view' })).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('ignores F on the Activity tab', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    await userEvent.click(screen.getByRole('tab', { name: /activity/i }))
+    await userEvent.keyboard('f')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('offers no full view on the Activity tab', async () => {
     await renderView()
     await screen.findByText('line one', { exact: false })

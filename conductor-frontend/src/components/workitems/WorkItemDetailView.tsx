@@ -34,12 +34,13 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { TikTokPublishGateProvider } from '@/components/marketing/TikTokConsentStep'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
 import { toastError, toastSuccess } from '@/components/ui/toast'
-import { FileX2, Maximize2, Minimize2 } from 'lucide-react'
+import { FileX2, Minimize2 } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
 import { ReviewBar } from '@/components/reviews/ReviewBar'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { CommentableHtmlDocument } from '@/components/markdown/CommentableHtmlDocument'
 import { DocumentUploadButton } from '@/components/workitems/DocumentUploadButton'
+import { FullViewToggle, isFullViewShortcut } from '@/components/workitems/FullViewToggle'
 import {
   DocumentTabs,
   TAB_CLASSES,
@@ -260,6 +261,8 @@ export function WorkItemDetailView({
   const [reviewMode, setReviewMode] = useState(false)
   // The selected document shown on its own, over the whole window.
   const [fullView, setFullView] = useState(false)
+  // Set once full view has been closed, so the page's Full view button takes back the focus it had.
+  const [fullViewClosed, setFullViewClosed] = useState(false)
   const [pendingComments, setPendingComments] = useState<PendingCommentDraft[]>([])
   const [reviewSubmitting, setReviewSubmitting] = useState(false)
   const [cancelConfirmOpen, setCancelConfirmOpen] = useState(false)
@@ -475,6 +478,20 @@ export function WorkItemDetailView({
 
   const selectedDoc = documents.find((d) => d.id === selectedDocId) ?? null
   const fullViewOpen = fullView && !!selectedDoc && activeTab === selectedDoc.id
+  // A markdown or HTML document is on screen, so it can go full view (F, or its corner button).
+  const documentReadable = !!selectedDoc && activeTab === selectedDoc.id && !!selectedDoc.content
+    && (isMarkdown(selectedDoc) || isHtml(selectedDoc))
+
+  useEffect(() => {
+    if (!documentReadable || fullViewOpen) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (!isFullViewShortcut(e)) return
+      e.preventDefault()
+      setFullView(true)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [documentReadable, fullViewOpen])
 
   // Full view: Escape closes it, and the page behind does not scroll.
   useEffect(() => {
@@ -486,6 +503,7 @@ export function WorkItemDetailView({
       const target = e.target as HTMLElement | null
       if (target?.closest('textarea,input,[contenteditable="true"]')) return
       setFullView(false)
+      setFullViewClosed(true)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => {
@@ -493,6 +511,11 @@ export function WorkItemDetailView({
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [fullViewOpen])
+
+  function closeFullView() {
+    setFullView(false)
+    setFullViewClosed(true)
+  }
 
   // Content is fetched on demand for the selected document (the list endpoint omits it).
   const requestedContentRef = useRef(new Set<string>())
@@ -885,6 +908,15 @@ export function WorkItemDetailView({
       ? `Updated ${timeAgo(issue.updatedAt)}`
       : undefined
 
+  // Lives in the document's top-right corner: Full view on the page, Exit full view inside it.
+  const fullViewToggle = (
+    <FullViewToggle
+      open={fullViewOpen}
+      onToggle={() => (fullViewOpen ? closeFullView() : setFullView(true))}
+      claimFocus={fullViewOpen || fullViewClosed}
+    />
+  )
+
   let mainContent: React.ReactNode
   // A document gets the full width of the main column rather than the 45rem reading cap: documents are
   // the thing being reviewed, and an HTML document brings its own layout and a comment rail.
@@ -942,6 +974,8 @@ export function WorkItemDetailView({
   } else if (selectedDoc && isMarkdown(selectedDoc) && selectedDoc.content) {
     documentShown = true
     mainContent = (
+      <div className="flex gap-2">
+      <div className="min-w-0 flex-1">
       <CommentableDocument
         content={selectedDoc.content}
         documentId={selectedDoc.id}
@@ -963,6 +997,12 @@ export function WorkItemDetailView({
         onEditPendingComment={editPendingComment}
         onRemovePendingComment={removePendingComment}
       />
+      </div>
+      {/* Its own column, so it sticks to the top while the document scrolls and never covers text. */}
+      <div className={cn('shrink-0', !fullViewOpen && 'hidden sm:block')}>
+        <div className="sticky top-2">{fullViewToggle}</div>
+      </div>
+      </div>
     )
   } else if (selectedDoc && (isMarkdown(selectedDoc) || isHtml(selectedDoc))
     && selectedDoc.content == null) {
@@ -974,6 +1014,7 @@ export function WorkItemDetailView({
     mainContent = (
       <CommentableHtmlDocument
         fullView={fullViewOpen}
+        toolbarAction={fullViewToggle}
         content={selectedDoc.content}
         documentId={selectedDoc.id}
         issueId={issueId}
@@ -1200,22 +1241,13 @@ export function WorkItemDetailView({
             Details
           </button>
         </div>
-        {((documentShown && selectedDoc) || (userRole !== 'REVIEWER' && !publishing && !documentsLoading)) && (
+        {userRole !== 'REVIEWER' && !publishing && !documentsLoading && (
           <div className="flex shrink-0 items-center gap-1 border-b border-border">
             <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
-            {documentShown && selectedDoc && (
-              // Not on a phone: the document already fills the screen there, and the tabs need the room.
-              <Button variant="ghost" size="sm" className="hidden sm:inline-flex" onClick={() => setFullView(true)}>
-                <Maximize2 className="h-4 w-4 mr-1.5" />
-                Full view
-              </Button>
-            )}
-            {userRole !== 'REVIEWER' && !publishing && !documentsLoading && (
-              <DocumentUploadButton
-                existingFilenames={documents.map((d) => d.filename)}
-                onUpload={uploadDocument}
-              />
-            )}
+            <DocumentUploadButton
+              existingFilenames={documents.map((d) => d.filename)}
+              onUpload={uploadDocument}
+            />
           </div>
         )}
         </div>
@@ -1254,7 +1286,7 @@ export function WorkItemDetailView({
               {fullViewOpen ? (
                 <p className="text-sm text-muted-foreground">
                   {selectedDoc!.filename} is open in full view.{' '}
-                  <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setFullView(false)}>
+                  <Button variant="link" size="sm" className="h-auto p-0" onClick={closeFullView}>
                     Close it
                   </Button>
                 </p>
@@ -1440,17 +1472,20 @@ export function WorkItemDetailView({
                   panelId="wi-fullview-panel"
                 />
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="self-center shrink-0"
-                onClick={() => setFullView(false)}
-                aria-label="Exit full view"
-                title="Exit full view"
-              >
-                <Minimize2 className="h-4 w-4 sm:mr-1.5" />
-                <span className="hidden sm:inline">Exit full view</span>
-              </Button>
+              {/* The document's corner holds Exit once it renders; until then (loading, empty) it's here. */}
+              {!documentShown && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="self-center shrink-0"
+                  onClick={closeFullView}
+                  aria-label="Exit full view"
+                  title="Exit full view (Esc)"
+                >
+                  <Minimize2 className="h-4 w-4 sm:mr-1.5" />
+                  <span className="hidden sm:inline">Exit full view</span>
+                </Button>
+              )}
             </div>
             <div
               id="wi-fullview-panel"
