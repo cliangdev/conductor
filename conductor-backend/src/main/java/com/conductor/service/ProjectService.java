@@ -85,6 +85,7 @@ public class ProjectService {
         workflowSeeder.seedEngineering(project);
         workflowSeeder.seedMarketing(project);
         workflowSeeder.seedMarketingChanges(project);
+        workflowSeeder.seedTask(project);
 
         ProjectMember adminMember = new ProjectMember();
         adminMember.setProject(project);

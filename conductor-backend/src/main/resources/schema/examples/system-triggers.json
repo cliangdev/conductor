@@ -7,6 +7,11 @@
       "description": "Fired when a linked GitHub pull request merges. The merge is the authority, so this transition bypasses the Review gate."
     },
     {
+      "id": "children_done",
+      "bypassReviewGate": true,
+      "description": "Fired on a parent Work Item when its last direct child reaches a terminal status. Completion rolls up automatically, so this transition bypasses the Review gate; it only ever moves a parent forward and never reopens one."
+    },
+    {
       "id": "status_changed",
       "bypassReviewGate": false,
       "description": "Fired on every Work Item status change (the WORK_ITEM_STATUS_CHANGED event). Lets a lifecycle auto-advance one status to another; honors the Review gate, so a review-gated edge only fires once its Review is satisfied."
