@@ -10,10 +10,28 @@ import { registerPaletteActions } from '@/components/layout/CommandPalette'
 import { usePersistedState } from '@/lib/persisted'
 import { categoriesForView, humanizeId, statusMeta } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
-import type { ActiveFilter, IssueWithReviewers, ListView, SortKey, WorkItemGroupData } from '@/components/workitems/listTypes'
+import { isSortKey } from '@/components/workitems/listTypes'
+import type { ActiveFilter, IssueWithReviewers, ListView, SignalFilter, SortKey, WorkItemGroupData } from '@/components/workitems/listTypes'
+
+/** P0 first, no priority last. */
+function priorityRank(issue: IssueWithReviewers): number {
+  return issue.priority ? Number(issue.priority.slice(1)) : Number.MAX_SAFE_INTEGER
+}
 
 function sortComparator(sortKey: SortKey) {
   switch (sortKey) {
+    case 'priority':
+      // Ties fall back to most recently updated, so equal-priority items keep a stable, useful order.
+      return (a: IssueWithReviewers, b: IssueWithReviewers) =>
+        priorityRank(a) - priorityRank(b) || new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    case 'dueOn':
+      // Soonest first, undated last.
+      return (a: IssueWithReviewers, b: IssueWithReviewers) => {
+        if (!a.dueOn && !b.dueOn) return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+        if (!a.dueOn) return 1
+        if (!b.dueOn) return -1
+        return a.dueOn.localeCompare(b.dueOn)
+      }
     case 'title':
       return (a: IssueWithReviewers, b: IssueWithReviewers) => a.title.localeCompare(b.title)
     case 'created':
@@ -81,7 +99,7 @@ export function useWorkItemListState({
 
   const [sortKey, setSortKey] = usePersistedState<SortKey>(
     `wv_sort_${storageKeyPrefix}`,
-    (v): v is SortKey => v === 'updated' || v === 'created' || v === 'title',
+    isSortKey,
     'updated'
   )
 
@@ -117,7 +135,13 @@ export function useWorkItemListState({
   const tagValues = activeFilters.filter((f) => f.kind === 'tag').map((f) => f.value)
   const typeValuesKey = typeValues.join(',')
   const statusValuesKey = statusValues.join(',')
+  const priorityValues = activeFilters.filter((f) => f.kind === 'priority').map((f) => f.value)
+  const milestoneValues = activeFilters.filter((f) => f.kind === 'milestone').map((f) => f.value)
+  const signalValues = activeFilters.filter((f) => f.kind === 'signal').map((f) => f.value as SignalFilter)
   const tagValuesKey = tagValues.join(',')
+  const priorityValuesKey = priorityValues.join(',')
+  const milestoneValuesKey = milestoneValues.join(',')
+  const signalValuesKey = signalValues.join(',')
 
   const filteredIssues = useMemo(
     () =>
@@ -127,6 +151,10 @@ export function useWorkItemListState({
         // Every selected tag must be present: picking two narrows to items carrying both, which is
         // what makes tags useful for finding one campaign's paid posts rather than either set.
         if (tagValues.length > 0 && !tagValues.every((t) => issue.tags?.includes(t))) return false
+        if (priorityValues.length > 0 && !(issue.priority && priorityValues.includes(issue.priority))) return false
+        if (milestoneValues.length > 0 && !(issue.milestoneId && milestoneValues.includes(issue.milestoneId))) return false
+        // Like tags, every selected signal must hold: "blocked" + "stale" narrows to both.
+        if (signalValues.length > 0 && !signalValues.every((sig) => issue.signals?.[sig])) return false
         if (
           needle &&
           !(
@@ -142,7 +170,7 @@ export function useWorkItemListState({
     // typeValues/statusValues are recomputed every render from activeFilters — their joined keys
     // are the stable identity to depend on instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [issuesInView, typeValuesKey, statusValuesKey, tagValuesKey, needle]
+    [issuesInView, typeValuesKey, statusValuesKey, tagValuesKey, priorityValuesKey, milestoneValuesKey, signalValuesKey, needle]
   )
 
   // Group by workflow status, in workflow-defined order, within the current tab's categories.
