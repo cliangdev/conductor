@@ -1,5 +1,6 @@
 export * from './spec.js'
 export * from './style.js'
 export { buildSlideHtml, yPx, esc, SAFE, FRAME_H, FRAME_W } from './html.js'
-export { composeSlideshow, resolveSpecImages, fontsDir, type ComposeOptions, type ComposeResult, type SlideshowCheck } from './compose.js'
+export { BUNDLED_FONTS, BUNDLED_FAMILIES, type BundledFamily } from './css.js'
+export { composeSlideshow, overImageContrast, resolveSpecImages, fontsDir, type ComposeOptions, type ComposeResult, type SlideshowCheck } from './compose.js'
 export * from './text-fields.js'

@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import type { Page } from 'playwright-core'
 import { findBrowserFactory, type BrowserFactory } from '../creative-browser.js'
 import { readProvenanceSidecar, writeProvenanceSidecar, type SidecarProvenance } from '../provenance-sidecar.js'
 import { buildSlideHtml, FRAME_H, FRAME_W } from './html.js'
@@ -10,7 +11,7 @@ import { assertValidSlideshowSpec, SLIDE_RATIOS, type SlideRatio, type Slideshow
 export interface SlideshowCheck {
   slide: number
   ratio: SlideRatio
-  rule: 'safeZone' | 'spill' | 'textSize' | 'wordsPerLine' | 'image' | 'font' | 'provenance' | 'render'
+  rule: 'safeZone' | 'spill' | 'textSize' | 'wordsPerLine' | 'contrast' | 'image' | 'font' | 'provenance' | 'render'
   severity: 'error' | 'warning'
   message: string
 }
@@ -122,6 +123,27 @@ async function slideProvenance(images: string[]): Promise<{ sidecar: SidecarProv
   }
 }
 
+/**
+ * Contrast of text that sits straight on the slide (no box, no outline). The page cannot read a file: image's pixels
+ * (it taints a canvas), so the slide is shot again with its text hidden and that screenshot, which has no origin, is
+ * measured in the page. Any failure skips the check: a guess would be worse than none.
+ */
+export async function overImageContrast(page: Page): Promise<SlideshowCheck[]> {
+  try {
+    if (!((await page.evaluate('(window.__overImage || []).length')) as number)) return []
+    await page.evaluate('window.__hideText(true)')
+    try {
+      const shot = await page.screenshot({ type: 'png' })
+      const measure = (url: string) => (globalThis as unknown as { __sampleContrast(u: string): Promise<SlideshowCheck[]> }).__sampleContrast(url)
+      return (await page.evaluate(measure, `data:image/png;base64,${shot.toString('base64')}`)) ?? []
+    } finally {
+      await page.evaluate('window.__hideText(false)')
+    }
+  } catch {
+    return []
+  }
+}
+
 export async function composeSlideshow(specInput: unknown, outDir: string, options: ComposeOptions = {}): Promise<ComposeResult> {
   assertValidSlideshowSpec(specInput)
   const ratios = options.ratios ?? ['9x16', '4x5']
@@ -180,6 +202,7 @@ export async function composeSlideshow(specInput: unknown, outDir: string, optio
           const png = join(out, `${htmlSpec.id}-${ratio}-${nn}.png`)
           await page.screenshot({ path: png })
           files.push(png)
+          checks.push(...(await overImageContrast(page)))
           const sidecar = perSlide[i]!.sidecar
           if (sidecar) {
             await writeProvenanceSidecar(png, sidecar)
