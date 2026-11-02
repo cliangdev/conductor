@@ -3,6 +3,7 @@ import { getConfig, resolveProject } from '../mcp/config.js'
 import { resolveCreativeId } from '../lib/creative-id.js'
 import { renderCreative } from '../lib/creative-render.js'
 import { attachSlideshowSpec } from '../mcp/tools/slideshow-spec.js'
+import { renderSlides } from '../mcp/tools/slideshow-render.js'
 
 /**
  * Headless runs (a workflow's docker step) have no ~/.conductor/config.json; the step supplies
@@ -53,7 +54,7 @@ function loadCreativeConfig(): ReturnType<typeof getConfig> | undefined {
 }
 
 export function registerCreative(program: Command): void {
-  const creative = program.command('creative').description('Work with Conductor Creatives locally: render them with Playwright, or attach a slideshow spec')
+  const creative = program.command('creative').description('Work with Conductor Creatives locally: render them with Playwright, attach a slideshow spec, or re-render edited slide text')
 
   creative
     .command('render <creativeId>')
@@ -99,6 +100,49 @@ Examples:
         if (!result.ok || result.state === 'FAILED') {
           process.exitCode = 1
         }
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err))
+        process.exitCode = 1
+      }
+    })
+
+  creative
+    .command('render-slides <revisionId>')
+    .description('Re-render the slides whose text was edited (a pending slide-text revision) and hand the images back to Conductor')
+    .requiredOption('--creative <id>', 'The Creative the revision belongs to (id or display id)')
+    .option('--workflow-run-id <id>', 'The Workflow run this is part of (the run-scoped key identifies it; shown in the log)')
+    .addHelpText(
+      'after',
+      `
+Run by the conductor-creative-render Workflow after update_creative_slide_text or an edit in the web app. With no
+runtime target or daemon to run it, run the same command yourself (after \`conductor login\`):
+
+  conductor creative render-slides 3f2a... --creative 12a
+
+Re-composes only the changed slides at each ratio the Creative has, uploads them, and tells Conductor; a failing layout
+check (text spilling, outside the safe zone) fails the revision instead and changes nothing.`
+    )
+    .action(async (revisionId: string, options: { creative: string; workflowRunId?: string }) => {
+      const config = loadCreativeConfig()
+      if (!config) return
+      try {
+        const result = await renderSlides(
+          { revisionId, creativeId: await resolveCreativeId(options.creative, config), workflowRunId: options.workflowRunId },
+          config,
+          { log: (message) => console.log(message) }
+        )
+        if (!result.ok) {
+          console.error(result.error)
+          if (result.outcome === 'checks-failed') {
+            for (const c of result.checks.filter((x) => x.severity === 'error')) console.error(`  slide ${c.slide} ${c.ratio} ${c.rule}: ${c.message}`)
+          }
+          process.exitCode = 1
+          return
+        }
+        console.log(
+          `revision ${result.revisionId}: slide${result.slides.length === 1 ? '' : 's'} ${result.slides.join(', ')} re-rendered at ${result.ratios.join(', ')} ` +
+            `(${result.uploaded} image${result.uploaded === 1 ? '' : 's'} uploaded, ${result.warnings} warning${result.warnings === 1 ? '' : 's'})`
+        )
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err))
         process.exitCode = 1
