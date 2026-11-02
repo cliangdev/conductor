@@ -469,6 +469,44 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   `slideStyle` from `resolvedStyle` when the Creative has none) at the Creative's current `version`. The result
   reports what was attached, the compared count, the lowest similarities and any skipped lists; verify with
   `get_creative`.
+- **Editing slide text: `update_creative_slide_text` / `conductor creative render-slides`.** For a CAROUSEL
+  with a stored spec. `update_creative_slide_text({creativeId, edits: [{slide, field, text}], version?})` takes
+  `field` from a `get_creative` `textFields[].path` (slides from 1; it replaces an existing string and never adds
+  or removes one), reads the Creative's `version` when it is not given, and POSTs
+  `.../creatives/{id}/slide-text-edits` (body `{version, edits: [{slide, path, text}]}`). It returns at once
+  (dispatch-status): `revisionId`, `status` PENDING, `changedSlides`, the `diff` (at most 20 entries, long text
+  clipped to 120 characters), `render` (`runtime` `target` or `self-hosted`, the run's id and status) and a
+  `nextStep`. Nothing on the Creative changes until the render passes; follow it with `get_creative`, which now
+  carries `latestRevision` (`id`, `revisionNo`, `status`, `source`, `error`, `createdAt`, and for a failure
+  `failingChecks` as `slide N 9x16 rule: message`, plus a `warningCount`) and, while one renders,
+  `pendingRevision` with a note. A 409 for a stale `version` reads "This Creative changed since you read it";
+  any other 409 means an edit or render of that Creative is still running. A 422 is shown as
+  `[field] message` per violation (`slideshowSpecMissing`, `slideTextEditInvalid`, `slideTextEditNoop`).
+  - **The job.** The render Workflow runs `conductor creative render-slides <revisionId> --creative <id>
+    [--workflow-run-id <id>]` in the render image with the run's scoped key (`CONDUCTOR_API_KEY`,
+    `CONDUCTOR_API_URL`, `CONDUCTOR_PROJECT_ID`), or on a person's machine with their own `conductor login`.
+    It `GET`s `.../revisions/{revisionId}` (the edited spec, `changedSlides`, the Creative's current `slides`
+    lists and `slideStyle`), re-renders the changed slides at every `9x16` / `4x5` list the Creative has (a
+    `default` list counts as the ratio of its images; a `1x1` list is left as it is), downloads only the images
+    those slides use, and composes **only the changed slides**: a spec holding just them, with the Creative's
+    `slideStyle` as the inline style and the bundled fonts, so the pictures are those a full compose makes
+    (`slideshow-subspec-equivalence.test.ts` pins that slide k alone is byte-identical to slide k of the whole
+    spec; a `grain` slide's feTurbulence texture can differ by one level in a few pixels from run to run of the
+    browser itself, also between two full composes). Checks come back numbered 1..n of the sub-spec and are mapped
+    to the real slide numbers; the composer's "no provenance sidecar" warning is dropped (it is about committing
+    local files). Any `error` check posts `.../revisions/{id}/fail` with `{error, checks}` and uploads nothing.
+    Otherwise each PNG is uploaded as media labelled `<displayId> slide <n> <ratio> r<revisionNo>` with the
+    source, licence and `aiGenerated` copied from the media it replaces, and `.../complete` gets
+    `{slideMedia: {ratio: {slide: mediaId}}, checks}`; the backend then applies it or rejects it (for instance
+    because the Creative changed meanwhile). A crash posts `/fail` with the message, then exits 1; a failed layout
+    check also exits 1 (with the failing checks printed); a revision that is no longer PENDING is reported and
+    left alone.
+  - **No runtime target or daemon?** An edit with no Cloud Run runtime target and no `conductor start` daemon
+    waits for a runner that never comes. Run the same job yourself from any folder, after `conductor login`:
+    `conductor creative render-slides <revisionId> --creative <id>` (the `revisionId` is in
+    `update_creative_slide_text`'s result and in `get_creative`'s `pendingRevision` / `latestRevision`). It needs
+    a browser (Chrome, Edge or Playwright's Chromium) and signed-in access to the project's media; the result is
+    identical to the Workflow's.
 - **Fonts:** the bundled TikTok Sans (600, 700, 800) under the SIL Open Font License, in
   `conductor-tools/assets/fonts/` with `OFL.txt`. The slide types that imitate a system UI (`notes`,
   `messages`, `week`, a `grid` photo's `badge`, `receipt`, `placard`) used Apple system fonts (SF Pro,

@@ -9,6 +9,7 @@ import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/media-probe.js'
 import { composePosterSheet } from '../../lib/poster-sheet.js'
 import { slideshowSpecView } from '../../lib/slideshow/spec-transport.js'
+import { compactRevisionState } from '../../lib/slideshow/revision-view.js'
 import { readProvenanceSidecar } from '../../lib/provenance-sidecar.js'
 import { renderCreative as runLocalRender, renderViaApi } from '../../lib/creative-render.js'
 import { needsLocalRender } from '../../lib/creative-local-render.js'
@@ -67,7 +68,7 @@ function trimExperiment(experiment: Record<string, unknown>): Record<string, unk
  * otherwise fall back to `err.message` (the RFC 7807 `detail`, already a readable sentence — e.g. a
  * 409's stale-`version` conflict) as returned, unchanged.
  */
-async function withCreativeErrors<T>(fn: () => Promise<T>): Promise<T> {
+export async function withCreativeErrors<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn()
   } catch (err) {
@@ -363,6 +364,7 @@ export async function getCreative(params: { creativeId: string }, config: Config
   return {
     ...creative,
     ...(specView ?? {}),
+    ...compactRevisionState(creative),
     readiness,
     variants,
     performance: family.map(trimPerformanceEntry),

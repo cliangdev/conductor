@@ -108,6 +108,7 @@ const CREATIVE_TOOLS = [
   'preview_creative',
   'preview_creative_draft',
   'attach_slideshow_spec',
+  'update_creative_slide_text',
   'attach_creative_to_post',
   'create_experiment',
   'delete_creative',
@@ -116,6 +117,7 @@ import { CodexConfirmationRequired } from '../lib/image-generation.js'
 import { generateCreativeImage, type GenerateCreativeImageParams } from './tools/creative-images.js'
 import { composeSlideshowTool, type ComposeSlideshowParams } from './tools/slideshow.js'
 import { attachSlideshowSpec, type AttachSlideshowSpecParams } from './tools/slideshow-spec.js'
+import { updateCreativeSlideText, type UpdateCreativeSlideTextParams } from './tools/slideshow-text.js'
 import {
   listProjectDocs,
   readProjectDoc,
@@ -1423,7 +1425,7 @@ export const TOOLS = [
   },
   {
     name: 'get_creative',
-    description: "One Creative in full: its fields (including audio, slideshow and, for a CAROUSEL or CLIP, renderedVideo — the latest video frame), for a CAROUSEL composed with compose_slideshow, slideshowSpec (the editable spec; summarised when large) and textFields (each editable text as {slide, path, text}, slides from 1), its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
+    description: "One Creative in full: its fields (including audio, slideshow and, for a CAROUSEL or CLIP, renderedVideo — the latest video frame), for a CAROUSEL composed with compose_slideshow, slideshowSpec (the editable spec; summarised when large) and textFields (each editable text as {slide, path, text}, slides from 1), latestRevision (the newest slide-text edit: status PENDING / APPLIED / FAILED, error, and failingChecks by slide, ratio and rule) and pendingRevision while one renders, its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1682,6 +1684,33 @@ export const TOOLS = [
         force: { type: 'boolean', description: 'Attach even when slides differ from a fresh render, or when the Creative already has a spec (optional)' },
       },
       required: ['creativeId', 'specPath'],
+    },
+  },
+  {
+    name: 'update_creative_slide_text',
+    description: "Edit the text of a slideshow (CAROUSEL) Creative's slides. Only a Creative with a stored slideshow spec can be edited (get_creative shows slideshowSpec and textFields; attach_slideshow_spec adds one to an older Creative). Each edit names a slide (from 1), the field (a textFields path such as texts[0].t) and the new text; it replaces an existing text and never adds or removes one. Starts a render of just the changed slides in the workspace's render Workflow and returns at once with revisionId, the diff, and where it renders; the Creative does not change until the render passes its layout checks (text spill, safe zones, size). Call get_creative to follow it: latestRevision.status is APPLIED when done, or FAILED with failingChecks (then nothing changed; shorten the text and retry). Refused with a conflict while another edit or render of this Creative is running, or when version is stale.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
+        edits: {
+          type: 'array',
+          description: 'Up to 50 text replacements',
+          minItems: 1,
+          maxItems: 50,
+          items: {
+            type: 'object',
+            properties: {
+              slide: { type: 'number', description: 'Slide number, from 1' },
+              field: { type: 'string', description: 'The path of one of get_creative textFields, e.g. texts[0].t or rows[1].items[0]' },
+              text: { type: 'string', description: 'The new text (at most 500 characters; keep line breaks as \\n)' },
+            },
+            required: ['slide', 'field', 'text'],
+          },
+        },
+        version: { type: 'number', description: "The Creative's version from get_creative (optional — defaults to the current version; pass it to refuse if the Creative changed since you read it)" },
+      },
+      required: ['creativeId', 'edits'],
     },
   },
   {
@@ -2731,6 +2760,9 @@ export async function runMcpServer(): Promise<void> {
         case 'attach_slideshow_spec': {
           const result = await attachSlideshowSpec(params as unknown as AttachSlideshowSpecParams, config)
           return result.ok ? successResponse(result) : errorResponse(result)
+        }
+        case 'update_creative_slide_text': {
+          return successResponse(await updateCreativeSlideText(params as unknown as UpdateCreativeSlideTextParams, config))
         }
         case 'attach_creative_to_post': {
           return successResponse(

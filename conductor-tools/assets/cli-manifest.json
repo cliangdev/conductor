@@ -911,6 +911,15 @@
       ]
     },
     {
+      "name": "update_creative_slide_text",
+      "description": "Edit the text of a slideshow (CAROUSEL) Creative's slides (needs a stored spec). Re-renders only the changed slides in the render Workflow and returns the revisionId and diff; the Creative changes once the layout checks pass. Call get_creative to follow latestRevision.",
+      "category": "marketing",
+      "requiredParams": [
+        "creativeId",
+        "edits"
+      ]
+    },
+    {
       "name": "preview_creative_draft",
       "description": "Look at a Creative before anything is saved: renders a draft locally from the create_creative fields plus local files (photoPath, clipPath, audioPath) and returns the contact sheet as an image; a CAROUSEL with a track also renders its slideshow MP4 and returns the path. Never writes to Conductor; commit only after the person approves.",
       "category": "marketing"
