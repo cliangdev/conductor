@@ -140,6 +140,7 @@ class WorkItemServiceTest {
         // A status change resolves the bound Workflow to enrich the notification; back it with the seeded
         // ENGINEERING statechart. Lenient because read-only / create tests never reach that path.
         lenient().when(workItemWorkflowService.resolveFor(any(), any())).thenReturn(engineeringStatechart());
+        lenient().when(workItemWorkflowService.resolveFor(any(), any(), any())).thenReturn(engineeringStatechart());
     }
 
     private static Statechart engineeringStatechart() {

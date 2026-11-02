@@ -64,8 +64,8 @@ class WorkItemHierarchyServiceTest {
 
         when(workItemRepository.findById(anyString()))
                 .thenAnswer(inv -> Optional.ofNullable(store.get(inv.<String>getArgument(0))));
-        when(workItemWorkflowService.resolveFor(eq(PROJECT), any(WorkItem.class)))
-                .thenAnswer(inv -> "TASK".equals(inv.<WorkItem>getArgument(1).getWorkflow()) ? taskChart : engineeringChart);
+        when(workItemWorkflowService.resolveFor(eq(PROJECT), anyString(), any()))
+                .thenAnswer(inv -> "TASK".equals(inv.<String>getArgument(1)) ? taskChart : engineeringChart);
         // The real service advances the item along the edge declaring the trigger and returns that edge.
         when(workItemWorkflowService.applySystemTransition(eq(PROJECT), any(WorkItem.class), eq("children_done")))
                 .thenAnswer(inv -> {

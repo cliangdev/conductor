@@ -617,15 +617,10 @@ public class WorkItemService {
             items = items.stream().filter(i -> inSubtree.contains(i.getId())).toList();
         }
         if (filter.dueBefore() != null) {
-            Map<String, Statechart> charts = new HashMap<>();
+            StatechartCache charts = new StatechartCache(workItemWorkflowService, projectId);
             items = items.stream()
                     .filter(i -> i.getDueOn() != null && i.getDueOn().isBefore(filter.dueBefore()))
-                    .filter(i -> {
-                        Statechart chart = charts.computeIfAbsent(
-                                i.getWorkflow() + "@" + i.getWorkflowVersion(),
-                                k -> resolveStatechartOrNull(projectId, i));
-                        return chart == null || !chart.isTerminal(i.getCurrentStatus());
-                    })
+                    .filter(i -> !charts.isTerminal(i))
                     .sorted(Comparator.comparing(WorkItem::getDueOn))
                     .toList();
         }

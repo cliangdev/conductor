@@ -96,7 +96,7 @@ public class WorkItemSignalService {
             return result;
         }
         List<String> ids = items.stream().map(WorkItem::getId).toList();
-        Charts charts = new Charts(projectId);
+        StatechartCache charts = new StatechartCache(workItemWorkflowService, projectId);
 
         // Blockers: one query; a blocker blocks only while it is not terminal in its own Workflow.
         Map<String, List<Blocker>> stillBlockedBy = new HashMap<>();
@@ -132,9 +132,8 @@ public class WorkItemSignalService {
         OffsetDateTime now = OffsetDateTime.now(clock);
         OffsetDateTime staleBefore = now.minus(STALE_AFTER);
         for (WorkItem item : items) {
-            Optional<String> category = charts.category(item);
-            boolean terminal = charts.isTerminal(item.getWorkflow(), item.getWorkflowVersion(),
-                    item.getCurrentStatus());
+            Optional<String> category = charts.statusOf(item).map(s -> s.category());
+            boolean terminal = charts.isTerminal(item);
             List<Blocker> blockers = stillBlockedBy.getOrDefault(item.getId(), List.of());
             boolean blocked = !blockers.isEmpty();
             WorkItemAgentSession own = latestOpen.get(item.getId());
@@ -163,35 +162,5 @@ public class WorkItemSignalService {
 
     private static boolean isAsking(WorkItemAgentSession session) {
         return session != null && WorkItemAgentSession.ACTIVITY_NEEDS_INPUT.equals(session.getActivity());
-    }
-
-    /** Statecharts by {@code workflow@version}, resolved once; one that cannot be resolved reads as open. */
-    private final class Charts {
-        private final String projectId;
-        private final Map<String, Optional<Statechart>> cache = new HashMap<>();
-
-        Charts(String projectId) {
-            this.projectId = projectId;
-        }
-
-        private Optional<Statechart> chart(String workflow, Integer version) {
-            return cache.computeIfAbsent(workflow + "@" + version, key -> {
-                try {
-                    return Optional.of(workItemWorkflowService.resolveFor(projectId, workflow, version));
-                } catch (RuntimeException e) {
-                    return Optional.empty();
-                }
-            });
-        }
-
-        boolean isTerminal(String workflow, Integer version, String status) {
-            return chart(workflow, version).map(c -> c.isTerminal(status)).orElse(false);
-        }
-
-        Optional<String> category(WorkItem item) {
-            return chart(item.getWorkflow(), item.getWorkflowVersion())
-                    .flatMap(c -> c.status(item.getCurrentStatus()))
-                    .map(s -> s.category());
-        }
     }
 }

@@ -172,7 +172,7 @@ public class WorkItemHierarchyService {
         if (ids.size() <= 1) {
             return Progress.EMPTY;
         }
-        Charts charts = new Charts(projectId);
+        StatechartCache charts = new StatechartCache(workItemWorkflowService, projectId);
         List<Node> nodes = new ArrayList<>();
         for (WorkItem w : workItemRepository.findAllById(ids)) {
             nodes.add(new Node(w.getId(), w.getId().equals(rootId) ? null : w.getParentWorkItemId(),
@@ -207,7 +207,7 @@ public class WorkItemHierarchyService {
     /** The ids among these items whose status is terminal in their own Workflow. */
     @Transactional(readOnly = true)
     public java.util.Set<String> terminalIds(String projectId, Collection<WorkItem> items) {
-        Charts charts = new Charts(projectId);
+        StatechartCache charts = new StatechartCache(workItemWorkflowService, projectId);
         java.util.Set<String> ids = new java.util.HashSet<>();
         for (WorkItem item : items) {
             if (charts.isTerminal(item)) {
@@ -233,14 +233,16 @@ public class WorkItemHierarchyService {
             }
         }
         childrenOf.values().forEach(list -> list.sort(Comparator.comparing(WorkItem::getSequenceNumber)));
-        return buildNode(byId.getOrDefault(root.getId(), root), childrenOf, new Charts(projectId));
+        return buildNode(byId.getOrDefault(root.getId(), root), childrenOf,
+                new StatechartCache(workItemWorkflowService, projectId));
     }
 
-    private TreeNode buildNode(WorkItem item, Map<String, List<WorkItem>> childrenOf, Charts charts) {
+    private TreeNode buildNode(WorkItem item, Map<String, List<WorkItem>> childrenOf, StatechartCache charts) {
         List<TreeNode> children = childrenOf.getOrDefault(item.getId(), List.of()).stream()
                 .map(child -> buildNode(child, childrenOf, charts))
                 .toList();
-        return new TreeNode(item, charts.statusLabel(item), charts.isTerminal(item), children);
+        String label = charts.statusOf(item).map(s -> s.displayLabel()).orElse(item.getCurrentStatus());
+        return new TreeNode(item, label, charts.isTerminal(item), children);
     }
 
     // --- completion roll-up ---
@@ -259,7 +261,7 @@ public class WorkItemHierarchyService {
     public List<ParentTransition> onChildStatusChanged(String projectId, WorkItem child) {
         List<ParentTransition> applied = new ArrayList<>();
         WorkItem current = child;
-        Charts charts = new Charts(projectId);
+        StatechartCache charts = new StatechartCache(workItemWorkflowService, projectId);
         for (int level = 0; level < MAX_DEPTH && current.getParentWorkItemId() != null; level++) {
             WorkItem parent = workItemRepository.findById(current.getParentWorkItemId())
                     .filter(p -> p.getProject() != null && projectId.equals(p.getProject().getId()))
@@ -289,35 +291,5 @@ public class WorkItemHierarchyService {
             current = parent;
         }
         return applied;
-    }
-
-    /** Resolves each item's own statechart once per {@code workflow@version}; an unresolvable one reads as open. */
-    private final class Charts {
-        private final String projectId;
-        private final Map<String, Optional<Statechart>> cache = new HashMap<>();
-
-        Charts(String projectId) {
-            this.projectId = projectId;
-        }
-
-        private Optional<Statechart> chart(WorkItem item) {
-            return cache.computeIfAbsent(item.getWorkflow() + "@" + item.getWorkflowVersion(), key -> {
-                try {
-                    return Optional.of(workItemWorkflowService.resolveFor(projectId, item));
-                } catch (RuntimeException e) {
-                    return Optional.empty();
-                }
-            });
-        }
-
-        boolean isTerminal(WorkItem item) {
-            return chart(item).map(c -> c.isTerminal(item.getCurrentStatus())).orElse(false);
-        }
-
-        String statusLabel(WorkItem item) {
-            return chart(item).flatMap(c -> c.status(item.getCurrentStatus()))
-                    .map(s -> s.displayLabel())
-                    .orElse(item.getCurrentStatus());
-        }
     }
 }

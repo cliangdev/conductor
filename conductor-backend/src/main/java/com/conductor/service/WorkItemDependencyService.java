@@ -6,7 +6,6 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.repository.WorkItemDependencyRepository;
 import com.conductor.repository.WorkItemRepository;
-import com.conductor.workflow.lifecycle.Statechart;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -219,14 +218,15 @@ public class WorkItemDependencyService {
         Map<String, WorkItem> byId = new HashMap<>();
         workItemRepository.findAllWithAssociationsByIdIn(wanted).forEach(w -> byId.put(w.getId(), w));
 
-        Map<String, Optional<Statechart>> charts = new HashMap<>();
+        StatechartCache charts = new StatechartCache(workItemWorkflowService, projectId);
         List<GraphNode> nodes = new ArrayList<>();
         for (String id : wanted) {
             WorkItem w = byId.get(id);
             if (w == null) {
                 continue;
             }
-            nodes.add(new GraphNode(w, categoryOf(projectId, w, charts), ghostIds.contains(id)));
+            nodes.add(new GraphNode(w, charts.statusOf(w).map(s -> s.category()).orElse(null),
+                    ghostIds.contains(id)));
         }
         List<GraphEdge> edges = new ArrayList<>();
         for (WorkItemDependency d : links) {
@@ -235,19 +235,6 @@ public class WorkItemDependencyService {
             }
         }
         return new Graph(nodes, edges);
-    }
-
-    /** The status category of an item in its own Workflow, or null when the Workflow cannot be resolved. */
-    private String categoryOf(String projectId, WorkItem item, Map<String, Optional<Statechart>> charts) {
-        Optional<Statechart> chart = charts.computeIfAbsent(item.getWorkflow() + "@" + item.getWorkflowVersion(),
-                key -> {
-                    try {
-                        return Optional.of(workItemWorkflowService.resolveFor(projectId, item));
-                    } catch (RuntimeException e) {
-                        return Optional.empty();
-                    }
-                });
-        return chart.flatMap(c -> c.status(item.getCurrentStatus())).map(s -> s.category()).orElse(null);
     }
 
     private Optional<WorkItem> inProject(String projectId, String id) {
