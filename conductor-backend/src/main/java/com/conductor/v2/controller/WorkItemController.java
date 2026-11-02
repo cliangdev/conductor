@@ -10,10 +10,16 @@ import com.conductor.generated.v2.model.AvailableTransition;
 import com.conductor.generated.v2.model.AvailableTransitionsResponse;
 import com.conductor.generated.v2.model.CreateWorkItemRequest;
 import com.conductor.generated.v2.model.PatchWorkItemRequest;
+import com.conductor.generated.v2.model.WorkItemPriority;
+import com.conductor.generated.v2.model.WorkItemProgress;
 import com.conductor.generated.v2.model.WorkItemAssignee;
 import com.conductor.generated.v2.model.WorkItemResponse;
 import com.conductor.generated.v2.model.ReviewerResponse;
+import com.conductor.service.PriorityScale;
+import com.conductor.service.ProgressRollup;
+import com.conductor.service.ProjectActor;
 import com.conductor.service.ReviewerService;
+import com.conductor.service.WorkItemHierarchyService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.conductor.service.view.ReviewerView;
@@ -55,11 +61,14 @@ public class WorkItemController implements WorkItemsApi {
     private final WorkItemWorkflowService workItemWorkflowService;
     private final ReviewerService reviewerService;
     private final WorkItemListEnricher listEnricher;
+    private final WorkItemHierarchyService hierarchyService;
 
     public WorkItemController(WorkItemService workItemService,
                               WorkItemWorkflowService workItemWorkflowService,
                               ReviewerService reviewerService,
-                              WorkItemListEnricher listEnricher) {
+                              WorkItemListEnricher listEnricher,
+                              WorkItemHierarchyService hierarchyService) {
+        this.hierarchyService = hierarchyService;
         this.workItemService = workItemService;
         this.workItemWorkflowService = workItemWorkflowService;
         this.reviewerService = reviewerService;
@@ -75,15 +84,29 @@ public class WorkItemController implements WorkItemsApi {
         // Canonical surface: never silently default the Workflow. Callers must name the lifecycle Workflow that
         // governs the item (discover via GET .../workflows?lifecycle=true). The legacy v1 /issues create keeps
         // its ENGINEERING default for back-compat.
-        if (request.getWorkflow() == null || request.getWorkflow().isBlank()) {
+        // A sub-item is the exception: with a parent and no Workflow it lands on TASK (type TASK).
+        boolean subItem = request.getParentWorkItemId() != null && !request.getParentWorkItemId().isBlank();
+        boolean noWorkflow = request.getWorkflow() == null || request.getWorkflow().isBlank();
+        if (noWorkflow && !subItem) {
             throw new BusinessException(
                     "workflow is required — name the lifecycle Workflow slug (e.g. ENGINEERING). "
                             + "Discover options via GET /api/v1/projects/{projectId}/workflows?lifecycle=true");
         }
+        if ((request.getType() == null || request.getType().isBlank()) && !(subItem && noWorkflow)) {
+            throw new BusinessException("type is required — a Workflow-defined type such as PRD");
+        }
+        // TODO(T1b): request.getCriteria() and request.getBlockedBy() are accepted by the schema but not
+        // stored yet; create them here once WorkItemCriteriaService / WorkItemDependencyService exist.
+        WorkItemService.DeliveryInput delivery = new WorkItemService.DeliveryInput(
+                request.getParentWorkItemId(),
+                request.getPriority() == null ? null : PriorityScale.parse(request.getPriority().getValue()),
+                request.getMilestoneId(), request.getAppetite());
         WorkItem created = workItemService.createWorkItem(
                 projectId, request.getType(), request.getTitle(), request.getDescription(),
-                request.getWorkflow(), request.getTags(), request.getFields(), request.getDueOn(), caller);
-        return ResponseEntity.status(201).body(toResponse(created, 0L).statusLabel(statusLabel(projectId, created)));
+                request.getWorkflow(), request.getTags(), request.getFields(), request.getDueOn(), delivery,
+                ProjectActor.of(caller));
+        return ResponseEntity.status(201).body(withChildren(toResponse(created, 0L), 0, null)
+                .statusLabel(statusLabel(projectId, created)));
     }
 
     @Override
@@ -91,10 +114,17 @@ public class WorkItemController implements WorkItemsApi {
     public ResponseEntity<List<WorkItemResponse>> listWorkItems(String projectId, String type, String status,
                                                                 String workflow, String tag,
                                                                 LocalDate dueBefore, String creativeId,
-                                                                String mediaId, Boolean enrich) {
+                                                                String mediaId, Boolean enrich,
+                                                                String parentId, String rootId,
+                                                                String milestoneId, WorkItemPriority priority,
+                                                                String assigneeId, Boolean withProgress,
+                                                                String sort) {
         User caller = currentUser();
-        List<WorkItem> items =
-                workItemService.listWorkItemEntities(projectId, type, status, workflow, tag, dueBefore, caller);
+        List<WorkItem> items = workItemService.listWorkItemEntities(projectId,
+                new WorkItemService.ListFilter(type, status, workflow, tag, dueBefore, parentId, rootId,
+                        milestoneId, priority == null ? null : PriorityScale.parse(priority.getValue()),
+                        assigneeId, sort),
+                caller);
         // "Posts using this Creative / Media": narrow the already project-scoped, access-checked list.
         Set<String> using = listEnricher.idsUsing(projectId, creativeId, mediaId);
         if (using != null) {
@@ -102,6 +132,11 @@ public class WorkItemController implements WorkItemsApi {
         }
         List<String> ids = items.stream().map(WorkItem::getId).toList();
         Map<String, Long> counts = workItemService.unresolvedCommentCounts(ids);
+        // Child counts for the whole page in one grouped query; progress only on request, as it reads each
+        // parent's subtree.
+        Map<String, Integer> childCounts = hierarchyService.childCounts(ids);
+        Map<String, ProgressRollup.Progress> progress = Boolean.TRUE.equals(withProgress)
+                ? hierarchyService.progressFor(projectId, childCounts.keySet()) : Map.of();
         // One query for the whole page, like the comment counts beside it — the list is exactly where an
         // N+1 would grow with the backlog.
         Map<String, List<Asset>> links = workItemService.externalLinks(ids);
@@ -116,8 +151,9 @@ public class WorkItemController implements WorkItemsApi {
                 .map(item -> {
                     WorkItemListEnricher.Enrichment extra =
                             enrichment.getOrDefault(item.getId(), WorkItemListEnricher.Enrichment.EMPTY);
-                    return toResponse(item, counts.getOrDefault(item.getId(), 0L),
-                            links.getOrDefault(item.getId(), List.of()))
+                    return withChildren(toResponse(item, counts.getOrDefault(item.getId(), 0L),
+                            links.getOrDefault(item.getId(), List.of())),
+                            childCounts.getOrDefault(item.getId(), 0), progress.get(item.getId()))
                             .statusLabel(statusLabel(projectId, item))
                             .thumbnailUrl(withExtras ? extra.thumbnailUrl() : null)
                             .publishTargets(withExtras ? extra.publishTargets() : null)
@@ -140,8 +176,7 @@ public class WorkItemController implements WorkItemsApi {
     public ResponseEntity<WorkItemResponse> getWorkItem(String projectId, String workItemId) {
         User caller = currentUser();
         WorkItem item = workItemService.getWorkItemEntity(projectId, workItemId, caller);
-        return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
-                linksFor(item)).statusLabel(statusLabel(projectId, item)));
+        return ResponseEntity.ok(singleResponse(projectId, item));
     }
 
     @Override
@@ -149,8 +184,7 @@ public class WorkItemController implements WorkItemsApi {
     public ResponseEntity<WorkItemResponse> getWorkItemByDisplayId(String projectId, String displayId) {
         User caller = currentUser();
         WorkItem item = workItemService.resolveByDisplayId(projectId, displayId, caller);
-        return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
-                linksFor(item)).statusLabel(statusLabel(projectId, item)));
+        return ResponseEntity.ok(singleResponse(projectId, item));
     }
 
     @Override
@@ -162,16 +196,18 @@ public class WorkItemController implements WorkItemsApi {
                 projectId, workItemId, request.getTitle(), request.getDescription(),
                 request.getStatus(), request.getAssigneeId(), request.getScheduledFor(),
                 request.getScheduleTimezone(), request.getTags(), request.getPublishOnApproval(),
-                request.getFields(), request.getDueOn(), caller);
+                request.getFields(), request.getDueOn(), request.getParentWorkItemId(), request.getPriority(),
+                request.getMilestoneId(), request.getAppetite(), caller);
         // Resolved here too: a client that refreshes its row from a patch response would otherwise see an
         // item's links vanish on an unrelated edit.
-        return ResponseEntity.ok(toResponse(item, workItemService.unresolvedCommentCount(item.getId()),
-                linksFor(item)).statusLabel(statusLabel(projectId, item)));
+        return ResponseEntity.ok(singleResponse(projectId, item));
     }
 
     @Override
-    public ResponseEntity<Void> deleteWorkItem(String projectId, String workItemId, Boolean confirmLive) {
-        workItemService.deleteWorkItem(projectId, workItemId, currentUser(), Boolean.TRUE.equals(confirmLive));
+    public ResponseEntity<Void> deleteWorkItem(String projectId, String workItemId, Boolean confirmLive,
+                                               Boolean cascade) {
+        workItemService.deleteWorkItem(projectId, workItemId, currentUser(), Boolean.TRUE.equals(confirmLive),
+                Boolean.TRUE.equals(cascade));
         return ResponseEntity.noContent().build();
     }
 
@@ -182,6 +218,30 @@ public class WorkItemController implements WorkItemsApi {
         AvailableTransitionsView view =
                 workItemWorkflowService.availableTransitions(projectId, workItemId, caller);
         return ResponseEntity.ok(toV2Transitions(view));
+    }
+
+    /**
+     * The full single-item response: comment count, links, status label, and the item's child count and
+     * progress. Shared by the two reads and the patch so a client refreshing from any of them sees the same.
+     */
+    private WorkItemResponse singleResponse(String projectId, WorkItem item) {
+        int childCount = hierarchyService.childCounts(List.of(item.getId())).getOrDefault(item.getId(), 0);
+        ProgressRollup.Progress progress = childCount > 0 ? hierarchyService.progress(projectId, item.getId()) : null;
+        return withChildren(toResponse(item, workItemService.unresolvedCommentCount(item.getId()), linksFor(item)),
+                childCount, progress).statusLabel(statusLabel(projectId, item));
+    }
+
+    /** Adds the child count and, for an item with children, its progress to a response. */
+    static WorkItemResponse withChildren(WorkItemResponse response, int childCount,
+                                         ProgressRollup.Progress progress) {
+        response.setChildCount(childCount);
+        if (progress != null) {
+            // TODO(T1b): criteriaTotal / criteriaMet are 0 until WorkItemHierarchyService#progress is fed
+            // the per-item criteria counts.
+            response.setProgress(new WorkItemProgress(progress.total(), progress.done(), progress.percent(),
+                    progress.criteriaTotal(), progress.criteriaMet()));
+        }
+        return response;
     }
 
     /** This one item's external links, as the single-item reads need them. */
@@ -268,6 +328,15 @@ public class WorkItemController implements WorkItemsApi {
                 .tags(List.copyOf(item.getTags()))
                 .fields(fieldsOf(item))
                 .dueOn(item.getDueOn())
+                .parentWorkItemId(item.getParentWorkItemId())
+                .priority(item.getPriority() == null ? null
+                        : WorkItemPriority.fromValue(PriorityScale.label(item.getPriority())))
+                .milestoneId(item.getMilestone() == null ? null : item.getMilestone().getId())
+                .milestoneName(item.getMilestone() == null ? null : item.getMilestone().getName())
+                .appetite(item.getAppetite())
+                .appetiteDays(item.getAppetiteDays())
+                .startedAt(item.getStartedAt())
+                .completedAt(item.getCompletedAt())
                 .externalLinks(externalLinks.stream()
                         .map(asset -> new WorkItemExternalLink(asset.getRef(), asset.getType())
                                 .label(asset.getLabel()))
