@@ -307,6 +307,7 @@ interface ListedWorkItem {
   title?: string
   type?: string
   status?: string
+  sequenceNumber?: number
   priority?: string | null
   childCount?: number
   signals?: { blocked?: boolean; ready?: boolean }
@@ -338,6 +339,8 @@ export function toCompactRow(item: ListedWorkItem): Record<string, unknown> {
     title: item.title,
     type: item.type,
     status: item.status,
+    // Kept so a bare "42" still resolves an item (conductor:implement step 1 matches on it).
+    sequenceNumber: item.sequenceNumber,
     priority: item.priority ?? null,
     childCount: item.childCount ?? 0,
     blocked: item.signals?.blocked ?? false,
