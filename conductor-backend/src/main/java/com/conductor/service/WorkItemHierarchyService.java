@@ -4,7 +4,9 @@ import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.UnprocessableEntityException;
+import com.conductor.repository.WorkItemCriterionRepository;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.ProgressRollup.CriteriaCount;
 import com.conductor.service.ProgressRollup.Node;
 import com.conductor.service.ProgressRollup.Progress;
 import com.conductor.workflow.lifecycle.Statechart;
@@ -48,11 +50,14 @@ public class WorkItemHierarchyService {
 
     private final WorkItemRepository workItemRepository;
     private final WorkItemWorkflowService workItemWorkflowService;
+    private final WorkItemCriterionRepository criterionRepository;
 
     public WorkItemHierarchyService(WorkItemRepository workItemRepository,
-                                    WorkItemWorkflowService workItemWorkflowService) {
+                                    WorkItemWorkflowService workItemWorkflowService,
+                                    WorkItemCriterionRepository criterionRepository) {
         this.workItemRepository = workItemRepository;
         this.workItemWorkflowService = workItemWorkflowService;
+        this.criterionRepository = criterionRepository;
     }
 
     /** A parent moved forward because its last child finished. */
@@ -173,9 +178,20 @@ public class WorkItemHierarchyService {
             nodes.add(new Node(w.getId(), w.getId().equals(rootId) ? null : w.getParentWorkItemId(),
                     charts.isTerminal(w)));
         }
-        // TODO(T1b): pass per-item criteria counts here (WorkItemCriterionRepository#countsByWorkItem) so
-        // criteriaTotal / criteriaMet are real; until criteria exist they stay 0.
-        return ProgressRollup.of(rootId, nodes, Map.of());
+        return ProgressRollup.of(rootId, nodes, criteriaCounts(ids));
+    }
+
+    /** Met and total acceptance criteria for these items in one query; items with none are absent. */
+    @Transactional(readOnly = true)
+    public Map<String, CriteriaCount> criteriaCounts(Collection<String> ids) {
+        Map<String, CriteriaCount> counts = new HashMap<>();
+        if (ids == null || ids.isEmpty()) {
+            return counts;
+        }
+        for (Object[] row : criterionRepository.countsByWorkItem(ids)) {
+            counts.put((String) row[0], new CriteriaCount(((Number) row[2]).intValue(), ((Number) row[1]).intValue()));
+        }
+        return counts;
     }
 
     /** {@link #progress} for each of these roots, keyed by id. */

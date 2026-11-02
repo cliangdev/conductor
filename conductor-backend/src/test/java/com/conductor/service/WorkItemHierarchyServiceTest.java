@@ -43,6 +43,7 @@ class WorkItemHierarchyServiceTest {
 
     @Mock private WorkItemRepository workItemRepository;
     @Mock private WorkItemWorkflowService workItemWorkflowService;
+    @Mock private com.conductor.repository.WorkItemCriterionRepository criterionRepository;
 
     private WorkItemHierarchyService service;
     private Statechart taskChart;
@@ -58,7 +59,8 @@ class WorkItemHierarchyServiceTest {
         project = new Project();
         project.setId(PROJECT);
 
-        service = new WorkItemHierarchyService(workItemRepository, workItemWorkflowService);
+        service = new WorkItemHierarchyService(workItemRepository, workItemWorkflowService,
+                criterionRepository);
 
         when(workItemRepository.findById(anyString()))
                 .thenAnswer(inv -> Optional.ofNullable(store.get(inv.<String>getArgument(0))));

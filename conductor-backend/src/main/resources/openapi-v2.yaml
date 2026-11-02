@@ -18,6 +18,12 @@ tags:
     description: Work Item management endpoints (canonical successor to v1 issues)
   - name: work-item-tree
     description: A Work Item and the sub-items beneath it
+  - name: work-item-dependencies
+    description: BLOCKS and DISCOVERED_FROM links between Work Items, and the dependency graph
+  - name: work-item-criteria
+    description: Acceptance criteria on a Work Item
+  - name: work-item-agent-sessions
+    description: Liveness of agent runs on a Work Item
   - name: milestones
     description: Named, optionally dated groupings of Work Items, with their progress
   - name: work-item-reviewers
@@ -223,6 +229,30 @@ paths:
           schema:
             type: string
             enum: [updated, created, priority, dueOn, sequence]
+        - name: ready
+          in: query
+          required: false
+          description: >-
+            When true, only items that can be picked up now: not blocked, in an `open` status, not terminal.
+            When false, only items that are not. Omit for both.
+          schema:
+            type: boolean
+        - name: blocked
+          in: query
+          required: false
+          description: >-
+            When true, only items held up by a BLOCKS blocker that has not finished. When false, only items
+            that are not. Omit for both.
+          schema:
+            type: boolean
+        - name: stale
+          in: query
+          required: false
+          description: >-
+            When true, only in-progress items untouched for seven days with no agent working on them. When
+            false, only items that are not. Omit for both.
+          schema:
+            type: boolean
       responses:
         "200":
           description: List of Work Items
@@ -933,6 +963,370 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/WorkItemTreeNode"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/dependencies:
+    get:
+      tags:
+        - work-item-dependencies
+      summary: List the dependencies around a Work Item
+      description: >-
+        Grouped by what they mean to this item: `blocks` (this item blocks them), `blockedBy`, `discoveredFrom`
+        and `discovered`. Each entry carries the `dependencyId` to remove it with.
+      operationId: listWorkItemDependencies
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: The grouped dependencies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkItemDependencies"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - work-item-dependencies
+      summary: Add a dependency
+      description: >-
+        Records "this item `kind` `relatedWorkItemId`" (`BLOCKS`: this item blocks the related one). Idempotent:
+        an existing link is returned as is. Both items must be in the project, an item cannot depend on itself,
+        BLOCKS must stay acyclic and an item has at most 25 outgoing and 25 incoming BLOCKS links.
+      operationId: addWorkItemDependency
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddWorkItemDependencyRequest"
+      responses:
+        "200":
+          description: The item's dependencies after the change
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkItemDependencies"
+        "400":
+          description: Unknown kind, self-link, or an item outside this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Would create a BLOCKS cycle, or exceeds the per-item BLOCKS cap
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/dependencies/{dependencyId}:
+    delete:
+      tags:
+        - work-item-dependencies
+      summary: Remove a dependency
+      operationId: removeWorkItemDependency
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+        - {name: dependencyId, in: path, required: true, schema: {type: string}}
+      responses:
+        "204":
+          description: Removed
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item or dependency not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/dependency-graph:
+    get:
+      tags:
+        - work-item-dependencies
+      summary: The BLOCKS graph of a Work Item's branch
+      description: >-
+        The branch's items as nodes and the BLOCKS edges whose blocked end is in it. A blocker outside the
+        branch appears as a node with `external: true`.
+      operationId: getWorkItemDependencyGraph
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: The graph
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkItemDependencyGraph"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/criteria:
+    get:
+      tags:
+        - work-item-criteria
+      summary: List a Work Item's acceptance criteria
+      operationId: listWorkItemCriteria
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: The criteria in order
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkItemCriterionResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags:
+        - work-item-criteria
+      summary: Replace a Work Item's acceptance criteria
+      description: >-
+        The sent list becomes the item's criteria, in that order. A criterion sent again (same `externalRef`,
+        or same text when it has none) keeps its met state and evidence. `kind` defaults to `auto`.
+      operationId: replaceWorkItemCriteria
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/CreateWorkItemCriterion"
+      responses:
+        "200":
+          description: The stored criteria
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkItemCriterionResponse"
+        "400":
+          description: Empty text, unknown kind, or too many criteria
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/criteria/{criterionId}:
+    patch:
+      tags:
+        - work-item-criteria
+      summary: Change one acceptance criterion
+      description: >-
+        `met: true` records who and when; `met: false` clears both. Returns the criterion and the item's totals.
+      operationId: patchWorkItemCriterion
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+        - {name: criterionId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatchWorkItemCriterionRequest"
+      responses:
+        "200":
+          description: The criterion and the item's criteria totals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatchWorkItemCriterionResponse"
+        "400":
+          description: Empty text or unknown kind
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item or criterion not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/agent-sessions:
+    get:
+      tags:
+        - work-item-agent-sessions
+      summary: List the agent sessions on a Work Item
+      operationId: listWorkItemAgentSessions
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Sessions, most recently heard from first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkItemAgentSessionResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/agent-sessions/{sessionKey}:
+    put:
+      tags:
+        - work-item-agent-sessions
+      summary: Report what an agent session is doing
+      description: >-
+        Idempotent upsert by `sessionKey`: the first report creates the session, later ones refresh its
+        activity, note and heartbeat. DONE and ERRORED close it; WORKING or NEEDS_INPUT reopens a closed one.
+        Never changes the item's assignee.
+      operationId: upsertWorkItemAgentSession
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+        - {name: sessionKey, in: path, required: true, schema: {type: string, maxLength: 128}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpsertAgentSessionRequest"
+      responses:
+        "200":
+          description: The session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkItemAgentSessionResponse"
+        "400":
+          description: Unknown mode or activity, or a step run that is not this item's
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Not authenticated
           content:
@@ -6220,6 +6614,262 @@ components:
           description: How many direct sub-items this item has.
         progress:
           $ref: "#/components/schemas/WorkItemProgress"
+        signals:
+          $ref: "#/components/schemas/WorkItemSignals"
+        agentActivity:
+          $ref: "#/components/schemas/WorkItemAgentActivity"
+
+    WorkItemBlocker:
+      type: object
+      description: A blocker that has not finished yet.
+      required: [id, displayId, title]
+      properties:
+        id:
+          type: string
+        displayId:
+          type: string
+        title:
+          type: string
+
+    WorkItemSignals:
+      type: object
+      description: >-
+        Facts derived on read from the item's dependencies, status and agent sessions (see docs/prd-tracking.md).
+      required: [blocked, blockedBy, ready, stale, needsInput]
+      properties:
+        blocked:
+          type: boolean
+          description: A BLOCKS blocker has not reached a terminal status in its own Workflow.
+        blockedBy:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkItemBlocker"
+        ready:
+          type: boolean
+          description: Not blocked, in an `open` status and not terminal; assignee is irrelevant.
+        stale:
+          type: boolean
+          description: In progress, untouched for seven days, and no agent session WORKING within seven days.
+        needsInput:
+          type: boolean
+          description: The latest open agent session (for an item with children, on it or any descendant) is NEEDS_INPUT.
+
+    WorkItemAgentActivity:
+      type: object
+      description: The latest open agent session on the item.
+      required: [agentLabel, mode, activity, updatedAt]
+      properties:
+        agentLabel:
+          type: string
+        mode:
+          type: string
+          enum: [DELEGATE, ASSIGNEE]
+        activity:
+          type: string
+          enum: [WORKING, NEEDS_INPUT, DONE, ERRORED]
+        note:
+          type: string
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+
+    WorkItemDependencyEntry:
+      type: object
+      description: One link seen from an item, with the Work Item on the other end.
+      required: [dependencyId, workItemId, displayId, title, status]
+      properties:
+        dependencyId:
+          type: string
+        workItemId:
+          type: string
+        displayId:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+
+    WorkItemDependencies:
+      type: object
+      required: [blocks, blockedBy, discoveredFrom, discovered]
+      properties:
+        blocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkItemDependencyEntry"
+        blockedBy:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkItemDependencyEntry"
+        discoveredFrom:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkItemDependencyEntry"
+        discovered:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkItemDependencyEntry"
+
+    AddWorkItemDependencyRequest:
+      type: object
+      required: [kind, relatedWorkItemId]
+      properties:
+        kind:
+          type: string
+          enum: [BLOCKS, DISCOVERED_FROM]
+        relatedWorkItemId:
+          type: string
+
+    WorkItemDependencyGraphNode:
+      type: object
+      required: [id, displayId, title, status, external]
+      properties:
+        id:
+          type: string
+        displayId:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+        statusCategory:
+          type: string
+          nullable: true
+        external:
+          type: boolean
+          description: A blocker outside the branch the graph was asked for.
+
+    WorkItemDependencyGraphEdge:
+      type: object
+      required: [id, from, to, kind]
+      properties:
+        id:
+          type: string
+        from:
+          type: string
+          description: The blocking item.
+        to:
+          type: string
+          description: The blocked item.
+        kind:
+          type: string
+
+    WorkItemDependencyGraph:
+      type: object
+      required: [nodes, edges]
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkItemDependencyGraphNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkItemDependencyGraphEdge"
+
+    WorkItemCriterionResponse:
+      type: object
+      required: [criterionId, position, text, kind, met]
+      properties:
+        criterionId:
+          type: string
+        position:
+          type: integer
+        text:
+          type: string
+        kind:
+          type: string
+          enum: [auto, manual]
+        externalRef:
+          type: string
+          nullable: true
+        met:
+          type: boolean
+        evidence:
+          type: string
+          nullable: true
+        metAt:
+          type: string
+          format: date-time
+          nullable: true
+        metByLabel:
+          type: string
+          nullable: true
+
+    PatchWorkItemCriterionRequest:
+      type: object
+      properties:
+        text:
+          type: string
+        kind:
+          type: string
+          enum: [auto, manual]
+        met:
+          type: boolean
+        evidence:
+          type: string
+
+    PatchWorkItemCriterionResponse:
+      type: object
+      required: [criterion, criteriaMet, criteriaTotal]
+      properties:
+        criterion:
+          $ref: "#/components/schemas/WorkItemCriterionResponse"
+        criteriaMet:
+          type: integer
+        criteriaTotal:
+          type: integer
+
+    UpsertAgentSessionRequest:
+      type: object
+      required: [agentLabel, activity]
+      properties:
+        agentLabel:
+          type: string
+        mode:
+          type: string
+          enum: [DELEGATE, ASSIGNEE]
+          description: Defaults to DELEGATE.
+        activity:
+          type: string
+          enum: [WORKING, NEEDS_INPUT, DONE, ERRORED]
+        note:
+          type: string
+          description: Replaces the previous note; for NEEDS_INPUT, the question.
+        stepRunId:
+          type: string
+
+    WorkItemAgentSessionResponse:
+      type: object
+      required: [sessionKey, agentLabel, mode, activity, startedAt, lastHeartbeatAt]
+      properties:
+        sessionKey:
+          type: string
+        agentLabel:
+          type: string
+        mode:
+          type: string
+          enum: [DELEGATE, ASSIGNEE]
+        activity:
+          type: string
+          enum: [WORKING, NEEDS_INPUT, DONE, ERRORED]
+        note:
+          type: string
+          nullable: true
+        stepRunId:
+          type: string
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+        lastHeartbeatAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+          nullable: true
 
     WorkItemPriority:
       type: string
@@ -6293,6 +6943,15 @@ components:
           $ref: "#/components/schemas/WorkItemAssignee"
         childCount:
           type: integer
+        criteriaTotal:
+          type: integer
+          description: Acceptance criteria on this item itself.
+        criteriaMet:
+          type: integer
+        signals:
+          $ref: "#/components/schemas/WorkItemSignals"
+        agentActivity:
+          $ref: "#/components/schemas/WorkItemAgentActivity"
         children:
           type: array
           items:
@@ -6519,13 +7178,13 @@ components:
         criteria:
           type: array
           description: >-
-            Acceptance criteria to create with the item. Accepted now but not yet stored.
+            Acceptance criteria to create with the item.
           items:
             $ref: "#/components/schemas/CreateWorkItemCriterion"
         blockedBy:
           type: array
           description: >-
-            Ids of Work Items that must finish first. Accepted now but not yet stored.
+            Ids of Work Items that must finish first: each is recorded as `<id> BLOCKS <this item>`.
           items:
             type: string
         title:

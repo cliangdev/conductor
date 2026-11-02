@@ -159,6 +159,101 @@ class WorkItemHierarchyE2ETest extends AbstractE2ETest {
                 .containsEntry("leafTotal", 2).containsEntry("leafDone", 1);
     }
 
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> callList(HttpMethod method, String url, Object body) {
+        ResponseEntity<List> response = rest.exchange(url, method, new HttpEntity<>(body, auth), List.class);
+        assertThat(response.getStatusCode()).as("%s %s", method, url).isEqualTo(HttpStatus.OK);
+        return response.getBody();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> map(Map<String, Object> body, String key) {
+        return (Map<String, Object>) body.get(key);
+    }
+
+    @Test
+    void dependenciesCriteriaAndAgentSessionsDriveTheSignalsAndTheRollup() {
+        String prd = create(Map.of("title", "Tracked feature", "type", "PRD", "workflow", "ENGINEERING"));
+        String a = create(Map.of("title", "Task A", "parentWorkItemId", prd));
+        // B is blocked by A from the moment it is created.
+        String b = create(Map.of("title", "Task B", "parentWorkItemId", prd, "blockedBy", List.of(a)));
+
+        var bBody = get(b);
+        assertThat(map(bBody, "signals")).containsEntry("blocked", true).containsEntry("ready", false);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> blockedBy = (List<Map<String, Object>>) map(bBody, "signals").get("blockedBy");
+        assertThat(blockedBy).extracting(m -> m.get("id")).containsExactly(a);
+
+        // The ready queue under the PRD is just A.
+        assertThat(list("?rootId=" + prd + "&ready=true")).extracting(m -> m.get("id")).containsExactly(a);
+        assertThat(list("?rootId=" + prd + "&blocked=true")).extracting(m -> m.get("id")).containsExactly(b);
+
+        // Dependencies list both ends, and a reverse BLOCKS is a cycle.
+        var deps = call(HttpMethod.GET, items() + "/" + b + "/dependencies", null, HttpStatus.OK);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> blockers = (List<Map<String, Object>>) deps.get("blockedBy");
+        assertThat(blockers).hasSize(1);
+        assertThat(blockers.get(0)).containsEntry("workItemId", a);
+        assertThat(blockers.get(0).get("dependencyId")).isNotNull();
+        call(HttpMethod.POST, items() + "/" + a + "/dependencies",
+                Map.of("kind", "BLOCKS", "relatedWorkItemId", b), HttpStatus.OK); // idempotent re-assert
+        call(HttpMethod.POST, items() + "/" + b + "/dependencies",
+                Map.of("kind", "BLOCKS", "relatedWorkItemId", a), HttpStatus.CONFLICT);
+        call(HttpMethod.POST, items() + "/" + a + "/dependencies",
+                Map.of("kind", "BLOCKS", "relatedWorkItemId", a), HttpStatus.BAD_REQUEST);
+        var graph = call(HttpMethod.GET, items() + "/" + prd + "/dependency-graph", null, HttpStatus.OK);
+        assertThat((List<?>) graph.get("nodes")).hasSize(3);
+        assertThat((List<?>) graph.get("edges")).hasSize(1);
+
+        // Finishing A unblocks B: the ready queue is now B, and A (terminal) is not ready.
+        move(a, "IN_PROGRESS");
+        move(a, "DONE");
+        assertThat(list("?rootId=" + prd + "&ready=true")).extracting(m -> m.get("id")).containsExactly(b);
+        assertThat(map(get(b), "signals")).containsEntry("blocked", false).containsEntry("ready", true);
+
+        // Two criteria on B, one met: the patch reports 1/2, the tree node and the PRD's progress agree.
+        var criteria = callList(HttpMethod.PUT, items() + "/" + b + "/criteria", List.of(
+                Map.of("text", "It works", "kind", "manual", "externalRef", "AC-P0-1.1"),
+                Map.of("text", "It is fast")));
+        assertThat(criteria).extracting(m -> m.get("position")).containsExactly(0, 1);
+        assertThat(criteria).extracting(m -> m.get("kind")).containsExactly("manual", "auto");
+        String firstCriterion = (String) criteria.get(0).get("criterionId");
+        var patched = call(HttpMethod.PATCH, items() + "/" + b + "/criteria/" + firstCriterion,
+                Map.of("met", true, "evidence", "checked by hand"), HttpStatus.OK);
+        assertThat(patched).containsEntry("criteriaMet", 1).containsEntry("criteriaTotal", 2);
+        assertThat(map(patched, "criterion")).containsEntry("met", true).containsEntry("evidence", "checked by hand");
+        assertThat(map(patched, "criterion").get("metAt")).isNotNull();
+
+        var tree = call(HttpMethod.GET, items() + "/" + prd + "/tree", null, HttpStatus.OK);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> nodes = (List<Map<String, Object>>) tree.get("children");
+        Map<String, Object> bNode = nodes.stream().filter(n -> b.equals(n.get("id"))).findFirst().orElseThrow();
+        assertThat(bNode).containsEntry("criteriaTotal", 2).containsEntry("criteriaMet", 1);
+        assertThat(map(bNode, "signals")).containsEntry("ready", true);
+        assertThat(map(get(prd), "progress")).containsEntry("criteriaTotal", 2).containsEntry("criteriaMet", 1)
+                .containsEntry("total", 2).containsEntry("done", 1);
+
+        // An agent asks a question on B: the PRD shows needsInput, B shows the activity.
+        String sessions = items() + "/" + b + "/agent-sessions/run-1";
+        var asking = call(HttpMethod.PUT, sessions, Map.of("agentLabel", "claude-code",
+                "activity", "NEEDS_INPUT", "note", "Which database?"), HttpStatus.OK);
+        assertThat(asking).containsEntry("activity", "NEEDS_INPUT").containsEntry("mode", "DELEGATE");
+        assertThat(map(get(prd), "signals")).containsEntry("needsInput", true);
+        assertThat(map(get(b), "agentActivity")).containsEntry("activity", "NEEDS_INPUT")
+                .containsEntry("note", "Which database?");
+        // Re-reporting is an idempotent upsert, not a second session.
+        call(HttpMethod.PUT, sessions, Map.of("agentLabel", "claude-code", "activity", "NEEDS_INPUT",
+                "note", "Which database?"), HttpStatus.OK);
+        assertThat(callList(HttpMethod.GET, items() + "/" + b + "/agent-sessions", null)).hasSize(1);
+
+        // Done closes the session: the PRD stops asking and B reports no live activity.
+        var done = call(HttpMethod.PUT, sessions, Map.of("agentLabel", "claude-code", "activity", "DONE"),
+                HttpStatus.OK);
+        assertThat(done.get("endedAt")).isNotNull();
+        assertThat(map(get(prd), "signals")).containsEntry("needsInput", false);
+        assertThat(get(b).get("agentActivity")).isNull();
+    }
+
     @Test
     void reparentingIsGuardedAndDeletingAParentNeedsCascade() {
         String prd = create(Map.of("title", "Parent", "type", "PRD", "workflow", "ENGINEERING"));

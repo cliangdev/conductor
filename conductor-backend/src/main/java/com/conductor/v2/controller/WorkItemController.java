@@ -19,6 +19,10 @@ import com.conductor.service.PriorityScale;
 import com.conductor.service.ProgressRollup;
 import com.conductor.service.ProjectActor;
 import com.conductor.service.ReviewerService;
+import com.conductor.service.WorkItemCriteriaService;
+import com.conductor.service.WorkItemDependencyService;
+import com.conductor.service.WorkItemSignalService;
+import com.conductor.entity.WorkItemDependency;
 import com.conductor.service.WorkItemHierarchyService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -62,13 +66,22 @@ public class WorkItemController implements WorkItemsApi {
     private final ReviewerService reviewerService;
     private final WorkItemListEnricher listEnricher;
     private final WorkItemHierarchyService hierarchyService;
+    private final WorkItemSignalService signalService;
+    private final WorkItemDependencyService dependencyService;
+    private final WorkItemCriteriaService criteriaService;
 
     public WorkItemController(WorkItemService workItemService,
                               WorkItemWorkflowService workItemWorkflowService,
                               ReviewerService reviewerService,
                               WorkItemListEnricher listEnricher,
-                              WorkItemHierarchyService hierarchyService) {
+                              WorkItemHierarchyService hierarchyService,
+                              WorkItemSignalService signalService,
+                              WorkItemDependencyService dependencyService,
+                              WorkItemCriteriaService criteriaService) {
         this.hierarchyService = hierarchyService;
+        this.signalService = signalService;
+        this.dependencyService = dependencyService;
+        this.criteriaService = criteriaService;
         this.workItemService = workItemService;
         this.workItemWorkflowService = workItemWorkflowService;
         this.reviewerService = reviewerService;
@@ -95,8 +108,6 @@ public class WorkItemController implements WorkItemsApi {
         if ((request.getType() == null || request.getType().isBlank()) && !(subItem && noWorkflow)) {
             throw new BusinessException("type is required — a Workflow-defined type such as PRD");
         }
-        // TODO(T1b): request.getCriteria() and request.getBlockedBy() are accepted by the schema but not
-        // stored yet; create them here once WorkItemCriteriaService / WorkItemDependencyService exist.
         WorkItemService.DeliveryInput delivery = new WorkItemService.DeliveryInput(
                 request.getParentWorkItemId(),
                 request.getPriority() == null ? null : PriorityScale.parse(request.getPriority().getValue()),
@@ -105,8 +116,25 @@ public class WorkItemController implements WorkItemsApi {
                 projectId, request.getType(), request.getTitle(), request.getDescription(),
                 request.getWorkflow(), request.getTags(), request.getFields(), request.getDueOn(), delivery,
                 ProjectActor.of(caller));
-        return ResponseEntity.status(201).body(withChildren(toResponse(created, 0L), 0, null)
-                .statusLabel(statusLabel(projectId, created)));
+        // Criteria and blockers are part of creating the item: a rejected one (a foreign id, a cap) rolls the
+        // whole create back, since this method is one transaction.
+        if (request.getCriteria() != null && !request.getCriteria().isEmpty()) {
+            criteriaService.replaceAll(projectId, created.getId(), request.getCriteria().stream()
+                    .map(c -> new WorkItemCriteriaService.CriterionInput(c.getText(),
+                            c.getKind() == null ? null : c.getKind().getValue(), c.getExternalRef()))
+                    .toList());
+        }
+        if (request.getBlockedBy() != null) {
+            for (String blockerId : request.getBlockedBy()) {
+                // "blockedBy X" reads as the row "X BLOCKS new item".
+                dependencyService.add(projectId, blockerId, WorkItemDependency.KIND_BLOCKS, created.getId(),
+                        ProjectActor.of(caller));
+            }
+        }
+        WorkItemSignalService.Signals signals =
+                signalService.signalsFor(projectId, List.of(created)).get(created.getId());
+        return ResponseEntity.status(201).body(withSignals(withChildren(toResponse(created, 0L), 0, null)
+                .statusLabel(statusLabel(projectId, created)), signals));
     }
 
     @Override
@@ -118,7 +146,8 @@ public class WorkItemController implements WorkItemsApi {
                                                                 String parentId, String rootId,
                                                                 String milestoneId, WorkItemPriority priority,
                                                                 String assigneeId, Boolean withProgress,
-                                                                String sort) {
+                                                                String sort, Boolean ready, Boolean blocked,
+                                                                Boolean stale) {
         User caller = currentUser();
         List<WorkItem> items = workItemService.listWorkItemEntities(projectId,
                 new WorkItemService.ListFilter(type, status, workflow, tag, dueBefore, parentId, rootId,
@@ -129,6 +158,19 @@ public class WorkItemController implements WorkItemsApi {
         Set<String> using = listEnricher.idsUsing(projectId, creativeId, mediaId);
         if (using != null) {
             items = items.stream().filter(i -> using.contains(i.getId())).toList();
+        }
+        // Derived signals for the whole page in a few batched reads; ready / blocked / stale narrow the list
+        // here, in Java, because they are judged in each item's own Workflow (like dueBefore).
+        Map<String, WorkItemSignalService.Signals> signals = signalService.signalsFor(projectId, items);
+        if (ready != null || blocked != null || stale != null) {
+            items = items.stream()
+                    .filter(i -> ready == null || signals.get(i.getId()) != null
+                            && signals.get(i.getId()).ready() == ready)
+                    .filter(i -> blocked == null || signals.get(i.getId()) != null
+                            && signals.get(i.getId()).blocked() == blocked)
+                    .filter(i -> stale == null || signals.get(i.getId()) != null
+                            && signals.get(i.getId()).stale() == stale)
+                    .toList();
         }
         List<String> ids = items.stream().map(WorkItem::getId).toList();
         Map<String, Long> counts = workItemService.unresolvedCommentCounts(ids);
@@ -155,6 +197,11 @@ public class WorkItemController implements WorkItemsApi {
                             links.getOrDefault(item.getId(), List.of())),
                             childCounts.getOrDefault(item.getId(), 0), progress.get(item.getId()))
                             .statusLabel(statusLabel(projectId, item))
+                            .signals(signals.containsKey(item.getId())
+                                    ? DeliveryMappers.signals(signals.get(item.getId())) : null)
+                            .agentActivity(signals.containsKey(item.getId())
+                                    ? DeliveryMappers.agentActivity(signals.get(item.getId()).agentActivity())
+                                    : null)
                             .thumbnailUrl(withExtras ? extra.thumbnailUrl() : null)
                             .publishTargets(withExtras ? extra.publishTargets() : null)
                             .creative(withExtras ? extra.creative() : null)
@@ -227,8 +274,20 @@ public class WorkItemController implements WorkItemsApi {
     private WorkItemResponse singleResponse(String projectId, WorkItem item) {
         int childCount = hierarchyService.childCounts(List.of(item.getId())).getOrDefault(item.getId(), 0);
         ProgressRollup.Progress progress = childCount > 0 ? hierarchyService.progress(projectId, item.getId()) : null;
-        return withChildren(toResponse(item, workItemService.unresolvedCommentCount(item.getId()), linksFor(item)),
-                childCount, progress).statusLabel(statusLabel(projectId, item));
+        WorkItemSignalService.Signals signals =
+                signalService.signalsFor(projectId, List.of(item)).get(item.getId());
+        return withSignals(withChildren(
+                toResponse(item, workItemService.unresolvedCommentCount(item.getId()), linksFor(item)),
+                childCount, progress).statusLabel(statusLabel(projectId, item)), signals);
+    }
+
+    /** Adds the derived signals and the latest open agent session to a response. */
+    private static WorkItemResponse withSignals(WorkItemResponse response, WorkItemSignalService.Signals signals) {
+        if (signals != null) {
+            response.setSignals(DeliveryMappers.signals(signals));
+            response.setAgentActivity(DeliveryMappers.agentActivity(signals.agentActivity()));
+        }
+        return response;
     }
 
     /** Adds the child count and, for an item with children, its progress to a response. */
@@ -236,8 +295,6 @@ public class WorkItemController implements WorkItemsApi {
                                          ProgressRollup.Progress progress) {
         response.setChildCount(childCount);
         if (progress != null) {
-            // TODO(T1b): criteriaTotal / criteriaMet are 0 until WorkItemHierarchyService#progress is fed
-            // the per-item criteria counts.
             response.setProgress(new WorkItemProgress(progress.total(), progress.done(), progress.percent(),
                     progress.criteriaTotal(), progress.criteriaMet()));
         }

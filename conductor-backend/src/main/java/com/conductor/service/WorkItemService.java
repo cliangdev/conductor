@@ -471,8 +471,8 @@ public class WorkItemService {
 
         if (statusChanged) {
             // PR link (if any) lives in github_pr Assets now, not on the Work Item; surfaced on the merge event.
+            // publishStatusChanged also rolls completion up to the parents.
             publishStatusChanged(projectId, workItem, previousStatus, workItem.getCurrentStatus(), null);
-            rollUpToParents(projectId, workItem);
         }
 
         return workItem;
@@ -520,7 +520,7 @@ public class WorkItemService {
         }
         for (WorkItemHierarchyService.ParentTransition moved
                 : hierarchyService.onChildStatusChanged(projectId, workItem)) {
-            publishStatusChanged(projectId, moved.parent(), moved.fromStatus(), moved.toStatus(), null);
+            announceStatusChanged(projectId, moved.parent(), moved.fromStatus(), moved.toStatus(), null);
         }
     }
 
@@ -864,7 +864,6 @@ public class WorkItemService {
 
         if (applied.isPresent()) {
             publishStatusChanged(projectId, workItem, previousStatus, workItem.getCurrentStatus(), pullRequestUrl);
-            rollUpToParents(projectId, workItem);
         } else if (blockedReason != null) {
             log.warn("PR merge for {}-{}: auto-transition from {} blocked: {}",
                     projectKey, sequenceNumber, previousStatus, blockedReason);
@@ -1079,8 +1078,22 @@ public class WorkItemService {
         return platformRegistry.declaresPublishing(statechart);
     }
 
+    /**
+     * Announces a status change and rolls completion up to the item's parents. Every status write in the
+     * product ends here (the patch, a PR merge, a lifecycle cascade, a review verdict, a publish outcome), so
+     * this is the one place the parent roll-up is hooked: a TASK parent whose children are all finished takes
+     * its {@code children_done} edge (see {@link WorkItemHierarchyService#onChildStatusChanged}). Call it after
+     * the new status has been saved.
+     */
     public void publishStatusChanged(String projectId, WorkItem workItem, String fromStatus, String toStatus,
                                      String prUrl) {
+        announceStatusChanged(projectId, workItem, fromStatus, toStatus, prUrl);
+        rollUpToParents(projectId, workItem);
+    }
+
+    /** The announcement alone; the parents moved by a roll-up use this so they do not roll up again. */
+    private void announceStatusChanged(String projectId, WorkItem workItem, String fromStatus, String toStatus,
+                                       String prUrl) {
         Statechart statechart = workItemWorkflowService.resolveFor(projectId, workItem);
         Map<String, Object> meta = new HashMap<>();
         meta.put("workItemId", workItem.getId());
