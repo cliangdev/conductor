@@ -35,6 +35,7 @@ import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -77,10 +78,13 @@ class ThroughputForecastServiceTest {
         return new Sample(NOW.minusDays(daysAgo), NOW.minusDays(daysAgo + cycleDays));
     }
 
-    /** Ten completions over four weeks: weekly throughput [3, 2, 3, 2]. */
+    /**
+     * Eleven completions: four full weeks counted back from now, newest first [2, 3, 2, 3], plus one in the
+     * partial window before them (29 days ago), which the series drops.
+     */
     private static List<Sample> fourWeeks() {
         List<Sample> samples = new ArrayList<>();
-        for (int d : new int[] {27, 26, 25, 20, 19, 13, 12, 11, 6, 5}) {
+        for (int d : new int[] {29, 27, 26, 25, 20, 19, 13, 12, 11, 6, 5}) {
             samples.add(done(d));
         }
         return samples;
@@ -125,13 +129,61 @@ class ThroughputForecastServiceTest {
 
         assertThat(f.state()).isEqualTo(State.OK);
         assertThat(f.mode()).isEqualTo(Mode.THROUGHPUT);
-        assertThat(f.samples()).isEqualTo(10);
+        assertThat(f.samples()).isEqualTo(11);
         assertThat(f.remaining()).isEqualTo(12);
         assertThat(f.weeklyThroughputMedian()).isEqualTo(2.5);
         assertThat(f.p50Date()).isAfter(TODAY);
         assertThat(f.p85Date()).isNotNull().isAfterOrEqualTo(f.p50Date());
         // Always whole weeks from today.
         assertThat(ChronoUnit.DAYS.between(TODAY, f.p50Date()) % 7).isZero();
+    }
+
+    @Test
+    void weeksAreFullWindowsCountedBackFromNowWithNoZeroStub() {
+        // Eight completions spread over 15 days: two full weeks; the 15-day-old one is in the dropped
+        // partial window, and the current partial week is not a short bucket.
+        List<Sample> samples = new ArrayList<>();
+        for (int d : new int[] {15, 13, 12, 9, 8, 5, 3, 1}) {
+            samples.add(done(d));
+        }
+
+        assertThat(ThroughputForecastService.weeklySeries(samples, NOW)).containsExactly(3, 4);
+    }
+
+    @Test
+    void aFreshPartialWeekIsNotDrawnAsAFullWeek() {
+        // 3 + 4 + 4 + a few days into a fourth week with nothing yet: [0 completions this week] must not
+        // exist as a bucket; the last bucket is the 7 days up to now.
+        List<Sample> samples = new ArrayList<>();
+        for (int d : new int[] {21, 20, 19, 18, 14, 13, 12, 8, 7, 6, 2}) {
+            samples.add(done(d));
+        }
+
+        int[] series = ThroughputForecastService.weeklySeries(samples, NOW);
+
+        assertThat(series).hasSize(3);
+        assertThat(series).doesNotContain(0);
+    }
+
+    @Test
+    void theTimeOfDayDoesNotMoveTheDates() {
+        List<Sample> samples = new ArrayList<>();
+        for (int d : new int[] {29, 27, 26, 25, 20, 19, 13, 12, 11, 6, 5}) {
+            samples.add(done(d));
+        }
+        ThroughputForecastService morning = new ThroughputForecastService(workItemRepository, sessionRepository,
+                hierarchyService, Clock.fixed(Instant.parse("2026-11-01T01:00:00Z"), ZoneOffset.UTC),
+                () -> new Random(42));
+        List<Sample> shifted = new ArrayList<>();
+        for (Sample s : samples) {
+            shifted.add(new Sample(s.completedAt().minusHours(11), null));
+        }
+
+        Forecast noon = service.compute(root(), 12, samples, () -> 1);
+        Forecast early = morning.compute(root(), 12, shifted, () -> 1);
+
+        assertThat(early.p50Date()).isEqualTo(noon.p50Date());
+        assertThat(early.p85Date()).isEqualTo(noon.p85Date());
     }
 
     @Test
@@ -308,6 +360,22 @@ class ThroughputForecastServiceTest {
 
         assertThat(f.samples()).isEqualTo(9);
         verify(workItemRepository, never()).findProjectLeafCompletionStamps(anyString(), any(), anyCollection());
+    }
+
+    @Test
+    void theProjectSamplesAreFetchedOnceForManyRoots() {
+        when(workItemRepository.findLeafCompletionStamps(anyCollection(), any(), anyCollection()))
+                .thenReturn(rows(2));
+        when(workItemRepository.findProjectLeafCompletionStamps(eq(PROJECT), any(), anyCollection()))
+                .thenReturn(rows(10));
+        java.util.function.Supplier<List<Sample>> projectSamples = service.projectSamples(PROJECT);
+
+        for (int i = 0; i < 5; i++) {
+            service.forecast(PROJECT, root(), new Progress(10, 4, 40, 0, 0), List.of("prd"), projectSamples);
+        }
+
+        verify(workItemRepository, times(1)).findProjectLeafCompletionStamps(eq(PROJECT), any(), anyCollection());
+        verify(workItemRepository, never()).findSubtreeIds(anyString());
     }
 
     @Test

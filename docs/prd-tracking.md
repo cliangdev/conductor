@@ -125,9 +125,10 @@ by `ThroughputForecastService` (nothing stored, no cache; the simulation is abou
 2. **Samples** = leaf `TASK` items in the subtree that completed in the last 90 days, excluding
    `CANCELLED`/`CLOSED`. Under 8, it widens to the whole project; still under 8 is `INSUFFICIENT_DATA`
    (`samples`, `needed: 8`).
-3. **Weekly throughput**: 7-day buckets from the first sample to now (leading empty weeks cannot occur, the
-   series starts at the first completion). With **3 or more weeks** it forecasts by throughput; with fewer it
-   falls back to cycle time.
+3. **Weekly throughput**: full 7-day buckets counted backwards from now (the newest is `[now-7d, now)`), so
+   the current partial week is never a short bucket; the oldest partial window is dropped. The number of
+   buckets is the whole weeks between the first sample and now. With **3 or more full weeks** it forecasts by
+   throughput; with fewer it falls back to cycle time.
 4. **Throughput mode**: a 2 000-run bootstrap draws a week from the series with replacement until the
    cumulative count covers `remaining` (cap 52 weeks). P50 and P85 of the weeks needed become dates, whole
    weeks from today. `weeklyThroughputMedian` is the median of the series.

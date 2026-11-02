@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Random;
+import java.util.Collection;
 import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 
@@ -29,9 +30,10 @@ import java.util.function.Supplier;
  *   <li>samples = leaf TASK items in the subtree completed in the last {@value #WINDOW_DAYS} days, widened to
  *       the whole project when there are fewer than {@value #MIN_SAMPLES}; still fewer is
  *       {@code INSUFFICIENT_DATA}.
- *   <li>weekly throughput in 7-day buckets from the first sample to now. With at least
- *       {@value #MIN_WEEKS} weeks, a bootstrap ({@value #RUNS} runs) draws weeks with replacement until the
- *       remaining count is covered; P50 and P85 of the weeks needed become dates. With fewer weeks, the
+ *   <li>weekly throughput in full 7-day buckets counted backwards from now (the newest is
+ *       {@code [now-7d, now)}), so the current partial week is never a short bucket; the oldest partial
+ *       window is dropped. With at least {@value #MIN_WEEKS} full weeks, a bootstrap ({@value #RUNS} runs)
+ *       draws weeks with replacement until the remaining count is covered; P50 and P85 of the weeks needed become dates. With fewer weeks, the
  *       cycle-time fallback: median(completed - started) x remaining / workers, P50 only.
  * </ol>
  */
@@ -66,7 +68,7 @@ public class ThroughputForecastService {
     }
 
     /** One finished leaf: when it completed, and when it started if that was recorded. */
-    record Sample(OffsetDateTime completedAt, OffsetDateTime startedAt) {
+    public record Sample(OffsetDateTime completedAt, OffsetDateTime startedAt) {
     }
 
     private final WorkItemRepository workItemRepository;
@@ -106,6 +108,37 @@ public class ThroughputForecastService {
     @Transactional(readOnly = true)
     public Forecast forecast(String projectId, WorkItem root) {
         Progress progress = hierarchyService.progress(projectId, root.getId());
+        if (progress.total() - progress.done() <= 0) {
+            return forecast(projectId, root, progress, List.of(), () -> List.of());
+        }
+        return forecast(projectId, root, progress, workItemRepository.findSubtreeIds(root.getId()),
+                projectSamples(projectId));
+    }
+
+    /**
+     * A once-only supplier of the project-wide completion samples, for a caller forecasting many roots in one
+     * request (the overview) so the widening query runs at most once.
+     */
+    public Supplier<List<Sample>> projectSamples(String projectId) {
+        OffsetDateTime since = OffsetDateTime.now(clock).minusDays(WINDOW_DAYS);
+        List<List<Sample>> cache = new ArrayList<>(1);
+        return () -> {
+            if (cache.isEmpty()) {
+                cache.add(toSamples(workItemRepository.findProjectLeafCompletionStamps(
+                        projectId, since, WorkItemHierarchyService.CANCEL_STYLE_STATUSES)));
+            }
+            return cache.get(0);
+        };
+    }
+
+    /**
+     * As {@link #forecast(String, WorkItem)} with the reads the caller already did: the root's rolled-up
+     * {@code progress}, the ids of its subtree, and a (memoised) source of project-wide samples that is only
+     * called when the subtree has fewer than {@value #MIN_SAMPLES}.
+     */
+    @Transactional(readOnly = true)
+    public Forecast forecast(String projectId, WorkItem root, Progress progress, Collection<String> subtreeIds,
+                             Supplier<List<Sample>> projectSamples) {
         if (progress.total() == 0) {
             return empty(State.NO_PLAN, 0, 0, null);
         }
@@ -113,16 +146,14 @@ public class ThroughputForecastService {
         if (remaining <= 0) {
             return empty(State.DONE, 0, 0, null);
         }
-        List<String> ids = workItemRepository.findSubtreeIds(root.getId());
         OffsetDateTime now = OffsetDateTime.now(clock);
         OffsetDateTime since = now.minusDays(WINDOW_DAYS);
         List<Sample> samples = toSamples(workItemRepository.findLeafCompletionStamps(
-                ids, since, WorkItemHierarchyService.CANCEL_STYLE_STATUSES));
+                subtreeIds, since, WorkItemHierarchyService.CANCEL_STYLE_STATUSES));
         if (samples.size() < MIN_SAMPLES) {
-            samples = toSamples(workItemRepository.findProjectLeafCompletionStamps(
-                    projectId, since, WorkItemHierarchyService.CANCEL_STYLE_STATUSES));
+            samples = projectSamples.get();
         }
-        LongSupplier workers = () -> sessionRepository.countDistinctWorkingSince(ids, now.minusDays(7));
+        LongSupplier workers = () -> sessionRepository.countDistinctWorkingSince(subtreeIds, now.minusDays(7));
         return compute(root, remaining, samples, workers);
     }
 
@@ -134,9 +165,8 @@ public class ThroughputForecastService {
         OffsetDateTime now = OffsetDateTime.now(clock);
         LocalDate today = now.toLocalDate();
 
-        OffsetDateTime first = samples.stream().map(Sample::completedAt).min(OffsetDateTime::compareTo).orElseThrow();
-        long elapsedSeconds = Math.max(0, Duration.between(first, now).getSeconds());
-        int weeks = (int) Math.max(1, (elapsedSeconds + WEEK_SECONDS - 1) / WEEK_SECONDS);
+        int[] series = weeklySeries(samples, now);
+        int weeks = series.length;
 
         Mode mode;
         Double median = null;
@@ -144,11 +174,6 @@ public class ThroughputForecastService {
         LocalDate p85 = null;
         if (weeks >= MIN_WEEKS) {
             mode = Mode.THROUGHPUT;
-            int[] series = new int[weeks];
-            for (Sample s : samples) {
-                long since = Math.max(0, Duration.between(first, s.completedAt()).getSeconds());
-                series[(int) Math.min(weeks - 1, since / WEEK_SECONDS)]++;
-            }
             median = median(Arrays.stream(series).asDoubleStream().toArray());
             int[] needed = bootstrap(series, remaining);
             p50 = today.plusWeeks(percentile(needed, 0.50));
@@ -190,6 +215,24 @@ public class ThroughputForecastService {
     }
 
     private static final long WEEK_SECONDS = 7L * 24 * 3600;
+
+    /**
+     * Completions per full 7-day window counted back from {@code now} (index 0 is {@code [now-7d, now)}).
+     * The number of windows is the whole weeks between the first sample and now, so the oldest partial
+     * window is dropped and the current partial week never becomes a short bucket.
+     */
+    static int[] weeklySeries(List<Sample> samples, OffsetDateTime now) {
+        OffsetDateTime first = samples.stream().map(Sample::completedAt).min(OffsetDateTime::compareTo).orElseThrow();
+        int weeks = (int) (Math.max(0, Duration.between(first, now).getSeconds()) / WEEK_SECONDS);
+        int[] series = new int[weeks];
+        for (Sample s : samples) {
+            long bucket = Math.max(0, Duration.between(s.completedAt(), now).getSeconds()) / WEEK_SECONDS;
+            if (bucket < weeks) {
+                series[(int) bucket]++;
+            }
+        }
+        return series;
+    }
 
     /** Weeks needed in each of {@link #RUNS} simulated runs, ascending. */
     private int[] bootstrap(int[] series, int remaining) {
