@@ -11,6 +11,7 @@ import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.publish.PublishPlatform;
 import com.conductor.service.publish.tasks.PublishTaskArmer;
 import com.conductor.service.publish.PublishPlatformRegistry;
+import com.conductor.service.publish.PermalinkFollowUp;
 import com.conductor.service.publish.PermalinkPostIds;
 import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.repository.WorkItemRepository;
@@ -307,7 +308,31 @@ public class PublishOutcomeService {
         }
         PublishPlatform platform = platformFor(target.getPlatform());
         String platformPostId = platform == null ? null : stringValue(output, platform.publish().postIdOutputKey());
-        return applySuccess(target, platformPostId, stringValue(output, PERMALINK_OUTPUT_KEY));
+        boolean moved = applySuccess(target, platformPostId, stringValue(output, PERMALINK_OUTPUT_KEY));
+        if (moved) {
+            startPermalinkFollowUp(target, output);
+        }
+        return moved;
+    }
+
+    /**
+     * The platform published the post but gave no link yet (TikTok issues the id after moderation). The row
+     * stays PUBLISHED; the handle to ask again with is kept on it and a bounded chain of PERMALINK tasks is
+     * armed. When the link arrives it lands through {@link #recordSuccess}, so the permalink and the
+     * destination Asset take the same path as any outcome.
+     */
+    private void startPermalinkFollowUp(PostPublishTarget target, Map<String, Object> output) {
+        String publishId = stringValue(output, PermalinkFollowUp.OUTPUT_PUBLISH_ID_KEY);
+        if (!Boolean.TRUE.equals(output.get(PermalinkFollowUp.OUTPUT_PENDING_KEY)) || publishId == null
+                || (target.getPermalink() != null && !target.getPermalink().isBlank())) {
+            return;
+        }
+        target.setResumeCheckpoint(new PermalinkFollowUp(publishId, stringValue(output,
+                PermalinkFollowUp.OUTPUT_KIND_KEY)).toJson());
+        targetRepository.save(target);
+        publishTaskArmer.armPermalinkFollowUp(target);
+        log.info("Target {} published on {} without a link; following up on publish {}", target.getId(),
+                target.getPlatform(), publishId);
     }
 
     /**
@@ -830,6 +855,14 @@ public class PublishOutcomeService {
                 targetRepository.save(target);
                 log.info("Target {} was PUBLISHED without a platform post id; took {} from the recorded link",
                         target.getId(), platformPostId);
+            }
+            // Likewise a link: a target published before its platform had one (TikTok fills the post id in
+            // after moderation) takes it when it arrives, from a follow-up fetch or a person's manual entry.
+            if ((target.getPermalink() == null || target.getPermalink().isBlank())
+                    && permalink != null && !permalink.isBlank()) {
+                target.setPermalink(permalink.trim());
+                targetRepository.save(target);
+                log.info("Target {} was PUBLISHED without a permalink; recorded {}", target.getId(), permalink);
             }
             recordDestinationAsset(target, permalink);
             log.debug("Target {} is already PUBLISHED; outcome re-applied without moving the row", target.getId());

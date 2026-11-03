@@ -509,8 +509,17 @@ to `PublishTaskArmer`, which creates one task per target for its next step:
 | `PENDING`, APP_MANAGED or MANUAL | `DISPATCH` | the fire time |
 | `PENDING`, NATIVE | `HANDOFF` | fire time minus the platform's maximum lead (now, if already inside it) |
 | `HANDED_OFF` | `CONFIRM` | the fire time, then every minute while the platform does not report it live |
+| `PUBLISHED`, no link yet | `PERMALINK` | 2, 5, 10, 15, 15, 15 minutes after publishing (about an hour), then it stops |
 
-Each task is an HTTP request to `POST /internal/v1/publish-targets/{id}/{dispatch|handoff|confirm}`
+A `PERMALINK` task covers a platform that reports a post live before it has a link. TikTok's `status/fetch`
+returns `PUBLISH_COMPLETE` with no post id until moderation finishes, and only for public posts. The target
+stays `PUBLISHED`; the publish id and post kind are kept on the row's `resume_checkpoint`
+(`PermalinkFollowUp`), and each task re-reads the status. When the id appears the link goes through
+`PublishOutcomeService.recordSuccess`, which fills `permalink` on an already-published row and records the
+destination Asset (and so the Post's external link). TikTok photo posts live at `/@handle/photo/{id}`,
+videos at `/@handle/video/{id}`.
+
+Each task is an HTTP request to `POST /internal/v1/publish-targets/{id}/{dispatch|handoff|confirm|permalink}`
 with a target-bound bearer token (`RunTokenService#generatePublishTaskToken`) and the target's fire time
 as a snapshot in the URL. `PublishTaskHandler` receives it and runs **the same conditional claim the
 poller runs** — `PENDING → PUBLISHING` in one `UPDATE … WHERE state = 'PENDING'` — so a duplicate
