@@ -25,6 +25,10 @@ vi.mock('next/navigation', () => ({
 }))
 let accessToken: string | null = 'token'
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ accessToken }) }))
+let mayEdit = true
+vi.mock('@/contexts/PermissionsContext', () => ({
+  usePermissions: () => ({ loading: false, can: () => mayEdit }),
+}))
 vi.mock('@/lib/workflows', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/workflows')>()
   return { ...actual, useWorkflowByAreaNoun: () => resolution, useWorkflowView: () => view }
@@ -42,6 +46,14 @@ describe('area/noun compose route', () => {
     resolution = { status: 'ready', workflow: workflow() }
     view = publishing
     accessToken = 'token'
+    mayEdit = true
+  })
+
+  it('offers a read-only member no compose page', () => {
+    mayEdit = false
+    render(<ComposeWorkItemPage />)
+    expect(screen.queryByTestId('compose-page')).not.toBeInTheDocument()
+    expect(screen.getByText(/can.t create here/i)).toBeInTheDocument()
   })
 
   it('renders the compose page for a publishing Workflow with its real slug and noun', async () => {

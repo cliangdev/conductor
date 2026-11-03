@@ -28,7 +28,7 @@ vi.mock('@/contexts/AuthContext', () => ({
 
 vi.mock('@/contexts/PermissionsContext', async () => {
   const { can } = await import('@/lib/permissions')
-  return { usePermissions: () => ({ role, loading: false, can: (c: Parameters<typeof can>[1]) => can(role, c), refresh: vi.fn() }) }
+  return { usePermissions: () => ({ roles: [role], loading: false, can: (c: Parameters<typeof can>[1]) => can([role], c), refresh: vi.fn() }) }
 })
 
 import { apiDelete, apiGet, apiPut } from '@/lib/api'

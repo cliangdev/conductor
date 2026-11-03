@@ -15,7 +15,7 @@ vi.mock('@/contexts/ProjectContext', () => ({
 
 vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({
-    role: mockCanManageMembers ? 'ADMIN' : 'CREATOR',
+    roles: mockCanManageMembers ? ['ADMIN'] : ['CREATOR'],
     loading: false,
     can: (cap: string) => (cap === 'members.manage' ? mockCanManageMembers : false),
     refresh: vi.fn(),
@@ -59,6 +59,7 @@ const adminMember = {
   email: 'admin@example.com',
   avatarUrl: null,
   role: 'ADMIN',
+  roles: ['ADMIN'],
   joinedAt: '2024-01-01T00:00:00Z',
 }
 
@@ -68,6 +69,7 @@ const regularMember = {
   email: 'creator@example.com',
   avatarUrl: null,
   role: 'CREATOR',
+  roles: ['CREATOR'],
   joinedAt: '2024-01-15T00:00:00Z',
 }
 
@@ -75,6 +77,7 @@ const pendingInvite = {
   id: 'invite-1',
   email: 'pending@example.com',
   role: 'REVIEWER',
+  roles: ['REVIEWER'],
   expiresAt: '2024-02-01T00:00:00Z',
 }
 
@@ -109,10 +112,12 @@ describe('MembersPage', () => {
     expect(await screen.findByText('Creator User')).toBeInTheDocument()
   })
 
-  it('admin user sees role dropdown and remove button for other members', async () => {
+  it('admin user sees role checkboxes and remove button for other members', async () => {
     render(<MembersPage />)
     await screen.findByText('Creator User')
-    expect(screen.getByLabelText(/role for creator user/i)).toBeInTheDocument()
+    expect(screen.getByLabelText('Admin role for Creator User')).toBeInTheDocument()
+    expect(screen.getByLabelText('Editor role for Creator User')).toBeChecked()
+    expect(screen.getByLabelText('Reviewer role for Creator User')).not.toBeChecked()
     expect(screen.getByRole('button', { name: /remove creator user/i })).toBeInTheDocument()
   })
 
@@ -129,24 +134,145 @@ describe('MembersPage', () => {
     expect(screen.queryByRole('button', { name: /invite member/i })).not.toBeInTheDocument()
   })
 
-  it('role change calls PATCH endpoint and updates UI', async () => {
-    const updatedMember = { ...regularMember, role: 'REVIEWER' }
-    vi.mocked(api.apiPatch).mockResolvedValue(updatedMember)
+  it('ticking Reviewer sends the whole set as { roles }', async () => {
+    vi.mocked(api.apiPatch).mockResolvedValue({ ...regularMember, roles: ['CREATOR', 'REVIEWER'] })
 
     render(<MembersPage />)
     await screen.findByText('Creator User')
 
-    const roleSelect = screen.getByLabelText(/role for creator user/i)
-    fireEvent.change(roleSelect, { target: { value: 'REVIEWER' } })
+    fireEvent.click(screen.getByLabelText('Reviewer role for Creator User'))
 
     await waitFor(() => {
       expect(api.apiPatch).toHaveBeenCalledWith(
         '/api/v1/projects/proj-1/members/user-creator',
-        { role: 'REVIEWER' },
+        { roles: ['CREATOR', 'REVIEWER'] },
         'test-token',
       )
     })
     expect(mockShowToast).toHaveBeenCalledWith('Role updated successfully')
+    await waitFor(() => expect(screen.getByLabelText('Reviewer role for Creator User')).toBeChecked())
+    expect(screen.getByLabelText('Editor role for Creator User')).toBeChecked()
+  })
+
+  it('unticking the last role leaves a read-only Viewer and says so', async () => {
+    vi.mocked(api.apiPatch).mockResolvedValue({ ...regularMember, roles: [] })
+
+    render(<MembersPage />)
+    await screen.findByText('Creator User')
+
+    fireEvent.click(screen.getByLabelText('Editor role for Creator User'))
+
+    await waitFor(() => {
+      expect(api.apiPatch).toHaveBeenCalledWith(
+        '/api/v1/projects/proj-1/members/user-creator',
+        { roles: [] },
+        'test-token',
+      )
+    })
+    expect(await screen.findByText('Viewer (read-only)')).toBeInTheDocument()
+  })
+
+  it('Admin implies the other two: they show checked and disabled', async () => {
+    vi.mocked(api.apiPatch).mockResolvedValue({ ...regularMember, roles: ['ADMIN'] })
+
+    render(<MembersPage />)
+    await screen.findByText('Creator User')
+
+    fireEvent.click(screen.getByLabelText('Admin role for Creator User'))
+
+    await waitFor(() => {
+      expect(api.apiPatch).toHaveBeenCalledWith(
+        '/api/v1/projects/proj-1/members/user-creator',
+        { roles: ['ADMIN', 'CREATOR'] },
+        'test-token',
+      )
+    })
+    await waitFor(() => expect(screen.getByLabelText('Admin role for Creator User')).toBeChecked())
+    const editor = screen.getByLabelText('Editor role for Creator User')
+    const reviewer = screen.getByLabelText('Reviewer role for Creator User')
+    expect(editor).toBeChecked()
+    expect(editor).toBeDisabled()
+    expect(reviewer).toBeChecked()
+    expect(reviewer).toBeDisabled()
+  })
+
+  it('unticking Admin keeps the Editor and Reviewer that were shown as implied', async () => {
+    const onlyAdmin = { ...regularMember, role: 'ADMIN', roles: ['ADMIN'] }
+    vi.mocked(api.apiGet).mockImplementation((path: string) =>
+      Promise.resolve(path.includes('/invites') ? [] : [adminMember, onlyAdmin]),
+    )
+    vi.mocked(api.apiPatch).mockResolvedValue({ ...onlyAdmin, roles: ['CREATOR', 'REVIEWER'] })
+    render(<MembersPage />)
+    await screen.findByText('Creator User')
+
+    fireEvent.click(screen.getByLabelText('Admin role for Creator User'))
+
+    await waitFor(() => {
+      expect(api.apiPatch).toHaveBeenCalledWith(
+        '/api/v1/projects/proj-1/members/user-creator',
+        { roles: ['CREATOR', 'REVIEWER'] },
+        'test-token',
+      )
+    })
+    await waitFor(() => expect(screen.getByLabelText('Editor role for Creator User')).not.toBeDisabled())
+    expect(screen.getByLabelText('Editor role for Creator User')).toBeChecked()
+    expect(screen.getByLabelText('Reviewer role for Creator User')).toBeChecked()
+  })
+
+  it('two quick clicks are sent one after the other, the second carrying both changes', async () => {
+    let releaseFirst: (m: unknown) => void = () => {}
+    vi.mocked(api.apiPatch)
+      .mockImplementationOnce(() => new Promise((res) => { releaseFirst = res }))
+      .mockResolvedValue({ ...regularMember, roles: ['ADMIN', 'CREATOR', 'REVIEWER'] })
+    render(<MembersPage />)
+    await screen.findByText('Creator User')
+
+    fireEvent.click(screen.getByLabelText('Reviewer role for Creator User'))
+    fireEvent.click(screen.getByLabelText('Admin role for Creator User'))
+
+    // Both show at once, before any request has come back.
+    expect(screen.getByLabelText('Reviewer role for Creator User')).toBeChecked()
+    expect(screen.getByLabelText('Admin role for Creator User')).toBeChecked()
+    await waitFor(() => expect(api.apiPatch).toHaveBeenCalledTimes(1))
+
+    releaseFirst({ ...regularMember, roles: ['CREATOR', 'REVIEWER'] })
+    await waitFor(() => expect(api.apiPatch).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(api.apiPatch).mock.calls[0][1]).toEqual({ roles: ['CREATOR', 'REVIEWER'] })
+    expect(vi.mocked(api.apiPatch).mock.calls[1][1]).toEqual({ roles: ['ADMIN', 'CREATOR', 'REVIEWER'] })
+  })
+
+  it('rolls back to the last confirmed roles and says so when a change is refused', async () => {
+    vi.mocked(api.apiPatch).mockRejectedValue(Object.assign(new Error('no'), { detail: 'Cannot remove the last admin.' }))
+    render(<MembersPage />)
+    await screen.findByText('Creator User')
+
+    fireEvent.click(screen.getByLabelText('Reviewer role for Creator User'))
+    expect(screen.getByLabelText('Reviewer role for Creator User')).toBeChecked()
+
+    await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith('Cannot remove the last admin.', 'error'))
+    expect(screen.getByLabelText('Reviewer role for Creator User')).not.toBeChecked()
+    expect(screen.getByLabelText('Editor role for Creator User')).toBeChecked()
+  })
+
+  it('does not offer Admin on an invite', async () => {
+    render(<MembersPage />)
+    await screen.findByText('Creator User')
+    fireEvent.click(screen.getByRole('button', { name: /invite member/i }))
+    const modal = await screen.findByTestId('modal')
+    expect(within(modal).queryByLabelText('Admin')).not.toBeInTheDocument()
+    expect(within(modal).getByLabelText('Editor')).toBeInTheDocument()
+    expect(within(modal).getByLabelText('Reviewer')).toBeInTheDocument()
+  })
+
+  it('a member from a server that sends only the legacy role still shows their role', async () => {
+    const legacy = { ...regularMember, roles: undefined, role: 'REVIEWER' }
+    vi.mocked(api.apiGet).mockImplementation((path: string) =>
+      Promise.resolve(path.includes('/invites') ? [] : [adminMember, legacy]),
+    )
+    render(<MembersPage />)
+    await screen.findByText('Creator User')
+    expect(screen.getByLabelText('Reviewer role for Creator User')).toBeChecked()
+    expect(screen.getByLabelText('Editor role for Creator User')).not.toBeChecked()
   })
 
   it('admin sees Invite member button', async () => {
@@ -161,11 +287,41 @@ describe('MembersPage', () => {
     expect(screen.getByText(/pending invitations/i)).toBeInTheDocument()
   })
 
+  it('the invite dialog defaults to Editor + Reviewer and lets the roles be changed', async () => {
+    vi.mocked(api.apiPost).mockResolvedValue({ id: 'i3', email: 'a@b.co', roles: ['REVIEWER'], expiresAt: 'x', token: 't' })
+
+    render(<MembersPage />)
+    await screen.findByText('Creator User')
+    fireEvent.click(screen.getByRole('button', { name: /invite member/i }))
+    const modal = await screen.findByTestId('modal')
+
+    expect(within(modal).getByLabelText('Editor')).toBeChecked()
+    expect(within(modal).getByLabelText('Reviewer')).toBeChecked()
+
+    fireEvent.click(within(modal).getByLabelText('Editor'))
+    fireEvent.change(within(modal).getByLabelText(/email/i), { target: { value: 'a@b.co' } })
+    fireEvent.click(within(modal).getByRole('button', { name: /send invite/i }))
+
+    await waitFor(() => {
+      expect(api.apiPost).toHaveBeenCalledWith(
+        '/api/v1/projects/proj-1/invites',
+        { email: 'a@b.co', roles: ['REVIEWER'] },
+        'test-token',
+      )
+    })
+  })
+
+  it('pending invitations show the label for their role set', async () => {
+    mockApiGet([{ ...pendingInvite, roles: ['CREATOR', 'REVIEWER'] }])
+    render(<MembersPage />)
+    expect(await screen.findByText('Editor · Reviewer')).toBeInTheDocument()
+  })
+
   it('email invite posts to invites endpoint and shows shareable link', async () => {
     vi.mocked(api.apiPost).mockResolvedValue({
       id: 'invite-2',
       email: 'new@example.com',
-      role: 'CREATOR',
+      roles: ['CREATOR', 'REVIEWER'],
       expiresAt: '2024-02-01T00:00:00Z',
       token: 'tok-abc',
     })
@@ -183,7 +339,7 @@ describe('MembersPage', () => {
     await waitFor(() => {
       expect(api.apiPost).toHaveBeenCalledWith(
         '/api/v1/projects/proj-1/invites',
-        { email: 'new@example.com', role: 'CREATOR' },
+        { email: 'new@example.com', roles: ['CREATOR', 'REVIEWER'] },
         'test-token',
       )
     })
