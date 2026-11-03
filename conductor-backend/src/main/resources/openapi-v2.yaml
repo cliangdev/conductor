@@ -6290,6 +6290,12 @@ components:
           description: >-
             Publish as soon as approved. The Post needs no fire time before its scheduled status; entering
             it stamps scheduledFor with the earliest time every destination accepts.
+        currentReviewRound:
+          type: integer
+          description: >-
+            The review round currently open on this Work Item (0 until its first review is closed or its bundle
+            edited under review). A verdict or content change belongs to the round it was made in, so compare it
+            with `PostContentChange.reviewRoundAfter` to tell whether a change opened the current round.
         tags:
           type: array
           description: >-
