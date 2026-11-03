@@ -32,6 +32,10 @@ tags:
     description: Outcome Metric series on a Work Item
   - name: work-item-step-runs
     description: Step-run records on a Work Item
+  - name: creative-edits
+    description: What a slide-text edit of a Creative would do, and where it renders
+  - name: work-item-content-changes
+    description: Creative edits that reached a Post (what changed since the last review)
   - name: publish-targets
     description: Publishable social accounts a project can select on a Post
   - name: publish-metrics
@@ -1702,6 +1706,51 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/content-changes:
+    get:
+      tags:
+        - work-item-content-changes
+      summary: What changed in a Post's content since it was last looked at
+      description: >-
+        The newest 50 times a Creative's slide text was edited and the edit reached this Post, newest first: the
+        revision and its text diff, who made it, and the Post's status and review round before and after. A
+        reviewer's own fix keeps the round (`reviewRoundBefore == reviewRoundAfter`); any other edit that reopens
+        the review has `reviewRoundAfter > reviewRoundBefore`. Any project member may read.
+      operationId: listWorkItemContentChanges
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The Post's content changes, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostContentChangeListResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found, or caller is not a member
           content:
             application/json:
               schema:
@@ -4834,6 +4883,103 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreativeValidationProblem"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/affected-posts:
+    get:
+      tags:
+        - creative-edits
+      summary: The Posts a slide-text edit of this Creative would move, and where each one goes
+      description: >-
+        Every Post that holds a frame of this Creative, with the `outcome` a saved edit would have on it, so the
+        editor can say so before saving: `back-to-review` (Approved or Scheduled: unscheduled and sent back to the
+        review status with a new round), `new-round` (in review: stays there, a new round, standing approvals stop
+        counting), `updated` (before review: just re-pointed at the new slides), `unchanged` (published, or past
+        the point of change: left alone). With `?postId=` naming one of them that is in review, that Post reads
+        `reviewer-fix` instead of `new-round` (it keeps its round). Any project member may read.
+      operationId: listCreativeAffectedPosts
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: postId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: The Post a reviewer is fixing text from (see `CreateCreativeSlideTextEditRequest.postId`).
+      responses:
+        "200":
+          description: The affected Posts, ordered by their number
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeAffectedPostsResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/render-availability:
+    get:
+      tags:
+        - creative-edits
+      summary: Where a slide-text edit of this Creative would be re-rendered
+      description: >-
+        `runtime: target` when the workspace's designated runtime target can render right now (`targetName` names
+        it), otherwise `self-hosted`: a local daemon must pick the render up. Conductor does not track daemon
+        liveness, so `daemonOnline` is null (unknown). Any project member may read.
+      operationId: getCreativeRenderAvailability
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Where the render would run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRenderAvailability"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /projects/{projectId}/marketing/creatives/{creativeId}/revisions/{revisionId}:
     get:
@@ -11349,6 +11495,16 @@ components:
           maxItems: 50
           items:
             $ref: "#/components/schemas/SlideTextEdit"
+        postId:
+          type: string
+          nullable: true
+          description: >-
+            Set when the edit is made from a Post's review (a reviewer's "Fix text"). The caller may then be an
+            editor or a reviewer of that Post (any project role); the Post must use this Creative (422
+            `slideTextEditPostMismatch`) and be in its review status (409 `slideTextEditPostNotInReview`). A reviewer
+            of the Post makes the revision `source: REVIEWER`, recorded with the Post and its current review round;
+            once applied, that Post stays in the same round (its standing approvals go stale because the media
+            changed) while every other Post using the Creative goes back to review as usual.
 
     SlideTextEdit:
       type: object
@@ -11374,6 +11530,102 @@ components:
           allOf:
             - $ref: "#/components/schemas/CreativeRenderRun"
           nullable: true
+
+    CreativeAffectedPostsResponse:
+      type: object
+      required: [posts]
+      properties:
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativeAffectedPost"
+
+    CreativeAffectedPost:
+      type: object
+      required: [workItemId, displayId, title, status, statusLabel, outcome]
+      properties:
+        workItemId:
+          type: string
+        displayId:
+          type: string
+          description: e.g. `RE-101`.
+        title:
+          type: string
+        status:
+          type: string
+        statusLabel:
+          type: string
+        outcome:
+          type: string
+          enum: [back-to-review, new-round, updated, unchanged, reviewer-fix]
+
+    CreativeRenderAvailability:
+      type: object
+      required: [runtime]
+      properties:
+        runtime:
+          type: string
+          enum: [target, self-hosted]
+        targetName:
+          type: string
+          nullable: true
+          description: The runtime target's name when `runtime` is `target`, else null.
+        daemonOnline:
+          type: boolean
+          nullable: true
+          description: Whether a self-hosted daemon is connected; null because Conductor does not track it.
+
+    PostContentChangeListResponse:
+      type: object
+      required: [changes]
+      properties:
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/PostContentChange"
+
+    PostContentChange:
+      type: object
+      required: [id, creativeId, revisionId, revisionNo, source, textDiff, reviewRoundBefore, reviewRoundAfter, createdAt]
+      properties:
+        id:
+          type: string
+        creativeId:
+          type: string
+        creativeDisplayId:
+          type: string
+          nullable: true
+          description: e.g. `158a`.
+        revisionId:
+          type: string
+        revisionNo:
+          type: integer
+        source:
+          type: string
+          enum: [EDITOR, REVIEWER, MCP]
+        actorUserId:
+          type: string
+          nullable: true
+        actorName:
+          type: string
+          nullable: true
+        fromStatus:
+          type: string
+          nullable: true
+        toStatus:
+          type: string
+          nullable: true
+        reviewRoundBefore:
+          type: integer
+        reviewRoundAfter:
+          type: integer
+        textDiff:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativeRevisionTextChange"
+        createdAt:
+          type: string
+          format: date-time
 
     SlideshowCheck:
       type: object
@@ -11554,6 +11806,10 @@ components:
         authorUserId:
           type: string
           nullable: true
+        authorName:
+          type: string
+          nullable: true
+          description: The author's display name; set on `GET .../revisions` items (one batched lookup), null elsewhere.
         postId:
           type: string
           nullable: true

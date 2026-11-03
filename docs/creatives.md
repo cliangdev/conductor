@@ -498,6 +498,45 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
     leaves both null to stay one query per kind. The readiness checklist gains a non-blocking `altTextStale`
     item for a CAROUSEL once an applied edit flagged a slide: not ok ("slide 2 alt text still quotes the old
     text") while that slide's alt text still contains the replaced text, ok once it does not.
+- **Editing slide text in the browser.** A CAROUSEL with a stored spec shows **Edit text** under the slide on
+  screen (ADMIN or CREATOR; disabled with a visible reason while an edit renders or the form has unsaved
+  changes). It opens the slide's fields from the registry under plain names (Text 1, Callout, Note item 3,
+  Bubble 2), one labelled textarea each; line breaks are kept. Beside them a live preview shows the slide at
+  9:16 and 4:5 (the ratios the Creative has). The preview is the composer's own page: the slideshow modules
+  of `conductor-tools/src/lib/slideshow/` (`spec`, `style`, `css`, `html` with the in-page measuring script,
+  `text-fields`) have no Node imports, so `conductor-tools/scripts/sync-slideshow-core.mjs` (run by
+  `npm run build`) compiles them to plain ESM and `.d.ts` in `conductor-creative/slideshow/` and copies the
+  bundled fonts to `conductor-creative/slideshow/fonts/`. Both are committed, and
+  `sync-slideshow-core.test.ts` fails when the committed copy differs from a fresh generation and checks the
+  generated builder returns the same HTML as the TypeScript one. The web app imports
+  `@cliangdev/creative-render/slideshow/*.js` and `scripts/copy-slideshow-fonts.mjs` (run by `predev` and
+  `prebuild`) copies the fonts to `public/slideshow-fonts/` (gitignored), the preview's `assetBase`. The
+  preview swaps each `media:<id>` for the media's display URL, resolves the style as the render job does
+  (the spec's own `style`, then the Creative's `slideStyle`), and shows the page's checks by rule once it has
+  measured itself (safe zone, spill, words per line, text size, font, image, contrast; errors first). A
+  **Show safe zones** switch overlays the 220 / 430 / 140 px bands on 9:16. The checks are advisory; the render
+  job's are the ones that count, and an error there refuses the save.
+  **Save** is two steps. **Review and save** lists the changed fields, the Posts that use the Creative with
+  what happens to each (`GET .../affected-posts`: back to review, new review round, updated, not changed), and
+  where the render runs (`GET .../render-availability`: the runtime target, or the self-hosted daemon; with no
+  target the page says to keep the daemon running or to run `conductor creative render-slides <revision id>`).
+  **Save and re-render** POSTs the edits with the Creative's `version`, shows "Re-rendering…" and asks the
+  Creative every few seconds until `pendingRevision` clears. Applied: the page reloads the slides. Failed: the
+  error and the failing checks by slide, ratio and rule, with the edit still in the form. A 409 (stale version,
+  an edit or render already running) and a 422 show the API's own message and leave the edit as it was. If an
+  edit is already rendering when the page opens, the editor opens on that state and the page shows a note.
+  **Text history** (Creative page) lists the revisions newest first: source (web editor, reviewer fix, agent,
+  committed), author, time, status, and rows "Slide 3 · Text 1: old → new" with the changed words marked (a
+  small word-level diff, no dependency). A long revision shows its first three changes. **Alt text**: after an
+  applied edit, a slide whose alt text still quotes the replaced words (the revision's `altTextFlags`, while the
+  readiness item `altTextStale` is not ok) shows "Quotes the old text — update" under its alt input, which
+  clears as the text stops quoting them.
+  On a Post, the edit's effect shows as **Changed since last review** (Content section: the Creative, who,
+  when, the changed words) while the newest change opened the Post's current review round or is a reviewer's fix
+  inside it, and as entries in the Activity tab (`GET .../work-items/{id}/content-changes`). A reviewer of an In
+  Review Post sees **Fix text** beside "Open Creative" for a slideshow Creative with a spec; it opens the same
+  editor with `postId`, whose confirmation says the fix stays in this round and names the other Posts that go
+  back to review.
 - **Spec through preview and commit (CLI).** `compose_slideshow` writes `spec.json` beside the slides (the
   input spec plus `resolvedStyle`). `preview_creative_draft` keeps it with a CAROUSEL draft: pass
   `slideshowSpecPath`, or leave it out and the `spec.json` in the folder of `slidePaths` is used when it is the

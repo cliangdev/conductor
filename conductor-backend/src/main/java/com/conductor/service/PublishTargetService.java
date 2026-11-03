@@ -581,7 +581,21 @@ public class PublishTargetService {
     @Transactional
     public List<TargetView> replaceSelection(String projectId, String workItemId,
                                             List<TargetSelection> selections, User caller) {
-        verifyMembership(projectId, caller);
+        return replaceSelection(projectId, workItemId, selections, caller, FreezeBypass.NONE);
+    }
+
+    /**
+     * As above, with the "frozen while under review" refusal waived for the one internal caller allowed to
+     * (see {@link FreezeBypass}). A bypassing caller is the system acting for a revision's author and has
+     * already established who may do what, so {@code caller} may then be null (no membership check). The
+     * approval revert still runs: it is how a Post that is Approved or Scheduled gets back to review.
+     */
+    @Transactional
+    public List<TargetView> replaceSelection(String projectId, String workItemId,
+                                            List<TargetSelection> selections, User caller, FreezeBypass bypass) {
+        if (bypass == FreezeBypass.NONE || caller != null) {
+            verifyMembership(projectId, caller);
+        }
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
         Map<String, TargetOption> available = new LinkedHashMap<>();
@@ -656,7 +670,9 @@ public class PublishTargetService {
 
         // Frozen while somebody is reading it, for the same reason the caption and media are: changing
         // where a post goes is changing what is being approved.
-        publishBundleGuard.refuseTargetEditWhileFrozen(projectId, workItem);
+        if (bypass == FreezeBypass.NONE) {
+            publishBundleGuard.refuseTargetEditWhileFrozen(projectId, workItem);
+        }
 
         // Revoke and revert FIRST, in this transaction. A failed revocation throws and nothing below runs.
         publishBundleGuard.revertForBundleEdit(projectId, workItem);

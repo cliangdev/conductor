@@ -116,6 +116,24 @@ caption, targets and uploaded assets — deliberately not the schedule — so ch
 dropping a destination, or swapping media reverts the Post to review and revokes anything already handed
 to a platform; moving the schedule touches none of it.
 
+**One internal exception: a Creative's slide-text edit.** When someone fixes the text on a slideshow Creative,
+every Post that uses it is re-pointed at the re-rendered slides even though media is frozen (`CreativeEditPropagator`;
+see [Creatives](creatives.md)). This is not a loophole in the freeze, it reopens the review: the move passes an
+internal-only `FreezeBypass` that no request can set (the public attach endpoint and the target editor still
+refuse a frozen Post), and the same transaction sends the Post back the way any bundle edit would. Approved and
+Scheduled Posts are unscheduled (a native hand-off is revoked first) and go back to the review status with a new
+round; an In Review Post stays and opens a new round; a Draft or Changes Requested Post is simply updated; a
+Published Post is never touched. The new assets change the bundle hash, so no earlier approval can stand over the
+new slides. Each move is recorded in `post_content_change` (text diff, who, status and round before and after) and
+read back on the Post page.
+
+**Reviewer fix.** A reviewer of a Post that is In Review may fix a typo in the slideshow's text without sending the
+Post back. That edit stays in the same review round: the status and round do not move, and the change is logged on
+that round with `reviewRoundBefore == reviewRoundAfter`. Approvals already given in the round were bound to the old
+bundle hash, so they stop counting (the review list shows them as not current) and the gate ignores them; the
+reviewer's next approval binds the new hash and counts. Other Posts that use the same Creative are not "in this
+reviewer's round": they get the normal treatment above, a new round or back to review.
+
 **Re-timing a Scheduled Post moves it in place.** A Post already in its scheduled status is live on its
 destinations — a native-lane target may already be `HANDED_OFF` to Facebook or YouTube. Changing its
 schedule there re-times it rather than reverting it: the new time is validated with the same gate a

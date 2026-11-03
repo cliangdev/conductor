@@ -28,6 +28,7 @@ import { usePublishReadiness } from '@/components/marketing/publishReadiness'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
 import { usePostDestinations } from '@/components/marketing/destinations/usePostDestinations'
 import { PostDetailBody } from '@/components/marketing/post-detail/PostDetailBody'
+import { changedSinceLastReview, getContentChanges, type PostContentChange } from '@/components/marketing/post-detail/contentChanges'
 import { PostHeaderActions } from '@/components/marketing/post-detail/PostHeaderActions'
 import { WorkItemMoreMenu } from '@/components/workitems/WorkItemMoreMenu'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
@@ -220,6 +221,9 @@ export function WorkItemDetailView({
   const [missingFields, setMissingFields] = useState<string[]>([])
   const [documents, setDocuments] = useState<DetailDocument[]>([])
   const [assets, setAssets] = useState<MediaAsset[]>([])
+  // Edits to the slide text of a Creative this Post uses, newest first (Posts only; empty otherwise).
+  const [contentChanges, setContentChanges] = useState<PostContentChange[]>([])
+  const contentChangesWanted = useRef(false)
   // Bumped on every bundle-affecting change so the readiness card re-asks the server. The card reads a
   // derived answer (the gate's verdict), so it cannot know from props alone when that answer moved.
   const [preflightVersion, setPreflightVersion] = useState(0)
@@ -380,12 +384,22 @@ export function WorkItemDetailView({
     }
   }, [accessToken, projectId, issueId])
 
+  const fetchContentChanges = useCallback(async () => {
+    if (!accessToken) return
+    try {
+      setContentChanges(await getContentChanges(projectId, issueId, accessToken))
+    } catch {
+      // Non-fatal — the "Changed since last review" card and the activity entries are simply absent.
+    }
+  }, [accessToken, projectId, issueId])
+
   // The list changed because someone uploaded, removed or replaced media: that is a bundle edit, so the
   // readiness card has to re-ask the server.
   const reloadAssetsAfterEdit = useCallback(async () => {
     await fetchAssets()
+    if (contentChangesWanted.current) void fetchContentChanges()
     setPreflightVersion((v) => v + 1)
-  }, [fetchAssets])
+  }, [fetchAssets, fetchContentChanges])
 
   // Editing a Post's publish bundle can revert it out of Approved (PublishBundleGuard), so the status
   // chip and the review panel have to be re-read after the picker saves rather than assumed unchanged.
@@ -401,8 +415,9 @@ export function WorkItemDetailView({
       // Non-fatal — a stale chip corrects itself on the next load.
     }
     await fetchReviews()
+    if (contentChangesWanted.current) void fetchContentChanges()
     setPreflightVersion((v) => v + 1)
-  }, [accessToken, projectId, issueId, fetchReviews])
+  }, [accessToken, projectId, issueId, fetchReviews, fetchContentChanges])
 
   // Also the retry target for the "Couldn't load your role" notice - pulled out of the mount effect so
   // it can be re-run on its own without re-fetching everything else. Goes through the shared members
@@ -606,6 +621,13 @@ export function WorkItemDetailView({
   // Whether this Workflow publishes anywhere. Decided from the Workflow's own declaration, so the page
   // never asks the server a question (the preflight) whose answer it already holds for every issue.
   const publishing = workflowDeclaresPublishTargets(workflowView)
+  useEffect(() => {
+    contentChangesWanted.current = publishing
+    if (publishing && accessToken) void fetchContentChanges()
+  }, [publishing, accessToken, fetchContentChanges])
+  const changeSinceReview = publishing
+    ? changedSinceLastReview(contentChanges, issue?.currentReviewRound, reviews)
+    : null
 
   // The Post's one primary action — lifted here so the header (PublishReadinessAction) and the
   // Destinations panel read the one poll of the server and share the one reviewer-picker dialog,
@@ -928,7 +950,7 @@ export function WorkItemDetailView({
         <Skeleton className="h-16 w-full" />
       </div>
     ) : (
-      <ActivityTab comments={comments} reviews={reviews} />
+      <ActivityTab comments={comments} reviews={reviews} contentChanges={publishing ? contentChanges : []} />
     )
   } else if (documentsLoading) {
     mainContent = (
@@ -1310,6 +1332,13 @@ export function WorkItemDetailView({
                   publishOnApproval={issue.publishOnApproval}
                   assets={mediaAssets}
                   destinations={destinations}
+                  contentChange={changeSinceReview}
+                  reviewerFix={reviewActive && isAssignedReviewer}
+                  onTextChanged={async () => {
+                    // A text edit re-attaches new slides to the Post and may move it back to review.
+                    await refreshIssueStatus()
+                    await reloadAssetsAfterEdit()
+                  }}
                   onCaptionSaved={(description) => {
                     setIssue((prev) => (prev ? { ...prev, description } : prev))
                     // A caption edit is a bundle edit, so the server may have reverted the item and

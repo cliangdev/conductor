@@ -215,6 +215,10 @@ const PUBLISH_OPTIONS = [
 ]
 let PUBLISH_SELECTION: unknown[] = []
 let PREFLIGHT: Record<string, unknown> = {}
+// A Post's media (some from a Creative), its slide-text changes and the Creative those come from.
+let ASSETS: unknown[] = []
+let CONTENT_CHANGES: unknown[] = []
+let SLIDESHOW_CREATIVE: object | null = null
 
 // Secondary sections held back to prove the page does not wait on them; every GET is recorded.
 let holdSecondary = false
@@ -226,11 +230,13 @@ vi.mock('@/lib/api', () => ({
     getUrls.push(url)
     if (holdSecondary && /\/(documents|comments|reviews|assets|members)(\?|$)/.test(url)) return NEVER
     if (/\/work-items\/[^/]+$/.test(url) && !url.includes('?')) return Promise.resolve(ISSUE)
+    if (url.endsWith('/content-changes')) return Promise.resolve({ changes: CONTENT_CHANGES })
+    if (url.endsWith('/marketing/creatives/cr-1')) return SLIDESHOW_CREATIVE ? Promise.resolve(SLIDESHOW_CREATIVE) : Promise.reject(new Error('no creative'))
     if (url.includes('/documents')) return Promise.resolve(DOCS)
     if (url.includes('/comments')) return Promise.resolve(COMMENTS)
     if (url.includes('/reviewers')) return Promise.resolve(REVIEWERS)
     if (url.includes('/reviews')) return failReviews ? Promise.reject(new Error('reviews down')) : Promise.resolve(REVIEWS)
-    if (url.includes('/assets')) return Promise.resolve([])
+    if (url.includes('/assets')) return Promise.resolve(ASSETS)
     if (url.includes('/available-transitions')) return Promise.resolve({ workflow: 'ENGINEERING', transitions: TRANSITIONS })
     if (url.endsWith('/projects/proj-1/publish-targets')) return Promise.resolve(PUBLISH_OPTIONS)
     if (url.endsWith('/work-items/wi-1/publish-targets')) return Promise.resolve(PUBLISH_SELECTION)
@@ -248,6 +254,7 @@ vi.mock('@/lib/api', () => ({
 }))
 
 import { WorkItemDetailView } from './WorkItemDetailView'
+import { creative as creativeFixture } from '@/components/marketing/creatives/slideTextFixtures'
 import { invalidateMembersCache } from '@/lib/workflows'
 
 function resetFixtures() {
@@ -269,6 +276,9 @@ function resetFixtures() {
   REVIEWS = []
   viewOverride = null
   PUBLISH_SELECTION = []
+  ASSETS = []
+  CONTENT_CHANGES = []
+  SLIDESHOW_CREATIVE = null
   PREFLIGHT = {
     publishing: true,
     ready: true,
@@ -983,6 +993,71 @@ describe('a Post on a publishing Workflow', () => {
     expect(await within(actions).findByRole('button', { name: 'Approve' })).toBeInTheDocument()
     expect(within(actions).getByRole('button', { name: 'Request changes' })).toBeInTheDocument()
     expect(await screen.findByText(/Locked while this post is in review/)).toBeInTheDocument()
+  })
+
+  describe('slide text edits carried onto the Post', () => {
+    const frame = {
+      id: 'a1', issueId: 'wi-1', type: 'facebook_post', label: 'Slide 1', kind: 'file', ref: 'r1', done: false, createdAt: '', updatedAt: '',
+      uploadStatus: 'UPLOADED', contentType: 'image/png', width: 1080, height: 1920, previewUrl: 'https://s/a1.png',
+      creativeFrameId: 'f1', creativeId: 'cr-1', creativeDisplayId: '158a', placementKey: '9x16', sequenceIndex: 0,
+    }
+    const change = (over: Record<string, unknown> = {}) => ({
+      id: 'chg-1', creativeId: 'cr-1', creativeDisplayId: '158a', revisionId: 'rev-1', source: 'EDITOR', actorName: 'Ada Admin',
+      reviewRoundBefore: 1, reviewRoundAfter: 2, createdAt: '2026-07-10T00:00:00Z',
+      textDiff: [{ slide: 3, path: 'texts[0].t', old: 'Save time', new: 'Save money' }], ...over,
+    })
+
+    it('shows "Changed since last review" while the change opened the Post’s current round', async () => {
+      asPost('IN_REVIEW')
+      ISSUE = { ...ISSUE, currentReviewRound: 2 }
+      CONTENT_CHANGES = [change()]
+      await renderPost()
+      const card = await screen.findByTestId('changed-since-review')
+      expect(card).toHaveTextContent('Ada Admin changed the text on 158a')
+      expect(within(card).getByText('Slide 3 · Text 1')).toBeInTheDocument()
+    })
+
+    it('drops the card once the Post is in a later round', async () => {
+      asPost('IN_REVIEW')
+      ISSUE = { ...ISSUE, currentReviewRound: 3 }
+      CONTENT_CHANGES = [change()]
+      await renderPost()
+      await screen.findByTestId('post-media')
+      await waitFor(() => expect(getUrls.some((u) => u.endsWith('/content-changes'))).toBe(true))
+      expect(screen.queryByTestId('changed-since-review')).not.toBeInTheDocument()
+    })
+
+    it('lists the change on the Activity tab', async () => {
+      asPost('IN_REVIEW')
+      CONTENT_CHANGES = [change()]
+      await renderPost()
+      await userEvent.click(screen.getByRole('tab', { name: /^Activity/ }))
+      expect(await screen.findByTestId('activity-content-chg-1')).toHaveTextContent('changed the slide text on 158a')
+    })
+
+    it('offers the assigned reviewer "Fix text" on an In Review Post from a slideshow Creative', async () => {
+      asPost('IN_REVIEW')
+      ASSETS = [frame]
+      SLIDESHOW_CREATIVE = creativeFixture({ id: 'cr-1' })
+      await renderPost()
+      expect(await screen.findByTestId('fix-text')).toBeInTheDocument()
+    })
+
+    it('does not offer it before review, or to someone who is not a reviewer of the Post', async () => {
+      asPost('DRAFT')
+      ASSETS = [frame]
+      SLIDESHOW_CREATIVE = creativeFixture({ id: 'cr-1' })
+      const { unmount } = await renderPost()
+      await screen.findByTestId('post-media')
+      expect(screen.queryByTestId('fix-text')).not.toBeInTheDocument()
+      unmount()
+
+      asPost('IN_REVIEW')
+      REVIEWERS = [{ userId: 'user-2', name: 'Cara Creator', email: 'cara@x.com' }]
+      await renderPost()
+      await screen.findByTestId('post-media')
+      expect(screen.queryByTestId('fix-text')).not.toBeInTheDocument()
+    })
   })
 })
 

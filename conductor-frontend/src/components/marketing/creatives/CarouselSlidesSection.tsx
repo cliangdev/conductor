@@ -3,8 +3,8 @@
 // CAROUSEL ("Finished images") mode's right-column section: a placement switcher, a stepped viewer
 // for the active placement's slides, and the ordered slide list (reorder, remove, per-slide alt text).
 
-import { useRef, useState, type KeyboardEvent } from 'react'
-import { ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, GripVerticalIcon, PlusIcon, XIcon } from 'lucide-react'
+import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { ArrowDownIcon, ArrowUpIcon, ChevronLeftIcon, ChevronRightIcon, GripVerticalIcon, PencilIcon, PlusIcon, XIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -29,6 +29,15 @@ export interface CarouselSlidesSectionProps {
   onChange: (next: { slides: Record<string, string[]>; slideAltText: string[] }) => void
   /** Server 422 messages for slides / slideAltText, shown as-is. */
   violations?: string[]
+  /**
+   * Present when this Creative has an editable slideshow spec: the "Edit text" action for the slide on
+   * screen (0-based index). `disabledReason` is shown beside the disabled button.
+   */
+  textEdit?: { onEdit: (slideIndex: number) => void; disabledReason?: string | null }
+  /** A line about the slide-text revision in flight or the last one that failed. */
+  revisionNote?: ReactNode
+  /** 1-based slides whose alt text still quotes text a slide-text edit replaced. */
+  staleAltSlides?: number[]
 }
 
 export function CarouselSlidesSection({
@@ -39,6 +48,9 @@ export function CarouselSlidesSection({
   onAddImages,
   onChange,
   violations = [],
+  textEdit,
+  revisionNote,
+  staleAltSlides = [],
 }: CarouselSlidesSectionProps) {
   const [active, setActive] = useState<string>(() => primaryCarouselPlacement(slides) ?? '4x5')
   const [indexByKey, setIndexByKey] = useState<Record<string, number>>({})
@@ -112,6 +124,8 @@ export function CarouselSlidesSection({
         }))}
       />
 
+      {revisionNote}
+
       {ids.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No images for {CAROUSEL_PLACEMENT_LABEL[active]} yet.
@@ -170,6 +184,25 @@ export function CarouselSlidesSection({
               <ChevronRightIcon className="h-4 w-4" aria-hidden />
             </Button>
           </div>
+          {textEdit && (
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!!textEdit.disabledReason}
+                onClick={() => textEdit.onEdit(index)}
+                data-testid="edit-slide-text"
+              >
+                <PencilIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+                Edit text
+              </Button>
+              {textEdit.disabledReason && (
+                <span className="text-xs text-muted-foreground" data-testid="edit-slide-text-reason">
+                  {textEdit.disabledReason}
+                </span>
+              )}
+            </div>
+          )}
           {ids.length <= 12 && (
             <div className="flex justify-center gap-1.5" aria-hidden>
               {ids.map((id, i) => (
@@ -246,6 +279,11 @@ export function CarouselSlidesSection({
                   placeholder="Alt text for this slide"
                   aria-label={`Alt text for slide ${i + 1}`}
                 />
+                {staleAltSlides.includes(i + 1) && (
+                  <p className="text-xs text-status-progress" data-testid={`slide-alt-stale-${i}`}>
+                    Quotes the old text — update
+                  </p>
+                )}
                 {mismatch && (
                   <p className="text-xs text-status-progress" data-testid={`slide-aspect-warning-${i}`}>
                     {media?.width}×{media?.height} doesn&apos;t match {CAROUSEL_PLACEMENT_LABEL[active]} (within 2%); the server will

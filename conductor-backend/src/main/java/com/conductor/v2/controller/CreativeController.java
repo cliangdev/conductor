@@ -426,7 +426,7 @@ public class CreativeController implements CreativesApi {
         String source = auth instanceof com.conductor.security.UserApiKeyAuthenticationToken
                 ? com.conductor.creative.CreativeRevision.SOURCE_MCP : com.conductor.creative.CreativeRevision.SOURCE_EDITOR;
         CreativeRevisionService.EditResult result = revisionService.edit(projectId, creativeId, request.getVersion(),
-                edits, source, currentUser());
+                edits, source, currentUser(), request.getPostId());
         return ResponseEntity.status(HttpStatus.ACCEPTED)
                 .body(new com.conductor.generated.v2.model.CreativeSlideTextEditResponse(toResponse(result.revision()))
                         .renderRun(result.renderRun() != null ? toRunResponse(result.renderRun()) : null));
@@ -493,6 +493,7 @@ public class CreativeController implements CreativesApi {
                 .checks(r.getChecks() != null ? objectMapper.convertValue(r.getChecks(),
                         new TypeReference<List<java.util.Map<String, Object>>>() { }) : null)
                 .authorUserId(r.getAuthorUserId())
+                .authorName(r.getAuthorName())
                 .postId(r.getPostId())
                 .reviewRound(r.getReviewRound())
                 .renderId(r.getRenderId())

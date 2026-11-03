@@ -58,6 +58,10 @@ import { MediaPicker } from '@/components/marketing/creatives/MediaPicker'
 import { PhotoPicker } from '@/components/marketing/creatives/PhotoPicker'
 import { needsLocalRender } from '@/components/marketing/creatives/creativeCopy'
 import { RendersPanel } from '@/components/marketing/creatives/RendersPanel'
+import { CreativeRevisionsPanel } from '@/components/marketing/creatives/CreativeRevisionsPanel'
+import { SlideChecksList } from '@/components/marketing/creatives/SlideChecksList'
+import { SlideTextEditor } from '@/components/marketing/creatives/SlideTextEditor'
+import { asChecks, getCreativeRevision, staleAltSlides, type TextChange } from '@/components/marketing/creatives/slideText'
 import { UseInPostDialog } from '@/components/marketing/creatives/UseInPostDialog'
 import {
   createCreativeVariant,
@@ -781,6 +785,10 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   // Index into `enabledKeys` of the placement currently open in the full-size viewer, or null when
   // it's closed.
   const [viewerIndex, setViewerIndex] = useState<number | null>(null)
+  // The slide the text editor is open on (0-based), or null when it is closed.
+  const [textEditorSlide, setTextEditorSlide] = useState<number | null>(null)
+  // Slides (1-based) the last applied text edit flagged as having alt text that quotes the old words.
+  const [flaggedAltSlides, setFlaggedAltSlides] = useState<{ flags: number[]; diff: TextChange[] } | null>(null)
 
   const load = useCallback(async () => {
     const [loaded, kitRows, reg] = await Promise.all([
@@ -808,6 +816,39 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   useEffect(() => {
     listCreativePhotos(projectId, token, true).then(setPhotos).catch(() => setPhotos([]))
   }, [projectId, token])
+
+  // A slide-text edit is rendering and its editor is closed: keep asking until it settles, then reload
+  // (applied: the slides and spec changed; failed: the page shows why).
+  const pendingRevisionId = creative?.pendingRevision?.id ?? null
+  useEffect(() => {
+    if (!pendingRevisionId || textEditorSlide !== null) return
+    const t = setInterval(() => {
+      getCreative(projectId, creativeId, token)
+        .then((c) => {
+          if (!c.pendingRevision) load().catch(() => undefined)
+        })
+        .catch(() => undefined)
+    }, 3000)
+    return () => clearInterval(t)
+  }, [pendingRevisionId, textEditorSlide, projectId, creativeId, token, load])
+
+  // After an applied edit, the alt text of the slides it touched may still quote the old words: fetch the
+  // revision's flags once the readiness checklist says so.
+  const altStaleItem = readiness?.items.find((i) => i.key === 'altTextStale')
+  const latestAppliedId = creative?.latestRevision?.status === 'APPLIED' ? creative.latestRevision.id : null
+  useEffect(() => {
+    if (!latestAppliedId || !altStaleItem || altStaleItem.ok) {
+      setFlaggedAltSlides(null)
+      return
+    }
+    let cancelled = false
+    getCreativeRevision(projectId, creativeId, latestAppliedId, token)
+      .then((r) => !cancelled && setFlaggedAltSlides({ flags: r.altTextFlags ?? [], diff: r.textDiff ?? [] }))
+      .catch(() => !cancelled && setFlaggedAltSlides(null))
+    return () => {
+      cancelled = true
+    }
+  }, [latestAppliedId, altStaleItem, projectId, creativeId, token])
 
   useEffect(() => {
     if (!form?.photoId) {
@@ -1091,6 +1132,18 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
       setVariantBusy(false)
     }
   }
+
+  const latestEdit = creative?.latestRevision
+  const revisionNote = creative?.pendingRevision ? (
+    <p className="text-sm text-muted-foreground" role="status" data-testid="revision-pending">
+      A text edit is rendering. The slides update here when it finishes.
+    </p>
+  ) : latestEdit?.status === 'FAILED' && latestEdit.source !== 'IMPORT' && latestEdit.source !== 'COMMIT' ? (
+    <Alert variant="destructive" data-testid="revision-failed">
+      <p>The last text edit failed{latestEdit.error ? `: ${latestEdit.error}` : '.'} Nothing was changed.</p>
+      {asChecks(latestEdit.checks).length > 0 && <SlideChecksList checks={asChecks(latestEdit.checks)} withLocation className="mt-2" />}
+    </Alert>
+  ) : null
 
   if (loadError) return <Alert variant="destructive">{loadError}</Alert>
   if (!form || !creative || !kits || !registry) {
@@ -1845,6 +1898,22 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               onAddImages={setCarouselPickerKey}
               onChange={(next) => setForm((prev) => (prev ? { ...prev, ...next } : prev))}
               violations={carouselViolations}
+              textEdit={
+                canManage && creative.slideshowSpec
+                  ? {
+                      onEdit: setTextEditorSlide,
+                      disabledReason: creative.pendingRevision
+                        ? 'A text edit is rendering.'
+                        : JSON.stringify(form) !== JSON.stringify(toForm(creative))
+                          ? 'Save your changes first.'
+                          : null,
+                    }
+                  : undefined
+              }
+              revisionNote={revisionNote}
+              staleAltSlides={
+                flaggedAltSlides ? staleAltSlides(flaggedAltSlides.flags, flaggedAltSlides.diff, form.slideAltText) : []
+              }
             />
           ) : form.kind === 'CLIP' ? (
             <ClipMediaSection
@@ -1939,6 +2008,10 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
             </Card>
           )}
 
+          {form.kind === 'CAROUSEL' && creative.slideshowSpec && (
+            <CreativeRevisionsPanel projectId={projectId} creativeId={creativeId} token={token} version={creative.version} />
+          )}
+
           <RendersPanel
             projectId={projectId}
             creativeId={creativeId}
@@ -1957,6 +2030,18 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           <CreativePerformancePanel projectId={projectId} creativeId={creativeId} token={token} />
         </div>
       </div>
+
+      {textEditorSlide !== null && creative.slideshowSpec && (
+        <SlideTextEditor
+          projectId={projectId}
+          token={token}
+          creative={creative}
+          initialSlide={textEditorSlide}
+          mediaById={photoById}
+          onApplied={load}
+          onClose={() => setTextEditorSlide(null)}
+        />
+      )}
 
       <PhotoPicker
         projectId={projectId}
