@@ -242,6 +242,17 @@ public class ProjectSecurityService {
         return hasRole(projectId, userId, MemberRole.CREATOR);
     }
 
+    /**
+     * Refuses a member who cannot edit (a Reviewer-only member or a read-only Viewer) with a 403. Callers
+     * that must hide a project from non-members check membership first; this throws for a non-member too.
+     */
+    public void requireEditor(String projectId, String userId) {
+        if (!isEditor(projectId, userId)) {
+            throw new ForbiddenException(
+                    "Requires the Editor role (or Admin); members without it can read and comment only");
+        }
+    }
+
     /** Whether the user may review work: holds REVIEWER (or ADMIN, which implies it). */
     public boolean canReview(String projectId, String userId) {
         return hasRole(projectId, userId, MemberRole.REVIEWER);

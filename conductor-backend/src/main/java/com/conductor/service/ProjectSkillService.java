@@ -69,7 +69,7 @@ public class ProjectSkillService {
     @Transactional
     public SkillRegistration registerSkill(String projectId, RegisterSkillRequest request, String callerId) {
         if (!projectSecurityService.isEditor(projectId, callerId)) {
-            throw new ForbiddenException("Only ADMIN or CREATOR can register skills");
+            throw new ForbiddenException("Requires the Editor role (or Admin) to register skills");
         }
         String skillId = request.getId() == null ? null : request.getId().trim();
         if (skillId == null || skillId.isEmpty()) {

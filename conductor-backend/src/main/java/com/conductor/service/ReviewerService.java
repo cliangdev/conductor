@@ -3,15 +3,12 @@ package com.conductor.service;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.WorkItemReviewer;
 import com.conductor.entity.MemberRole;
-import com.conductor.entity.MemberRoles;
-import com.conductor.entity.ProjectMember;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.repository.WorkItemReviewerRepository;
 import com.conductor.repository.WorkItemRepository;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.service.view.ReviewerView;
@@ -27,13 +24,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class ReviewerService {
 
     private final WorkItemReviewerRepository workItemReviewerRepository;
     private final WorkItemRepository workItemRepository;
-    private final ProjectMemberRepository projectMemberRepository;
     private final ProjectSecurityService projectSecurityService;
     private final UserRepository userRepository;
     private final SignalBus signalBus;
@@ -43,7 +40,6 @@ public class ReviewerService {
     public ReviewerService(
             WorkItemReviewerRepository workItemReviewerRepository,
             WorkItemRepository workItemRepository,
-            ProjectMemberRepository projectMemberRepository,
             ProjectSecurityService projectSecurityService,
             UserRepository userRepository,
             SignalBus signalBus,
@@ -51,7 +47,6 @@ public class ReviewerService {
             WorkItemWorkflowService workItemWorkflowService) {
         this.workItemReviewerRepository = workItemReviewerRepository;
         this.workItemRepository = workItemRepository;
-        this.projectMemberRepository = projectMemberRepository;
         this.projectSecurityService = projectSecurityService;
         this.userRepository = userRepository;
         this.signalBus = signalBus;
@@ -62,15 +57,20 @@ public class ReviewerService {
     @Transactional
     public WorkItemReviewer assignReviewer(String projectId, String workItemId, String targetUserId, User caller) {
         verifyCallerCanManageReviewers(projectId, caller.getId());
-        requireWorkItemInProject(projectId, workItemId);
+        WorkItem workItem = requireWorkItemInProject(projectId, workItemId);
 
-        ProjectMember targetMember = projectMemberRepository.findByProjectIdAndUserId(projectId, targetUserId)
+        Set<MemberRole> targetRoles = projectSecurityService.effectiveRoles(projectId, targetUserId)
                 .orElseThrow(() -> new BusinessException("User is not a project member"));
 
         // An ADMIN already outranks every review role at the gate (WorkItemWorkflowService); refusing to
         // assign one only meant a workspace with no dedicated reviewer could never approve anything.
-        if (!MemberRoles.effective(targetMember.getRoles()).contains(MemberRole.REVIEWER)) {
+        if (!targetRoles.contains(MemberRole.REVIEWER)) {
             throw new BusinessException("Only members with the Reviewer role (or Admins) can be assigned as reviewers");
+        }
+
+        if (workItem.getCreatedBy() != null && targetUserId.equals(workItem.getCreatedBy().getId())
+                && workItemWorkflowService.requiresIndependentReviewer(projectId, workItem)) {
+            throw new BusinessException(ReviewService.INDEPENDENT_REVIEWER_MESSAGE);
         }
 
         if (workItemReviewerRepository.findByWorkItemIdAndUserId(workItemId, targetUserId).isPresent()) {
@@ -86,8 +86,7 @@ public class ReviewerService {
         String reviewerName = userRepository.findById(targetUserId)
                 .map(u -> u.getName() != null ? u.getName() : u.getEmail())
                 .orElse(targetUserId);
-        WorkItem workItem = workItemRepository.findById(workItemId).orElse(null);
-        String workItemTitle = workItem != null ? workItem.getTitle() : workItemId;
+        String workItemTitle = workItem.getTitle();
         // An approval request on a Post is marketing's to act on: the marker sends it to the Publishing
         // channel when one exists, and to Issues otherwise — the same routing a status change gets.
         Map<String, Object> meta = new java.util.HashMap<>(Map.of(
@@ -115,7 +114,7 @@ public class ReviewerService {
 
     @Transactional(readOnly = true)
     public List<ReviewerView> listReviewers(String projectId, String workItemId, User caller) {
-        if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, caller.getId())) {
+        if (!projectSecurityService.isProjectMember(projectId, caller.getId())) {
             throw new EntityNotFoundException("Work Item not found");
         }
         requireWorkItemInProject(projectId, workItemId);
@@ -127,8 +126,8 @@ public class ReviewerService {
                 .toList();
     }
 
-    private void requireWorkItemInProject(String projectId, String workItemId) {
-        workItemRepository.findById(workItemId)
+    private WorkItem requireWorkItemInProject(String projectId, String workItemId) {
+        return workItemRepository.findById(workItemId)
                 .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
     }
@@ -165,7 +164,7 @@ public class ReviewerService {
 
     private void verifyCallerCanManageReviewers(String projectId, String callerId) {
         if (!projectSecurityService.isEditor(projectId, callerId)) {
-            throw new ForbiddenException("Only ADMIN or CREATOR can manage reviewers");
+            throw new ForbiddenException("Requires the Editor role (or Admin) to manage reviewers");
         }
     }
 

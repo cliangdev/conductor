@@ -410,4 +410,14 @@ class ProjectSecurityServiceTest {
 
         verify(projectMemberRepository, times(1)).findByProjectIdAndUserId(PROJECT_ID, "user-1");
     }
+
+    @Test
+    void requireEditorRefusesAViewerAndAReviewerOnlyMemberButAdmitsAnEditor() {
+        memberWithRoles(MemberRole.REVIEWER);
+        assertThatThrownBy(() -> service().requireEditor(PROJECT_ID, "user-1"))
+                .isInstanceOf(ForbiddenException.class).hasMessageContaining("Editor role");
+
+        memberWithRoles(MemberRole.CREATOR);
+        service().requireEditor(PROJECT_ID, "user-1");
+    }
 }

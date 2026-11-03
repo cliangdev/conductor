@@ -1139,7 +1139,7 @@ public class CreativeRenderService {
             case RenderCaller.UserCaller u -> {
                 requireMember(projectId, creativeId, caller);
                 if (!projectSecurityService.isEditor(projectId, u.user().getId())) {
-                    throw new ForbiddenException("Only ADMIN or CREATOR can manage Creative renders");
+                    throw new ForbiddenException("Requires the Editor role (or Admin) to manage Creative renders");
                 }
             }
             case RenderCaller.RunCaller r -> requireRunScope(projectId, creativeId, r);

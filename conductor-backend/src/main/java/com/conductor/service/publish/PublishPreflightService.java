@@ -56,7 +56,7 @@ public class PublishPreflightService {
         static Preflight notPublishing() {
             return new Preflight(false, true, List.of(), List.of(), null,
                     new ConsentSummary(false, PublishConsentService.Verdict.NOT_REQUIRED),
-                    new ReviewSummary(false, 0, false, null, false), null);
+                    new ReviewSummary(false, 0, false, null, false, null), null);
         }
     }
 
@@ -71,7 +71,7 @@ public class PublishPreflightService {
      * approval currently satisfies the gate (round- and bundle-bound), and the role the gate asks for.
      */
     public record ReviewSummary(boolean gated, int assignedReviewers, boolean satisfied, String reviewerRole,
-                                boolean requireIndependentReviewer) {}
+                                boolean requireIndependentReviewer, String authorId) {}
 
     private final ProjectSecurityService projectSecurityService;
     private final WorkItemRepository workItemRepository;
@@ -161,7 +161,8 @@ public class PublishPreflightService {
                 reviewerRepository.findAllByWorkItemId(workItem.getId()).size(),
                 gate.isPresent() && workItemWorkflowService.isReviewSatisfied(projectId, workItem, gate.get(), ctx),
                 gate.map(StatechartTransition::reviewerRole).orElse(null),
-                gate.map(StatechartTransition::requireIndependentReviewer).orElse(false));
+                gate.map(StatechartTransition::requireIndependentReviewer).orElse(false),
+                workItem.getCreatedBy() == null ? null : workItem.getCreatedBy().getId());
 
         // The move a ready item takes next: a gate edge out of the current status when there is one, else
         // the edge that hands it to review (DRAFT → IN_REVIEW on MARKETING), so a client that only knows

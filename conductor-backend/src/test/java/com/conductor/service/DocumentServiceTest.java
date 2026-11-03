@@ -549,4 +549,19 @@ class DocumentServiceTest {
         assertThat(response.storageUrl()).isNull();
         assertThat(response.storageUrlExpiresAt()).isNull();
     }
+
+    // --- viewers and reviewers cannot write documents ---
+
+    @Test
+    void aMemberWhoCannotEditCannotCreateOrDeleteDocuments() {
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        doThrow(new com.conductor.exception.ForbiddenException("Requires the Editor role (or Admin)"))
+                .when(projectSecurityService).requireProjectEditor("proj-1");
+
+        assertThatThrownBy(() -> documentService.createDocument("proj-1", "issue-1", "spec.md", "# x", null))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+        assertThatThrownBy(() -> documentService.deleteDocument("proj-1", "issue-1", "doc-1"))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+        verify(documentRepository, never()).save(any());
+    }
 }

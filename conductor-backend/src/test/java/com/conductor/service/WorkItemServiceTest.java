@@ -11,7 +11,6 @@ import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.WorkItemRepository;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.signal.Signal;
@@ -60,8 +59,6 @@ class WorkItemServiceTest {
     @Mock
     private ProjectSecurityService projectSecurityService;
 
-    @Mock
-    private ProjectMemberRepository projectMemberRepository;
 
     @Mock
     private SignalBus signalBus;
@@ -177,8 +174,6 @@ class WorkItemServiceTest {
         testIssue.setCurrentStatus("APPROVED");
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
-                .thenReturn(Optional.of(memberAs(MemberRole.ADMIN)));
 
         workItemService.patchWorkItem("proj-1", "issue-1", null, null, "SCHEDULED", null, null, null, caller);
 
@@ -199,8 +194,6 @@ class WorkItemServiceTest {
         OffsetDateTime earliest = OffsetDateTime.parse("2026-09-10T10:11:00Z");
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
-                .thenReturn(Optional.of(memberAs(MemberRole.ADMIN)));
         when(publishTargetService.earliestFireTime(testIssue)).thenReturn(earliest);
 
         workItemService.patchWorkItem("proj-1", "issue-1", null, null, "SCHEDULED", null, null, null, caller);
@@ -223,8 +216,6 @@ class WorkItemServiceTest {
         testIssue.setCurrentStatus("SCHEDULED");
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
-                .thenReturn(Optional.of(memberAs(MemberRole.ADMIN)));
 
         workItemService.patchWorkItem("proj-1", "issue-1", null, null, "APPROVED", null, null, null, caller);
 
@@ -542,8 +533,6 @@ class WorkItemServiceTest {
 
         ProjectMember adminMember = new ProjectMember();
         adminMember.setRole(MemberRole.ADMIN);
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
-                .thenReturn(Optional.of(adminMember));
 
         String requestStatus = ("IN_REVIEW");
 
@@ -607,20 +596,51 @@ class WorkItemServiceTest {
     }
 
     @Test
-    void patchWorkItemReviewerRoleAttemptingStatusChangeThrows403() {
+    void patchWorkItemByAMemberWhoCannotEditThrows403() {
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
-        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        org.mockito.Mockito.doThrow(new ForbiddenException("Requires the Editor role (or Admin)"))
+                .when(projectSecurityService).requireEditor("proj-1", "user-1");
 
-        ProjectMember reviewerMember = new ProjectMember();
-        reviewerMember.setRole(MemberRole.REVIEWER);
-        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "user-1"))
-                .thenReturn(Optional.of(reviewerMember));
-
-        String requestStatus = ("IN_REVIEW");
-
-        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", null, null, requestStatus, null, null, null, caller))
+        assertThatThrownBy(() -> workItemService.patchWorkItem("proj-1", "issue-1", "new title", null, null, null,
+                null, null, caller))
                 .isInstanceOf(ForbiddenException.class)
-                .hasMessageContaining("Only members with the Editor role (or Admins) can change Work Item status");
+                .hasMessageContaining("Editor role");
+        verify(workItemRepository, never()).save(any());
+    }
+
+    @Test
+    void createWorkItemByAMemberWhoCannotEditThrows403() {
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        org.mockito.Mockito.doThrow(new ForbiddenException("Requires the Editor role (or Admin)"))
+                .when(projectSecurityService).requireEditor("proj-1", "user-1");
+
+        assertThatThrownBy(() -> workItemService.createWorkItem("proj-1", "TASK", "t", null, null, null, caller))
+                .isInstanceOf(ForbiddenException.class);
+        verify(workItemRepository, never()).save(any());
+    }
+
+    @Test
+    void deleteWorkItemByAMemberWhoCannotEditThrows403() {
+        when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
+        org.mockito.Mockito.doThrow(new ForbiddenException("Requires the Editor role (or Admin)"))
+                .when(projectSecurityService).requireEditor("proj-1", "user-1");
+
+        assertThatThrownBy(() -> workItemService.deleteWorkItem("proj-1", "issue-1", caller))
+                .isInstanceOf(ForbiddenException.class);
+        verify(workItemRepository, never()).delete(any());
+    }
+
+    @Test
+    void aMachineActorCreatesWithoutAnEditorCheck() {
+        // Machine credentials are issued per project and act on its behalf: no member row to check.
+        try {
+            workItemService.createWorkItem("proj-1", "TASK", "t", null, null, null, ProjectActor.agent("Agent"));
+        } catch (ForbiddenException e) {
+            throw e; // would mean a machine was role-checked
+        } catch (RuntimeException ignored) {
+            // downstream collaborators are mocks; only the absence of the role check matters here
+        }
+        verify(projectSecurityService, never()).requireEditor(any(), any());
     }
 
     @Test

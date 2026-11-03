@@ -582,6 +582,7 @@ public class PublishTargetService {
     public List<TargetView> replaceSelection(String projectId, String workItemId,
                                             List<TargetSelection> selections, User caller) {
         verifyMembership(projectId, caller);
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
         Map<String, TargetOption> available = new LinkedHashMap<>();

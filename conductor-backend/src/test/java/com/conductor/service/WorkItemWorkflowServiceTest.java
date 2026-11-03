@@ -265,8 +265,8 @@ class WorkItemWorkflowServiceTest {
         assertThat(applied.get().to()).isEqualTo("DONE");
         assertThat(workItem.getCurrentStatus()).isEqualTo("DONE");
         // gate bypassed → no review lookups at all
-        verify(reviewRepository, never()).existsApprovedByReviewerRole(any(), any(), any(), any());
-        verify(reviewRepository, never()).existsByWorkItemIdAndVerdict(any(), any());
+        verify(reviewRepository, never()).existsApprovedByReviewerRole(any(), any(), any(), any(), any());
+        verify(reviewRepository, never()).existsByWorkItemIdAndVerdict(any(), any(), any());
     }
 
     @Test
@@ -335,13 +335,13 @@ class WorkItemWorkflowServiceTest {
 
         assertThat(applied).isEmpty();
         assertThat(workItem.getCurrentStatus()).isEqualTo("REVIEW");
-        verify(reviewRepository).existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER");
+        verify(reviewRepository).existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER", null);
     }
 
     @Test
     void statusChangedTriggerAdvancesOnceReviewGateIsSatisfied() {
         WorkItem workItem = lcTestWorkItemAtReview();
-        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER"))
+        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER", null))
                 .thenReturn(true);
 
         Optional<StatechartTransition> applied = service.applySystemTransition(
@@ -383,9 +383,7 @@ class WorkItemWorkflowServiceTest {
     void availableTransitionsReturnsEdgesForNonReviewer() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("DRAFT")));
-        ProjectMember member = new ProjectMember();
-        member.setRole(MemberRole.CREATOR);
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, "user-1")).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(java.util.Set.of(MemberRole.CREATOR))));
 
         AvailableTransitionsView response = service.availableTransitions(PROJECT_ID, "issue-1", caller());
 
@@ -403,9 +401,7 @@ class WorkItemWorkflowServiceTest {
         givenMarketing();
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(marketingPostAt("SCHEDULED")));
-        ProjectMember member = new ProjectMember();
-        member.setRole(MemberRole.ADMIN);
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, "user-1")).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(java.util.Set.of(MemberRole.ADMIN))));
 
         AvailableTransitionsView response = service.availableTransitions(PROJECT_ID, "issue-1", caller());
 
@@ -451,14 +447,14 @@ class WorkItemWorkflowServiceTest {
 
         // The gate is role-scoped — it queries the REVIEWER-scoped projection, not the generic verdict check.
         verify(reviewRepository).existsApprovedByReviewerRole(
-                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER");
-        verify(reviewRepository, never()).existsByWorkItemIdAndVerdict(any(), any());
+                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER", null);
+        verify(reviewRepository, never()).existsByWorkItemIdAndVerdict(any(), any(), any());
     }
 
     @Test
     void reviewGatedMergeIsAllowedWithReviewerApproval() {
         when(reviewRepository.existsApprovedByReviewerRole(
-                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(true);
+                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER", null)).thenReturn(true);
 
         assertThatCode(() ->
                 service.validateTransition(PROJECT_ID, workItemAt("CODE_REVIEW"), "DONE"))
@@ -470,7 +466,7 @@ class WorkItemWorkflowServiceTest {
         // A non-REVIEWER (e.g. CREATOR) APPROVED review does NOT satisfy a reviewerRole=REVIEWER gate, so the
         // role-scoped projection returns false and the move is blocked.
         when(reviewRepository.existsApprovedByReviewerRole(
-                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(false);
+                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER", null)).thenReturn(false);
 
         assertThatThrownBy(() ->
                 service.validateTransition(PROJECT_ID, workItemAt("CODE_REVIEW"), "DONE"))
@@ -482,19 +478,17 @@ class WorkItemWorkflowServiceTest {
     void availableTransitionsHidesGatedMergeUntilApproved() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("CODE_REVIEW")));
-        ProjectMember member = new ProjectMember();
-        member.setRole(MemberRole.CREATOR);
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, "user-1")).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(java.util.Set.of(MemberRole.CREATOR))));
 
         // No approval: the gated DONE edge is hidden; only CLOSED shows.
         when(reviewRepository.existsApprovedByReviewerRole(
-                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(false);
+                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER", null)).thenReturn(false);
         assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).transitions())
                 .extracting(AvailableTransitionsView.Transition::toStatus).containsExactly("CLOSED");
 
         // Reviewer-approved: DONE appears.
         when(reviewRepository.existsApprovedByReviewerRole(
-                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER")).thenReturn(true);
+                "issue-1", PROJECT_ID, "APPROVED", "REVIEWER", null)).thenReturn(true);
         assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).transitions())
                 .extracting(AvailableTransitionsView.Transition::toStatus).containsExactlyInAnyOrder("DONE", "CLOSED");
     }
@@ -503,9 +497,7 @@ class WorkItemWorkflowServiceTest {
     void availableTransitionsIsEmptyForReviewer() {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("DRAFT")));
-        ProjectMember member = new ProjectMember();
-        member.setRole(MemberRole.REVIEWER);
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.of(member));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, "user-1")).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(java.util.Set.of(MemberRole.REVIEWER))));
 
         AvailableTransitionsView response = service.availableTransitions(PROJECT_ID, "issue-1", caller());
 
@@ -574,44 +566,23 @@ class WorkItemWorkflowServiceTest {
     }
 
     @Test
-    void selfApprovalIsIgnoredWhenAnIndependentReviewerIsRequired() {
+    void anIndependentGateAsksTheQueryToIgnoreTheAuthor() {
         WorkItem item = independentItem(true, "creator");
-        when(reviewRepository.findAllByWorkItemId("issue-1")).thenReturn(java.util.List.of(approvalBy("creator")));
-        when(projectMemberRepository.findByProjectIdAndUserIdIn(eq(PROJECT_ID), any()))
-                .thenReturn(java.util.List.of(memberOf("creator", MemberRole.CREATOR, MemberRole.REVIEWER)));
+        // The database ignores the author's approval: with them excluded, nobody else has approved.
+        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER", "creator"))
+                .thenReturn(false);
+        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER", null))
+                .thenReturn(true);
 
         assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isFalse();
+        verify(reviewRepository).existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER", "creator");
     }
 
     @Test
     void anotherMembersApprovalCountsWhenAnIndependentReviewerIsRequired() {
         WorkItem item = independentItem(true, "creator");
-        when(reviewRepository.findAllByWorkItemId("issue-1"))
-                .thenReturn(java.util.List.of(approvalBy("creator"), approvalBy("other")));
-        when(projectMemberRepository.findByProjectIdAndUserIdIn(eq(PROJECT_ID), any()))
-                .thenReturn(java.util.List.of(
-                        memberOf("creator", MemberRole.CREATOR, MemberRole.REVIEWER),
-                        memberOf("other", MemberRole.CREATOR, MemberRole.REVIEWER)));
-
-        assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isTrue();
-    }
-
-    @Test
-    void anotherMembersApprovalStillNeedsTheGatesReviewerRole() {
-        WorkItem item = independentItem(true, "creator");
-        when(reviewRepository.findAllByWorkItemId("issue-1")).thenReturn(java.util.List.of(approvalBy("other")));
-        when(projectMemberRepository.findByProjectIdAndUserIdIn(eq(PROJECT_ID), any()))
-                .thenReturn(java.util.List.of(memberOf("other", MemberRole.CREATOR)));
-
-        assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isFalse();
-    }
-
-    @Test
-    void anAdminsApprovalCountsForAReviewerRoleGate() {
-        WorkItem item = independentItem(true, "creator");
-        when(reviewRepository.findAllByWorkItemId("issue-1")).thenReturn(java.util.List.of(approvalBy("boss")));
-        when(projectMemberRepository.findByProjectIdAndUserIdIn(eq(PROJECT_ID), any()))
-                .thenReturn(java.util.List.of(memberOf("boss", MemberRole.ADMIN)));
+        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER", "creator"))
+                .thenReturn(true);
 
         assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isTrue();
     }
@@ -619,7 +590,7 @@ class WorkItemWorkflowServiceTest {
     @Test
     void everyApprovalCountsWhenTheItemHasNoCreatorUser() {
         WorkItem item = independentItem(true, null);
-        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER"))
+        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER", null))
                 .thenReturn(true);
 
         assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isTrue();
@@ -629,17 +600,38 @@ class WorkItemWorkflowServiceTest {
     @Test
     void selfApprovalCountsByDefault() {
         WorkItem item = independentItem(false, "creator");
-        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER"))
+        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER", null))
                 .thenReturn(true);
 
         assertThat(service.isReviewSatisfied(PROJECT_ID, item, gateOf(item))).isTrue();
     }
 
     @Test
+    void anIndependentGateWithoutAReviewerRoleStillExcludesTheAuthor() {
+        WorkItem item = independentItem(true, "creator");
+        StatechartTransition open = new StatechartTransition("REVIEW", "DONE", "x", true, java.util.List.of("approve"),
+                null, null, java.util.List.of(), true);
+        when(reviewRepository.existsByWorkItemIdAndVerdict("issue-1", "APPROVED", "creator")).thenReturn(false);
+
+        assertThat(service.isReviewSatisfied(PROJECT_ID, item, open)).isFalse();
+        verify(reviewRepository).existsByWorkItemIdAndVerdict("issue-1", "APPROVED", "creator");
+    }
+
+    @Test
+    void requiresIndependentReviewerReadsTheGateOutOfTheCurrentStatus() {
+        assertThat(service.requiresIndependentReviewer(PROJECT_ID, independentItem(true, "creator"))).isTrue();
+    }
+
+    @Test
+    void requiresIndependentReviewerIsFalseByDefault() {
+        assertThat(service.requiresIndependentReviewer(PROJECT_ID, independentItem(false, "creator"))).isFalse();
+    }
+
+    @Test
     void availableTransitionsAreOfferedToAMemberHoldingCreatorAndReviewer() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("DRAFT")));
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
-                .thenReturn(Optional.of(memberOf("user-1", MemberRole.CREATOR, MemberRole.REVIEWER)));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(java.util.Set.of(MemberRole.CREATOR, MemberRole.REVIEWER)));
 
         assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).transitions()).isNotEmpty();
     }
@@ -647,8 +639,7 @@ class WorkItemWorkflowServiceTest {
     @Test
     void availableTransitionsAreEmptyForAViewerWithNoRoles() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(workItemAt("DRAFT")));
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
-                .thenReturn(Optional.of(memberOf("user-1")));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, "user-1")).thenReturn(Optional.of(java.util.Set.of()));
 
         assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).transitions()).isEmpty();
     }

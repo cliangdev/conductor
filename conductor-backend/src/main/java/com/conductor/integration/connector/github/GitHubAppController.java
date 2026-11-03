@@ -295,7 +295,7 @@ public class GitHubAppController implements GithubApi {
     private User requireAdminOrCreator(String projectId) {
         User user = currentUser();
         if (!projectSecurityService.isEditor(projectId, user.getId())) {
-            throw new AccessDeniedException("Requires ADMIN or CREATOR role");
+            throw new AccessDeniedException("Requires the Editor role (or Admin)");
         }
         return user;
     }

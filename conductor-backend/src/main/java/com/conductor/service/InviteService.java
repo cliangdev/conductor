@@ -83,6 +83,10 @@ public class InviteService {
         invite.setInvitedBy(inviter);
         invite.setExpiresAt(OffsetDateTime.now().plusHours(72));
         inviteRepository.save(invite);
+        if (roles.isEmpty()) {
+            inviteRepository.flush();
+            inviteRepository.clearRoles(invite.getId());
+        }
 
         try {
             emailService.sendInviteEmail(email, inviter.getName(), project.getName(), invite.getToken());
@@ -137,11 +141,17 @@ public class InviteService {
         member.setUser(currentUser);
         member.setRoles(invite.getRoles());
         projectMemberRepository.save(member);
+        if (member.getRoles().isEmpty()) {
+            projectMemberRepository.flush();
+            projectMemberRepository.clearRoles(member.getId());
+        }
 
         invite.setStatus("ACCEPTED");
         inviteRepository.save(invite);
 
-        return new AcceptInviteResponse(project.getId(), project.getName(), invite.getRole().name());
+        return new AcceptInviteResponse(project.getId(), project.getName(), invite.getRole().name())
+                .roles(invite.getRoles().stream()
+                        .map(r -> com.conductor.generated.model.MemberRoleName.fromValue(r.name())).toList());
     }
 
     private Set<MemberRole> parseInviteRoles(java.util.List<com.conductor.generated.model.MemberRoleName> roleNames, String legacyRole) {

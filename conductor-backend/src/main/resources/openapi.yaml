@@ -7387,6 +7387,12 @@ components:
           type: string
         role:
           type: string
+          deprecated: true
+          description: Primary role. Use `roles`.
+        roles:
+          type: array
+          items:
+            $ref: '#/components/schemas/MemberRoleName'
 
     CreateApiKeyRequest:
       type: object

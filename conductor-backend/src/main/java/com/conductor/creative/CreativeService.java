@@ -1718,7 +1718,7 @@ public class CreativeService {
     private void requireEditor(String projectId, User caller) {
         requireMember(projectId, caller);
         if (!projectSecurityService.isEditor(projectId, caller.getId())) {
-            throw new ForbiddenException("Only ADMIN or CREATOR can manage Creatives");
+            throw new ForbiddenException("Requires the Editor role (or Admin) to manage Creatives");
         }
     }
 }

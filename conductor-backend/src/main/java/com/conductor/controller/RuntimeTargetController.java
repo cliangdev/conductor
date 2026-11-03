@@ -100,7 +100,7 @@ public class RuntimeTargetController implements RuntimeTargetsApi {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         Object principal = auth != null ? auth.getPrincipal() : null;
         if (!(principal instanceof User user) || !projectSecurityService.isEditor(projectId, user.getId())) {
-            throw new AccessDeniedException("Requires ADMIN or CREATOR role");
+            throw new AccessDeniedException("Requires the Editor role (or Admin)");
         }
     }
 }

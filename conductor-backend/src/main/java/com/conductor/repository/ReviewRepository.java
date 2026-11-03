@@ -16,7 +16,23 @@ public interface ReviewRepository extends JpaRepository<Review, String> {
 
     List<Review> findAllByWorkItemId(String workItemId);
 
-    boolean existsByWorkItemIdAndVerdict(String workItemId, String verdict);
+    /**
+     * Whether the Work Item has a review with the given verdict, ignoring {@code excludedReviewerId} when it
+     * is non-null (a gate that needs a reviewer other than the author). The explicit casts let Postgres bind a
+     * null parameter.
+     */
+    @Query(value = """
+            SELECT EXISTS (
+                SELECT 1 FROM reviews r
+                WHERE r.work_item_id = :workItemId
+                  AND r.verdict = :verdict
+                  AND (CAST(:excludedReviewerId AS varchar) IS NULL
+                       OR r.reviewer_id <> CAST(:excludedReviewerId AS varchar))
+            )
+            """, nativeQuery = true)
+    boolean existsByWorkItemIdAndVerdict(@Param("workItemId") String workItemId,
+                                         @Param("verdict") String verdict,
+                                         @Param("excludedReviewerId") String excludedReviewerId);
 
     /**
      * Whether the Work Item has a review with the given verdict from a project member holding {@code role}
@@ -34,10 +50,13 @@ public interface ReviewRepository extends JpaRepository<Review, String> {
                   AND r.verdict = :verdict
                   AND m.project_id = :projectId
                   AND (:role = ANY(m.roles) OR 'ADMIN' = ANY(m.roles))
+                  AND (CAST(:excludedReviewerId AS varchar) IS NULL
+                       OR r.reviewer_id <> CAST(:excludedReviewerId AS varchar))
             )
             """, nativeQuery = true)
     boolean existsApprovedByReviewerRole(@Param("workItemId") String workItemId,
                                          @Param("projectId") String projectId,
                                          @Param("verdict") String verdict,
-                                         @Param("role") String role);
+                                         @Param("role") String role,
+                                         @Param("excludedReviewerId") String excludedReviewerId);
 }
