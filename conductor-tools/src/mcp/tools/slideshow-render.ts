@@ -76,6 +76,7 @@ export type RenderSlidesResult =
   | { ok: true; outcome: 'completed'; revisionId: string; slides: number[]; ratios: SlideRatio[]; uploaded: number; warnings: number }
   | { ok: false; outcome: 'checks-failed'; revisionId: string; error: string; checks: SlideshowCheck[] }
   | { ok: false; outcome: 'not-pending'; revisionId: string; error: string }
+  | { ok: false; outcome: 'rejected'; revisionId: string; error: string }
 
 /** The ratio of a stored image by its size: 1080x1920 is 9x16, 1080x1350 is 4x5; anything else is not re-rendered. */
 export function ratioOfSize(width: number | null | undefined, height: number | null | undefined): SlideRatio | undefined {
@@ -206,7 +207,11 @@ export async function renderSlides(params: RenderSlidesParams, config: Config, o
       }
     }
 
-    await apiPost(`${base}/complete`, { slideMedia, checks }, config)
+    // A 200 can still carry a FAILED revision (the backend refused the slides, or the Creative changed meanwhile).
+    const settled = await apiPost<{ status?: string; error?: string | null }>(`${base}/complete`, { slideMedia, checks }, config)
+    if (settled?.status === 'FAILED') {
+      return { ok: false, outcome: 'rejected', revisionId: params.revisionId, error: settled.error || `Revision ${params.revisionId} was not applied.` }
+    }
     return { ok: true, outcome: 'completed', revisionId: params.revisionId, slides: changed, ratios, uploaded, warnings: checks.length }
   } catch (err) {
     // The backend still holds the revision PENDING; say why it will not finish, then let the caller exit non-zero.

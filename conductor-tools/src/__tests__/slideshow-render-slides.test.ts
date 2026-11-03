@@ -126,6 +126,15 @@ describe('renderSlides', () => {
     })
   })
 
+  it('reports a revision the backend settled as FAILED on complete instead of success', async () => {
+    mocked(apiPost).mockImplementation(async (url: string) =>
+      url.endsWith('/complete') ? { status: 'FAILED', error: 'The Creative changed while the slides were rendering.' } : {}
+    )
+    const r = await run()
+    expect(r).toEqual({ ok: false, outcome: 'rejected', revisionId: REV, error: 'The Creative changed while the slides were rendering.' })
+    expect(posts('/fail')).toHaveLength(0)
+  })
+
   it('treats a default list as the ratio of its images and renders it once per ratio', async () => {
     current = detail({ slides: { default: [ID(11), ID(12), ID(13)] } })
     const r = await run()
