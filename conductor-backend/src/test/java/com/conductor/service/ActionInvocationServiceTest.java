@@ -273,6 +273,12 @@ class ActionInvocationServiceTest {
         retryable.setLastAttemptedAt(OffsetDateTime.now().minusMinutes(10));
         when(repository.findRetryable(any())).thenReturn(java.util.List.of(retryable));
         when(repository.findById("inv-retry")).thenReturn(Optional.of(retryable));
+        when(repository.claimForRetry(eq("inv-retry"), eq(ActionInvocationStatus.FAILED), eq(1), any(), any()))
+                .thenAnswer(inv -> { // emulate the conditional UPDATE's effect on the row
+                    retryable.setStatus(ActionInvocationStatus.PENDING);
+                    retryable.setAttempts(retryable.getAttempts() + 1);
+                    return 1;
+                });
         when(connectionService.getById("conn-1")).thenReturn(Optional.of(connection()));
         when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
         when(connector.invoke(eq(ACTION_ID), any(), any())).thenReturn(ActionResult.ok(Map.of("message_id", "m2")));
@@ -281,6 +287,91 @@ class ActionInvocationServiceTest {
 
         assertThat(retryable.getAttempts()).isEqualTo(2);
         assertThat(retryable.getStatus()).isEqualTo(ActionInvocationStatus.SUCCEEDED);
+    }
+
+    private ActionInvocation row(String id, ActionInvocationStatus status, int attempts,
+                                 OffsetDateTime lastAttemptedAt, OffsetDateTime createdAt) {
+        ActionInvocation a = new ActionInvocation();
+        a.setId(id);
+        a.setConnectionId("conn-1");
+        a.setConnectorId(CONNECTOR_ID);
+        a.setActionId(ACTION_ID);
+        a.setInputJson("{}");
+        a.setStatus(status);
+        a.setAttempts(attempts);
+        a.setLastAttemptedAt(lastAttemptedAt);
+        a.setCreatedAt(createdAt);
+        return a;
+    }
+
+    @Test
+    void sweep_losingTheClaim_neverCallsTheConnector() {
+        ActionInvocation failed = row("inv-lost", ActionInvocationStatus.FAILED, 1,
+                OffsetDateTime.now().minusMinutes(10), OffsetDateTime.now().minusMinutes(20));
+        when(repository.findRetryable(any())).thenReturn(java.util.List.of(failed));
+        when(connectionService.getById("conn-1")).thenReturn(Optional.of(connection()));
+        when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        when(repository.claimForRetry(anyString(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any()))
+                .thenReturn(0);
+
+        service.retryFailedInvocations();
+
+        verify(connector, never()).invoke(anyString(), any(), any());
+        verify(oAuthFlowService, never()).withFreshToken(any(), any());
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    void sweep_skipsFreshPendingRowAnInlineRunOwns_evenWhenItWasNeverAttempted() {
+        // Inserted by invoke() moments ago, still fetching a token: lastAttemptedAt null.
+        ActionInvocation inFlight = row("inv-live", ActionInvocationStatus.PENDING, 0, null,
+                OffsetDateTime.now().minusSeconds(30));
+        when(repository.findRetryable(any())).thenReturn(java.util.List.of(inFlight));
+        when(connectionService.getById("conn-1")).thenReturn(Optional.of(connection()));
+        when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
+
+        service.retryFailedInvocations();
+
+        verify(repository, never()).claimForRetry(anyString(), any(), org.mockito.ArgumentMatchers.anyInt(), any(), any());
+        verify(connector, never()).invoke(anyString(), any(), any());
+    }
+
+    @Test
+    void sweep_neverDeadLettersALivePendingRowAtMaxAttempts() {
+        ActionInvocation running = row("inv-run", ActionInvocationStatus.PENDING, 5,
+                OffsetDateTime.now().minusSeconds(30), OffsetDateTime.now().minusHours(1));
+        when(repository.findRetryable(any())).thenReturn(java.util.List.of(running));
+        when(connectionService.getById("conn-1")).thenReturn(Optional.of(connection()));
+        when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
+
+        service.retryFailedInvocations();
+
+        assertThat(running.getStatus()).isEqualTo(ActionInvocationStatus.PENDING);
+    }
+
+    @Test
+    void sweep_retriesAbandonedPendingRow() {
+        ActionInvocation abandoned = row("inv-dead-owner", ActionInvocationStatus.PENDING, 0, null,
+                OffsetDateTime.now().minusHours(1));
+        when(repository.findRetryable(any())).thenReturn(java.util.List.of(abandoned));
+        when(repository.findById("inv-dead-owner")).thenReturn(Optional.of(abandoned));
+        when(connectionService.getById("conn-1")).thenReturn(Optional.of(connection()));
+        when(connectorRegistry.findAction(CONNECTOR_ID)).thenReturn(Optional.of(connector));
+        when(repository.claimForRetry(eq("inv-dead-owner"), eq(ActionInvocationStatus.PENDING), eq(0), any(), any()))
+                .thenReturn(1);
+        when(connector.invoke(eq(ACTION_ID), any(), any())).thenReturn(ActionResult.ok(Map.of("id", "x")));
+
+        service.retryFailedInvocations();
+
+        verify(connector).invoke(eq(ACTION_ID), any(), any());
+    }
+
+    @Test
+    void abandonedAfter_coversTheWorstCaseInlineRun() {
+        // Default 10s timeout: 3 attempts + backoff + margin; a connector declaring 30 minutes waits longer.
+        assertThat(service.abandonedAfter(connector).toSeconds()).isGreaterThan(3 * 10);
+        when(connector.getInvocationTimeout()).thenReturn(Optional.of(java.time.Duration.ofMinutes(30)));
+        assertThat(service.abandonedAfter(connector)).isGreaterThan(java.time.Duration.ofMinutes(90));
     }
 
     // ---- secret redaction at rest ----
