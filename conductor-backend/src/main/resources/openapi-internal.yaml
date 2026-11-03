@@ -447,6 +447,30 @@ paths:
         "401":
           description: Missing or invalid publish task token
 
+  /publish-targets/{targetId}/permalink:
+    post:
+      tags: [publish-internal]
+      summary: Ask the platform again for the link of a published target that has none yet
+      description: >
+        Cloud Tasks' HTTP target for a PERMALINK publish task: TikTok reports a post as published before it
+        has an id, and fills the id in only after moderation (and only for public posts). Delivered on a
+        backoff of a few minutes; reads the status for the publish id kept on the row, and on an id records
+        the target's permalink and its destination Asset. `attempt` is the zero-based count of follow-ups
+        already made; the chain ends quietly at the cap. A no-op 200 when the row already has a link, is no
+        longer PUBLISHED, or carries no follow-up.
+      operationId: followUpPublishPermalink
+      security:
+        - publishTaskToken: []
+      parameters:
+        - $ref: "#/components/parameters/TargetId"
+        - $ref: "#/components/parameters/FireTime"
+        - $ref: "#/components/parameters/Attempt"
+      responses:
+        "200":
+          description: Delivered — link recorded, re-armed, or nothing left to do
+        "401":
+          description: Missing or invalid publish task token
+
   /scheduler/jobs/{job}:
     post:
       tags: [scheduler-internal]

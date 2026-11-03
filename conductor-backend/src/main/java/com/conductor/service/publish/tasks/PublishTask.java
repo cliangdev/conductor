@@ -41,6 +41,11 @@ public record PublishTask(PublishTaskKind kind, String targetId, OffsetDateTime 
         return new PublishTask(PublishTaskKind.CONFIRM, targetId, fireTime, notBefore, attempt);
     }
 
+    public static PublishTask permalink(String targetId, OffsetDateTime fireTime, OffsetDateTime notBefore,
+                                        int attempt) {
+        return new PublishTask(PublishTaskKind.PERMALINK, targetId, fireTime, notBefore, attempt);
+    }
+
     /** The fire-time snapshot as it travels in the task URL: epoch seconds. */
     public long fireTimeEpochSecond() {
         return fireTime.toEpochSecond();
