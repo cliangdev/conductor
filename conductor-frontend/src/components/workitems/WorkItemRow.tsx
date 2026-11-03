@@ -50,6 +50,7 @@ export function WorkItemRow({
   canEdit,
   accessToken,
   members,
+  independentReviewerStatuses,
   selected,
   focused,
   publishing,
@@ -71,6 +72,8 @@ export function WorkItemRow({
   canEdit: boolean
   accessToken: string
   members: Member[]
+  /** Statuses whose review gate needs a reviewer other than the author. */
+  independentReviewerStatuses?: ReadonlySet<string>
   selected: boolean
   focused: boolean
   /** Publishing/marketing workflow: adds a 40px thumbnail, destination marks and the scheduled time. */
@@ -202,6 +205,7 @@ export function WorkItemRow({
             members={members}
             token={accessToken}
             onChanged={(r) => onReviewersChanged(issue.id, r)}
+            excludeUserId={independentReviewerStatuses?.has(issue.status) ? issue.createdBy : null}
           />
         )}
 

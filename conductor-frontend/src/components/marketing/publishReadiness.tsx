@@ -26,7 +26,7 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiGet, apiPatch } from '@/lib/api'
-import { ROLE_LABELS } from '@/lib/permissions'
+import { roleName } from '@/lib/permissions'
 import { statusMeta, statusHasReviewGate } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
 
@@ -91,11 +91,6 @@ export function dedupeFindings(list: PublishFinding[] | undefined | null): Publi
     out.push(f)
   }
   return out
-}
-
-/** The UI name for a stored role string (CREATOR reads "Editor"); unknown strings pass through. */
-function roleName(role: string): string {
-  return (ROLE_LABELS as Record<string, string>)[role] ?? role
 }
 
 export interface PublishPreflight {

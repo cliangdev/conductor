@@ -8,7 +8,7 @@
 // Redesigned (design-system.md) as a Linear-style grouped row list — see WorkItemRow/WorkItemGroup for
 // row anatomy, useWorkItemListState for filter/sort/selection/keyboard state.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { CalendarDaysIcon, CheckCircle2, Inbox, LayoutDashboardIcon, LayoutGridIcon, ListIcon, Plus, SearchX } from 'lucide-react'
@@ -142,6 +142,16 @@ export function WorkItemListView({
     if (readPersistedFlag(modeExplicitKey)) return
     setMode(wfDefault)
   }, [workflowView?.defaultView, modeExplicitKey, searchParams])
+
+  const independentReviewerStatuses = useMemo(
+    () =>
+      new Set(
+        (workflowView?.transitions ?? [])
+          .filter((t) => t.requiresReview && t.requireIndependentReviewer)
+          .map((t) => t.from)
+      ),
+    [workflowView]
+  )
 
   const title = pluralizeNoun(noun)
   const lowerNoun = title.toLowerCase()
@@ -678,6 +688,7 @@ export function WorkItemListView({
                 canEdit={canEdit}
                 accessToken={accessToken!}
                 members={members}
+                independentReviewerStatuses={independentReviewerStatuses}
                 selectedIds={listState.selected}
                 onToggleSelect={canSelect ? listState.toggleSelect : undefined}
                 tabStopId={listState.tabStopId}

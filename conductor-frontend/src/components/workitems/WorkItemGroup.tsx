@@ -16,6 +16,7 @@ export function WorkItemGroup({
   canEdit,
   accessToken,
   members,
+  independentReviewerStatuses,
   selectedIds,
   onToggleSelect,
   tabStopId,
@@ -38,6 +39,7 @@ export function WorkItemGroup({
   canEdit: boolean
   accessToken: string
   members: Member[]
+  independentReviewerStatuses?: ReadonlySet<string>
   selectedIds: Set<string>
   onToggleSelect?: (id: string) => void
   /** The row currently holding the roving tab stop (defaults to the first row — see useWorkItemListState). */
@@ -84,6 +86,7 @@ export function WorkItemGroup({
             canEdit={canEdit}
             accessToken={accessToken}
             members={members}
+            independentReviewerStatuses={independentReviewerStatuses}
             selected={selectedIds.has(issue.id)}
             focused={tabStopId === issue.id}
             publishing={publishing}

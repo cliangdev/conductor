@@ -6,6 +6,7 @@
 
 import { cloneElement, isValidElement, useId, useState } from 'react'
 import { ChevronRightIcon, PlusIcon, Trash2Icon, XIcon } from 'lucide-react'
+import { ROLE_LABELS } from '@/lib/permissions'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -17,7 +18,6 @@ import {
   DEFAULT_VIEW_OPTIONS,
   METRIC_DIRECTION_OPTIONS,
   REVIEWER_ROLE_OPTIONS,
-  REVIEWER_ROLE_LABELS,
   REVIEW_OUTCOME_OPTIONS,
   SKILL_OPTIONS,
   STEP_KIND_OPTIONS,
@@ -495,7 +495,7 @@ export function StatechartEditor({
                       <option value="">any</option>
                       {REVIEWER_ROLE_OPTIONS.map((r) => (
                         <option key={r} value={r}>
-                          {REVIEWER_ROLE_LABELS[r]}
+                          {ROLE_LABELS[r]}
                         </option>
                       ))}
                     </Select>

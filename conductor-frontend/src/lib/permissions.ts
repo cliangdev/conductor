@@ -60,6 +60,23 @@ export const ROLE_LABELS: Record<MemberRole, string> = {
   REVIEWER: 'Reviewer',
 }
 
+/** Display order for a set of roles: Admin first, then Editor, then Reviewer. */
+export const ROLE_ORDER: MemberRole[] = ['ADMIN', 'CREATOR', 'REVIEWER']
+
+/** UI name for a stored role string; an unknown string passes through unchanged. */
+export function roleName(role: string): string {
+  return (ROLE_LABELS as Record<string, string>)[role] ?? role
+}
+
+/** The roles in display order (unknown strings last). */
+export function sortRoles<T extends string>(roles: readonly T[]): T[] {
+  const rank = (r: string) => {
+    const i = (ROLE_ORDER as string[]).indexOf(r)
+    return i === -1 ? ROLE_ORDER.length : i
+  }
+  return [...roles].sort((a, b) => rank(a) - rank(b))
+}
+
 /** The roles a member/invite/project summary holds. Falls back to the legacy single `role` from an older server. */
 export function memberRoles(m: { roles?: MemberRole[] | null; role?: MemberRole | null } | null | undefined): MemberRole[] {
   if (!m) return []

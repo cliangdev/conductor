@@ -606,8 +606,14 @@ export function WorkItemDetailView({
   const reviewOutcomes = reviewGate?.reviewOutcomes
 
   const assignedIds = new Set(reviewers.map((r) => r.userId))
+  // When the gating transition needs a reviewer other than the author, the author is not offered:
+  // their approval would not count, so assigning them could only strand the item.
+  const gateNeedsIndependent = !!reviewGate?.requireIndependentReviewer
   const assignableReviewers = allMembers.filter(
-    (m) => can(memberRoles(m), 'review.submit') && !assignedIds.has(m.userId)
+    (m) =>
+      can(memberRoles(m), 'review.submit') &&
+      !assignedIds.has(m.userId) &&
+      !(gateNeedsIndependent && issue?.createdBy && m.userId === issue.createdBy)
   )
 
   // Whether this Workflow publishes anywhere. Decided from the Workflow's own declaration, so the page
@@ -640,6 +646,12 @@ export function WorkItemDetailView({
     onAssignReviewer: handleAssignReviewer,
     onUnassignReviewer: handleUnassignReviewer,
   })
+
+  // The author of an item whose gate needs someone else cannot approve it: the server refuses, so the
+  // button is withheld with the reason rather than offered and failed. Comment / request changes stay.
+  const needsIndependent = gateNeedsIndependent || !!readiness.preflight?.review?.requireIndependentReviewer
+  const authorBlocked = needsIndependent && !!issue?.createdBy && issue.createdBy === user?.id
+  const authorBlockedReason = 'This Workflow needs a reviewer other than the author'
 
   // Where the Post goes and where each destination is: the Destinations panel's state, consuming the
   // preflight above rather than polling its own. Called unconditionally (hooks), fetching nothing for a
@@ -1046,14 +1058,19 @@ export function WorkItemDetailView({
   }
 
   const reviewBar = (
+    <>
+      {authorBlocked && (
+        <p className="px-4 py-1 text-xs text-muted-foreground">{authorBlockedReason}</p>
+      )}
     <ReviewBar
       pendingCount={pendingComments.length}
       commentable={documents.length > 0}
-      reviewOutcomes={reviewOutcomes}
+      reviewOutcomes={authorBlocked ? reviewOutcomes?.filter((o) => o !== 'approve') : reviewOutcomes}
       submitting={reviewSubmitting}
       onSubmit={handleSubmitReview}
       onCancel={handleCancelReview}
     />
+    </>
   )
 
   // With no documents there are no document tabs, so Activity used to be the only one on the bar —
@@ -1093,10 +1110,13 @@ export function WorkItemDetailView({
   const reviewerActs = reviewActive && isAssignedReviewer && !hasDocuments
   const noDocReviewActions = reviewerActs && (
     <>
+      {authorBlocked && <span className="text-xs text-muted-foreground">{authorBlockedReason}</span>}
       <Button variant="outline" size="sm" onClick={() => setChangesModalOpen(true)} disabled={reviewSubmitting}>
         Request changes
       </Button>
-      <Button size="sm" onClick={() => void handleSubmitReview('APPROVED', '')} disabled={reviewSubmitting || !gateReady}>
+      <Button size="sm" onClick={() => void handleSubmitReview('APPROVED', '')} disabled={reviewSubmitting || !gateReady || authorBlocked}
+        title={authorBlocked ? authorBlockedReason : undefined}
+      >
         Approve
       </Button>
     </>
@@ -1412,7 +1432,7 @@ export function WorkItemDetailView({
               reviewVerdict={
                 // The reviewer's approve, where the doer's moves are. Outside review mode only: in it
                 // the bar at the bottom is the place, with the pending comments and the summary.
-                reviewActive && isAssignedReviewer && !reviewMode && reviewGate && reviewOutcomes?.includes('approve')
+                reviewActive && isAssignedReviewer && !reviewMode && !authorBlocked && reviewGate && reviewOutcomes?.includes('approve')
                   ? { toStatus: reviewGate.to, label: 'Approve', submit: () => handleSubmitReview('APPROVED', '') }
                   : undefined
               }

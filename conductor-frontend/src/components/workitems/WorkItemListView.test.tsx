@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, within, fireEvent, act } from '@testing-library/react'
+import { render, screen, waitFor, within, fireEvent, act, cleanup } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { WorkflowView } from '@/types/workItem'
 
@@ -489,6 +489,21 @@ describe('keyboard nav + bulk actions', () => {
   it('lets a member holding {Editor, Reviewer} select rows', async () => {
     const selected = await selectWithX({ ...MEMBERS[0], role: 'CREATOR', roles: ['CREATOR', 'REVIEWER'] })
     expect(selected()).toBe('true')
+  })
+
+  it('offers a Viewer no New button, and an Editor one', async () => {
+    const originalMembers = [...MEMBERS]
+    try {
+      MEMBERS.splice(0, MEMBERS.length, { ...MEMBERS[0], role: 'REVIEWER', roles: [] } as (typeof MEMBERS)[number], MEMBERS[1])
+      await renderList()
+      expect(screen.queryByRole('button', { name: /new issue/i })).not.toBeInTheDocument()
+      cleanup()
+      MEMBERS.splice(0, MEMBERS.length, { ...originalMembers[0], role: 'CREATOR', roles: ['CREATOR'] } as (typeof MEMBERS)[number], originalMembers[1])
+      await renderList()
+      expect(await screen.findByRole('button', { name: /new issue/i })).toBeInTheDocument()
+    } finally {
+      MEMBERS.splice(0, MEMBERS.length, ...originalMembers)
+    }
   })
 
   it('gates selection off for a member with no roles (Viewer)', async () => {

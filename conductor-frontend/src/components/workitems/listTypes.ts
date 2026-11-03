@@ -78,6 +78,8 @@ export interface Issue {
 }
 
 export interface IssueWithReviewers extends Issue {
+  /** The author, when the list payload carries it; used to keep them out of an independent-review picker. */
+  createdBy?: string | null
   reviewers?: IssueReviewer[]
 }
 

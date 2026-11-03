@@ -1,10 +1,8 @@
 'use client'
 
 import { Checkbox } from '@/components/ui/checkbox'
-import { ROLE_LABELS } from '@/lib/permissions'
+import { ROLE_LABELS, ROLE_ORDER } from '@/lib/permissions'
 import type { MemberRole } from '@/types'
-
-const ROLE_ORDER: MemberRole[] = ['ADMIN', 'CREATOR', 'REVIEWER']
 
 const ROLE_HINTS: Record<MemberRole, string> = {
   ADMIN: 'Manages the workspace; can also edit and review.',
@@ -21,6 +19,8 @@ interface RoleCheckboxesProps {
   disabled?: boolean
   /** Show the one-line description under each box (roomy layouts such as the invite dialog). */
   showHints?: boolean
+  /** Leave the Admin box out, e.g. for an invite (an invite can't grant Admin). */
+  hideAdmin?: boolean
   className?: string
 }
 
@@ -28,18 +28,23 @@ interface RoleCheckboxesProps {
  * Admin / Editor / Reviewer boxes. Admin implies the other two, so ticking it shows them as
  * checked-and-disabled; ticking none means a read-only Viewer, which gets a muted hint.
  */
-export function RoleCheckboxes({ roles, onChange, label, idPrefix, disabled, showHints, className }: RoleCheckboxesProps) {
+export function RoleCheckboxes({ roles, onChange, label, idPrefix, disabled, showHints, hideAdmin, className }: RoleCheckboxesProps) {
   const isAdmin = roles.includes('ADMIN')
 
   function toggle(role: MemberRole, on: boolean) {
-    const next = on ? Array.from(new Set([...roles, role])) : roles.filter((r) => r !== role)
+    let next: MemberRole[]
+    if (on) next = Array.from(new Set([...roles, role]))
+    else if (role === 'ADMIN') {
+      // Editor and Reviewer were shown ticked as implied; unticking Admin keeps what was displayed.
+      next = Array.from(new Set([...roles.filter((r) => r !== 'ADMIN'), 'CREATOR', 'REVIEWER'])) as MemberRole[]
+    } else next = roles.filter((r) => r !== role)
     onChange(ROLE_ORDER.filter((r) => next.includes(r)))
   }
 
   return (
     <div className={className}>
       <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-        {ROLE_ORDER.map((role) => {
+        {ROLE_ORDER.filter((r) => !(hideAdmin && r === 'ADMIN')).map((role) => {
           const implied = isAdmin && role !== 'ADMIN'
           return (
             <Checkbox

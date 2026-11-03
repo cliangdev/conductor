@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
@@ -87,19 +87,52 @@ export default function MembersPage() {
     if (isAdmin) fetchInvites()
   }, [isAdmin, fetchInvites])
 
-  async function handleRoleChange(userId: string, roles: MemberRole[]) {
+  // Role edits are applied locally at once and sent one at a time per member. Each request carries the
+  // full set as it stood at the click (built from the latest local state), so two quick clicks cannot
+  // overwrite each other with a stale set. A failure puts the member back to the last set the server
+  // confirmed and drops that member's still-queued requests, which were built on top of the failed one.
+  const confirmedRoles = useRef(new Map<string, MemberRole[]>())
+  const patchQueue = useRef(new Map<string, Promise<void>>())
+  const pendingPatches = useRef(new Map<string, number>())
+  const patchEpoch = useRef(new Map<string, number>())
+
+  function setMemberRoles(userId: string, roles: MemberRole[]) {
+    setMembers((prev) => prev.map((m) => (m.userId === userId ? { ...m, roles } : m)))
+  }
+
+  function handleRoleChange(userId: string, roles: MemberRole[]) {
     if (!accessToken) return
-    try {
-      const updated = await apiPatch<Member>(
-        `/api/v1/projects/${projectId}/members/${userId}`,
-        { roles },
-        accessToken,
-      )
-      setMembers((prev) => prev.map((m) => (m.userId === userId ? { ...m, roles: updated && (updated.roles || updated.role) ? memberRoles(updated) : roles } : m)))
-      showToast('Role updated successfully')
-    } catch (err) {
-      showToast(apiErrorMessage(err, 'Failed to update role. Please try again.'), 'error')
+    if (!confirmedRoles.current.has(userId)) {
+      const current = members.find((m) => m.userId === userId)
+      confirmedRoles.current.set(userId, memberRoles(current))
     }
+    setMemberRoles(userId, roles)
+    const epoch = patchEpoch.current.get(userId) ?? 0
+    pendingPatches.current.set(userId, (pendingPatches.current.get(userId) ?? 0) + 1)
+
+    const run = async () => {
+      try {
+        if ((patchEpoch.current.get(userId) ?? 0) !== epoch) return // an earlier request failed
+        const updated = await apiPatch<Member>(
+          `/api/v1/projects/${projectId}/members/${userId}`,
+          { roles },
+          accessToken,
+        )
+        const confirmed = updated && (updated.roles || updated.role) ? memberRoles(updated) : roles
+        confirmedRoles.current.set(userId, confirmed)
+        // Only adopt the server's answer when nothing newer is waiting to be sent.
+        if ((pendingPatches.current.get(userId) ?? 1) <= 1) setMemberRoles(userId, confirmed)
+        showToast('Role updated successfully')
+      } catch (err) {
+        patchEpoch.current.set(userId, epoch + 1)
+        setMemberRoles(userId, confirmedRoles.current.get(userId) ?? [])
+        showToast(apiErrorMessage(err, 'Failed to update role. Please try again.'), 'error')
+      } finally {
+        pendingPatches.current.set(userId, (pendingPatches.current.get(userId) ?? 1) - 1)
+      }
+    }
+    const previous = patchQueue.current.get(userId) ?? Promise.resolve()
+    patchQueue.current.set(userId, previous.then(run))
   }
 
   function openRemoveConfirm(userId: string, name: string) {
@@ -292,6 +325,7 @@ export default function MembersPage() {
                 roles={inviteRoles}
                 onChange={setInviteRoles}
                 idPrefix="invite-role"
+                hideAdmin
                 showHints
                 className="mt-1.5"
               />

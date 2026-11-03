@@ -5,17 +5,11 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { RoleCheckboxes } from '@/components/members/RoleCheckboxes'
-import { humanizeId } from '@/lib/workflows'
-import { memberRoles, ROLE_LABELS } from '@/lib/permissions'
+import { memberRoles, ROLE_LABELS, roleName, sortRoles } from '@/lib/permissions'
 import type { Member, MemberRole } from '@/types'
 
 /** Single source of role display labels — reused by the invite modal and the role dropdown. */
 export { ROLE_LABELS }
-
-/** Display label for one role, falling back to a humanized id for any role outside the known set. */
-function singleRoleLabel(role: MemberRole | string): string {
-  return ROLE_LABELS[role as MemberRole] ?? humanizeId(role)
-}
 
 /**
  * Display label for a set of roles: the held roles joined with " · ", and "Viewer" for an empty
@@ -24,9 +18,7 @@ function singleRoleLabel(role: MemberRole | string): string {
 export function roleLabel(roles: readonly (MemberRole | string)[] | MemberRole | string | null | undefined): string {
   const list = typeof roles === 'string' ? [roles] : roles ? [...roles] : []
   if (list.length === 0) return 'Viewer'
-  const order = ['ADMIN', 'CREATOR', 'REVIEWER']
-  const sorted = [...list].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99))
-  return sorted.map(singleRoleLabel).join(' · ')
+  return sortRoles(list).map(roleName).join(' · ')
 }
 
 interface MemberRowProps {

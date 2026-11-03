@@ -84,12 +84,6 @@ export const DEFAULT_VIEW_OPTIONS: { value: DefaultView; label: string }[] = [
 
 export const REVIEWER_ROLE_OPTIONS: ReviewerRole[] = ['ADMIN', 'CREATOR', 'REVIEWER']
 
-/** Display names for REVIEWER_ROLE_OPTIONS; the stored values stay ADMIN / CREATOR / REVIEWER. */
-export const REVIEWER_ROLE_LABELS: Record<ReviewerRole, string> = {
-  ADMIN: 'Admin',
-  CREATOR: 'Editor',
-  REVIEWER: 'Reviewer',
-}
 
 export const REVIEW_OUTCOME_OPTIONS: { value: ReviewOutcome; label: string }[] = [
   { value: 'approve', label: 'Approve' },

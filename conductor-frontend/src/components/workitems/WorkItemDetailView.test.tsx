@@ -1384,3 +1384,51 @@ describe('a member who holds a set of roles', () => {
     }
   })
 })
+
+describe('a Workflow that needs a reviewer other than the author', () => {
+  const independent: WorkflowView = {
+    ...VIEW,
+    transitions: [{ ...VIEW.transitions[0], requireIndependentReviewer: true }],
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetFixtures()
+    failMembers = false
+    failReviews = false
+    holdSecondary = false
+    getUrls.length = 0
+    DOCS = []
+    viewOverride = independent
+  })
+
+  it('withholds Approve from the author, says why, and keeps Request changes', async () => {
+    ISSUE = { ...ISSUE, createdBy: 'user-1' } // user-1 is the signed-in, assigned reviewer
+    await renderView()
+    const approve = await screen.findByRole('button', { name: 'Approve' })
+    expect(approve).toBeDisabled()
+    expect(screen.getByText('This Workflow needs a reviewer other than the author')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Request changes' })).toBeEnabled()
+  })
+
+  it('leaves Approve alone for a reviewer who is not the author', async () => {
+    await renderView() // createdBy is user-2
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeEnabled()
+    expect(screen.queryByText('This Workflow needs a reviewer other than the author')).not.toBeInTheDocument()
+  })
+
+  it('does not offer the author in the reviewer picker', async () => {
+    Object.assign(MEMBERS[1], { roles: ['CREATOR', 'REVIEWER'] }) // Cara, the author
+    ISSUE = { ...ISSUE, createdBy: 'user-2' }
+    REVIEWERS = []
+    try {
+      await renderView()
+      await userEvent.click(within(screen.getByTestId('properties-panel')).getByRole('button', { name: /add reviewer/i }))
+      expect(await screen.findByText('Rita Reviewer')).toBeInTheDocument()
+      expect(screen.queryByText('Cara Creator')).not.toBeInTheDocument()
+    } finally {
+      delete (MEMBERS[1] as Record<string, unknown>).roles
+    }
+  })
+})
+
