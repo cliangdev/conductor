@@ -69,8 +69,8 @@ public class WorkflowDefinitionLifecycleService {
      */
     @Transactional
     public WorkflowDefinition publish(String projectId, String workflowId, String callerId) {
-        if (!projectSecurityService.isAdminOrCreator(projectId, callerId)) {
-            throw new ForbiddenException("Only ADMIN or CREATOR can publish workflows");
+        if (!projectSecurityService.isEditor(projectId, callerId)) {
+            throw new ForbiddenException("Requires the Editor role (or Admin) to publish workflows");
         }
 
         WorkflowDefinition definition = definitionRepository.findById(workflowId)
@@ -172,8 +172,8 @@ public class WorkflowDefinitionLifecycleService {
     }
 
     private void requireAdminOrCreator(String projectId, String callerId) {
-        if (!projectSecurityService.isAdminOrCreator(projectId, callerId)) {
-            throw new ForbiddenException("Only ADMIN or CREATOR can manage workflows");
+        if (!projectSecurityService.isEditor(projectId, callerId)) {
+            throw new ForbiddenException("Requires the Editor role (or Admin) to manage workflows");
         }
     }
 

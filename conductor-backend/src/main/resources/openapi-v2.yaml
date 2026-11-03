@@ -450,7 +450,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/AssignReviewerResponse"
         "400":
-          description: User is not a project member or not a REVIEWER role
+          description: User is not a project member or cannot review
           content:
             application/json:
               schema:
@@ -1207,7 +1207,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Not an assigned reviewer or caller is CREATOR role
+          description: Not an assigned reviewer or caller cannot review
           content:
             application/json:
               schema:
@@ -8151,6 +8151,13 @@ components:
           type: string
           nullable: true
           description: The project role the gate asks its approval from, or null when any approval satisfies it.
+        requireIndependentReviewer:
+          type: boolean
+          description: When true, the gate ignores approvals by the item's own creator (self-approval does not count).
+        authorId:
+          type: string
+          nullable: true
+          description: The user id of the item's creator (null for an agent-created item). A client excludes this user from reviewer pickers when requireIndependentReviewer is true.
 
     PublishTargetResponse:
       type: object

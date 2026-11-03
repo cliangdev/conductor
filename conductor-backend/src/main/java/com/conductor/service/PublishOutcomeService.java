@@ -381,6 +381,7 @@ public class PublishOutcomeService {
             // A non-member must not be able to tell a project apart from one that does not exist.
             throw new EntityNotFoundException("Project not found");
         }
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem post = workItemRepository.findById(workItemId)
                 .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
@@ -473,6 +474,7 @@ public class PublishOutcomeService {
             // A non-member must not be able to tell a project apart from one that does not exist.
             throw new EntityNotFoundException("Project not found");
         }
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem post = workItemRepository.findById(workItemId)
                 .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));

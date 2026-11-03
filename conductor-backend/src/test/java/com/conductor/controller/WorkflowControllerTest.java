@@ -110,7 +110,7 @@ class WorkflowControllerTest {
         WorkflowDefinition wf = automationWorkflow();
         wf.setWebhookToken("secret-token");
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, "user-1")).thenReturn(true);
         when(workflowService.listWorkflows(PROJECT_ID, null, null, null)).thenReturn(List.of(wf));
 
         mockMvc.perform(get("/api/v1/projects/{p}/workflows", PROJECT_ID)
@@ -124,7 +124,7 @@ class WorkflowControllerTest {
         WorkflowDefinition wf = automationWorkflow();
         wf.setWebhookToken("secret-token");
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(false);
+        when(projectSecurityService.isEditor(PROJECT_ID, "user-1")).thenReturn(false);
         when(workflowService.listWorkflows(PROJECT_ID, null, null, null)).thenReturn(List.of(wf));
 
         mockMvc.perform(get("/api/v1/projects/{p}/workflows", PROJECT_ID)
@@ -140,13 +140,13 @@ class WorkflowControllerTest {
         when(projectSecurityService.isProjectMember(PROJECT_ID, "user-1")).thenReturn(true);
         when(workflowService.getWorkflow(PROJECT_ID, "wf-auto")).thenReturn(wf);
 
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, "user-1")).thenReturn(true);
         mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}", PROJECT_ID, "wf-auto")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.webhookToken").value("secret-token"));
 
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "user-1")).thenReturn(false);
+        when(projectSecurityService.isEditor(PROJECT_ID, "user-1")).thenReturn(false);
         mockMvc.perform(get("/api/v1/projects/{p}/workflows/{w}", PROJECT_ID, "wf-auto")
                         .header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk())

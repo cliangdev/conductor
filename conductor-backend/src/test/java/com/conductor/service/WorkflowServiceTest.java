@@ -68,7 +68,7 @@ class WorkflowServiceTest {
         def.setDefinition(new ObjectMapper().readTree("{\"id\":\"ENGINEERING\"}"));
         def.setSidebarEnabled(false);
 
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(workflowRepository.findById("wf-1")).thenReturn(Optional.of(def));
         when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -90,7 +90,7 @@ class WorkflowServiceTest {
         automation.setYaml("on: { workflow_dispatch: {} }");
         automation.setDefinition(null); // YAML automation — not a lifecycle workflow
 
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(workflowRepository.findById("wf-auto")).thenReturn(Optional.of(automation));
 
         assertThatThrownBy(() -> service.setSidebarEnabled("proj-1", "wf-auto", "user-1", true))
@@ -111,7 +111,7 @@ class WorkflowServiceTest {
         def.setAutoPauseReason("CONSECUTIVE_FAILURES");
         def.setAutoPausedRunId("run-that-tripped-it");
 
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(workflowRepository.findById("wf-auto")).thenReturn(Optional.of(def));
         when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -136,7 +136,7 @@ class WorkflowServiceTest {
         def.setEnabled(true);
         def.setConsecutiveFailures(2);
 
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(workflowRepository.findById("wf-auto")).thenReturn(Optional.of(def));
         when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -175,7 +175,7 @@ class WorkflowServiceTest {
 
     @Test
     void createWorkflowRejectsReservedAreaName() {
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
         when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "My Flow")).thenReturn(Optional.empty());
@@ -192,7 +192,7 @@ class WorkflowServiceTest {
 
     @Test
     void createWorkflowRejectsReservedDefinitionSlug() {
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
         when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "My Flow")).thenReturn(Optional.empty());
@@ -213,7 +213,7 @@ class WorkflowServiceTest {
      */
     @Test
     void createWorkflowRejectsASecondLifecycleOnTheSameAreaAndNoun() throws Exception {
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
         when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "Marketing autopilot")).thenReturn(Optional.empty());
@@ -241,7 +241,7 @@ class WorkflowServiceTest {
     /** Posts and Changes share the MARKETING area: the route key is area + noun, so they never collide. */
     @Test
     void createWorkflowAllowsASecondLifecycleInTheSameAreaWithADifferentNoun() throws Exception {
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
         when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "MARKETING_CHANGES")).thenReturn(Optional.empty());
@@ -265,7 +265,7 @@ class WorkflowServiceTest {
 
     @Test
     void createWorkflowRejectsDuplicateSlug() {
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
         when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "Eng v2")).thenReturn(Optional.empty());
@@ -283,7 +283,7 @@ class WorkflowServiceTest {
 
     @Test
     void createWorkflowAllowsNonReservedAreaAndSlug() {
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
         when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(0L);
         when(workflowRepository.findByProjectIdAndName("proj-1", "My Flow")).thenReturn(Optional.empty());
@@ -306,7 +306,7 @@ class WorkflowServiceTest {
         lifecycle.setName("ENGINEERING");
         lifecycle.setDefinition(new ObjectMapper().readTree("{\"id\":\"ENGINEERING\"}"));
 
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(workflowRepository.findById("wf-life")).thenReturn(Optional.of(lifecycle));
         when(workItemRepository.countByWorkflowSlug("ENGINEERING")).thenReturn(1L);
 
@@ -324,7 +324,7 @@ class WorkflowServiceTest {
         lifecycle.setName("ENGINEERING");
         lifecycle.setDefinition(new ObjectMapper().readTree("{\"id\":\"ENGINEERING\"}"));
 
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(workflowRepository.findById("wf-life")).thenReturn(Optional.of(lifecycle));
         when(workItemRepository.countByWorkflowSlug("ENGINEERING")).thenReturn(0L);
 
@@ -341,7 +341,7 @@ class WorkflowServiceTest {
         automation.setName("my-workflow");
         automation.setDefinition(null);
 
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(workflowRepository.findById("wf-auto")).thenReturn(Optional.of(automation));
 
         service.deleteWorkflow("proj-1", "wf-auto", "user-1");
@@ -357,7 +357,7 @@ class WorkflowServiceTest {
         published.setName("my-workflow");
         published.setState("PUBLISHED");
 
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(workflowRepository.findById("wf-pub")).thenReturn(Optional.of(published));
 
         assertThatThrownBy(() -> service.deleteWorkflow("proj-1", "wf-pub", "user-1"))
@@ -374,7 +374,7 @@ class WorkflowServiceTest {
         disabled.setName("my-workflow");
         disabled.setState("DISABLED");
 
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(workflowRepository.findById("wf-dis")).thenReturn(Optional.of(disabled));
 
         assertThatThrownBy(() -> service.deleteWorkflow("proj-1", "wf-dis", "user-1"))
@@ -391,7 +391,7 @@ class WorkflowServiceTest {
         draft.setName("my-workflow");
         draft.setState("DRAFT");
 
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(workflowRepository.findById("wf-draft")).thenReturn(Optional.of(draft));
 
         service.deleteWorkflow("proj-1", "wf-draft", "user-1");
@@ -430,7 +430,7 @@ class WorkflowServiceTest {
 
     @Test
     void createWorkflowCountsEverythingExceptSystemWorkflowsTowardTheLimit() {
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-1")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-1")).thenReturn(true);
         when(projectRepository.findById("proj-1")).thenReturn(Optional.of(projectWithId("proj-1")));
         // 20 user workflows already: the limit refuses, whatever system workflows exist on top.
         when(workflowRepository.countByProjectIdAndNameNotIn(eq("proj-1"), any())).thenReturn(20L);

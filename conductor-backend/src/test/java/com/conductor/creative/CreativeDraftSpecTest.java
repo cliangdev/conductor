@@ -90,7 +90,7 @@ class CreativeDraftSpecTest {
         caller = new User();
         caller.setId("user-1");
         when(security.isProjectMember(eq(PROJECT), anyString())).thenReturn(true);
-        when(security.isAdminOrCreator(eq(PROJECT), anyString())).thenReturn(true);
+        when(security.isEditor(eq(PROJECT), anyString())).thenReturn(true);
 
         kit = new BrandKit();
         kit.setId("kit-1");
@@ -413,7 +413,7 @@ class CreativeDraftSpecTest {
 
     @Test
     void aReviewerCannotBuildADraftSpecJustAsTheyCannotCreate() {
-        when(security.isAdminOrCreator(eq(PROJECT), anyString())).thenReturn(false);
+        when(security.isEditor(eq(PROJECT), anyString())).thenReturn(false);
 
         assertThatThrownBy(() -> service.buildDraftSpec(PROJECT, draftRequest("Hello"), caller))
                 .isInstanceOf(ForbiddenException.class);

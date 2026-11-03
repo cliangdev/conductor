@@ -972,8 +972,8 @@ public class CreativePhotoService {
 
     private void requireEditor(String projectId, User caller) {
         requireMember(projectId, caller);
-        if (!projectSecurityService.isAdminOrCreator(projectId, caller.getId())) {
-            throw new com.conductor.exception.ForbiddenException("Only ADMIN or CREATOR can manage Creative photos");
+        if (!projectSecurityService.isEditor(projectId, caller.getId())) {
+            throw new com.conductor.exception.ForbiddenException("Requires the Editor role (or Admin) to manage Creative photos");
         }
     }
 }
