@@ -1757,7 +1757,15 @@ registered**, so for a new domain skill (e.g. `marketing:seo-report`) register i
   it and publish, **with no backend redeploy**. Idempotent; built-ins need no registration.
 
 Registering a skill only makes the id *bindable* — the skill's behavior lives in the Claude Code skill/command the
-user installs. Only ADMIN/CREATOR can register skills or publish workflows.
+user installs. Only Editors (or Admins) can register skills or publish workflows.
+
+### Review gate: requireIndependentReviewer
+
+A lifecycle transition with `requiresReview: true` is satisfied by an APPROVED review from a member holding the
+transition's `reviewerRole` (Admin implies every role; see `workflow-definition-schema.md`). Members hold a *set* of
+roles (Admin, Editor, Reviewer), so one person can be both Editor and Reviewer. By default they may approve their own
+Work Item. Add `requireIndependentReviewer: true` (default `false`) to the transition and an approval by the Work Item's
+creator no longer satisfies the gate; publish-preflight reports why.
 
 ### Fields and due dates
 
