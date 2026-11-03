@@ -45,7 +45,7 @@ public class ProjectMember {
 
     /** The role set, stored as {@code varchar[]}; read and written through {@link MemberRoles}. */
     @JdbcTypeCode(SqlTypes.ARRAY)
-    @Column(name = "roles", nullable = false, columnDefinition = "varchar(16)[]")
+    @Column(name = "roles", columnDefinition = "varchar(16)[]")
     private String[] roles = new String[0];
 
     @Column(name = "joined_at", nullable = false, updatable = false)

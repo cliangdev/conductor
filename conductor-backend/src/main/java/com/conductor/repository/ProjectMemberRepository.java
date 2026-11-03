@@ -2,7 +2,6 @@ package com.conductor.repository;
 
 import com.conductor.entity.ProjectMember;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -33,11 +32,6 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, St
     long countByProjectId(String projectId);
 
     boolean existsByProjectIdAndUserId(String projectId, String userId);
-
-    /** As {@code InviteRepository#clearRoles}: stores a deliberate empty (read-only) role set after the insert. */
-    @Modifying
-    @Query(value = "UPDATE project_members SET roles = '{}' WHERE id = :id", nativeQuery = true)
-    void clearRoles(@Param("id") String id);
 
     /** Members holding ADMIN (the last-admin guard). */
     @Query(value = "SELECT COUNT(*) FROM project_members WHERE project_id = :projectId AND 'ADMIN' = ANY(roles)",

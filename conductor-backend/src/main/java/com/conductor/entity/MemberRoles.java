@@ -43,6 +43,7 @@ public final class MemberRoles {
 
     static Set<MemberRole> fromStored(String[] stored) {
         EnumSet<MemberRole> set = EnumSet.noneOf(MemberRole.class);
+        // NULL (a row old code wrote before the sync trigger filled it) reads as the empty set.
         if (stored != null) {
             Arrays.stream(stored).map(MemberRole::valueOf).forEach(set::add);
         }

@@ -67,12 +67,7 @@ class ProjectMemberRolesRepositoryTest extends AbstractNoneWebIntegrationTest {
         m.setProject(project);
         m.setUser(user);
         m.setRoles(roles);
-        memberRepository.saveAndFlush(m);
-        if (roles.isEmpty()) {
-            // As the app does: the sync trigger reads an empty set on INSERT as old code, so clear after.
-            memberRepository.clearRoles(m.getId());
-        }
-        return m;
+        return memberRepository.saveAndFlush(m);
     }
 
     private ProjectMember reload(ProjectMember m) {
@@ -244,6 +239,23 @@ class ProjectMemberRolesRepositoryTest extends AbstractNoneWebIntegrationTest {
                 .setParameter("id", m.getId()).executeUpdate();
 
         assertThat(rolesOf("project_members", m.getId())).isEqualTo("CREATOR,REVIEWER");
+    }
+
+    @Test
+    void newCodeInsertingAViewerKeepsTheEmptySet() {
+        ProjectMember viewer = member(newUser(), Set.of());
+
+        assertThat(rolesOf("project_members", viewer.getId())).isEmpty();
+    }
+
+    @Test
+    void aNullRolesRowReadsAsTheEmptySet() {
+        ProjectMember m = member(newUser(), Set.of(MemberRole.CREATOR));
+        em.createNativeQuery("UPDATE project_members SET roles = NULL, joined_at = now() WHERE id = :id")
+                .setParameter("id", m.getId()).executeUpdate();
+        em.clear();
+
+        assertThat(memberRepository.findById(m.getId()).orElseThrow().getRoles()).isEmpty();
     }
 
     @Test

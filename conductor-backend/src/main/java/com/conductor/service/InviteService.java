@@ -83,10 +83,6 @@ public class InviteService {
         invite.setInvitedBy(inviter);
         invite.setExpiresAt(OffsetDateTime.now().plusHours(72));
         inviteRepository.save(invite);
-        if (roles.isEmpty()) {
-            inviteRepository.flush();
-            inviteRepository.clearRoles(invite.getId());
-        }
 
         try {
             emailService.sendInviteEmail(email, inviter.getName(), project.getName(), invite.getToken());
@@ -141,10 +137,6 @@ public class InviteService {
         member.setUser(currentUser);
         member.setRoles(invite.getRoles());
         projectMemberRepository.save(member);
-        if (member.getRoles().isEmpty()) {
-            projectMemberRepository.flush();
-            projectMemberRepository.clearRoles(member.getId());
-        }
 
         invite.setStatus("ACCEPTED");
         inviteRepository.save(invite);
