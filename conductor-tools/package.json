@@ -23,7 +23,7 @@
     "scripts/"
   ],
   "scripts": {
-    "build": "tsc && node scripts/build-creative.mjs",
+    "build": "tsc && node scripts/build-creative.mjs && node scripts/sync-slideshow-core.mjs",
     "typecheck:fast": "tsgo --noEmit",
     "dev": "ts-node src/index.ts",
     "test": "vitest run",

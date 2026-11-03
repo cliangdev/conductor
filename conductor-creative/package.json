@@ -20,6 +20,10 @@
     "./slideshow-style.json": "./slideshow-style.json",
     "./slideshow-style": "./slideshow-style.js",
     "./slideshow-style.js": "./slideshow-style.js",
+    "./slideshow/*.js": {
+      "types": "./slideshow/*.d.ts",
+      "default": "./slideshow/*.js"
+    },
     "./layouts/index.js": "./layouts/index.js",
     "./layouts/index.json": "./layouts/index.json",
     "./assertions.js": "./assertions.js",
@@ -40,6 +44,7 @@
     "placements.json",
     "slideshow-style.js",
     "slideshow-style.json",
+    "slideshow",
     "layouts",
     "styles.css",
     "tokens.css",
