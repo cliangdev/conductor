@@ -429,6 +429,75 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   (patterns such as `texts[].t` and `rows[].items[]`, plus the 500-character limit), mirrored by
   `SlideshowTextFields` in the backend, which lists, applies and diffs them (parity test
   `SlideshowTextFieldsParityTest`).
+- **Editing slide text (backend).** `POST /api/v2/projects/{id}/marketing/creatives/{creativeId}/slide-text-edits`
+  (ADMIN or CREATOR) takes `{version, edits: [{slide, path, text}]}` (1-50 edits, `path` a concrete registry
+  path such as `texts[0].t`) and answers 202 `{revision, renderRun}`. Nothing on the Creative changes yet: the
+  edit is a PENDING `creative_revision` holding the candidate spec (`spec`), the text diff, the Creative
+  `version` it was made against (`baseVersion`), `source` `EDITOR` (a signed-in session) or `MCP` (a user API
+  key), and the id of the render run (`workflowRunId`). Checks, in order: 404 unknown Creative or non-member
+  (403 for a REVIEWER); 422 `slideshowSpecMissing` (not a CAROUSEL, or no stored spec); 409 `version` is not the
+  Creative's ("This Creative changed since you read it"); 409 `SLIDE_EDIT_ACTIVE` while a revision is PENDING
+  (body `revisionId`), or 409 `RENDER_RUN_ACTIVE` while any render run of the Creative is queued or running
+  (also `RENDER_WORKFLOW_DISABLED` / `RENDER_WORKFLOW_NAME_TAKEN`, as for a Render click); 422
+  `slideTextEditInvalid` with `field: edits[i]` for each edit the registry refuses (not an editable path, a missing
+  path, not text, over 500 characters, no such slide) or `edits` for a count outside 1-50; 422
+  `slideTextEditNoop` when the candidate's diff is empty. The Creative row is locked for the request, and a
+  partial unique index (`uq_creative_revision_one_pending`, V175) lets at most one revision per Creative be
+  PENDING, so two edits cannot race past the check.
+  - **Dispatch.** `CreativeRenderDispatchService.dispatchSlideTextEdit` fires the same `conductor-creative-render`
+    workflow on the same runtime (the designated Cloud Run target when its render job is READY, else the
+    daemon) with `type: "creative.slideshow-text"` and `revisionId` in the event. Both jobs set
+    `REVISION_ID: ${{ event.revisionId }}`; a missing event field interpolates to the empty string, so the
+    one-line script runs `conductor creative render-slides` when it is set and `conductor creative render`
+    otherwise (see [the workflow](workflows.md#creatives-rendering-from-the-web-app-on-a-self-hosted-daemon);
+    `CreativeRenderWorkflowYamlTest` runs the script under `sh`). A seeded copy of the workflow from before this is
+    refreshed in place by the next dispatch (`CreativeWorkflowProvisioner` compares the YAML).
+  - **The job's calls.** `GET .../revisions/{revisionId}` returns the revision's fields plus `spec`,
+    `changedSlides` (distinct 1-based slides of the diff), `altTextFlags`, and the Creative's current `slides`
+    and `slideStyle`. `POST .../revisions/{revisionId}/complete` takes `{slideMedia: {"9x16": {"3": "<mediaId>"},
+    "4x5": {...}}, checks: [{slide, ratio, rule, severity, message}]}` and `.../fail` takes `{error, checks?}`.
+    Access is the revision's own run token (the run's event must name this Creative and the revision's
+    `workflowRunId` must be the token's run, else 403) or a person: any member may read, ADMIN or CREATOR may
+    complete or fail, so an editor can run the job with their own key. A revision that is not PENDING is a 409.
+  - **Apply (`complete`, one transaction, Creative row locked).** (1) A check with severity `error` FAILS the
+    revision (checks stored, error "The re-rendered slides failed N checks: slide 3 9x16 safeZone (...)") and
+    changes nothing else. (2) The Creative's `version` must still equal `baseVersion` and a spec must still be
+    stored, else FAILED with "The Creative changed while the slides were rendering. Make the edit again." (3)
+    `slideMedia` must be exactly the changed slides for each ratio the Creative has a non-empty list for
+    (`9x16` and `4x5` keys; a `default` list counts as the closest ratio of its first image; `1x1`, or a
+    `default` list of unknown size, is not re-rendered and is recorded as a warning check
+    `{rule: "render", severity: "warning", message: "1x1 slides were not re-rendered"}`), and every media id must
+    be an uploaded, unblocked IMAGE of this project; otherwise FAILED with the reason. (4) The new media is marked
+    `checked` (the composer's own output). (5) The changed entries are replaced by index in every list that was
+    re-rendered (the `default` list included), `slideshow_spec` becomes the revision's spec, and the version is
+    bumped; `slide_style` is kept. (6) `alt_text_flags` is the list of slides whose alt text (lowercased,
+    whitespace including newlines collapsed) contains an old text of that slide's diff (empty old texts are
+    ignored). (7) The revision becomes APPLIED with snapshots of `slides`, `slideAltText` and `slideStyle`, the
+    new `creativeVersion`, `appliedAt` and the checks. A FAILED outcome is still a 200 with the revision; only a
+    malformed body (an unknown ratio, a slide that is not a positive number) is a 422 `slideMediaInvalid`, which
+    leaves the revision PENDING.
+  - **The render and the event.** Without a music track the apply renders instantly (`requestCarouselRender`
+    semantics: the render is SUCCEEDED in the same transaction and linked to the revision as `renderId`). If that
+    render is refused (for instance the caption was removed meanwhile) the apply stands and the revision's
+    `error` says so. With a track the video is rebuilt by a second render run, queued after the apply commits
+    (the revision's own run is still active and is ignored by the one-active-run guard; a refusal is noted in
+    `error`, the slides stay applied); the job's render then follows the normal render endpoints, and when it
+    SUCCEEDS `completeRender` links the oldest unlinked applied edit of that Creative version. Either way a
+    `CreativeRevisionRendered(projectId, creativeId, revisionId, renderId)` Spring event is published once,
+    **after the transaction that finished the render has committed**, and never when the render fails or the
+    transaction rolls back. Listen with a plain `@EventListener` (it runs on the committing thread, no transaction
+    bound); T2 has no listener, post propagation is the first.
+  - **Stale revisions.** A PENDING revision whose run ended without completing it (FAILED, CANCELLED,
+    `LOCAL_PICKUP_TIMEOUT`, no longer there, or finished without reporting) can never finish, so it reads as
+    FAILED with the run's reason and is stored so in its own transaction. This happens on the revision's `GET`,
+    the revision list, a single-Creative read and a new edit; a PENDING revision with no run is abandoned after
+    35 minutes.
+  - **What a reader sees.** `CreativeResponse` of a single-Creative read carries `pendingRevision`
+    (`{id, status, createdAt, workflowRunId}` or null) and `latestRevision` (`{id, revisionNo, status, source,
+    error, checks, createdAt}` of the newest revision, a FAILED one with its `error` and `checks`); the list read
+    leaves both null to stay one query per kind. The readiness checklist gains a non-blocking `altTextStale`
+    item for a CAROUSEL once an applied edit flagged a slide: not ok ("slide 2 alt text still quotes the old
+    text") while that slide's alt text still contains the replaced text, ok once it does not.
 - **Spec through preview and commit (CLI).** `compose_slideshow` writes `spec.json` beside the slides (the
   input spec plus `resolvedStyle`). `preview_creative_draft` keeps it with a CAROUSEL draft: pass
   `slideshowSpecPath`, or leave it out and the `spec.json` in the folder of `slidePaths` is used when it is the

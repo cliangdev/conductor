@@ -8,7 +8,10 @@ name: conductor-creative-render
 # `self-hosted` (the `render` job runs on the workspace's conductor daemon, `conductor start`, Docker
 # required). Both execute the same `conductor creative render` Claude Code uses, in the render image.
 # `with.conductor_mcp: true` makes the dispatch payload carry a run-scoped key (CONDUCTOR_API_KEY) for it.
-# The creative id goes in through env, never into the shell string. The `if` must use this split form:
+# The same two jobs also re-compose edited slide text: the dispatcher adds `event.revisionId` for a slide-text
+# revision (type `creative.slideshow-text`), and the step then runs `conductor creative render-slides` for it.
+# A missing event field interpolates to the empty string (WorkflowInterpolator), so `$REVISION_ID` is empty for
+# an ordinary render. The creative id goes in through env, never into the shell string. The `if` must use this split form:
 # `${{ event.runtime }} == '...'` -- a whole-expression `${{ event.runtime == '...' }}` always evaluates false.
 #
 # `manual: false` keeps it out of the generic Run button: it needs a creativeId event field.
@@ -28,7 +31,13 @@ jobs:
           timeout_minutes: 30
         env:
           CREATIVE_ID: ${{ event.creativeId }}
-        run: conductor creative render "$CREATIVE_ID" --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"
+          REVISION_ID: ${{ event.revisionId }}
+        # Folded (`>-`) into one line: the shell sees a single `if ...; then ...; else ...; fi`.
+        run: >-
+          if [ -n "$REVISION_ID" ];
+          then conductor creative render-slides "$REVISION_ID" --creative "$CREATIVE_ID" --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID";
+          else conductor creative render "$CREATIVE_ID" --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID";
+          fi
 
   render-target:
     if: "${{ event.runtime }} == 'target'"
@@ -41,4 +50,10 @@ jobs:
           timeout_minutes: 30
         env:
           CREATIVE_ID: ${{ event.creativeId }}
-        run: conductor creative render "$CREATIVE_ID" --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"
+          REVISION_ID: ${{ event.revisionId }}
+        # Folded (`>-`) into one line: the shell sees a single `if ...; then ...; else ...; fi`.
+        run: >-
+          if [ -n "$REVISION_ID" ];
+          then conductor creative render-slides "$REVISION_ID" --creative "$CREATIVE_ID" --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID";
+          else conductor creative render "$CREATIVE_ID" --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID";
+          fi

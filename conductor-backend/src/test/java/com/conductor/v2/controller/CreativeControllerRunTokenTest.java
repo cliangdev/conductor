@@ -8,6 +8,8 @@ import com.conductor.creative.CreativePhotoService;
 import com.conductor.creative.CreativeRegistry;
 import com.conductor.creative.CreativeRenderDispatchService;
 import com.conductor.creative.CreativeRenderService;
+import com.conductor.creative.CreativeRevision;
+import com.conductor.creative.CreativeRevisionService;
 import com.conductor.creative.CreativeService;
 import com.conductor.creative.RenderCaller;
 import com.conductor.exception.ForbiddenException;
@@ -50,6 +52,7 @@ class CreativeControllerRunTokenTest {
     private CreativeService creativeService;
     private CreativeRenderService renderService;
     private CreativeRenderDispatchService dispatchService;
+    private CreativeRevisionService revisionService;
     private MockMvc mockMvc;
 
     @BeforeEach
@@ -57,10 +60,11 @@ class CreativeControllerRunTokenTest {
         creativeService = Mockito.mock(CreativeService.class);
         renderService = Mockito.mock(CreativeRenderService.class);
         dispatchService = Mockito.mock(CreativeRenderDispatchService.class);
+        revisionService = Mockito.mock(CreativeRevisionService.class);
         CreativeController controller = new CreativeController(Mockito.mock(CreativePhotoService.class), creativeService,
                 Mockito.mock(CreativeRegistry.class), new ObjectMapper(), renderService,
                 Mockito.mock(CreativeAttachService.class), Mockito.mock(CreativePerformanceService.class),
-                Mockito.mock(CreativeExperimentService.class), dispatchService);
+                Mockito.mock(CreativeExperimentService.class), dispatchService, revisionService);
         mockMvc = MockMvcBuilders.standaloneSetup(controller).setControllerAdvice(new GlobalExceptionHandler()).build();
     }
 
@@ -281,6 +285,130 @@ class CreativeControllerRunTokenTest {
         mockMvc.perform(get(BASE + "/render-runs/latest")).andExpect(status().isOk())
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers
                         .jsonPath("$.runtime").value("self-hosted"));
+    }
+
+    // ── slide-text revisions: the render job's calls and the edit ────────────────────────────────
+
+    private static CreativeRevision revision() {
+        CreativeRevision r = new CreativeRevision();
+        r.setId("rv-1");
+        r.setProjectId("proj-1");
+        r.setCreativeId("cr-1");
+        r.setRevisionNo(2);
+        r.setCreativeVersion(3);
+        r.setBaseVersion(3);
+        r.setStatus(CreativeRevision.STATUS_PENDING);
+        r.setSource(CreativeRevision.SOURCE_EDITOR);
+        ObjectMapper om = new ObjectMapper();
+        r.setSpec(om.createObjectNode().put("id", "s"));
+        r.setTextDiff(om.createArrayNode());
+        r.setWorkflowRunId("run-1");
+        r.setCreatedAt(OffsetDateTime.now());
+        return r;
+    }
+
+    @Test
+    void theRevisionsRunTokenReadsCompletesAndFailsItAsARunCaller() throws Exception {
+        asRun("proj-1", "run-1");
+        runIsTheRenderRunForCr1();
+        RenderCaller run = new RenderCaller.RunCaller("run-1", "proj-1", "cr-1");
+        when(revisionService.getDetail("proj-1", "cr-1", "rv-1", run))
+                .thenReturn(new CreativeRevisionService.RevisionDetail(revision(), java.util.List.of(2), null, null));
+        when(revisionService.complete(eq("proj-1"), eq("cr-1"), eq("rv-1"), any(), eq(run))).thenReturn(revision());
+        when(revisionService.fail(eq("proj-1"), eq("cr-1"), eq("rv-1"), any(), eq(run))).thenReturn(revision());
+
+        mockMvc.perform(get(BASE + "/revisions/rv-1")).andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.changedSlides[0]").value(2))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.baseVersion").value(3))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.workflowRunId").value("run-1"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.spec.id").value("s"));
+        mockMvc.perform(post(BASE + "/revisions/rv-1/complete").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"slideMedia\":{\"9x16\":{\"2\":\"m-1\"}},\"checks\":[]}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post(BASE + "/revisions/rv-1/fail").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"error\":\"boom\"}"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void aRunTokenThatIsNotThisCreativesRenderRunIsRefusedOnTheRevisionEndpoints() throws Exception {
+        asRun("proj-1", "run-1"); // isRenderRunFor defaults to false
+        mockMvc.perform(get(BASE + "/revisions/rv-1")).andExpect(status().isForbidden());
+        mockMvc.perform(post(BASE + "/revisions/rv-1/complete").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"slideMedia\":{}}")).andExpect(status().isForbidden());
+        mockMvc.perform(post(BASE + "/revisions/rv-1/fail").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"error\":\"x\"}")).andExpect(status().isForbidden());
+
+        asRun("proj-OTHER", "run-1");
+        mockMvc.perform(get(BASE + "/revisions/rv-1")).andExpect(status().isForbidden());
+
+        verify(revisionService, never()).getDetail(any(), any(), any(), any());
+        verify(revisionService, never()).complete(any(), any(), any(), any(), any());
+        verify(revisionService, never()).fail(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void anotherRunsRevisionIsRefusedByTheServiceAndSurfacesAs403() throws Exception {
+        asRun("proj-1", "run-1");
+        runIsTheRenderRunForCr1();
+        when(revisionService.getDetail(any(), any(), any(), any(RenderCaller.class)))
+                .thenThrow(new ForbiddenException("This run token did not request revision rv-1"));
+
+        mockMvc.perform(get(BASE + "/revisions/rv-1")).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void aProjectEditorsOwnKeyUsesTheRevisionEndpointsAsAUserCaller() throws Exception {
+        com.conductor.entity.User user = userPrincipal();
+        SecurityContextHolder.getContext().setAuthentication(new com.conductor.security.UserApiKeyAuthenticationToken(user));
+        when(revisionService.complete(eq("proj-1"), eq("cr-1"), eq("rv-1"), any(), eq(new RenderCaller.UserCaller(user))))
+                .thenReturn(revision());
+
+        mockMvc.perform(post(BASE + "/revisions/rv-1/complete").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"slideMedia\":{\"9x16\":{\"2\":\"m-1\"}}}"))
+                .andExpect(status().isOk());
+
+        verify(revisionService).complete(eq("proj-1"), eq("cr-1"), eq("rv-1"), any(), eq(new RenderCaller.UserCaller(user)));
+    }
+
+    @Test
+    void theEditEndpointIs202AndTagsAnApiKeyCallerAsMcpAndABrowserSessionAsEditor() throws Exception {
+        com.conductor.entity.User user = userPrincipal();
+        when(revisionService.edit(eq("proj-1"), eq("cr-1"), eq(3), any(), any(), eq(user)))
+                .thenReturn(new CreativeRevisionService.EditResult(revision(),
+                        new CreativeRenderDispatchService.RenderRunView("wf-1", "run-1", "PENDING_LOCAL_PICKUP",
+                                "AWAITING_RUNNER", null, null, null)));
+        String body = "{\"version\":3,\"edits\":[{\"slide\":2,\"path\":\"texts[0].t\",\"text\":\"Hi\"}]}";
+
+        SecurityContextHolder.getContext().setAuthentication(new com.conductor.security.UserApiKeyAuthenticationToken(user));
+        mockMvc.perform(post(BASE + "/slide-text-edits").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isAccepted())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.revision.id").value("rv-1"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.renderRun.runId").value("run-1"));
+        SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken(user, null));
+        mockMvc.perform(post(BASE + "/slide-text-edits").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isAccepted());
+
+        org.mockito.ArgumentCaptor<java.util.List<com.conductor.creative.SlideshowTextFields.Edit>> edits =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        org.mockito.ArgumentCaptor<String> source = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(revisionService, org.mockito.Mockito.times(2)).edit(eq("proj-1"), eq("cr-1"), eq(3), edits.capture(),
+                source.capture(), eq(user));
+        org.assertj.core.api.Assertions.assertThat(source.getAllValues()).containsExactly("MCP", "EDITOR");
+        org.assertj.core.api.Assertions.assertThat(edits.getValue()).containsExactly(
+                new com.conductor.creative.SlideshowTextFields.Edit(2, "texts[0].t", "Hi"));
+    }
+
+    @Test
+    void aRunTokenCannotEditSlideText() throws Exception {
+        asRun("proj-1", "run-1");
+        runIsTheRenderRunForCr1();
+
+        mockMvc.perform(post(BASE + "/slide-text-edits").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":3,\"edits\":[{\"slide\":2,\"path\":\"texts[0].t\",\"text\":\"Hi\"}]}"))
+                .andExpect(status().isForbidden());
+
+        verify(revisionService, never()).edit(any(), any(), any(), any(), any(), any());
     }
 
     private static com.conductor.entity.User userPrincipal() {

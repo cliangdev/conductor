@@ -25,6 +25,7 @@ public class CreativeRevision {
     public static final String STATUS_APPLIED = "APPLIED";
     public static final String STATUS_FAILED = "FAILED";
 
+    /** A person editing slide text (a signed-in session). */
     public static final String SOURCE_EDITOR = "EDITOR";
     public static final String SOURCE_REVIEWER = "REVIEWER";
     public static final String SOURCE_MCP = "MCP";
@@ -96,6 +97,15 @@ public class CreativeRevision {
 
     @Column(name = "error", columnDefinition = "TEXT")
     private String error;
+
+    /** For an edit: the Creative's version it was made against. See {@code V175__creative_revision_edit.sql}. */
+    @Column(name = "base_version")
+    private Integer baseVersion;
+
+    /** 1-based slides whose alt text quotes replaced text; null until the revision is applied. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "alt_text_flags", columnDefinition = "jsonb")
+    private JsonNode altTextFlags;
 
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
@@ -169,6 +179,12 @@ public class CreativeRevision {
 
     public String getError() { return error; }
     public void setError(String error) { this.error = error; }
+
+    public Integer getBaseVersion() { return baseVersion; }
+    public void setBaseVersion(Integer baseVersion) { this.baseVersion = baseVersion; }
+
+    public JsonNode getAltTextFlags() { return altTextFlags; }
+    public void setAltTextFlags(JsonNode altTextFlags) { this.altTextFlags = altTextFlags; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

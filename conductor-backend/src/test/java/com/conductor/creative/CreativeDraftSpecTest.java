@@ -86,7 +86,7 @@ class CreativeDraftSpecTest {
                 projectRepository, registry, new CreativeValidator(registry),
                 new CreativeSpecBuilder(registry, storage, objectMapper), security, storage, mock(StorageObjectReferences.class), objectMapper,
                 renderService, experimentRepository, frameRepository, renderRepository, assetRepository,
-                mock(CreativeRevisionRepository.class));
+                mock(CreativeRevisionRepository.class), mock(CreativeRevisionService.class));
 
         caller = new User();
         caller.setId("user-1");

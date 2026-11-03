@@ -34,6 +34,8 @@ import java.util.Optional;
 public class CreativeRenderDispatchService {
 
     public static final String EVENT_TYPE = "creative.render";
+    /** The event type of a run that re-composes edited slide text ({@code revisionId} is set). */
+    public static final String EVENT_TYPE_SLIDE_TEXT = "creative.slideshow-text";
 
     private final ProjectSecurityService projectSecurityService;
     private final CreativeRepository creativeRepository;
@@ -105,6 +107,38 @@ public class CreativeRenderDispatchService {
         // Fail fast, before a run is queued: the same checks requestRender makes (422 with the violations).
         renderService.validateForRender(projectId, creativeId);
 
+        WorkflowDefinition workflow = requireRenderWorkflow(projectId);
+        requireNoActiveRun(workflow, creativeId, null);
+        return fire(projectId, creativeId, workflow, EVENT_TYPE, null);
+    }
+
+    /**
+     * Queues the run that re-composes the slides of a PENDING slide-text revision (the caller has checked the
+     * role and holds the Creative's row lock). Same workflow and runtime choice as {@link #dispatch}; the event
+     * carries {@code revisionId}, so the workflow runs {@code conductor creative render-slides} instead of
+     * {@code conductor creative render}. 409 {@code RENDER_RUN_ACTIVE} while any run for the Creative is active.
+     */
+    @Transactional
+    public RenderRunView dispatchSlideTextEdit(String projectId, String creativeId, String revisionId) {
+        WorkflowDefinition workflow = requireRenderWorkflow(projectId);
+        requireNoActiveRun(workflow, creativeId, null);
+        return fire(projectId, creativeId, workflow, EVENT_TYPE_SLIDE_TEXT, revisionId);
+    }
+
+    /**
+     * The video render a slide-text revision needs once its slides are applied (a CAROUSEL with a music track).
+     * No role check: the caller is the revision's own run (or an editor) completing it. The revision's own run is
+     * still active at that moment, so it is ignored by the one-active-run guard. Runs in the caller's
+     * transaction; the caller decides what a refusal means (the slides are already applied).
+     */
+    @Transactional
+    public RenderRunView dispatchRenderAfterEdit(String projectId, String creativeId, String ignoreRunId) {
+        WorkflowDefinition workflow = requireRenderWorkflow(projectId);
+        requireNoActiveRun(workflow, creativeId, ignoreRunId);
+        return fire(projectId, creativeId, workflow, EVENT_TYPE, null);
+    }
+
+    private WorkflowDefinition requireRenderWorkflow(String projectId) {
         WorkflowDefinition workflow;
         try {
             workflow = provisioner.ensureProvisioned(projectId);
@@ -119,10 +153,14 @@ public class CreativeRenderDispatchService {
                     "The render workflow '" + workflow.getName() + "' is switched off. Turn it back on in "
                             + "Workflows, then render again.", Map.of("workflowId", workflow.getId()));
         }
+        return workflow;
+    }
 
+    private void requireNoActiveRun(WorkflowDefinition workflow, String creativeId, String ignoreRunId) {
         Optional<WorkflowRun> active = runRepository
                 .findByWorkflowIdAndEventCreativeId(workflow.getId(), creativeId, 20).stream()
                 .filter(r -> WorkflowRunStatus.ACTIVE_RUN_STATUSES.contains(r.getStatus()))
+                .filter(r -> !r.getId().equals(ignoreRunId))
                 .findFirst();
         if (active.isPresent()) {
             Map<String, Object> props = new LinkedHashMap<>();
@@ -131,11 +169,17 @@ public class CreativeRenderDispatchService {
             throw new CreativeRenderDispatchException(HttpStatus.CONFLICT, "RENDER_RUN_ACTIVE",
                     "This Creative is already being rendered.", props);
         }
+    }
 
+    private RenderRunView fire(String projectId, String creativeId, WorkflowDefinition workflow, String type,
+                               String revisionId) {
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("type", EVENT_TYPE);
+        payload.put("type", type);
         payload.put("projectId", projectId);
         payload.put("creativeId", creativeId);
+        if (revisionId != null) {
+            payload.put("revisionId", revisionId);
+        }
         // Where this render runs. `target` only when the designated runtime target can render right now
         // (ACTIVE, connected, render job READY); anything else falls back to the daemon, as before.
         RuntimeTargetResolver.RenderTargetResolution resolution = runtimeTargetResolver.resolveRenderTarget(projectId);
@@ -147,6 +191,19 @@ public class CreativeRenderDispatchService {
         }
         WorkflowRun run = workflowTriggerService.fireTrigger(workflow.getId(), "workflow_dispatch", toJson(payload));
         return view(workflow.getId(), run, runQueryService.deriveWaitReasons(List.of(run)).get(run.getId()));
+    }
+
+    /**
+     * A workflow run by id as the API reports it (status + failure reason), or empty when it does not exist.
+     * What the revision service reads to tell a revision whose run ended without completing it.
+     */
+    @Transactional(readOnly = true)
+    public Optional<RenderRunView> findRun(String runId) {
+        if (runId == null) {
+            return Optional.empty();
+        }
+        return runRepository.findById(runId).map(run -> view(run.getWorkflow() != null ? run.getWorkflow().getId() : null,
+                run, null));
     }
 
     /**

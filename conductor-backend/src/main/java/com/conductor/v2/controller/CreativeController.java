@@ -10,7 +10,9 @@ import com.conductor.creative.CreativePhotoService;
 import com.conductor.creative.CreativeRegistry;
 import com.conductor.creative.CreativeRenderDispatchService;
 import com.conductor.creative.CreativeRenderService;
+import com.conductor.creative.CreativeRevisionService;
 import com.conductor.creative.CreativeService;
+import com.conductor.creative.SlideshowTextFields;
 import com.conductor.creative.RenderCaller;
 import com.conductor.entity.User;
 import com.conductor.generated.v2.api.CreativesApi;
@@ -100,12 +102,15 @@ public class CreativeController implements CreativesApi {
     private final CreativePerformanceService performanceService;
     private final CreativeExperimentService experimentService;
     private final CreativeRenderDispatchService renderDispatchService;
+    private final CreativeRevisionService revisionService;
 
     public CreativeController(CreativePhotoService photoService, CreativeService creativeService,
                               CreativeRegistry registry, ObjectMapper objectMapper,
                               CreativeRenderService renderService, CreativeAttachService attachService,
                               CreativePerformanceService performanceService, CreativeExperimentService experimentService,
-                              CreativeRenderDispatchService renderDispatchService) {
+                              CreativeRenderDispatchService renderDispatchService,
+                              CreativeRevisionService revisionService) {
+        this.revisionService = revisionService;
         this.photoService = photoService;
         this.creativeService = creativeService;
         this.registry = registry;
@@ -411,6 +416,67 @@ public class CreativeController implements CreativesApi {
         return ResponseEntity.ok(new com.conductor.generated.v2.model.CreativeRevisionListResponse(revisions));
     }
 
+    @Override
+    public ResponseEntity<com.conductor.generated.v2.model.CreativeSlideTextEditResponse> createCreativeSlideTextEdit(
+            String projectId, String creativeId, com.conductor.generated.v2.model.CreateCreativeSlideTextEditRequest request) {
+        List<SlideshowTextFields.Edit> edits = request.getEdits().stream()
+                .map(e -> new SlideshowTextFields.Edit(e.getSlide(), e.getPath(), e.getText())).toList();
+        // A person in the web app is an EDITOR; a script or an agent's MCP session holds a user API key.
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        String source = auth instanceof com.conductor.security.UserApiKeyAuthenticationToken
+                ? com.conductor.creative.CreativeRevision.SOURCE_MCP : com.conductor.creative.CreativeRevision.SOURCE_EDITOR;
+        CreativeRevisionService.EditResult result = revisionService.edit(projectId, creativeId, request.getVersion(),
+                edits, source, currentUser());
+        return ResponseEntity.status(HttpStatus.ACCEPTED)
+                .body(new com.conductor.generated.v2.model.CreativeSlideTextEditResponse(toResponse(result.revision()))
+                        .renderRun(result.renderRun() != null ? toRunResponse(result.renderRun()) : null));
+    }
+
+    @Override
+    public ResponseEntity<com.conductor.generated.v2.model.CreativeRevisionDetail> getCreativeRevision(
+            String projectId, String creativeId, String revisionId) {
+        RenderCaller caller = renderCaller(projectId, creativeId);
+        CreativeRevisionService.RevisionDetail detail =
+                revisionService.getDetail(projectId, creativeId, revisionId, caller);
+        com.conductor.creative.CreativeRevision r = detail.revision();
+        com.conductor.generated.v2.model.CreativeRevision base = toResponse(r);
+        com.conductor.generated.v2.model.CreativeRevisionDetail body = new com.conductor.generated.v2.model.CreativeRevisionDetail(
+                base.getId(), base.getRevisionNo(), base.getCreativeVersion(),
+                com.conductor.generated.v2.model.CreativeRevisionDetail.StatusEnum.fromValue(base.getStatus().getValue()),
+                com.conductor.generated.v2.model.CreativeRevisionDetail.SourceEnum.fromValue(base.getSource().getValue()),
+                base.getTextDiff(), base.getCreatedAt(),
+                objectMapper.convertValue(r.getSpec(), new TypeReference<LinkedHashMap<String, Object>>() { }),
+                detail.changedSlides());
+        body.checks(base.getChecks()).authorUserId(base.getAuthorUserId()).postId(base.getPostId())
+                .reviewRound(base.getReviewRound()).renderId(base.getRenderId()).error(base.getError())
+                .baseVersion(base.getBaseVersion()).workflowRunId(base.getWorkflowRunId())
+                .appliedAt(base.getAppliedAt());
+        body.altTextFlags(r.getAltTextFlags() != null ? objectMapper.convertValue(r.getAltTextFlags(),
+                new TypeReference<List<Integer>>() { }) : null);
+        body.slides(detail.slides() != null ? objectMapper.convertValue(detail.slides(),
+                new TypeReference<LinkedHashMap<String, List<String>>>() { }) : null);
+        body.slideStyle(com.conductor.creative.SlideshowStyles.fromStored(objectMapper, detail.slideStyle()));
+        return ResponseEntity.ok(body);
+    }
+
+    @Override
+    public ResponseEntity<com.conductor.generated.v2.model.CreativeRevision> completeCreativeRevision(
+            String projectId, String creativeId, String revisionId,
+            com.conductor.generated.v2.model.CompleteCreativeRevisionRequest request) {
+        RenderCaller caller = renderCaller(projectId, creativeId);
+        return ResponseEntity.ok(toResponse(
+                revisionService.complete(projectId, creativeId, revisionId, request, caller)));
+    }
+
+    @Override
+    public ResponseEntity<com.conductor.generated.v2.model.CreativeRevision> failCreativeRevision(
+            String projectId, String creativeId, String revisionId,
+            com.conductor.generated.v2.model.FailCreativeRevisionRequest request) {
+        RenderCaller caller = renderCaller(projectId, creativeId);
+        return ResponseEntity.ok(toResponse(
+                revisionService.fail(projectId, creativeId, revisionId, request, caller)));
+    }
+
     private com.conductor.generated.v2.model.CreativeRevision toResponse(com.conductor.creative.CreativeRevision r) {
         List<com.conductor.generated.v2.model.CreativeRevisionTextChange> diff = new java.util.ArrayList<>();
         if (r.getTextDiff() != null) {
@@ -431,6 +497,8 @@ public class CreativeController implements CreativesApi {
                 .reviewRound(r.getReviewRound())
                 .renderId(r.getRenderId())
                 .error(r.getError())
+                .baseVersion(r.getBaseVersion())
+                .workflowRunId(r.getWorkflowRunId())
                 .appliedAt(r.getAppliedAt());
     }
 
@@ -588,6 +656,23 @@ public class CreativeController implements CreativesApi {
                         ? objectMapper.convertValue(c.getSlideshow(), CreativeSlideshow.class) : null)
                 .createdBy(c.getCreatedBy())
                 .activeExperimentId(view.activeExperimentId());
+        if (view.pendingRevision() != null) {
+            com.conductor.creative.CreativeRevision p = view.pendingRevision();
+            response.pendingRevision(new com.conductor.generated.v2.model.CreativePendingRevision(p.getId(),
+                    com.conductor.generated.v2.model.CreativePendingRevision.StatusEnum.PENDING, p.getCreatedAt())
+                    .workflowRunId(p.getWorkflowRunId()));
+        }
+        if (view.latestRevision() != null) {
+            com.conductor.creative.CreativeRevision l = view.latestRevision();
+            response.latestRevision(new com.conductor.generated.v2.model.CreativeLatestRevision(l.getId(),
+                    l.getRevisionNo(),
+                    com.conductor.generated.v2.model.CreativeLatestRevision.StatusEnum.fromValue(l.getStatus()),
+                    com.conductor.generated.v2.model.CreativeLatestRevision.SourceEnum.fromValue(l.getSource()),
+                    l.getCreatedAt())
+                    .error(l.getError())
+                    .checks(l.getChecks() != null ? objectMapper.convertValue(l.getChecks(),
+                            new TypeReference<List<java.util.Map<String, Object>>>() { }) : null));
+        }
         if (view.latestRenderSummary() != null) {
             response.latestRenderId(view.latestRenderSummary().render().getId())
                     .latestRenderThumbnailUrl(renderService.thumbnailUrl(view.latestRenderSummary(),
