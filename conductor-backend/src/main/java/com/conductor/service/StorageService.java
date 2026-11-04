@@ -20,6 +20,12 @@ public interface StorageService {
     boolean isHealthy();
 
     /**
+     * The stored size in bytes of an object, or empty when there is no such object. Lets a confirm step take the
+     * size from storage instead of trusting the client's claim.
+     */
+    java.util.OptionalLong objectSize(String gcsPath);
+
+    /**
      * Best-effort: marks an object (typically one a browser just PUT to a signed URL, which carries no
      * Cache-Control) as privately browser-cacheable. Never throws; the default is a no-op for backends
      * with nothing to mark.

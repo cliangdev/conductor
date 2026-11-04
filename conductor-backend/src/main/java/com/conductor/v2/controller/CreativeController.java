@@ -461,7 +461,25 @@ public class CreativeController implements CreativesApi {
         body.slides(detail.slides() != null ? objectMapper.convertValue(detail.slides(),
                 new TypeReference<LinkedHashMap<String, List<String>>>() { }) : null);
         body.slideStyle(com.conductor.creative.SlideshowStyles.fromStored(objectMapper, detail.slideStyle()));
+        body.media(detail.media().stream().map(this::toResponse).toList());
         return ResponseEntity.ok(body);
+    }
+
+    @Override
+    public ResponseEntity<CreativePhotoResponse> createCreativeRevisionMedia(String projectId, String creativeId,
+            String revisionId, CreateCreativePhotoRequest request) {
+        RenderCaller caller = renderCaller(projectId, creativeId);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(toResponse(revisionService.createMedia(projectId, creativeId, revisionId, request, caller)));
+    }
+
+    @Override
+    public ResponseEntity<CreativePhotoResponse> confirmCreativeRevisionMedia(String projectId, String creativeId,
+            String revisionId, String mediaId, ConfirmCreativePhotoRequest request) {
+        RenderCaller caller = renderCaller(projectId, creativeId);
+        // The body's sizeBytes is ignored here: the size is read from storage.
+        return ResponseEntity.ok(toResponse(
+                revisionService.confirmMedia(projectId, creativeId, revisionId, mediaId, caller)));
     }
 
     @Override

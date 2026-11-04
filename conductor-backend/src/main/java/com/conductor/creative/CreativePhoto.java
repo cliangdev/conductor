@@ -107,6 +107,10 @@ public class CreativePhoto {
     @Column(name = "created_by", length = 36)
     private String createdBy;
 
+    /** The slide-text revision whose render job minted this image (see V177); null for every other Media. */
+    @Column(name = "minted_for_revision_id", length = 36)
+    private String mintedForRevisionId;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -200,6 +204,9 @@ public class CreativePhoto {
 
     public String getCodec() { return codec; }
     public void setCodec(String codec) { this.codec = codec; }
+
+    public String getMintedForRevisionId() { return mintedForRevisionId; }
+    public void setMintedForRevisionId(String mintedForRevisionId) { this.mintedForRevisionId = mintedForRevisionId; }
 
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }

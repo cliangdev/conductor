@@ -102,6 +102,7 @@ public class CreativeRevisionService {
     private final WorkflowDefinitionResolver workflowResolver;
     private final CreativeEditImpacts impacts;
     private final PlatformTransactionManager transactionManager;
+    private final CreativePhotoService photoService;
     private final TransactionTemplate newTx;
 
     public CreativeRevisionService(CreativeRevisionRepository revisionRepository,
@@ -118,7 +119,9 @@ public class CreativeRevisionService {
                                    UserRepository userRepository,
                                    WorkflowDefinitionResolver workflowResolver,
                                    CreativeEditImpacts impacts,
-                                   PlatformTransactionManager transactionManager) {
+                                   PlatformTransactionManager transactionManager,
+                                   CreativePhotoService photoService) {
+        this.photoService = photoService;
         this.impacts = impacts;
         this.transactionManager = transactionManager;
         this.cancellationService = cancellationService;
@@ -144,7 +147,8 @@ public class CreativeRevisionService {
 
     /** A revision plus the parts of the Creative the render job needs next to it. */
     public record RevisionDetail(CreativeRevision revision, List<Integer> changedSlides, JsonNode slides,
-                                 JsonNode slideStyle, List<RenderList> renderLists) {
+                                 JsonNode slideStyle, List<RenderList> renderLists,
+                                 List<CreativePhotoService.PhotoView> media) {
     }
 
     /** A stored slide list the render job re-renders, and the ratio ({@code 9x16} / {@code 4x5}) it is made at. */
@@ -320,8 +324,107 @@ public class CreativeRevisionService {
         CreativeRevision revision = findRevision(creativeId, revisionId);
         authorize(projectId, creativeId, revision, caller, false);
         resolveStale(revision);
-        return new RevisionDetail(revision, changedSlides(revision), creative.getSlides(), creative.getSlideStyle(),
-                planRenderLists(toSlidesMap(creative.getSlides())).lists());
+        List<Integer> changed = changedSlides(revision);
+        List<RenderList> lists = planRenderLists(toSlidesMap(creative.getSlides())).lists();
+        List<CreativePhotoService.PhotoView> media = revision.getStatus().equals(CreativeRevision.STATUS_PENDING)
+                ? photoService.viewsOf(projectId, mediaTheJobReads(revision, creative, changed, lists)) : List.of();
+        return new RevisionDetail(revision, changed, creative.getSlides(), creative.getSlideStyle(), lists, media);
+    }
+
+    /**
+     * The Media a render job reads for a revision: the images the changed slides of the candidate spec use, and
+     * the entries of the re-rendered lists at the changed positions (the slides being replaced, for provenance).
+     * Nothing else: a run token reads this much and no more.
+     */
+    private Set<String> mediaTheJobReads(CreativeRevision revision, Creative creative, List<Integer> changed,
+                                         List<RenderList> lists) {
+        Set<String> ids = new LinkedHashSet<>();
+        JsonNode specSlides = revision.getSpec() != null ? revision.getSpec().get("slides") : null;
+        if (specSlides != null && specSlides.isArray()) {
+            com.fasterxml.jackson.databind.node.ObjectNode only = objectMapper.createObjectNode();
+            ArrayNode picked = only.putArray("slides");
+            for (int n : changed) {
+                if (n >= 1 && n <= specSlides.size()) {
+                    picked.add(specSlides.get(n - 1));
+                }
+            }
+            for (SlideshowSpecs.ImageRef ref : SlideshowSpecs.imageRefs(only)) {
+                String id = SlideshowSpecs.mediaId(ref.value());
+                if (id != null) {
+                    ids.add(id);
+                }
+            }
+        }
+        Map<String, List<String>> slides = toSlidesMap(creative.getSlides());
+        for (RenderList list : lists) {
+            List<String> entries = slides.get(list.list());
+            for (int n : changed) {
+                if (entries != null && n >= 1 && n <= entries.size() && entries.get(n - 1) != null) {
+                    ids.add(entries.get(n - 1));
+                }
+            }
+        }
+        return ids;
+    }
+
+    // ── the render job's uploads ────────────────────────────────────────────
+
+    /**
+     * Mints an image upload for a re-rendered slide of a PENDING revision. The photo endpoints refuse a run token;
+     * this is the narrow door instead: the revision's own run (or an editor), an image, a PENDING revision, at most
+     * one image per changed slide and ratio. The image is marked as this revision's, which is all that
+     * {@link #confirmMedia} and a run's {@code complete} accept. A run token's Media is attributed to the revision's
+     * author, the person the system is acting for, who must still be an editor: otherwise the revision is failed
+     * with that reason. Not one transaction: failing the revision must commit even though the call is refused.
+     */
+    public CreativePhotoService.PhotoView createMedia(String projectId, String creativeId, String revisionId,
+            com.conductor.generated.v2.model.CreateCreativePhotoRequest request, RenderCaller caller) {
+        Creative creative = findCreative(projectId, creativeId);
+        CreativeRevision revision = findRevision(creativeId, revisionId);
+        authorize(projectId, creativeId, revision, caller, true);
+        requirePending(revision);
+        String uploader = uploader(projectId, creativeId, revision, caller);
+
+        long ratios = planRenderLists(toSlidesMap(creative.getSlides())).lists().stream()
+                .map(RenderList::ratio).distinct().count();
+        long cap = ratios * changedSlides(revision).size();
+        if (photoService.countMintedForRevision(revision.getId()) >= cap) {
+            throw new ConflictException("This revision re-renders " + cap + " slide image" + (cap == 1 ? "" : "s")
+                    + " and has already minted that many.");
+        }
+        return photoService.createImageForRevision(projectId, request, uploader, revision.getId());
+    }
+
+    /** Confirms an image minted by {@link #createMedia} for this revision (its size comes from storage). */
+    @Transactional
+    public CreativePhotoService.PhotoView confirmMedia(String projectId, String creativeId, String revisionId,
+            String mediaId, RenderCaller caller) {
+        findCreative(projectId, creativeId);
+        CreativeRevision revision = findRevision(creativeId, revisionId);
+        authorize(projectId, creativeId, revision, caller, true);
+        requirePending(revision);
+        return photoService.confirmImageForRevision(projectId, mediaId, revision.getId());
+    }
+
+    /**
+     * Who a minted image is credited to: the person calling, or for a run token the revision's author, who must
+     * still be an editor (the edit was theirs, but their role may have changed while the job waited).
+     */
+    private String uploader(String projectId, String creativeId, CreativeRevision revision, RenderCaller caller) {
+        if (caller instanceof RenderCaller.UserCaller u) {
+            return u.user().getId();
+        }
+        String author = revision.getAuthorUserId();
+        String problem = author == null ? "This edit has no author, so the render job cannot save slides for it."
+                : !projectSecurityService.isEditor(projectId, author)
+                        ? "The author of this edit is no longer an editor of this project, so the render job cannot save slides for them."
+                        : null;
+        if (problem != null) {
+            fail(projectId, creativeId, revision.getId(),
+                    new FailCreativeRevisionRequest().error(problem + " Make the edit again."), caller);
+            throw new ForbiddenException(problem);
+        }
+        return author;
     }
 
     /** The distinct 1-based slides a revision's text diff touches, ascending. */
@@ -441,6 +544,10 @@ public class CreativeRevisionService {
                     || !CreativePhoto.MEDIA_KIND_IMAGE.equals(p.getMediaKind()) || !p.isUploaded() || p.isBlocked()) {
                 return failed(revision, "Media " + id + " is not an uploaded image of this project", checks);
             }
+            // The job's own token may only put in what this revision minted, not any image in the library.
+            if (caller instanceof RenderCaller.RunCaller && !revision.getId().equals(p.getMintedForRevisionId())) {
+                return failed(revision, "Media " + id + " was not uploaded for this revision", checks);
+            }
         }
 
         // Replace the changed entries of every list that gets re-rendered. All of this is computed before anything
@@ -482,6 +589,8 @@ public class CreativeRevisionService {
         revision.setChecks(stored.isEmpty() ? null : stored);
         revision.setError(null);
         revision = revisionRepository.save(revision);
+        // Anything this revision minted that did not end up in the Creative (extra uploads) goes.
+        photoService.deleteMintedForRevision(revision.getId(), mediaIds);
 
         render(revision, creative, followUps);
         return revision;
@@ -501,6 +610,8 @@ public class CreativeRevisionService {
     }
 
     private CreativeRevision failed(CreativeRevision revision, String error, List<SlideshowCheck> checks) {
+        // None of what the job minted is in the Creative: remove it rather than leave orphans in the library.
+        photoService.deleteMintedForRevision(revision.getId(), Set.of());
         revision.setStatus(CreativeRevision.STATUS_FAILED);
         revision.setError(error);
         revision.setChecks(checks == null || checks.isEmpty() ? null : objectMapper.valueToTree(checks));
@@ -596,6 +707,7 @@ public class CreativeRevisionService {
         revision.setError(reason);
         if (!TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
             revisionRepository.saveAndFlush(revision);
+            photoService.deleteMintedForRevision(revision.getId(), Set.of());
         }
         return true;
     }

@@ -1,9 +1,10 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Config } from '../config.js'
 import { apiGet, apiPost } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
+import { mintPutConfirmImage } from './creatives.js'
 import {
   composeSlideshow,
   isMediaRef,
@@ -15,7 +16,6 @@ import {
   type SlideshowCheck,
   type SlideshowSpec,
 } from '../../lib/slideshow/index.js'
-import { uploadCreativeMedia, type UploadCreativeMediaParams, type UploadCreativeMediaResult } from './creatives.js'
 
 /**
  * `conductor creative render-slides`: the job half of editing a slideshow's text. The backend holds a PENDING
@@ -26,7 +26,6 @@ import { uploadCreativeMedia, type UploadCreativeMediaParams, type UploadCreativ
  */
 
 const creativesBase = (config: Config): string => `/api/v2/projects/${config.projectId}/marketing/creatives`
-const photoUrl = (config: Config, id: string): string => `/api/v2/projects/${config.projectId}/marketing/photos/${id}`
 
 /** The ratios a text edit re-renders. The backend decides which stored lists get which (`renderLists`). */
 const RENDERED: SlideRatio[] = ['9x16', '4x5']
@@ -47,9 +46,14 @@ export interface RevisionDetail {
   slideStyle?: Record<string, unknown> | null
   /** The Creative's display id (12a), when the backend sends it; used only to label the new media. */
   displayId?: string
+  /**
+   * Everything the job reads about Media: signed download urls and provenance for the changed slides' images and for
+   * the slides being replaced. A run-scoped key cannot read `GET .../photos/{id}`, so nothing else is fetched.
+   */
+  media?: MediaInfo[]
 }
 
-interface MediaInfo {
+export interface MediaInfo {
   id: string
   url?: string
   width?: number | null
@@ -66,11 +70,27 @@ export interface RenderSlidesParams {
   workflowRunId?: string
 }
 
+/** What the job sends for one re-rendered slide. */
+export interface SlideUploadParams {
+  filePath: string
+  label: string
+  source?: string
+  licence?: string
+  aiGenerated?: boolean
+}
+
+export interface SlideUploadResult {
+  media: Record<string, unknown>
+}
+
+/** Slides are stored as JPEG at this quality: Instagram feed images and TikTok photo posts refuse PNG. */
+export const SLIDE_JPEG_QUALITY = 92
+
 export interface RenderSlidesOptions {
   /** Tests: stand-ins for the browser compose, the image download and the upload. */
   compose?: (spec: SlideshowSpec, outDir: string, options: ComposeOptions) => Promise<Pick<ComposeResult, 'slidePaths' | 'checks'>>
   download?: (media: MediaInfo, into: string) => Promise<string>
-  upload?: (params: UploadCreativeMediaParams, config: Config) => Promise<UploadCreativeMediaResult>
+  upload?: (params: SlideUploadParams, config: Config) => Promise<SlideUploadResult>
   log?: (message: string) => void
 }
 
@@ -93,6 +113,27 @@ async function downloadMedia(media: MediaInfo, into: string): Promise<string> {
   return file
 }
 
+/**
+ * Uploads one composed slide through the revision's own media endpoints (the photo endpoints refuse a run-scoped
+ * key): mint, PUT the bytes, confirm. The slide must be a JPEG, the format every stored slide has; a PNG here would
+ * fail publishing to TikTok photo posts later, so it is refused now.
+ */
+export async function uploadRevisionSlide(revisionBase: string, params: SlideUploadParams, config: Config): Promise<SlideUploadResult> {
+  const bytes = new Uint8Array(await readFile(params.filePath))
+  const info = readImageDimensions(bytes)
+  if (!info || info.contentType !== 'image/jpeg') {
+    throw new Error(`The composed slide ${params.filePath} is ${info?.contentType ?? 'not an image'}, not image/jpeg; slides are stored as JPEG.`)
+  }
+  const media = await mintPutConfirmImage(
+    bytes,
+    info,
+    { label: params.label, source: params.source, licence: params.licence, aiGenerated: params.aiGenerated },
+    { mint: `${revisionBase}/media`, confirm: (id) => `${revisionBase}/media/${id}/confirm` },
+    config
+  )
+  return { media }
+}
+
 function summarise(checks: SlideshowCheck[]): string {
   const errors = checks.filter((c) => c.severity === 'error')
   const shown = errors.slice(0, 5).map((c) => `slide ${c.slide} ${c.ratio} ${c.rule}: ${c.message}`)
@@ -109,13 +150,12 @@ export async function renderSlides(params: RenderSlidesParams, config: Config, o
 
   const temp = await mkdtemp(join(tmpdir(), 'conductor-render-slides-'))
   try {
-    const mediaCache = new Map<string, Promise<MediaInfo>>()
-    const mediaInfo = (id: string): Promise<MediaInfo> => {
-      let found = mediaCache.get(id)
-      if (!found) {
-        found = apiGet<MediaInfo>(photoUrl(config, id), config)
-        mediaCache.set(id, found)
-      }
+    // The revision detail carries every Media this job reads; a run-scoped key may not call the photo endpoints.
+    if (!Array.isArray(detail.media)) throw new Error("The backend did not send the revision's media (media); it needs updating.")
+    const mediaById = new Map(detail.media.map((m) => [m.id, m]))
+    const mediaInfo = (id: string): MediaInfo => {
+      const found = mediaById.get(id)
+      if (!found) throw new Error(`The revision detail did not include media ${id}.`)
       return found
     }
 
@@ -152,13 +192,19 @@ export async function renderSlides(params: RenderSlidesParams, config: Config, o
     })
     const download = options.download ?? downloadMedia
     const local = new Map<string, string>()
-    for (const [ref, id] of refs) local.set(ref, await download(await mediaInfo(id), temp))
+    for (const [ref, id] of refs) local.set(ref, await download(mediaInfo(id), temp))
     const composable = mapSpecImages(subSpec, (value) => (value && isMediaRef(value) ? local.get(value) : value))
 
     log(`re-composing slide${changed.length === 1 ? '' : 's'} ${changed.join(', ')} at ${ratios.join(', ')}`)
     const compose = options.compose ?? ((s, out, o) => composeSlideshow(s, out, o))
     const style = (detail.slideStyle && Object.keys(detail.slideStyle).length > 0 ? detail.slideStyle : undefined) as ComposeOptions['style']
-    const composed = await compose(composable, join(temp, 'composed'), { ratios, specDir: temp, ...(style ? { style } : {}) })
+    const composed = await compose(composable, join(temp, 'composed'), {
+      ratios,
+      specDir: temp,
+      format: 'jpeg',
+      jpegQuality: SLIDE_JPEG_QUALITY,
+      ...(style ? { style } : {}),
+    })
 
     // The composer numbers the slides it was given 1..n; the Creative's slides are numbered by the full spec. The
     // provenance warning is about committing a draft from local files, which this is not.
@@ -171,7 +217,7 @@ export async function renderSlides(params: RenderSlidesParams, config: Config, o
       return { ok: false, outcome: 'checks-failed', revisionId: params.revisionId, error, checks }
     }
 
-    const upload = options.upload ?? uploadCreativeMedia
+    const upload = options.upload ?? ((p: SlideUploadParams, c: Config) => uploadRevisionSlide(base, p, c))
     const label = detail.displayId ?? (await apiGet<{ displayId?: string }>(`${creativesBase(config)}/${params.creativeId}`, config)).displayId ?? params.creativeId
     const slideMedia: Record<string, Record<string, string>> = {}
     let uploaded = 0
@@ -181,7 +227,7 @@ export async function renderSlides(params: RenderSlidesParams, config: Config, o
       slideMedia[ratio] = {}
       for (let j = 0; j < changed.length; j++) {
         const slide = changed[j]!
-        const old = await mediaInfo(replaced.get(ratio)![slide - 1]!)
+        const old = mediaInfo(replaced.get(ratio)![slide - 1]!)
         const result = await upload(
           {
             filePath: files[j]!,

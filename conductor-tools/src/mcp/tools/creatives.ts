@@ -5,7 +5,7 @@ import { Config } from '../config.js'
 import { hasAnyStyleField, SlideshowStyleError, validateSlideshowStyle } from '../../lib/slideshow/style.js'
 import { brandKitSlug, KIT_SLUG_PATTERN } from '../../lib/slug.js'
 import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../api.js'
-import { readImageDimensions } from '../../lib/image-dimensions.js'
+import { readImageDimensions, type ImageInfo } from '../../lib/image-dimensions.js'
 import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/media-probe.js'
 import { composePosterSheet } from '../../lib/poster-sheet.js'
 import { slideshowSpecView } from '../../lib/slideshow/spec-transport.js'
@@ -602,6 +602,44 @@ async function uploadPoster(mediaId: string, localVideoPath: string, config: Con
   }
 }
 
+/** Where an image upload is minted and confirmed: the library's photo endpoints, or a revision's media endpoints. */
+export interface ImageUploadPaths {
+  mint: string
+  confirm: (mediaId: string) => string
+}
+
+/**
+ * The image upload every path shares: mint (declaring type, size and dimensions), PUT the bytes to the signed URL,
+ * confirm. Used for the library's photo endpoints and, by `render-slides`, for a revision's media endpoints.
+ */
+export async function mintPutConfirmImage(
+  bytes: Uint8Array,
+  info: ImageInfo,
+  fields: { label: string; source?: string; licence?: string; aiGenerated?: boolean },
+  paths: ImageUploadPaths,
+  config: Config
+): Promise<Record<string, unknown>> {
+  const mint = await apiPost<{ id: string; uploadUrl: string | null }>(
+    paths.mint,
+    {
+      label: fields.label,
+      contentType: info.contentType,
+      sizeBytes: bytes.byteLength,
+      width: info.width,
+      height: info.height,
+      source: fields.source ?? null,
+      licence: fields.licence ?? null,
+      aiGenerated: !!fields.aiGenerated,
+    },
+    config
+  )
+  if (!mint.uploadUrl) {
+    throw new Error('The mint response carried no uploadUrl — cannot upload bytes.')
+  }
+  await putBytes(mint.uploadUrl, info.contentType, bytes)
+  return apiPost<Record<string, unknown>>(paths.confirm(mint.id), { sizeBytes: bytes.byteLength }, config)
+}
+
 export interface UploadCreativeMediaParams {
   filePath?: string
   url?: string
@@ -637,27 +675,11 @@ export async function uploadCreativeMedia(params: UploadCreativeMediaParams, con
 
   const imageInfo = readImageDimensions(source.bytes)
   if (imageInfo) {
-    const mint = await apiPost<{ id: string; uploadUrl: string | null }>(
-      `${V2_PROJECT(config)}/marketing/photos`,
-      {
-        label,
-        contentType: imageInfo.contentType,
-        sizeBytes: source.bytes.byteLength,
-        width: imageInfo.width,
-        height: imageInfo.height,
-        source: params.source ?? null,
-        licence: params.licence ?? null,
-        aiGenerated: !!params.aiGenerated,
-      },
-      config
-    )
-    if (!mint.uploadUrl) {
-      throw new Error('The mint response carried no uploadUrl — cannot upload bytes.')
-    }
-    await putBytes(mint.uploadUrl, imageInfo.contentType, source.bytes)
-    const confirmed = await apiPost<Record<string, unknown>>(
-      `${V2_PROJECT(config)}/marketing/photos/${mint.id}/confirm`,
-      { sizeBytes: source.bytes.byteLength },
+    const confirmed = await mintPutConfirmImage(
+      source.bytes,
+      imageInfo,
+      { label, source: params.source, licence: params.licence, aiGenerated: params.aiGenerated },
+      { mint: `${V2_PROJECT(config)}/marketing/photos`, confirm: (id) => `${V2_PROJECT(config)}/marketing/photos/${id}/confirm` },
       config
     )
     return { media: trimMedia(confirmed), warnings }

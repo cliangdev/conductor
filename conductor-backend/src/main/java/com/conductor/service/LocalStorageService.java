@@ -99,6 +99,16 @@ public class LocalStorageService implements StorageService {
     }
 
     @Override
+    public java.util.OptionalLong objectSize(String gcsPath) {
+        Path target = resolveWithinStorageRoot(gcsPath);
+        try {
+            return Files.isRegularFile(target) ? java.util.OptionalLong.of(Files.size(target)) : java.util.OptionalLong.empty();
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException("Failed to stat local file '" + gcsPath + "'", e);
+        }
+    }
+
+    @Override
     public boolean isHealthy() {
         return Files.isWritable(storagePath) || tryCreateStorageDir();
     }
