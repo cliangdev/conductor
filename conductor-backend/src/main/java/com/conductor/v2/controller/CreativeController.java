@@ -446,7 +446,10 @@ public class CreativeController implements CreativesApi {
                 com.conductor.generated.v2.model.CreativeRevisionDetail.SourceEnum.fromValue(base.getSource().getValue()),
                 base.getTextDiff(), base.getCreatedAt(),
                 objectMapper.convertValue(r.getSpec(), new TypeReference<LinkedHashMap<String, Object>>() { }),
-                detail.changedSlides());
+                detail.changedSlides(),
+                detail.renderLists().stream().map(l -> new com.conductor.generated.v2.model.CreativeRevisionRenderList(
+                        com.conductor.generated.v2.model.CreativeRevisionRenderList.ListEnum.fromValue(l.list()),
+                        com.conductor.generated.v2.model.CreativeRevisionRenderList.RatioEnum.fromValue(l.ratio()))).toList());
         body.checks(base.getChecks()).authorUserId(base.getAuthorUserId()).postId(base.getPostId())
                 .reviewRound(base.getReviewRound()).renderId(base.getRenderId()).error(base.getError())
                 .baseVersion(base.getBaseVersion()).workflowRunId(base.getWorkflowRunId())

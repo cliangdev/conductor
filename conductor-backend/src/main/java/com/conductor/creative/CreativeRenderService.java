@@ -452,12 +452,12 @@ public class CreativeRenderService {
         }
 
         boolean local = carouselNeedsLocalRender(audio);
-        // Local: the slide images are linked now, exactly as the instant path does; the local job adds one
-        // 9x16 video frame (no index) and completes the render.
-        CreativeRender render = saveRender(projectId, creative, request, requestedBy,
-                local ? CreativeRender.STATE_RUNNING : CreativeRender.STATE_SUCCEEDED);
 
-        List<CreativeRenderFrame> frames = new ArrayList<>();
+        // Resolve every piece of media first: a refusal below must come before the first write, so a caller that
+        // catches it (an applied slide-text edit keeps its apply) never commits a half-written render.
+        record SlideFrame(String placementKey, int index, CreativePhoto media) {
+        }
+        List<SlideFrame> slideFrames = new ArrayList<>();
         for (String placementKey : placements) {
             List<String> mediaIds = slides.containsKey(placementKey) ? slides.get(placementKey) : slides.get("default");
             if (mediaIds == null) {
@@ -467,32 +467,48 @@ public class CreativeRenderService {
                 String mediaId = mediaIds.get(i);
                 CreativePhoto media = lookupMedia(projectId, mediaId)
                         .orElseThrow(() -> new BusinessException("No media with id " + mediaId + " in this project"));
-                // The frame links the slide's own object: nothing is copied.
-                String destPath = media.getGcsPath();
-
-                CreativeRenderFrame frame = new CreativeRenderFrame();
-                frame.setRenderId(render.getId());
-                frame.setCreativeId(creative.getId());
-                frame.setPlacementKey(placementKey);
-                frame.setSequenceIndex(i);
-                frame.setPlatform(registry.hasPlacement(placementKey) ? registry.placements().get(placementKey).platform() : null);
-                frame.setGcsPath(destPath);
-                frame.setContentType(media.getContentType());
-                frame.setWidth(media.getWidth() != null ? media.getWidth() : 0);
-                frame.setHeight(media.getHeight() != null ? media.getHeight() : 0);
-                frame.setSizeBytes(media.getSizeBytes());
-                frame.setWarnings(objectMapper.createArrayNode());
-                frameRepository.save(frame);
-                frames.add(frame);
+                slideFrames.add(new SlideFrame(placementKey, i, media));
             }
         }
+        List<MediaFacts> slideFacts = new ArrayList<>();
+        MediaFacts trackFacts = null;
         if (local) {
-            List<MediaFacts> slideFacts = new ArrayList<>();
             for (String id : videoList != null ? videoList : List.<String>of()) {
                 slideFacts.add(findMedia(projectId, id));
             }
+            trackFacts = findMedia(projectId, audio.getTrackId());
+        }
+
+        // Local: the slide images are linked now, exactly as the instant path does; the local job adds one
+        // 9x16 video frame (no index) and completes the render.
+        CreativeRender render = saveRender(projectId, creative, request, requestedBy,
+                local ? CreativeRender.STATE_RUNNING : CreativeRender.STATE_SUCCEEDED);
+
+        List<CreativeRenderFrame> frames = new ArrayList<>();
+        for (SlideFrame slide : slideFrames) {
+            CreativePhoto media = slide.media();
+            // The frame links the slide's own object: nothing is copied.
+            String destPath = media.getGcsPath();
+
+            CreativeRenderFrame frame = new CreativeRenderFrame();
+            frame.setRenderId(render.getId());
+            frame.setCreativeId(creative.getId());
+            frame.setPlacementKey(slide.placementKey());
+            frame.setSequenceIndex(slide.index());
+            frame.setPlatform(registry.hasPlacement(slide.placementKey())
+                    ? registry.placements().get(slide.placementKey()).platform() : null);
+            frame.setGcsPath(destPath);
+            frame.setContentType(media.getContentType());
+            frame.setWidth(media.getWidth() != null ? media.getWidth() : 0);
+            frame.setHeight(media.getHeight() != null ? media.getHeight() : 0);
+            frame.setSizeBytes(media.getSizeBytes());
+            frame.setWarnings(objectMapper.createArrayNode());
+            frameRepository.save(frame);
+            frames.add(frame);
+        }
+        if (local) {
             CreativeRenderSpec spec = specBuilder.buildCarousel(render.getId(), false, creative, kit, slideFacts,
-                    findMedia(projectId, audio.getTrackId()), audio, slideshow);
+                    trackFacts, audio, slideshow);
             return new CreateRenderResult(render, spec, frames);
         }
         return new CreateRenderResult(render, null, frames);
@@ -502,8 +518,8 @@ public class CreativeRenderService {
      * The instant CAROUSEL render of an applied slide-text edit (a slideshow without a music track): the slides
      * are linked as they stand and the render is SUCCEEDED when this returns. Deliberately not
      * {@code @Transactional}: it joins the caller's transaction, and a refusal ({@link CreativeValidationException},
-     * {@link BusinessException}) is thrown before anything is written, so the caller may catch it and keep the
-     * apply it has already made.
+     * {@link BusinessException}) is thrown before anything is written (every slide's media is resolved before the
+     * render row is saved), so the caller may catch it and keep the apply it has already made.
      */
     CreativeRender renderCarouselForRevision(String projectId, Creative creative, String requestedBy) {
         prefetchMedia(creative);

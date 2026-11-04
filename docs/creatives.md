@@ -441,7 +441,11 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   (also `RENDER_WORKFLOW_DISABLED` / `RENDER_WORKFLOW_NAME_TAKEN`, as for a Render click); 422
   `slideTextEditInvalid` with `field: edits[i]` for each edit the registry refuses (not an editable path, a missing
   path, not text, over 500 characters, no such slide) or `edits` for a count outside 1-50; 422
-  `slideTextEditNoop` when the candidate's diff is empty. The Creative row is locked for the request, and a
+  `slideTextEditNoop` when the candidate's diff is empty; 422 `slideTextEditUnsupportedRatio` (field `slides`)
+  when the Creative has any non-empty `1x1` list, or a list (a `default` one included) whose images are neither
+  9:16 nor 4:5 within 2%: the composer only makes 9x16 and 4x5, so such a Creative is refused up front ("Text
+  editing isn't available for Creatives with 1x1 slides yet. Re-compose it locally with `compose_slideshow`.")
+  rather than applying the new text while a list keeps the old. The Creative row is locked for the request, and a
   partial unique index (`uq_creative_revision_one_pending`, V175) lets at most one revision per Creative be
   PENDING, so two edits cannot race past the check.
   - **Dispatch.** `CreativeRenderDispatchService.dispatchSlideTextEdit` fires the same `conductor-creative-render`
@@ -453,8 +457,9 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
     `CreativeRenderWorkflowYamlTest` runs the script under `sh`). A seeded copy of the workflow from before this is
     refreshed in place by the next dispatch (`CreativeWorkflowProvisioner` compares the YAML).
   - **The job's calls.** `GET .../revisions/{revisionId}` returns the revision's fields plus `spec`,
-    `changedSlides` (distinct 1-based slides of the diff), `altTextFlags`, and the Creative's current `slides`
-    and `slideStyle`. `POST .../revisions/{revisionId}/complete` takes `{slideMedia: {"9x16": {"3": "<mediaId>"},
+    `changedSlides` (distinct 1-based slides of the diff), `renderLists` (`[{list, ratio}]`: the stored lists to
+    re-render, `list` a key of `slides` and `ratio` `9x16` or `4x5`; the backend's single decision, see Apply),
+    `altTextFlags`, and the Creative's current `slides` and `slideStyle`. `POST .../revisions/{revisionId}/complete` takes `{slideMedia: {"9x16": {"3": "<mediaId>"},
     "4x5": {...}}, checks: [{slide, ratio, rule, severity, message}]}` and `.../fail` takes `{error, checks?}`.
     Access is the revision's own run token (the run's event must name this Creative and the revision's
     `workflowRunId` must be the token's run, else 403) or a person: any member may read, ADMIN or CREATOR may
@@ -463,12 +468,13 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
     revision (checks stored, error "The re-rendered slides failed N checks: slide 3 9x16 safeZone (...)") and
     changes nothing else. (2) The Creative's `version` must still equal `baseVersion` and a spec must still be
     stored, else FAILED with "The Creative changed while the slides were rendering. Make the edit again." (3)
-    `slideMedia` must be exactly the changed slides for each ratio the Creative has a non-empty list for
-    (`9x16` and `4x5` keys; a `default` list counts as the closest ratio of its first image; `1x1`, or a
-    `default` list of unknown size, is not re-rendered and is recorded as a warning check
-    `{rule: "render", severity: "warning", message: "1x1 slides were not re-rendered"}`), and every media id must
-    be an uploaded, unblocked IMAGE of this project; otherwise FAILED with the reason. (4) The new media is marked
-    `checked` (the composer's own output). (5) The changed entries are replaced by index in every list that was
+    `slideMedia` must be exactly the changed slides for each distinct ratio of the `renderLists` (the same
+    classification the detail reported: a `9x16` / `4x5` key is that ratio; a `default` list is the ratio all its
+    images share within 2%, so a 720x1280 list is 9x16; a Creative that has since gained a `1x1` or off-shape
+    list FAILS the revision), and every media id must be an uploaded, unblocked IMAGE of this project; otherwise
+    FAILED with the reason. All of this, and the "slide past the end of a list" check, is decided before anything is
+    written, so a FAILED revision leaves the Creative and the uploaded media untouched. (4) The new media is
+    marked `checked` (the composer's own output). (5) The changed entries are replaced by index in every list that was
     re-rendered (the `default` list included), `slideshow_spec` becomes the revision's spec, and the version is
     bumped; `slide_style` is kept. (6) `alt_text_flags` is the list of slides whose alt text (lowercased,
     whitespace including newlines collapsed) contains an old text of that slide's diff (empty old texts are
@@ -526,7 +532,7 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   refuses a Creative that is not a CAROUSEL, one that already has a spec (without `force`), and a spec whose
   slide count differs from a stored list (not even `force` overrides that: the backend would answer
   `slideshowSpecSlideCount`). It then re-composes the spec into a temp folder at each ratio the Creative has a
-  list for (`9x16`, `4x5`; `default` or `1x1` by the shape of its images, 1080x1920 or 1080x1350, anything else
+  list for (`9x16`, `4x5`; `default` by the shape of its images within 2%, anything else, `1x1` included,
   is skipped with a note), downloads the stored slides and scores each pair. The score is the **lowest tile
   SSIM** over a 6x8 grid (ffmpeg's `ssim` filter, already resolved for media probing; no image library): a
   changed headline is a small area, so a whole-frame score would average it away (0.98 on a busy photo) while
@@ -550,13 +556,16 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   `failingChecks` as `slide N 9x16 rule: message`, plus a `warningCount`) and, while one renders,
   `pendingRevision` with a note. A 409 for a stale `version` reads "This Creative changed since you read it";
   any other 409 means an edit or render of that Creative is still running. A 422 is shown as
-  `[field] message` per violation (`slideshowSpecMissing`, `slideTextEditInvalid`, `slideTextEditNoop`).
+  `[field] message` per violation (`slideshowSpecMissing`, `slideTextEditInvalid`, `slideTextEditNoop`,
+  `slideTextEditUnsupportedRatio`). `get_creative` adds `textEditable: false` and a `textEditNote` beside
+  `textFields` when the Creative's `slides` has a `1x1` list.
   - **The job.** The render Workflow runs `conductor creative render-slides <revisionId> --creative <id>
     [--workflow-run-id <id>]` in the render image with the run's scoped key (`CONDUCTOR_API_KEY`,
     `CONDUCTOR_API_URL`, `CONDUCTOR_PROJECT_ID`), or on a person's machine with their own `conductor login`.
-    It `GET`s `.../revisions/{revisionId}` (the edited spec, `changedSlides`, the Creative's current `slides`
-    lists and `slideStyle`), re-renders the changed slides at every `9x16` / `4x5` list the Creative has (a
-    `default` list counts as the ratio of its images; a `1x1` list is left as it is), downloads only the images
+    It `GET`s `.../revisions/{revisionId}` (the edited spec, `changedSlides`, `renderLists`, the Creative's
+    current `slides` lists and `slideStyle`), re-renders the changed slides at exactly the lists and ratios
+    `renderLists` names (it never infers a ratio from pixel sizes, and an older backend that sends none is an
+    error), downloads only the images
     those slides use, and composes **only the changed slides**: a spec holding just them, with the Creative's
     `slideStyle` as the inline style and the bundled fonts, so the pictures are those a full compose makes
     (`slideshow-subspec-equivalence.test.ts` pins that slide k alone is byte-identical to slide k of the whole

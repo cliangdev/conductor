@@ -6,3 +6,4 @@ export { composeSlideshow, mapSpecImages, overImageContrast, resolveSpecImages, 
 export * from './text-fields.js'
 export * from './spec-transport.js'
 export * from './revision-view.js'
+export * from './ratio.js'

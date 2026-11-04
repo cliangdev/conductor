@@ -28,7 +28,7 @@ import { uploadCreativeMedia, type UploadCreativeMediaParams, type UploadCreativ
 const creativesBase = (config: Config): string => `/api/v2/projects/${config.projectId}/marketing/creatives`
 const photoUrl = (config: Config, id: string): string => `/api/v2/projects/${config.projectId}/marketing/photos/${id}`
 
-/** The ratios a text edit re-renders. Any other list (1x1) is left as it is; the backend notes that on /complete. */
+/** The ratios a text edit re-renders. The backend decides which stored lists get which (`renderLists`). */
 const RENDERED: SlideRatio[] = ['9x16', '4x5']
 
 export interface RevisionDetail {
@@ -42,6 +42,8 @@ export interface RevisionDetail {
   changedSlides: number[]
   /** The Creative's current stored slides: placement key to media ids, one per slide. */
   slides: Record<string, string[] | null>
+  /** The stored lists to re-render and the ratio each is made at: the backend's decision, never inferred here. */
+  renderLists?: Array<{ list: string; ratio: SlideRatio }>
   slideStyle?: Record<string, unknown> | null
   /** The Creative's display id (12a), when the backend sends it; used only to label the new media. */
   displayId?: string
@@ -77,13 +79,6 @@ export type RenderSlidesResult =
   | { ok: false; outcome: 'checks-failed'; revisionId: string; error: string; checks: SlideshowCheck[] }
   | { ok: false; outcome: 'not-pending'; revisionId: string; error: string }
   | { ok: false; outcome: 'rejected'; revisionId: string; error: string }
-
-/** The ratio of a stored image by its size: 1080x1920 is 9x16, 1080x1350 is 4x5; anything else is not re-rendered. */
-export function ratioOfSize(width: number | null | undefined, height: number | null | undefined): SlideRatio | undefined {
-  if (width === 1080 && height === 1920) return '9x16'
-  if (width === 1080 && height === 1350) return '4x5'
-  return undefined
-}
 
 async function downloadMedia(media: MediaInfo, into: string): Promise<string> {
   if (!media.url) throw new Error(`Media ${media.id} has no download url.`)
@@ -130,21 +125,18 @@ export async function renderSlides(params: RenderSlidesParams, config: Config, o
     const bad = changed.find((n) => !Number.isInteger(n) || n < 1 || n > (spec?.slides?.length ?? 0))
     if (bad !== undefined) throw new Error(`The revision names slide ${bad}, which its spec does not have.`)
 
-    // Which stored lists are re-rendered, grouped by ratio. A `default` list counts as the ratio of its images;
-    // an explicit 9x16 / 4x5 list is preferred as the source of the slide being replaced (for its provenance).
-    const lists = Object.entries(detail.slides ?? {}).filter((e): e is [string, string[]] => Array.isArray(e[1]) && e[1].length > 0)
+    // Which stored lists are re-rendered, grouped by ratio: exactly the backend's `renderLists` (it classifies a
+    // `default` list by its images' shape, with a tolerance, and refused the edit if any list is not 9x16 / 4x5).
+    // `replaced` is the list whose slide is being replaced at each ratio, the source of the new media's provenance;
+    // a list named for its ratio is preferred over a `default` one.
+    if (!Array.isArray(detail.renderLists)) throw new Error('The backend did not say which slide lists to re-render (renderLists); it needs updating.')
     const replaced = new Map<SlideRatio, string[]>()
-    for (const [placement, ids] of [...lists].sort(([a], [b]) => Number(a === 'default') - Number(b === 'default'))) {
-      let ratio: SlideRatio | undefined = (RENDERED as string[]).includes(placement) ? (placement as SlideRatio) : undefined
-      if (!ratio && placement === 'default') {
-        const first = await mediaInfo(ids[0]!)
-        ratio = ratioOfSize(first.width, first.height)
-      }
-      if (!ratio) {
-        log(`${placement} list is not 1080x1920 or 1080x1350; left as it is`)
-        continue
-      }
-      if (ids.length < Math.max(...changed)) throw new Error(`The ${placement} list has ${ids.length} slides but the edit changes slide ${Math.max(...changed)}.`)
+    const ordered = [...detail.renderLists].sort((a, b) => Number(a.list === 'default') - Number(b.list === 'default'))
+    for (const { list, ratio } of ordered) {
+      if (!(RENDERED as string[]).includes(ratio)) throw new Error(`The backend asked for ${list} to be re-rendered at ${ratio}, which this job cannot make.`)
+      const ids = detail.slides?.[list]
+      if (!Array.isArray(ids) || ids.length === 0) throw new Error(`The revision names the ${list} list, which the Creative does not have.`)
+      if (ids.length < Math.max(...changed)) throw new Error(`The ${list} list has ${ids.length} slides but the edit changes slide ${Math.max(...changed)}.`)
       if (!replaced.has(ratio)) replaced.set(ratio, ids)
     }
     const ratios = RENDERED.filter((r) => replaced.has(r))

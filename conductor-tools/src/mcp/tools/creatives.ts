@@ -360,7 +360,7 @@ export async function getCreative(params: { creativeId: string }, config: Config
 
   const family = (performance['family'] as Array<Record<string, unknown>> | undefined) ?? []
   // A stored slideshow spec: shown while small, with the editable text fields listed beside it (not the spec twice).
-  const specView = slideshowSpecView(creative['slideshowSpec'])
+  const specView = slideshowSpecView(creative['slideshowSpec'], creative['slides'] as Record<string, unknown> | null | undefined)
   return {
     ...creative,
     ...(specView ?? {}),

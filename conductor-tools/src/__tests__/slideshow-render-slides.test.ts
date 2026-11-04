@@ -10,7 +10,7 @@ vi.mock('../mcp/tools/creatives.js', () => ({ uploadCreativeMedia: vi.fn() }))
 
 import { apiGet, apiPost } from '../mcp/api.js'
 import { uploadCreativeMedia } from '../mcp/tools/creatives.js'
-import { ratioOfSize, renderSlides } from '../mcp/tools/slideshow-render.js'
+import { renderSlides } from '../mcp/tools/slideshow-render.js'
 
 const config: Config = { apiKey: 'run-key', projectId: 'proj-1', projectName: '', email: '', apiUrl: 'https://api.test' }
 const mocked = <T>(fn: T) => fn as unknown as ReturnType<typeof vi.fn>
@@ -36,6 +36,10 @@ function detail(over: Record<string, unknown> = {}) {
       ],
     },
     slides: { '9x16': [ID(11), ID(12), ID(13)], '4x5': [ID(21), ID(22), ID(23)] },
+    renderLists: [
+      { list: '9x16', ratio: '9x16' },
+      { list: '4x5', ratio: '4x5' },
+    ],
     slideStyle: { boxBg: '#ffffff', accent: '#ff2d55' },
     ...over,
   }
@@ -46,6 +50,8 @@ const media: Record<string, Record<string, unknown>> = {
   [ID(2)]: { id: ID(2), url: 'https://cdn/b' },
   [ID(11)]: { id: ID(11), width: 1080, height: 1920, source: 'src 11', licence: 'Own work', aiGenerated: false },
   [ID(13)]: { id: ID(13), width: 1080, height: 1920, source: 'src 13', licence: 'Licensed', aiGenerated: true },
+  [ID(31)]: { id: ID(31), width: 720, height: 1280, source: 'src 31', licence: 'Own work', aiGenerated: false },
+  [ID(33)]: { id: ID(33), width: 720, height: 1280, source: 'src 33', licence: 'Own work', aiGenerated: false },
   [ID(21)]: { id: ID(21), width: 1080, height: 1350, source: 'src 21', licence: 'Own work', aiGenerated: false },
   [ID(23)]: { id: ID(23), width: 1080, height: 1350, source: 'src 23', licence: 'Licensed', aiGenerated: true },
 }
@@ -81,15 +87,6 @@ beforeEach(() => {
 
 const run = (o: Record<string, unknown> = {}) => renderSlides({ revisionId: REV, creativeId: CREATIVE }, config, { compose: compose as never, download: download as never, ...o })
 const posts = (suffix: string) => mocked(apiPost).mock.calls.filter((c) => (c[0] as string).endsWith(suffix))
-
-describe('ratioOfSize', () => {
-  it('names the two composed sizes only', () => {
-    expect(ratioOfSize(1080, 1920)).toBe('9x16')
-    expect(ratioOfSize(1080, 1350)).toBe('4x5')
-    expect(ratioOfSize(1080, 1080)).toBeUndefined()
-    expect(ratioOfSize(null, undefined)).toBeUndefined()
-  })
-})
 
 describe('renderSlides', () => {
   it('composes only the changed slides at both ratios, uploads them with the replaced media provenance and completes', async () => {
@@ -135,8 +132,17 @@ describe('renderSlides', () => {
     expect(posts('/fail')).toHaveLength(0)
   })
 
-  it('treats a default list as the ratio of its images and renders it once per ratio', async () => {
-    current = detail({ slides: { default: [ID(11), ID(12), ID(13)] } })
+  it('renders a default list at the ratio the backend names, whatever size its images are', async () => {
+    // 720x1280 is not 1080x1920: a job that read pixel sizes would refuse it; the backend's renderLists decides.
+    current = detail({ slides: { default: [ID(31), ID(32), ID(33)] }, renderLists: [{ list: 'default', ratio: '9x16' }] })
+    const r = await run()
+    expect(r).toMatchObject({ ok: true, ratios: ['9x16'], uploaded: 2 })
+    expect(mocked(uploadCreativeMedia).mock.calls[0]![0]).toMatchObject({ source: 'src 31' })
+    expect(mocked(apiGet).mock.calls.map((c) => c[0] as string).filter((u) => u.includes(`/photos/${ID(32)}`))).toHaveLength(0)
+  })
+
+  it('renders a default list once per ratio', async () => {
+    current = detail({ slides: { default: [ID(11), ID(12), ID(13)] }, renderLists: [{ list: 'default', ratio: '9x16' }] })
     const r = await run()
     expect(r).toMatchObject({ ok: true, ratios: ['9x16'], uploaded: 2 })
     expect(calls[0]!.options.ratios).toEqual(['9x16'])
@@ -145,22 +151,41 @@ describe('renderSlides', () => {
   })
 
   it('adds the ratio of a default list next to an explicit 9x16 list', async () => {
-    current = detail({ slides: { '9x16': [ID(11), ID(12), ID(13)], default: [ID(21), ID(22), ID(23)] } })
-    // the default list's images are 1080x1350, so it is the 4x5 list
+    current = detail({
+      slides: { '9x16': [ID(11), ID(12), ID(13)], default: [ID(21), ID(22), ID(23)] },
+      renderLists: [{ list: '9x16', ratio: '9x16' }, { list: 'default', ratio: '4x5' }],
+    })
+    // the backend says the default list is the 4x5 list
     const r = await run()
     expect(r).toMatchObject({ ok: true, ratios: ['9x16', '4x5'] })
     // an explicit list is where provenance comes from
-    current = detail({ slides: { default: [ID(13), ID(12), ID(13)], '9x16': [ID(11), ID(12), ID(13)] } })
+    current = detail({
+      slides: { default: [ID(13), ID(12), ID(13)], '9x16': [ID(11), ID(12), ID(13)] },
+      renderLists: [{ list: 'default', ratio: '9x16' }, { list: '9x16', ratio: '9x16' }],
+    })
     mocked(uploadCreativeMedia).mockClear()
     await run()
     expect((mocked(uploadCreativeMedia).mock.calls[0]![0] as Record<string, unknown>)['source']).toBe('src 11')
   })
 
-  it('leaves a 1x1 list alone and fails when nothing else is left to render', async () => {
-    current = detail({ slides: { '1x1': [ID(11), ID(12), ID(13)] } })
+  it('fails when the backend names nothing to render (the Creative cannot be text-edited)', async () => {
+    current = detail({ slides: { '1x1': [ID(11), ID(12), ID(13)] }, renderLists: [] })
     await expect(run()).rejects.toThrow(/no 9x16 or 4x5 slides/)
     expect(compose).not.toHaveBeenCalled()
     expect(posts('/fail')[0]![1]).toMatchObject({ error: expect.stringMatching(/no 9x16 or 4x5/) })
+  })
+
+  it('does not guess the lists from pixel sizes when an older backend sends no renderLists', async () => {
+    current = detail({ renderLists: undefined })
+    await expect(run()).rejects.toThrow(/did not say which slide lists to re-render/)
+    expect(compose).not.toHaveBeenCalled()
+    expect(mocked(uploadCreativeMedia)).not.toHaveBeenCalled()
+  })
+
+  it('refuses a ratio it cannot compose instead of skipping the list', async () => {
+    current = detail({ slides: { '1x1': [ID(11), ID(12), ID(13)] }, renderLists: [{ list: '1x1', ratio: '1x1' }] })
+    await expect(run()).rejects.toThrow(/cannot make/)
+    expect(compose).not.toHaveBeenCalled()
   })
 
   it('posts /fail with the checks, mapped to real slide numbers, and uploads nothing on an error check', async () => {
