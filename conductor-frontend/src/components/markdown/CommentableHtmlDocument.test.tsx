@@ -87,6 +87,12 @@ describe('CommentableHtmlDocument', () => {
     expect(srcdoc).toContain('<h1>Report</h1>')
   })
 
+  it('puts the toolbar action at the right end of its toolbar', () => {
+    render(<CommentableHtmlDocument {...baseProps} toolbarAction={<button type="button">Full view</button>} />)
+    const hint = screen.getByText('Select text in the document to comment on it.')
+    expect(hint.parentElement).toContainElement(screen.getByRole('button', { name: 'Full view' }))
+  })
+
   it('ignores messages that do not come from its frame', () => {
     const { container } = render(<CommentableHtmlDocument {...baseProps} />)
     fromFrame(window, bridge(selection)) // some other window

@@ -11,6 +11,8 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.ColumnTransformer;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -34,6 +36,11 @@ public class Invite {
     @Column(name = "role", nullable = false, columnDefinition = "member_role")
     @ColumnTransformer(write = "?::member_role")
     private MemberRole role;
+
+    /** The role set, stored as {@code varchar[]}; read and written through {@link MemberRoles}. */
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "roles", columnDefinition = "varchar(16)[]")
+    private String[] roles = new String[0];
 
     @Column(name = "token", length = 255, nullable = false, unique = true)
     private String token;
@@ -71,8 +78,19 @@ public class Invite {
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
 
+    /** The primary role (legacy column). */
     public MemberRole getRole() { return role; }
-    public void setRole(MemberRole role) { this.role = role; }
+
+    /** Convenience for an invite carrying exactly one role. */
+    public void setRole(MemberRole role) { setRoles(role == null ? java.util.Set.of() : java.util.Set.of(role)); }
+
+    public java.util.Set<MemberRole> getRoles() { return MemberRoles.fromStored(roles); }
+
+    /** Replaces the role set and keeps the legacy {@code role} column on the primary role. */
+    public void setRoles(java.util.Set<MemberRole> newRoles) {
+        this.roles = MemberRoles.toStored(newRoles);
+        this.role = MemberRoles.primary(newRoles);
+    }
 
     public String getToken() { return token; }
     public void setToken(String token) { this.token = token; }

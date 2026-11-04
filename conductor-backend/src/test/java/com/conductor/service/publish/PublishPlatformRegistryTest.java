@@ -137,7 +137,7 @@ class PublishPlatformRegistryTest {
         assertThat(facebook.minLead()).isEqualTo(Duration.ofMinutes(10));
         assertThat(facebook.maxLead()).isEqualTo(Duration.ofDays(75));
         assertThat(registry.require("youtube").minLead()).isEqualTo(Duration.ZERO);
-        assertThat(registry.require("youtube").maxLead()).isNull();
+        assertThat(registry.require("youtube").maxLead()).isEqualTo(Duration.ofHours(24));
         assertThat(registry.require("instagram").minLead()).isEqualTo(Duration.ofMinutes(1));
         assertThat(registry.require("tiktok").minLead()).isEqualTo(Duration.ofMinutes(1));
         assertThat(facebook.minLead(PublishLane.MANUAL)).isEqualTo(Duration.ZERO);
@@ -152,7 +152,9 @@ class PublishPlatformRegistryTest {
         // A reel has a shorter ceiling on Facebook's side than a feed post.
         assertThat(facebook.windowFor(PostFormat.REEL).accepts(now, now.plusDays(29))).isTrue();
         assertThat(facebook.windowFor(PostFormat.REEL).tooFarOut(now, now.plusDays(30))).isTrue();
-        assertThat(registry.require("youtube").window().accepts(now, now.plusYears(5))).isTrue();
+        // YouTube schedules any distance ahead, but the upload waits until the day before (upload cap).
+        assertThat(registry.require("youtube").window().accepts(now, now.plusHours(24))).isTrue();
+        assertThat(registry.require("youtube").window().tooFarOut(now, now.plusHours(25))).isTrue();
         assertThat(window.accepts(now, null)).isFalse();
     }
 

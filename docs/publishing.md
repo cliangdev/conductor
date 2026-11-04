@@ -42,7 +42,9 @@ unvalidated and then sit forever, because the native hand-off refused it. Edges 
 while the review was pending, say) the approval still stands, the Post stays put, `blockedReason` names
 the problem, and the Publishing channel gets an `AUTO_TRANSITION_BLOCKED` notification; fix the Post and
 take the edge — nobody has to approve again. Approving over the API works with a **user** API key held by
-a REVIEWER or ADMIN who is assigned to the item; a
+an assigned member holding the Reviewer role, or an Admin; a member can hold Editor and Reviewer together,
+and self-approval counts unless the transition sets `requireIndependentReviewer` (see
+[workflows](workflows.md#review-gate-requireindependentreviewer)). A
 project-scoped key is refused with a 403 rather than a 500.
 
 **Ask before you move.** `GET …/work-items/{id}/publish-preflight` runs the same validators without
@@ -115,6 +117,30 @@ Everything after approval is bound to what was approved. `reviews.bundle_hash` i
 caption, targets and uploaded assets — deliberately not the schedule — so changing the caption, adding or
 dropping a destination, or swapping media reverts the Post to review and revokes anything already handed
 to a platform; moving the schedule touches none of it.
+
+**One internal exception: a Creative's slide-text edit.** When someone fixes the text on a slideshow Creative,
+every Post that uses it is re-pointed at the re-rendered slides even though media is frozen (`CreativeEditPropagator`;
+see [Creatives](creatives.md)). This is not a loophole in the freeze, it reopens the review: the move passes an
+internal-only `FreezeBypass` that no request can set (the public attach endpoint and the target editor still
+refuse a frozen Post), and the same transaction sends the Post back the way any bundle edit would. Approved and
+Scheduled Posts are unscheduled (a native hand-off is revoked first) and go back to the review status with a new
+round; an In Review Post stays and opens a new round; a Draft or Changes Requested Post is simply updated; a
+Published Post is never touched, and neither is a partly published one (any destination already `PUBLISHED`,
+whatever the Post's status reads, such as Failed after one account went live): what is live cannot be taken back. The new assets change the bundle hash, so no earlier approval can stand over the
+new slides. Each move is recorded in `post_content_change` (text diff, who, status and round before and after) and
+read back on the Post page.
+
+**Reviewer fix.** A reviewer of a Post that is In Review may fix a typo in the slideshow's text without sending the
+Post back. That edit stays in the same review round: the status and round do not move, and the change is logged on
+that round with `reviewRoundBefore == reviewRoundAfter`. Approvals already given in the round were bound to the old
+bundle hash, so they stop counting (the review list shows them as not current) and the gate ignores them; the
+reviewer's next approval binds the new hash and counts. Other Posts that use the same Creative are not "in this
+reviewer's round": they get the normal treatment above, a new round or back to review. Because of that, a reviewer
+who is not a project editor (ADMIN or CREATOR) may only make the fix when no other Post using the Creative would go
+back to review (Approved or Scheduled): otherwise the save is refused with `slideTextEditNeedsEditor` ("Ask an
+editor to make this change"), and the preview (`affected-posts`) says so in `blockedReason`. An editor is not
+restricted. The fix needs the caller to be one of the Post's reviewers; an editor who is not one makes an ordinary
+edit (a new round).
 
 **Re-timing a Scheduled Post moves it in place.** A Post already in its scheduled status is live on its
 destinations — a native-lane target may already be `HANDED_OFF` to Facebook or YouTube. Changing its
@@ -193,6 +219,11 @@ Each target has a **lane**, which decides who does the posting:
 | `APP_MANAGED` | Conductor | Instagram, TikTok | Conductor holds the post and calls the platform when it comes due |
 | `MANUAL` | A person | all four | Conductor calls nothing; the target is flagged for a human |
 
+A native hand-off waits until the fire time is within the platform's maximum lead: 75 days for a Facebook
+feed post, 29 for a reel, and **24 hours for YouTube**. YouTube accepts any `publishAt`, but the hand-off
+*is* the video upload, and YouTube caps how many videos a channel may upload in a rolling 24 hours
+(`uploadLimitExceeded`, a 400). Uploading the day before keeps a batch scheduled weeks ahead within that cap.
+
 Automated targets are derived from the project's ACTIVE connections — connect an account and it
 appears, disconnect it and it stops being offered. A manual target is derived from nothing and is
 always offered, one per platform.
@@ -211,7 +242,7 @@ An agent drives the whole pipeline with four tools, in the shape Blotato made fa
 `create_post` (caption, media from paths or URLs, destinations by account name and `format` — feed,
 reel or story — fire time, reviewers — one call) → `get_post_status` (status, every destination's
 outcome and format, the gate's blockers, review and consent state) → `submit_review` (as an assigned
-REVIEWER's or ADMIN's user key; approval schedules the Post). `submit_post`, `list_posts`, `list_assets`,
+user key of an assigned member with the Reviewer role (or an Admin); approval schedules the Post). `submit_post`, `list_posts`, `list_assets`,
 `set_publish_targets`, `upload_asset`, `retry_failed_publish_targets` and `complete_manual_publish`
 cover the rest. `format` defaults to `feed` and is omitted from a response when it is feed, to keep
 the common case's output small. Giving a story target several media and no `assetIds` resolves to the
@@ -507,8 +538,17 @@ to `PublishTaskArmer`, which creates one task per target for its next step:
 | `PENDING`, APP_MANAGED or MANUAL | `DISPATCH` | the fire time |
 | `PENDING`, NATIVE | `HANDOFF` | fire time minus the platform's maximum lead (now, if already inside it) |
 | `HANDED_OFF` | `CONFIRM` | the fire time, then every minute while the platform does not report it live |
+| `PUBLISHED`, no link yet | `PERMALINK` | 2, 5, 10, 15, 15, 15 minutes after publishing (about an hour), then it stops |
 
-Each task is an HTTP request to `POST /internal/v1/publish-targets/{id}/{dispatch|handoff|confirm}`
+A `PERMALINK` task covers a platform that reports a post live before it has a link. TikTok's `status/fetch`
+returns `PUBLISH_COMPLETE` with no post id until moderation finishes, and only for public posts. The target
+stays `PUBLISHED`; the publish id and post kind are kept on the row's `resume_checkpoint`
+(`PermalinkFollowUp`), and each task re-reads the status. When the id appears the link goes through
+`PublishOutcomeService.recordSuccess`, which fills `permalink` on an already-published row and records the
+destination Asset (and so the Post's external link). TikTok photo posts live at `/@handle/photo/{id}`,
+videos at `/@handle/video/{id}`.
+
+Each task is an HTTP request to `POST /internal/v1/publish-targets/{id}/{dispatch|handoff|confirm|permalink}`
 with a target-bound bearer token (`RunTokenService#generatePublishTaskToken`) and the target's fire time
 as a snapshot in the URL. `PublishTaskHandler` receives it and runs **the same conditional claim the
 poller runs** — `PENDING → PUBLISHING` in one `UPDATE … WHERE state = 'PENDING'` — so a duplicate

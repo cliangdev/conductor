@@ -104,6 +104,20 @@ public class PublishTaskArmer {
         }
     }
 
+    /**
+     * Delays before each PERMALINK follow-up for a target that published without a link: about an hour in
+     * all, after which the chain ends (a post that is not public may never get an id).
+     */
+    public static final List<Duration> PERMALINK_BACKOFF = List.of(Duration.ofMinutes(2), Duration.ofMinutes(5),
+            Duration.ofMinutes(10), Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(15));
+
+    /** Starts the PERMALINK chain for a target that published without a link. Safe inside a transaction. */
+    public void armPermalinkFollowUp(PostPublishTarget target) {
+        OffsetDateTime now = OffsetDateTime.now();
+        scheduler.scheduleAfterCommit(PublishTask.permalink(target.getId(),
+                target.getFireTime() == null ? now : target.getFireTime(), now.plus(PERMALINK_BACKOFF.get(0)), 0));
+    }
+
     /** The task {@code target} needs next, if any. */
     public Optional<PublishTask> taskFor(PostPublishTarget target, OffsetDateTime now) {
         OffsetDateTime fireTime = target.getFireTime();

@@ -21,7 +21,8 @@ import { getBrandKit } from './creatives.js'
 /**
  * compose_slideshow: builds native-looking organic slideshow slides (TikTok / Reels style) on this machine and
  * returns the PNG paths plus layout checks. Nothing is sent to Conductor; the paths go to
- * preview_creative_draft({kind: "CAROUSEL", slidePaths}) next.
+ * preview_creative_draft({kind: "CAROUSEL", slidePaths}) next, which also picks up the spec.json written beside them
+ * (preview_creative_draft keeps it, commit_creative_draft stores it with the Creative).
  */
 
 export const SLIDESHOWS_SUBDIR = join('.conductor', 'slideshows')
@@ -168,7 +169,8 @@ export async function composeSlideshowTool(
       provenance: result.provenance,
       style: result.style,
       nextStep: result.passed
-        ? 'Call preview_creative_draft({kind: "CAROUSEL", slidePaths, slideStyle: style, caption, slideAltText}) to get the contact sheet and readiness, show it to the person, and call commit_creative_draft only after they approve. Warnings are advisory: fix them if cheap.' +
+        ? 'Call preview_creative_draft({kind: "CAROUSEL", slidePaths, slideStyle: style, caption, slideAltText}) to get the contact sheet and readiness, show it to the person, and call commit_creative_draft only after they approve. Warnings are advisory: fix them if cheap. ' +
+          'The spec.json beside the slides is kept with the draft and stored on the Creative at commit (its images uploaded), which makes the slide text editable later.' +
           provenanceNote(result.provenance)
         : 'Fix the spec for every check with severity "error" and call compose_slideshow again BEFORE showing anything to the person.',
       ...(image ? { image } : {}),

@@ -8,6 +8,7 @@ import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { WorkItemDescriptionCard } from '@/components/workitems/WorkItemDescriptionCard'
 import type { DestinationsState } from '@/components/marketing/destinations/model'
 import type { WorkflowView } from '@/types/workItem'
+import type { PostContentChange } from './contentChanges'
 import { PostMediaSection } from './PostMediaSection'
 
 export interface PostContentSectionProps {
@@ -23,6 +24,9 @@ export interface PostContentSectionProps {
   canEdit: boolean
   onCaptionSaved: (description: string) => void
   onAssetsChanged: () => void | Promise<void>
+  contentChange?: PostContentChange | null
+  reviewerFix?: boolean
+  onTextChanged?: () => void | Promise<void>
 }
 
 export function PostContentSection({
@@ -37,6 +41,9 @@ export function PostContentSection({
   canEdit,
   onCaptionSaved,
   onAssetsChanged,
+  contentChange,
+  reviewerFix,
+  onTextChanged,
 }: PostContentSectionProps) {
   return (
     <Card data-testid="post-content">
@@ -65,6 +72,9 @@ export function PostContentSection({
           canEdit={canEdit}
           destinations={destinations}
           onAssetsChanged={onAssetsChanged}
+          contentChange={contentChange}
+          reviewerFix={reviewerFix}
+          onTextChanged={onTextChanged}
         />
       </div>
     </Card>

@@ -16,6 +16,7 @@ import com.conductor.service.ActionInvocationService;
 import com.conductor.service.AssetService;
 import com.conductor.service.AssetUploadPolicy;
 import com.conductor.service.StorageService;
+import com.conductor.service.publish.PermalinkFollowUp;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.cloud.ReadChannel;
@@ -329,7 +330,7 @@ public class TikTokPublishAction {
         }
 
         PublishStatus status = awaitPublish(accessToken, checkpoint.publishId());
-        return ActionResult.ok(publishOutput(checkpoint.publishId(), status, ctx));
+        return ActionResult.ok(publishOutput(checkpoint.publishId(), status, ctx, TikTokPermalinks.KIND_VIDEO));
     }
 
     /**
@@ -426,7 +427,8 @@ public class TikTokPublishAction {
         }
     }
 
-    private Map<String, Object> publishOutput(String publishId, PublishStatus status, ConnectionContext ctx) {
+    private Map<String, Object> publishOutput(String publishId, PublishStatus status, ConnectionContext ctx,
+                                              String kind) {
         Map<String, Object> output = new LinkedHashMap<>();
         output.put(OUTPUT_PUBLISH_ID, publishId);
         if (status.sentToInbox()) {
@@ -441,30 +443,30 @@ public class TikTokPublishAction {
         if (status.postId() != null && !status.postId().isBlank()) {
             output.put(OUTPUT_POST_ID, status.postId());
         }
-        String permalink = permalink(status, ctx);
+        String permalink = permalink(status, ctx, kind);
         if (permalink != null) {
             output.put(OUTPUT_PERMALINK, permalink);
+        } else if (status.complete() && (status.postId() == null || status.postId().isBlank())) {
+            // Live, but TikTok has not issued the post's id yet (it does so after moderation, and only for
+            // public posts). The target still publishes; a follow-up asks again with this publish_id.
+            output.put(PermalinkFollowUp.OUTPUT_PENDING_KEY, Boolean.TRUE);
+            output.put(PermalinkFollowUp.OUTPUT_PUBLISH_ID_KEY, publishId);
+            output.put(PermalinkFollowUp.OUTPUT_KIND_KEY, kind);
         }
         return output;
     }
 
     /**
      * TikTok's own {@code share_url} when it gives one; otherwise the canonical
-     * {@code /@handle/video/{id}} URL built from the creator handle cached on the connection at connect
+     * {@code /@handle/video/{id}} (photo posts: {@code /photo/{id}}) URL built from the creator handle cached on the connection at connect
      * time. Never a guess: with neither the handle nor a share URL, no permalink is reported at all.
      */
-    private String permalink(PublishStatus status, ConnectionContext ctx) {
+    private String permalink(PublishStatus status, ConnectionContext ctx, String kind) {
         if (status.shareUrl() != null && !status.shareUrl().isBlank()) {
             return status.shareUrl();
         }
-        if (status.postId() == null || status.postId().isBlank()) {
-            return null;
-        }
         String username = ctx == null ? null : text(ctx.configValue(TikTokConnector.CONFIG_CREATOR_USERNAME));
-        if (username == null) {
-            return null;
-        }
-        return "https://www.tiktok.com/@" + username + "/video/" + status.postId();
+        return TikTokPermalinks.url(username, kind, status.postId());
     }
 
     /**
@@ -521,7 +523,7 @@ public class TikTokPublishAction {
         }
 
         PublishStatus status = awaitPublish(accessToken, publishId);
-        return ActionResult.ok(publishOutput(publishId, status, ctx));
+        return ActionResult.ok(publishOutput(publishId, status, ctx, TikTokPermalinks.KIND_PHOTO));
     }
 
     /**

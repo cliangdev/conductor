@@ -316,9 +316,25 @@ public class ActionInvocationService {
 
     // ---- background retry sweep (ad-hoc invocations only — see ActionInvocationRepository#findRetryable) ----
 
+    /**
+     * Re-drives ad-hoc invocations the inline path is not working on.
+     *
+     * <p><b>Eligibility rule.</b> A row's "last activity" is {@code COALESCE(last_attempted_at,
+     * created_at)}. FAILED rows are retried once idle for {@link #SWEEP_IDLE_MINUTES} (plus the
+     * exponential backoff in {@link #isReadyForRetry}). PENDING rows mean "some thread owns this right
+     * now" — an inline {@link #invoke} (which may legitimately run for minutes: token refresh, then up to
+     * {@link #MAX_INLINE_ATTEMPTS} attempts of the connector's own timeout) or an earlier sweep — so
+     * they are only retried once abandoned: idle longer than {@link #abandonedAfter(ActionConnector)}.
+     * Before invoking, {@link #claimForRetryInNewTx} atomically takes the row (compare-and-set on
+     * status/attempts/idle time), so two sweeps on two instances, or a sweep racing an inline run,
+     * cannot both run the connector; the loser skips.
+     */
     public void retryFailedInvocations() {
-        OffsetDateTime minimumCutoff = OffsetDateTime.now().minusMinutes(2);
+        OffsetDateTime minimumCutoff = OffsetDateTime.now().minusMinutes(SWEEP_IDLE_MINUTES);
         for (ActionInvocation invocation : repository.findRetryable(minimumCutoff)) {
+            if (invocation.getStatus() == ActionInvocationStatus.PENDING && !isAbandoned(invocation)) {
+                continue; // a live owner (inline run or earlier sweep) may still be working on it
+            }
             if (invocation.getAttempts() >= MAX_ATTEMPTS) {
                 log.warn("Marking action invocation {} as DEAD after {} attempts", invocation.getId(), invocation.getAttempts());
                 self.persistDeadInNewTx(invocation.getId(), invocation.getErrorMessage());
@@ -331,16 +347,54 @@ public class ActionInvocationService {
         }
     }
 
+    /** Idle time before a FAILED row (or a PENDING row's first look) is considered by the sweep. */
+    private static final long SWEEP_IDLE_MINUTES = 2;
+    /** Slack on top of the worst-case inline run (token refresh, DB hops) before PENDING counts as abandoned. */
+    private static final long ABANDONED_MARGIN_SECONDS = 120;
+
+    /**
+     * How long a PENDING row may sit with no activity before it is presumed abandoned (owner crashed):
+     * the worst case between two activity stamps of a live owner is one connector timeout plus backoff
+     * plus token refresh, so {@code MAX_INLINE_ATTEMPTS * timeout + margin} is safely above it.
+     */
+    Duration abandonedAfter(ActionConnector connector) {
+        long seconds = MAX_INLINE_ATTEMPTS * resolveTimeoutSeconds(connector)
+                + (INLINE_BACKOFF_MILLIS * MAX_INLINE_ATTEMPTS) / 1000 + ABANDONED_MARGIN_SECONDS;
+        return Duration.ofSeconds(seconds);
+    }
+
+    private boolean isAbandoned(ActionInvocation invocation) {
+        ActionConnector connector = connectionService.getById(invocation.getConnectionId())
+                .flatMap(c -> connectorRegistry.findAction(c.getConnectorId())).orElse(null);
+        OffsetDateTime lastActivity = invocation.getLastAttemptedAt() != null
+                ? invocation.getLastAttemptedAt() : invocation.getCreatedAt();
+        return lastActivity == null
+                || lastActivity.isBefore(OffsetDateTime.now().minus(abandonedAfter(connector)));
+    }
+
+    /** Atomic claim for a sweep retry; false means someone else owns the row (or it moved on). */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean claimForRetryInNewTx(ActionInvocation read, Duration idleRequired) {
+        OffsetDateTime now = OffsetDateTime.now();
+        return repository.claimForRetry(read.getId(), read.getStatus(), read.getAttempts(),
+                now.minus(idleRequired), now) == 1;
+    }
+
     private void retryOnce(ActionInvocation invocation) {
         Optional<Connection> conn = connectionService.getById(invocation.getConnectionId());
         Optional<ActionConnector> connector = conn.flatMap(c -> connectorRegistry.findAction(c.getConnectorId()));
+        Duration idleRequired = invocation.getStatus() == ActionInvocationStatus.PENDING
+                ? abandonedAfter(connector.orElse(null))
+                : Duration.ofMinutes(SWEEP_IDLE_MINUTES);
+        if (!self.claimForRetryInNewTx(invocation, idleRequired)) {
+            log.info("Action invocation {} is owned elsewhere or not yet stale — sweep skips it", invocation.getId());
+            return;
+        }
         if (conn.isEmpty() || connector.isEmpty()) {
-            self.recordAttemptInNewTx(invocation.getId());
             self.persistFailureInNewTx(invocation.getId(), "Connector or connection no longer available");
             return;
         }
 
-        self.recordAttemptInNewTx(invocation.getId());
         ConnectionContext ctx;
         try {
             ctx = oAuthFlowService.withFreshToken(conn.get(), connectionService.toContext(conn.get()));

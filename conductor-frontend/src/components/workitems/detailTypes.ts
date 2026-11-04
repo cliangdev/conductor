@@ -21,6 +21,8 @@ export interface DetailIssue extends Omit<Issue, 'createdAt' | 'updatedAt'> {
   fields?: Record<string, unknown> | null
   /** Calendar date (yyyy-MM-dd) this item is due, or null. */
   dueOn?: string | null
+  /** The review round a Post is in (rises when its bundle changes in review). Absent from an older server. */
+  currentReviewRound?: number | null
 }
 
 export interface DetailDocument {

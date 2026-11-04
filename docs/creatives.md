@@ -39,7 +39,8 @@ verdicts and AI disclosure (a local file's sidecar provenance counts in the prev
 Approving a draft is also the photo check: `commit_creative_draft({photoChecked: true})` records that the person
 saw no burned-in text, logo or claim in the files that commit uploads (a library photo keeps its own verdict).
 A Creative then leaves DRAFT with `update_creative({state: "READY"})`, which is refused while any other blocking
-readiness item fails.
+readiness item fails. Attaching a DRAFT Creative to a Post does the same promotion itself when the checklist
+(bar its own "still a draft" item) has no blocking failure; see [Attach](#attach--use-in-post).
 
 Photos (`creative_photo`) carry provenance (source, licence, AI disclosure), a checked/blocked verdict and
 per-placement focal points, and go through the same mint → signed PUT → confirm upload shape as a Post's
@@ -134,7 +135,8 @@ last step. Two MCP tools (`conductor-tools/src/mcp/tools/creative-drafts.ts`) ca
 - **`commit_creative_draft`** runs only after the person approved the image: it uploads each local file
   (the `upload_creative_media` code path), swaps `local:<key>` for the returned ids, calls
   `create_creative` (or `update_creative` at the current `version` when the draft has a
-  `baseCreativeId`), then runs the full local render. It refuses a draft that is already committed.
+  `baseCreativeId`), then runs the full local render. It refuses a draft that is already committed. A CAROUSEL
+  draft also carries its slideshow spec to the Creative; see [Organic slideshows](#organic-slideshows).
 
 The local render uses `conductor-creative/job/file-transport.mjs`, a fourth transport beside the API one:
 `run()` is unchanged. `getSpec()` rewrites each `local:<key>` to a loopback URL served by a small
@@ -231,6 +233,12 @@ selection and pushes it through `PublishTargetService#replaceSelection` — the 
 own edit in the UI goes through — so the approval gate reverts and the bundle hash changes exactly as if a
 human had picked that media by hand. Sequence frames (a carousel's beats) attach in the order they
 rendered, keyed by `sequenceIndex`; they are never re-sorted, because order is content.
+
+**Attach promotes a ready DRAFT.** A Creative on a Post is in use, so a `DRAFT` that passes readiness
+(`CreativeService#promoteOnAttach`, the same checklist as `readiness`) becomes `READY` in the attach's
+transaction. One with a blocking failure stays `DRAFT` and is still attached; `READY` and `ARCHIVED` are left alone.
+The response's `creativeState` is the state afterwards and `stateNote` is null or one sentence naming the first
+blocking issue.
 
 **Alt text reaches Instagram.** Instagram is the only platform here with an `altText` option (sent as
 `alt_text`, single feed images only). When attach gives an Instagram target exactly one still image, and the
@@ -398,15 +406,341 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   `messages`, `grid`, `stack` (with labelled before/after), `tier`, `week`, `receipt` and `placard`; up
   to 35 slides. Text is native box or stroke text placed by `y` (percent of the 9:16 frame). The field
   reference is `conductor-tools/src/lib/slideshow/spec.ts`.
-- **Output:** PNG slides at 1080x1920 (`9x16`) and 1080x1350 (`4x5`), written under
+- **Output:** JPEG slides (quality 92; Instagram feed images and TikTok photo posts refuse PNG, so a committed
+  slide must not be one) at 1080x1920 (`9x16`) and 1080x1350 (`4x5`), written under
   `.conductor/slideshows/`, plus layout `checks` (spill, safe zones, text size) and `passed`. Nothing is
   sent to Conductor.
 - **Then a CAROUSEL.** The returned `slidePaths` go to `preview_creative_draft({kind: "CAROUSEL",
   slidePaths, caption, slideAltText})`, and after approval `commit_creative_draft`. The result is an
-  ordinary [CAROUSEL Creative](#finished-images-carousel); the backend never sees the spec, only the
-  finished images.
+  ordinary [CAROUSEL Creative](#finished-images-carousel) that can also keep the spec (below).
+- **The stored spec.** A CAROUSEL may carry `slideshowSpec` (`creative.slideshow_spec`, jsonb, nullable):
+  the spec its slides were composed from, in the same shape as above except that every image field
+  (`bg`, `shot`, `photos[].src`, `days[].img`) is `media:<id>`, the id of an IMAGE in the project's media
+  library, and a `resolvedStyle` key is stripped (the resolved style stays in `slideStyle`). Create, PATCH and
+  draft-spec accept it and `CreativeResponse` returns it. Validation answers 422 with a `ruleId`:
+  `slideshowSpecKind` (not a CAROUSEL), `slideshowSpecInvalid` (structure: `id` 1-80 characters, 1-35
+  slide objects, editable text at most 500 characters, finite numbers, a 256 KB cap; the CLI validates
+  fully before sending), `slideshowSpecMedia` (an image field is not `media:<id>` of an image in this
+  project; all refs are resolved in one query) and `slideshowSpecSlideCount` (every non-empty list in
+  `slides` must have as many entries as the spec has slides). Like `slideStyle`, it is cleared by a PATCH
+  that changes the slides (ids or order, any placement) without sending a spec, by changing the kind away
+  from CAROUSEL, and by an explicit `null` (or `{}`); resending identical slides keeps it, and a draft over
+  `baseCreativeId` inherits it on the same terms. A variant copies it.
+- **Revisions.** Setting or replacing the spec writes a `creative_revision` row in the same transaction as the
+  save: source `IMPORT` when the Creative had no spec, `COMMIT` when it replaced one or the spec was set at
+  create. A revision snapshots the spec, slides, alt text and style, the Creative `version` after the save,
+  the author, and a `text_diff` (`[{slide, path, old, new}]`, the editable strings that changed over the
+  slides both specs have; empty for `IMPORT` and for a create). Resending an identical spec, and clearing,
+  write none. `GET /api/v2/projects/{id}/marketing/creatives/{creativeId}/revisions` returns
+  `{revisions: [...]}`, newest first, at most 50, to any project member (no spec or slides in the list; read
+  the spec from the Creative). Which strings are editable is `conductor-creative/slideshow-text-fields.json`
+  (patterns such as `texts[].t` and `rows[].items[]`, plus the 500-character limit), mirrored by
+  `SlideshowTextFields` in the backend, which lists, applies and diffs them (parity test
+  `SlideshowTextFieldsParityTest`).
+- **Editing slide text (backend).** `POST /api/v2/projects/{id}/marketing/creatives/{creativeId}/slide-text-edits`
+  (ADMIN or CREATOR; or, with `postId`, a reviewer of that Post, see [the reviewer fix](#reviewer-fix)) takes
+  `{version, edits: [{slide, path, text}], postId?}` (1-50 edits, `path` a concrete registry
+  path such as `texts[0].t`) and answers 202 `{revision, renderRun}`. Nothing on the Creative changes yet: the
+  edit is a PENDING `creative_revision` holding the candidate spec (`spec`), the text diff, the Creative
+  `version` it was made against (`baseVersion`), `source` `EDITOR` (a signed-in session) or `MCP` (a user API
+  key), and the id of the render run (`workflowRunId`). Checks, in order: 404 unknown Creative or non-member
+  (403 for a REVIEWER); 422 `slideshowSpecMissing` (not a CAROUSEL, or no stored spec); 409 `version` is not the
+  Creative's ("This Creative changed since you read it"); 409 `SLIDE_EDIT_ACTIVE` while a revision is PENDING
+  (body `revisionId`), or 409 `RENDER_RUN_ACTIVE` while any render run of the Creative is queued or running
+  (also `RENDER_WORKFLOW_DISABLED` / `RENDER_WORKFLOW_NAME_TAKEN`, as for a Render click); 422
+  `slideTextEditInvalid` with `field: edits[i]` for each edit the registry refuses (not an editable path, a missing
+  path, not text, over 500 characters, no such slide) or `edits` for a count outside 1-50; 422
+  `slideTextEditNoop` when the candidate's diff is empty; 422 `slideTextEditUnsupportedRatio` (field `slides`)
+  when the Creative has any non-empty `1x1` list, or a list (a `default` one included) whose images are neither
+  9:16 nor 4:5 within 2%: the composer only makes 9x16 and 4x5, so such a Creative is refused up front ("Text
+  editing isn't available for Creatives with 1x1 slides yet. Re-compose it locally with `compose_slideshow`.")
+  rather than applying the new text while a list keeps the old. The Creative row is locked for the request, and a
+  partial unique index (`uq_creative_revision_one_pending`, V175) lets at most one revision per Creative be
+  PENDING, so two edits cannot race past the check.
+  - **Dispatch.** `CreativeRenderDispatchService.dispatchSlideTextEdit` fires the same `conductor-creative-render`
+    workflow on the same runtime (the designated Cloud Run target when its render job is READY, else the
+    daemon) with `type: "creative.slideshow-text"` and `revisionId` in the event. Both jobs set
+    `REVISION_ID: ${{ event.revisionId }}`; a missing event field interpolates to the empty string, so the
+    one-line script runs `conductor creative render-slides` when it is set and `conductor creative render`
+    otherwise (see [the workflow](workflows.md#creatives-rendering-from-the-web-app-on-a-self-hosted-daemon);
+    `CreativeRenderWorkflowYamlTest` runs the script under `sh`). A seeded copy of the workflow from before this is
+    refreshed in place by the next dispatch (`CreativeWorkflowProvisioner` compares the YAML).
+  - **The job's calls.** `GET .../revisions/{revisionId}` returns the revision's fields plus `spec`,
+    `changedSlides` (distinct 1-based slides of the diff), `renderLists` (`[{list, ratio}]`: the stored lists to
+    re-render, `list` a key of `slides` and `ratio` `9x16` or `4x5`; the backend's single decision, see Apply),
+    `altTextFlags`, and the Creative's current `slides` and `slideStyle`. `POST .../revisions/{revisionId}/complete` takes `{slideMedia: {"9x16": {"3": "<mediaId>"},
+    "4x5": {...}}, checks: [{slide, ratio, rule, severity, message}]}` and `.../fail` takes `{error, checks?}`.
+    Access is the revision's own run token (the run's event must name this Creative and the revision's
+    `workflowRunId` must be the token's run, else 403) or a person: any member may read, ADMIN or CREATOR may
+    complete or fail, so an editor can run the job with their own key. A revision that is not PENDING is a 409.
+  - **Apply (`complete`, one transaction, Creative row locked).** (1) A check with severity `error` FAILS the
+    revision (checks stored, error "The re-rendered slides failed N checks: slide 3 9x16 safeZone (...)") and
+    changes nothing else. (2) The Creative's `version` must still equal `baseVersion` and a spec must still be
+    stored, else FAILED with "The Creative changed while the slides were rendering. Make the edit again." (3)
+    `slideMedia` must be exactly the changed slides for each distinct ratio of the `renderLists` (the same
+    classification the detail reported: a `9x16` / `4x5` key is that ratio; a `default` list is the ratio all its
+    images share within 2%, so a 720x1280 list is 9x16; a Creative that has since gained a `1x1` or off-shape
+    list FAILS the revision), and every media id must be an uploaded, unblocked IMAGE of this project; otherwise
+    FAILED with the reason. All of this, and the "slide past the end of a list" check, is decided before anything is
+    written, so a FAILED revision leaves the Creative and the uploaded media untouched. (4) The new media is
+    marked `checked` (the composer's own output). (5) The changed entries are replaced by index in every list that was
+    re-rendered (the `default` list included), `slideshow_spec` becomes the revision's spec, and the version is
+    bumped; `slide_style` is kept. (6) `alt_text_flags` is the list of slides whose alt text (lowercased,
+    whitespace including newlines collapsed) contains an old text of that slide's diff (empty old texts are
+    ignored). (7) The revision becomes APPLIED with snapshots of `slides`, `slideAltText` and `slideStyle`, the
+    new `creativeVersion`, `appliedAt` and the checks. A FAILED outcome is still a 200 with the revision; only a
+    malformed body (an unknown ratio, a slide that is not a positive number) is a 422 `slideMediaInvalid`, which
+    leaves the revision PENDING.
+  - **The render and the event.** Without a music track the apply renders instantly (`requestCarouselRender`
+    semantics: the render is SUCCEEDED in the same transaction and linked to the revision as `renderId`). If that
+    render is refused (for instance the caption was removed meanwhile) the apply stands and the revision's
+    `error` says so. With a track the video is rebuilt by a second render run, queued after the apply commits
+    (the revision's own run is still active and is ignored by the one-active-run guard; a refusal is noted in
+    `error`, the slides stay applied); the job's render then follows the normal render endpoints, and when it
+    SUCCEEDS `completeRender` links the oldest unlinked applied edit of that Creative version. Either way a
+    `CreativeRevisionRendered(projectId, creativeId, revisionId, renderId)` Spring event is published once,
+    **after the transaction that finished the render has committed**, and never when the render fails or the
+    transaction rolls back. Listen with a plain `@EventListener` (it runs on the request thread, no transaction
+    bound and **no pooled connection held**). The listener is `CreativeEditPropagator`, below.
+  - **One connection at a time.** The pool is small in prod, and Spring runs `afterCommit` callbacks while the
+    committed transaction's connection is still bound, so a follow-up that opened its own transaction there held two.
+    `complete`, `fail` and `completeRender` are therefore not `@Transactional` themselves: they run their body in a
+    transaction through `AfterTransaction.execute` and collect the follow-ups (releasing the unstarted run, queueing
+    the video render, publishing the event so the propagator runs), which start only once that transaction has ended
+    and released its connection, each in a short transaction of its own. They run on the request thread, before the
+    response: no `@Async` and no timers, because prod is scale-to-zero and work left for after the response may never
+    be scheduled.
+  - **Stale revisions.** A PENDING revision whose run ended without completing it (FAILED, CANCELLED,
+    `LOCAL_PICKUP_TIMEOUT`, no longer there, or finished without reporting) can never finish, so it reads as
+    FAILED with the run's reason and is stored so in its own transaction. This happens on the revision's `GET`,
+    the revision list, a single-Creative read and a new edit; a PENDING revision with no run is abandoned after
+    35 minutes.
+  - **What a reader sees.** `CreativeResponse` of a single-Creative read carries `pendingRevision`
+    (`{id, status, createdAt, workflowRunId}` or null) and `latestRevision` (`{id, revisionNo, status, source,
+    error, checks, createdAt}` of the newest revision, a FAILED one with its `error` and `checks`); the list read
+    leaves both null to stay one query per kind. The readiness checklist gains a non-blocking `altTextStale`
+    item for a CAROUSEL once an applied edit flagged a slide: not ok ("slide 2 alt text still quotes the old
+    text") while that slide's alt text still contains the replaced text, ok once it does not.
+- **Editing slide text in the browser.** A CAROUSEL with a stored spec shows **Edit text** under the slide on
+  screen (ADMIN or CREATOR; disabled with a visible reason while an edit renders or the form has unsaved
+  changes). It opens the slide's fields from the registry under plain names (Text 1, Callout, Note item 3,
+  Bubble 2), one labelled textarea each; line breaks are kept. Beside them a live preview shows the slide at
+  9:16 and 4:5 (the ratios the Creative has). The preview is the composer's own page: the slideshow modules
+  of `conductor-tools/src/lib/slideshow/` (`spec`, `style`, `css`, `html` with the in-page measuring script,
+  `text-fields`) have no Node imports, so `conductor-tools/scripts/sync-slideshow-core.mjs` (run by
+  `npm run build`) compiles them to plain ESM and `.d.ts` in `conductor-creative/slideshow/` and copies the
+  bundled fonts to `conductor-creative/slideshow/fonts/`. Both are committed, and
+  `sync-slideshow-core.test.ts` fails when the committed copy differs from a fresh generation and checks the
+  generated builder returns the same HTML as the TypeScript one. The web app imports
+  `@cliangdev/creative-render/slideshow/*.js` and `scripts/copy-slideshow-fonts.mjs` (run by `predev` and
+  `prebuild`) copies the fonts to `public/slideshow-fonts/` (gitignored), the preview's `assetBase`. The
+  preview swaps each `media:<id>` for the media's display URL, resolves the style as the render job does
+  (the spec's own `style`, then the Creative's `slideStyle`), and shows the page's checks by rule once it has
+  measured itself (safe zone, spill, words per line, text size, font, image, contrast; errors first). A
+  **Show safe zones** switch overlays the 220 / 430 / 140 px bands on 9:16. The checks are advisory; the render
+  job's are the ones that count, and an error there refuses the save.
+  **Save** is two steps. **Review and save** lists the changed fields, the Posts that use the Creative with
+  what happens to each (`GET .../affected-posts`: back to review, new review round, updated, not changed), and
+  where the render runs (`GET .../render-availability`: the runtime target, or the self-hosted daemon; with no
+  target the page says to keep the daemon running or to run `conductor creative render-slides <revision id>`).
+  **Save and re-render** POSTs the edits with the Creative's `version`, shows "Re-rendering…" and asks the
+  Creative every few seconds until `pendingRevision` clears. Applied: the page reloads the slides. Failed: the
+  error and the failing checks by slide, ratio and rule, with the edit still in the form. A 409 (stale version,
+  an edit or render already running) and a 422 show the API's own message and leave the edit as it was. If an
+  edit is already rendering when the page opens, the editor opens on that state and the page shows a note.
+  **Text history** (Creative page) lists the revisions newest first: source (web editor, reviewer fix, agent,
+  committed), author, time, status, and rows "Slide 3 · Text 1: old → new" with the changed words marked (a
+  small word-level diff, no dependency). A long revision shows its first three changes. **Alt text**: after an
+  applied edit, a slide whose alt text still quotes the replaced words (the revision's `altTextFlags`, while the
+  readiness item `altTextStale` is not ok) shows "Quotes the old text — update" under its alt input, which
+  clears as the text stops quoting them.
+  On a Post, the edit's effect shows as **Changed since last review** (Content section: the Creative, who,
+  when, the changed words) while the newest change opened the Post's current review round or is a reviewer's fix
+  inside it, and as entries in the Activity tab (`GET .../work-items/{id}/content-changes`). A reviewer of an In
+  Review Post sees **Fix text** beside "Open Creative" for a slideshow Creative with a spec; it opens the same
+  editor with `postId`, whose confirmation says the fix stays in this round and names the other Posts that go
+  back to review.
+- **Spec through preview and commit (CLI).** `compose_slideshow` writes `spec.json` beside the slides (the
+  input spec plus `resolvedStyle`). `preview_creative_draft` keeps it with a CAROUSEL draft: pass
+  `slideshowSpecPath`, or leave it out and the `spec.json` in the folder of `slidePaths` is used when it is the
+  one that composed them (its `id` prefixes the slide file names). It is validated with `validateSlideshowSpec`
+  and its slide count must equal every `slides` list; a mismatch, or an auto-detected spec that cannot be read,
+  warns in the preview's `note` and drops the spec, never blocking the slides (an explicit
+  `slideshowSpecPath` that is unusable is an error). The draft records `slideshowSpecPath` and its own copy of
+  the spec (`draft.json`: images as absolute paths, `resolvedStyle` stripped), so editing the file afterwards
+  cannot change what is committed. The spec is not sent to `draft-spec` (that call knows uploaded media, not
+  local files). `commit_creative_draft` uploads each distinct input image once (`bg`, `shot`,
+  `photos[].src`, `days[].img`; deduped by absolute path, each file's `.provenance.json` sidecar winning over
+  the call's `source`/`licence`/`aiGenerated`, and never marked `photoChecked`), rewrites the references to
+  `media:<id>`, and sends `slideshowSpec` in the create or update body; uploaded spec images are remembered in
+  `draft.json` (`specImages`) so a retry never re-uploads. A draft over `baseCreativeId` whose new slides come
+  with no spec warns that committing will clear the base's spec. `get_creative` returns `slideshowSpec` and a
+  compact `textFields` list (`[{slide, path, text}]`, slides from 1, from `listTextFields`); above 8000 JSON
+  characters the spec is summarised and `textFields` carries the text.
+- **Text-field registry (TS).** `conductor-tools/src/lib/slideshow/text-fields.ts` holds the patterns from
+  `slideshow-text-fields.json` and `listTextFields(spec)`, `applyTextEdits(spec, edits)` (throws on a slide
+  out of range, a path outside the registry, an absent path, a non-string target or text over the maximum;
+  never adds or removes entries) and `diffText(a, b)` (the `text_diff` shape, over the slides both have). A
+  parity test asserts the constants equal the JSON, as the backend's does.
+- **Backfill: `attach_slideshow_spec` / `conductor creative attach-spec <creativeId> <specPath> [--force]`.**
+  For a CAROUSEL committed before specs were kept. `specPath` is a source spec (relative image paths resolve
+  against its folder) or a compose_slideshow output `spec.json` (absolute paths and `resolvedStyle`). It
+  refuses a Creative that is not a CAROUSEL, one that already has a spec (without `force`), and a spec whose
+  slide count differs from a stored list (not even `force` overrides that: the backend would answer
+  `slideshowSpecSlideCount`). It then re-composes the spec into a temp folder at each ratio the Creative has a
+  list for (`9x16`, `4x5`; `default` by the shape of its images within 2%, anything else, `1x1` included,
+  is skipped with a note), downloads the stored slides and scores each pair. The score is the **lowest tile
+  SSIM** over a 6x8 grid (ffmpeg's `ssim` filter, already resolved for media probing; no image library): a
+  changed headline is a small area, so a whole-frame score would average it away (0.98 on a busy photo) while
+  the tiles under the text drop to 0.77-0.83. Measured with this composer: the same spec re-composed scores
+  1.0; a PNG re-saved as a JPEG 0.99 (0.96 on a worst-case synthetic test card); a changed box colour 0.999
+  (luminance-based, so not caught). Any slide below **0.95** refuses the attach and names the slides, unless
+  `force`, since it means these slides are not what this spec makes (edited since, or composed before the
+  bundled fonts below). Otherwise it uploads the spec's images as commit does, and PATCHes `slideshowSpec` (plus
+  `slideStyle` from `resolvedStyle` when the Creative has none) at the Creative's current `version`. The result
+  reports what was attached, the compared count, the lowest similarities and any skipped lists; verify with
+  `get_creative`.
+- **Editing slide text: `update_creative_slide_text` / `conductor creative render-slides`.** For a CAROUSEL
+  with a stored spec. `update_creative_slide_text({creativeId, edits: [{slide, field, text}], version?})` takes
+  `field` from a `get_creative` `textFields[].path` (slides from 1; it replaces an existing string and never adds
+  or removes one), reads the Creative's `version` when it is not given, and POSTs
+  `.../creatives/{id}/slide-text-edits` (body `{version, edits: [{slide, path, text}]}`). It returns at once
+  (dispatch-status): `revisionId`, `status` PENDING, `changedSlides`, the `diff` (at most 20 entries, long text
+  clipped to 120 characters), `render` (`runtime` `target` or `self-hosted`, the run's id and status) and a
+  `nextStep`. Nothing on the Creative changes until the render passes; follow it with `get_creative`, which now
+  carries `latestRevision` (`id`, `revisionNo`, `status`, `source`, `error`, `createdAt`, and for a failure
+  `failingChecks` as `slide N 9x16 rule: message`, plus a `warningCount`) and, while one renders,
+  `pendingRevision` with a note. A 409 for a stale `version` reads "This Creative changed since you read it";
+  any other 409 means an edit or render of that Creative is still running. A 422 is shown as
+  `[field] message` per violation (`slideshowSpecMissing`, `slideTextEditInvalid`, `slideTextEditNoop`,
+  `slideTextEditUnsupportedRatio`). `get_creative` adds `textEditable: false` and a `textEditNote` beside
+  `textFields` when the Creative's `slides` has a `1x1` list.
+  - **Run token, JPEG.** The run-scoped key may not call the photo endpoints, so the job reads and writes Media
+    only through the revision: `GET .../revisions/{id}` carries `media` (signed download urls and provenance of the
+    changed slides' images and of the slides being replaced), and `POST .../revisions/{id}/media` +
+    `.../media/{mediaId}/confirm` mint and confirm the new images. A mint takes images only, on a PENDING
+    revision, at most one per changed slide and ratio (409 past that), credited to the revision's author, who must
+    still be an editor (else the revision is FAILED with that reason); it marks the image as the revision's
+    (`creative_photo.minted_for_revision_id`, V177). Confirm accepts only such an image, and only once its bytes are
+    in storage (the size comes from storage, not the client); a run token's `complete` accepts only such images.
+    Whatever a revision minted that did not end up in the Creative (a failed or stale revision, a rejected
+    `complete`, an extra upload) is deleted. Slides are composed as JPEG at quality 92 (the composer's default),
+    like every stored frame, and the job refuses to upload anything that is not `image/jpeg`.
+    `CreativeRevisionRunTokenApiTest` drives all of it with a real run token.
+  - **The job.** The render Workflow runs `conductor creative render-slides <revisionId> --creative <id>
+    [--workflow-run-id <id>]` in the render image with the run's scoped key (`CONDUCTOR_API_KEY`,
+    `CONDUCTOR_API_URL`, `CONDUCTOR_PROJECT_ID`), or on a person's machine with their own `conductor login`.
+    It `GET`s `.../revisions/{revisionId}` (the edited spec, `changedSlides`, `renderLists`, the Creative's
+    current `slides` lists and `slideStyle`), re-renders the changed slides at exactly the lists and ratios
+    `renderLists` names (it never infers a ratio from pixel sizes, and an older backend that sends none is an
+    error), downloads only the images
+    those slides use, and composes **only the changed slides**: a spec holding just them, with the Creative's
+    `slideStyle` as the inline style and the bundled fonts, so the pictures are those a full compose makes
+    (`slideshow-subspec-equivalence.test.ts` pins that slide k alone is byte-identical to slide k of the whole
+    spec; a `grain` slide's feTurbulence texture can differ by one level in a few pixels from run to run of the
+    browser itself, also between two full composes). Checks come back numbered 1..n of the sub-spec and are mapped
+    to the real slide numbers; the composer's "no provenance sidecar" warning is dropped (it is about committing
+    local files). Any `error` check posts `.../revisions/{id}/fail` with `{error, checks}` and uploads nothing.
+    Otherwise each slide is uploaded as media labelled `<displayId> slide <n> <ratio> r<revisionNo>` with the
+    source, licence and `aiGenerated` copied from the media it replaces, and `.../complete` gets
+    `{slideMedia: {ratio: {slide: mediaId}}, checks}`; the backend then applies it or rejects it (for instance
+    because the Creative changed meanwhile). A crash posts `/fail` with the message, then exits 1; a failed layout
+    check also exits 1 (with the failing checks printed); a revision that is no longer PENDING is reported and
+    left alone.
+  - **No runtime target or daemon?** An edit with no Cloud Run runtime target and no `conductor start` daemon
+    waits for a runner that never comes. Run the same job yourself from any folder, after `conductor login`:
+    `conductor creative render-slides <revisionId> --creative <id>` (the `revisionId` is in
+    `update_creative_slide_text`'s result and in `get_creative`'s `pendingRevision` / `latestRevision`). It needs
+    a browser (Chrome, Edge or Playwright's Chromium) and signed-in access to the project's media; the result is
+    identical to the Workflow's.
+- **Edits reach the Posts (`CreativeEditPropagator`).** When the event fires, every Post that holds a frame of
+  any render of the Creative is moved onto the new slides, each in its own transaction (one Post failing is
+  logged and rolls back only itself; a Post that already holds the new render's frames, or already has a change
+  row for the revision, is skipped, so a second event changes nothing). What happens to a Post follows its status
+  on its own Workflow's statechart, never a hardcoded list (`CreativeEditImpact`):
+
+  | Post is | Outcome | What the propagator does |
+  | --- | --- | --- |
+  | Approved or Scheduled (anything past the review gate, not terminal; Failed counts), with no destination yet published | `back-to-review` | `PublishBundleGuard.revertForBundleEdit`: revokes a native hand-off first, back to the review status, a new review round, announced as a status change |
+  | In review | `new-round` | stays in review, `currentReviewRound + 1`: approvals cast so far stop counting |
+  | Before review (Draft, Changes Requested) | `updated` | re-pointed at the new slides, nothing else moves |
+  | Published (terminal), **partly published** (any destination `PUBLISHED`, whatever the Post's status: say Failed after one account went live), or Scheduled on a Workflow with no review gate | `unchanged` | not touched, no record: what is live cannot be taken back, and swapping the media of the rest would make the Post disagree with it |
+
+  *Re-pointing* (`CreativeAttachService.reattach`, package-private) swaps each old Creative asset on the Post for
+  the new render's frame in the same slot (placement, slide index, image or video) in place in every
+  destination's selection, so which destinations carry the Creative, their order, `carouselAs`, caption
+  overrides, alt text and every other option are exactly as they were; destinations that inherit stay inheriting.
+  It goes through `PublishTargetService.replaceSelection` like any edit, so the bundle hash changes, and then
+  deletes the replaced assets (the frames and stored objects belong to the Creative). A Post whose old asset has
+  no counterpart in the new render fails whole (rolled back) rather than being left half moved. It records a
+  `post_content_change` row (V176): revision, source, actor (the revision's author), status and review round
+  before and after, and a copy of the text diff.
+
+  **The freeze exception is internal only.** A Post under review or later refuses media and destination edits,
+  and still does through the public attach endpoint and `replaceSelection`. Only this path passes
+  `FreezeBypass.CREATIVE_EDIT_PROPAGATION`, an enum argument of `AssetService.createAllFromStoredObjects` and
+  `PublishTargetService.replaceSelection` that no controller maps from a request. It waives only the frozen
+  refusal; the revert and the new round are the propagator's own, so a frozen Post never changes silently.
+- **Reviewer fix {#reviewer-fix}.** `slide-text-edits` accepts `postId`. Without it, editors only (as before). With
+  it, the caller may be an editor or a reviewer of that Post (a `work_item_reviewers` row, whatever the project
+  role, even REVIEWER); anyone else is 403, a non-member 404, an unknown Post 404. The Post must use this Creative
+  (a frame of it on the Post) else 422 `slideTextEditPostMismatch` (field `postId`), and be in its Workflow's
+  review status else 409 `slideTextEditPostNotInReview` (body `postId`). The revision gets `source: REVIEWER` when
+  the caller is a reviewer of the Post (an editor who is not one keeps `EDITOR` / `MCP`), with `postId` and the
+  Post's current `reviewRound` recorded. When the revision's render lands, that one Post, if it is still in review
+  in the same round, is **not** bumped: status and round stay, and its change row has the same round before and
+  after. Every other Post using the Creative gets the table's normal treatment, a Post whose round has moved on
+  meanwhile too. Approvals already recorded in that round stay in the table but stop counting by the existing
+  hash rule: a review's `bundle_hash` is the hash of the bundle it was cast against, the gate and the review list
+  compare it to the Post's current hash (caption, targets, selections, uploaded assets with ids and paths), and
+  the re-pointed assets changed it. The reviewer's next approval stamps the new hash in the same round and
+  counts. `PostContentChange.source` is the revision's source for every Post it reaches, so the card on another
+  Post reads "edited by a reviewer", with a new round.
+
+  **Limits of a reviewer fix.** A caller counts as a reviewer of the Post only through a `work_item_reviewers` row
+  (`CreativeEditImpacts.isReviewerOf`, the one test `edit` and `affected-posts` both use). A reviewer who is **not a
+  project editor** (not ADMIN or CREATOR) may fix the text only when no OTHER Post using the Creative would go
+  `back-to-review`: sending an approved or scheduled Post back is an editor's call, not a side effect of a review
+  comment. Otherwise the save answers 409 `slideTextEditNeedsEditor` (body `code` and `ruleId`), message "Post
+  RE-12 and 1 more using this Creative are approved or scheduled. Ask an editor to make this change." An editor
+  who passes `postId` is unaffected. The same text is `blockedReason` on `affected-posts`, so the save dialog can
+  disable Save before anyone tries.
+- **Reads.** Any project member may read all three; each is a fixed number of queries (the Posts using a Creative
+  are one query over `assets` joined to `creative_render_frame`, not a walk of every frame).
+  - `GET /api/v2/projects/{id}/work-items/{workItemId}/content-changes` answers `{changes: [...]}`, newest first,
+    at most 50: `id, creativeId, creativeDisplayId, revisionId, revisionNo, source, actorUserId, actorName,
+    fromStatus, toStatus, reviewRoundBefore, reviewRoundAfter, textDiff, createdAt`.
+  - `GET .../marketing/creatives/{creativeId}/affected-posts[?postId=]` answers `{posts: [{workItemId, displayId,
+    title, status, statusLabel, outcome}]}` for every Post holding a frame of the Creative, ordered by number:
+    `outcome` is `back-to-review`, `new-round`, `updated` or `unchanged` (the table above); with `postId` naming
+    a Post that is in review **and the caller one of its reviewers**, that Post reads `reviewer-fix` instead of
+    `new-round`. The response also carries `blockedReason` (string or null): why this caller, a non-editor
+    reviewer of `postId`, may not save (see the limits of a reviewer fix).
+  - `GET .../marketing/creatives/{creativeId}/render-availability` answers `{runtime, targetName, daemonOnline}`:
+    `target` (with the runtime target's name) when the designated target can render now, else `self-hosted`.
+    Conductor does not track daemon liveness, so `daemonOnline` is always null.
+  - `GET .../revisions` items gain `authorName` (one batched user lookup); it is null on the revision objects
+    inside other responses.
 - **Fonts:** the bundled TikTok Sans (600, 700, 800) under the SIL Open Font License, in
-  `conductor-tools/assets/fonts/` with `OFL.txt`.
+  `conductor-tools/assets/fonts/` with `OFL.txt`. The slide types that imitate a system UI (`notes`,
+  `messages`, `week`, a `grid` photo's `badge`, `receipt`, `placard`) used Apple system fonts (SF Pro,
+  Helvetica Neue, Georgia, Courier New) that do not exist on the Linux render image, so they now use bundled
+  OFL families in the same folder, each with its licence file: Inter 400/600/700 (`OFL-inter.txt`), Source
+  Serif 4 400/700 (`OFL-source-serif-4.txt`) and Courier Prime 400/700 (`OFL-courier-prime.txt`). Only those
+  families plus a generic keyword are named, so the output is the same on every machine. A slide declares only
+  the faces its type uses (a photo or screen slide's HTML is unchanged apart from the measuring script and the
+  unused font-family declarations, which `slideshow-html-stability.test.ts` pins against golden HTML), and the
+  in-page `font` check treats a bundled face that will not load as an error (the package files ship through
+  `assets/` in `package.json` `files`). Slides composed before this change look different on those types, which
+  is why `attach_slideshow_spec` may refuse older notes, messages, week, receipt or placard slides.
+- **Contrast (`contrast` check, a warning).** For each text element (`[data-fg][data-ts]`) the in-page rule
+  compares the text colour with what is behind it, by the WCAG relative-luminance ratio (the formula of
+  `conductor-creative/assertions.js`), and warns below 3:1 naming the slide and the ratio. Boxed text and the
+  callout pill are judged against their box; outlined text (`stroke`, `sub`: a text stroke or shadow blur of
+  2px or more) against the outline colour; text with neither against the mean luminance of the pixels behind
+  it. A `file:` image taints a canvas, so for that case the composer shoots the slide again with its text
+  hidden and the page measures that screenshot (it includes the dim layer, grade and any `bgColor`); any
+  failure skips the check. It never fails a slideshow in this version.
 - **Style.** The native look is the default. A `SlideshowStyle` (`fontFamily`, a name or comma list such as `Inter, sans-serif`; `fontUrl` for an https CSS
   stylesheet such as Google Fonts, `boxBg`, `boxInk`, `darkBg`, `darkInk`, `strokeInk` (the colour of outlined text and sub text; white when a stored style has none), `outline`, `accent` as
   `#RRGGBB`, `defaultText` of `box|dark|stroke`, `textSize` 24-120, `subSize` 16-96; all optional)
@@ -415,7 +749,7 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   `compose_slideshow`. Resolution is native, then the kit's style (`brandKitId`; refused with a clear
   error when the kit has none; unknown fields in a kit's style are ignored), then the spec's own top-level `style` (`null` = no layer), then the inline `style` on top. In the spec's and the inline `style` a field left out inherits from the layer below, while a field set to `null` resets it to the native value (`fontFamily: null` = bundled TikTok Sans and no `fontUrl`); in a kit, null and absent both mean "not set by the kit". `fontUrl` is checked only against the shared pattern (https only, no whitespace or quotes, at most 2048 characters) and `fontFamily` needs at least one family name; an invalid kit style is reported naming the kit. A new `fontFamily` keeps the inherited `fontUrl` only when its first family is the same (case-insensitive). The font check loads the list's first non-keyword family (generic and system keywords such as `sans-serif`, `-apple-system` and `BlinkMacSystemFont` are emitted unquoted and never checked; a list of only keywords has no custom-font check) even on slides with no styled text, and checks the bundled TikTok Sans whenever any text uses it (no custom font, or any placard slide). A custom font loads from `fontUrl`;
   a font that fails to load, or a `fontFamily` that is not installed when there is no `fontUrl`, is a blocking `font` check naming the family; notes, week, receipt,
-  placard and messages slides keep their system-UI fonts. The resolved (full) style is written to
+  placard and messages slides keep their own bundled fonts (Inter, Source Serif 4, Courier Prime; see Fonts). The resolved (full) style is written to
   `spec.json` as `resolvedStyle` (the spec's own `style` is kept as given and a re-compose ignores `resolvedStyle`), returned by the tool as `style`, and recorded on the Creative as `slideStyle`
   (CAROUSEL only; native slides record the native defaults) so a look can be reused later. The rules
   (native values, keyword list, bounds, patterns) live once in `conductor-creative/slideshow-style.json`; the
@@ -595,7 +929,7 @@ numbers used (or why a decision couldn't be made) and is never recomputed after 
 
 **Confirming a winner** is the one human action in this loop: `POST .../experiments/{id}/confirm-winner`
 appends the winning variant's headline to its family's Brand Kit `approved_lines` (deduplicated) and
-stamps `winnerLineConfirmedAt`/`By`. It requires ADMIN or CREATOR, requires a `DECIDED` experiment with a
+stamps `winnerLineConfirmedAt`/`By`. It requires the Editor role (or Admin), requires a `DECIDED` experiment with a
 winner, and is idempotent — `decide` never calls it, and calling it twice never appends the line twice. No
 experiment ever changes brand copy on its own.
 

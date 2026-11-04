@@ -6,7 +6,6 @@ import { statusHasReviewGate } from '@/lib/workflows'
 import { useTikTokPublishGate } from '@/components/marketing/TikTokConsentStep'
 import type { WorkflowView } from '@/types/workItem'
 
-export type UserRole = 'ADMIN' | 'CREATOR' | 'REVIEWER'
 
 export interface AvailableTransition {
   toStatus: string
@@ -71,12 +70,12 @@ export function useAvailableTransitionsState(
   projectId: string,
   issueId: string,
   currentStatus: string,
-  userRole: UserRole,
+  canEdit: boolean,
   token: string,
   enabled = true
 ): AvailableTransitionsState {
   const [loaded, setLoaded] = useState<Loaded | null>(null)
-  const active = enabled && userRole !== 'REVIEWER' && !!token
+  const active = enabled && canEdit && !!token
 
   useEffect(() => {
     if (!active) return
@@ -106,11 +105,11 @@ export function useAvailableTransitions(
   projectId: string,
   issueId: string,
   currentStatus: string,
-  userRole: UserRole,
+  canEdit: boolean,
   token: string,
   enabled = true
 ): AvailableTransition[] {
-  return useAvailableTransitionsState(projectId, issueId, currentStatus, userRole, token, enabled).transitions
+  return useAvailableTransitionsState(projectId, issueId, currentStatus, canEdit, token, enabled).transitions
 }
 
 /**

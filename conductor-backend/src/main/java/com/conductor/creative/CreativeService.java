@@ -81,6 +81,8 @@ public class CreativeService {
     private final CreativeRenderFrameRepository frameRepository;
     private final CreativeRenderRepository renderRepository;
     private final AssetRepository assetRepository;
+    private final CreativeRevisionRepository revisionRepository;
+    private final CreativeRevisionService revisionService;
 
     public CreativeService(CreativeRepository creativeRepository,
                            CreativePhotoRepository photoRepository,
@@ -98,7 +100,10 @@ public class CreativeService {
                            CreativeExperimentRepository experimentRepository,
                            CreativeRenderFrameRepository frameRepository,
                            CreativeRenderRepository renderRepository,
-                           AssetRepository assetRepository) {
+                           AssetRepository assetRepository,
+                           CreativeRevisionRepository revisionRepository,
+                           CreativeRevisionService revisionService) {
+        this.revisionService = revisionService;
         this.creativeRepository = creativeRepository;
         this.photoRepository = photoRepository;
         this.brandKitRepository = brandKitRepository;
@@ -116,6 +121,7 @@ public class CreativeService {
         this.frameRepository = frameRepository;
         this.renderRepository = renderRepository;
         this.assetRepository = assetRepository;
+        this.revisionRepository = revisionRepository;
     }
 
     /**
@@ -129,18 +135,26 @@ public class CreativeService {
     public record CreativeView(Creative creative, String photoUrl,
                                CreativeRenderService.RenderView latestRenderSummary,
                                CreativeRenderService.RenderView latestRenderFull,
-                               String activeExperimentId, Integer postCount) {
+                               String activeExperimentId, Integer postCount,
+                               CreativeRevision pendingRevision, CreativeRevision latestRevision) {
         public CreativeView(Creative creative, String photoUrl) {
-            this(creative, photoUrl, null, null, null, null);
+            this(creative, photoUrl, null, null, null, null, null, null);
         }
 
         public CreativeView(Creative creative, String photoUrl, CreativeRenderService.RenderView latestRenderSummary,
                             CreativeRenderService.RenderView latestRenderFull, String activeExperimentId) {
-            this(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, null);
+            this(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, null, null, null);
         }
 
         CreativeView withPostCount(Integer count) {
-            return new CreativeView(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, count);
+            return new CreativeView(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, count,
+                    pendingRevision, latestRevision);
+        }
+
+        /** The slide-text revisions a single-Creative read reports (the list read leaves them out). */
+        CreativeView withRevisions(CreativeRevision pending, CreativeRevision latest) {
+            return new CreativeView(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId,
+                    postCount, pending, latest);
         }
     }
 
@@ -226,7 +240,9 @@ public class CreativeService {
         CreativeView view = toView(projectId, creative, loadPhotos(List.of(creative)));
         // Only the single-Creative read pays for the full render + its frames (contract item 6).
         CreativeRenderService.RenderView full = renderService.latestSucceededRender(creative.getId()).orElse(null);
-        return new CreativeView(view.creative(), view.photoUrl(), view.latestRenderSummary(), full, view.activeExperimentId());
+        CreativeRevisionService.RevisionHeads heads = revisionService.heads(creative.getId());
+        return new CreativeView(view.creative(), view.photoUrl(), view.latestRenderSummary(), full,
+                view.activeExperimentId()).withRevisions(heads.pending(), heads.latest());
     }
 
     @Transactional
@@ -236,6 +252,9 @@ public class CreativeService {
         creative.setCreatedBy(caller.getId());
 
         creative = saveWithNextNumber(creative);
+        if (creative.getSlideshowSpec() != null) {
+            recordSpecRevision(creative, CreativeRevision.SOURCE_COMMIT, emptyDiff(), caller);
+        }
         return toView(projectId, creative, loadPhotos(List.of(creative)));
     }
 
@@ -296,6 +315,8 @@ public class CreativeService {
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput())));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         violations.addAll(slideStyleViolations(kind, request.getSlideStyle()));
+        JsonNode slideshowSpec = toSpecNode(request.getSlideshowSpec());
+        violations.addAll(slideshowSpecViolations(projectId, kind, slideshowSpec, slides));
         violations.addAll(0, media.violations());
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
@@ -332,6 +353,7 @@ public class CreativeService {
         creative.setSlides(slides.isEmpty() ? null : objectMapper.valueToTree(slides));
         creative.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
         creative.setSlideStyle(SlideshowStyles.toStored(objectMapper, request.getSlideStyle()));
+        creative.setSlideshowSpec(slideshowSpec);
         return new PreparedCreate(kit, creative, motionRes, sound);
     }
 
@@ -426,6 +448,8 @@ public class CreativeService {
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput()));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         violations.addAll(slideStyleViolations(kind, request.getSlideStyle()));
+        JsonNode requestedSpec = toSpecNode(request.getSlideshowSpec());
+        violations.addAll(slideshowSpecViolations(projectId, kind, requestedSpec, slides));
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -478,8 +502,32 @@ public class CreativeService {
         } else if (slidesChanged) {
             current.setSlideStyle(null);
         }
+        // The slideshow spec follows the same rules as the style: sending one replaces it (null or {} clears it),
+        // changing the slides without sending one clears it, resending the same slides keeps it, and leaving
+        // CAROUSEL drops it. A revision is recorded only when the stored spec actually changes to another spec.
+        JsonNode priorSpec = current.getSlideshowSpec();
+        JsonNode newSpec;
+        if (!Creative.KIND_CAROUSEL.equals(kind)) {
+            newSpec = null;
+        } else if (request.getSlideshowSpec() != null) {
+            newSpec = requestedSpec;
+        } else if (slidesChanged) {
+            newSpec = null;
+        } else {
+            newSpec = priorSpec;
+        }
+        current.setSlideshowSpec(newSpec);
+        boolean specChanged = newSpec != null && !newSpec.equals(priorSpec);
 
-        current = creativeRepository.save(current);
+        current = specChanged ? creativeRepository.saveAndFlush(current) : creativeRepository.save(current);
+        if (specChanged) {
+            if (priorSpec == null) {
+                recordSpecRevision(current, CreativeRevision.SOURCE_IMPORT, emptyDiff(), caller);
+            } else {
+                recordSpecRevision(current, CreativeRevision.SOURCE_COMMIT,
+                        SlideshowTextFields.diffJson(priorSpec, newSpec), caller);
+            }
+        }
         return toView(projectId, current, loadPhotos(List.of(current)));
     }
 
@@ -546,12 +594,16 @@ public class CreativeService {
         variant.setAudio(sound.audio() != null ? objectMapper.valueToTree(sound.audio()) : null);
         variant.setSlideshow(root.getSlideshow());
         variant.setSlideStyle(root.getSlideStyle());
+        variant.setSlideshowSpec(root.getSlideshowSpec());
         variant.setTypeOverrides(objectMapper.createObjectNode());
         variant.setLayoutOverrides(root.getLayoutOverrides());
         variant.setLockup(root.getLockup());
         variant.setCreatedBy(caller.getId());
 
         variant = saveWithNextLetter(variant);
+        if (variant.getSlideshowSpec() != null) {
+            recordSpecRevision(variant, CreativeRevision.SOURCE_IMPORT, emptyDiff(), caller);
+        }
         return toView(projectId, variant, loadPhotos(List.of(variant)));
     }
 
@@ -576,12 +628,68 @@ public class CreativeService {
     @Transactional(readOnly = true)
     public Readiness readiness(String projectId, String creativeId, User caller) {
         requireMember(projectId, caller);
-        Creative creative = findCreative(projectId, creativeId);
-        MediaResolver media = new MediaResolver(projectId, null);
+        return readinessOf(findCreative(projectId, creativeId));
+    }
+
+    private Readiness readinessOf(Creative creative) {
+        MediaResolver media = new MediaResolver(creative.getProjectId(), null);
         media.preload(referencedMediaIds(creative.getPhotoId(), toSequenceBeats(creative.getSequence()),
                 toClipMediaMap(creative.getClipMedia()), toSlidesMap(creative.getSlides()),
                 toMotion(creative.getMotion()), toAudio(creative.getAudio())));
-        return computeReadiness(creative, media);
+        Readiness readiness = computeReadiness(creative, media);
+        if (Creative.KIND_CAROUSEL.equals(creative.getKind())) {
+            addAltTextStaleItem(creative, readiness);
+        }
+        return readiness;
+    }
+
+    /**
+     * Non-blocking: after a slide-text edit, a slide whose alt text still quotes the text that was replaced.
+     * Appears only once an applied edit flagged a slide; it clears when the alt text no longer quotes it.
+     */
+    private void addAltTextStaleItem(Creative creative, Readiness readiness) {
+        CreativeRevisionService.StaleAltText stale = revisionService.staleAltText(creative);
+        if (stale == null) {
+            return;
+        }
+        boolean ok = stale.stale().isEmpty();
+        String slides = stale.stale().stream().map(String::valueOf).collect(Collectors.joining(", "));
+        readiness.items().add(new ReadinessItem("altTextStale", ok, false, ok
+                ? "alt text no longer quotes the replaced slide text"
+                : (stale.stale().size() == 1 ? "slide " + slides + " alt text still quotes the old text"
+                        : "slides " + slides + " alt text still quotes the old text")));
+    }
+
+    /** A Creative's state after an attach, and (null unless it stayed DRAFT) why. */
+    public record AttachStateOutcome(String state, String note) {
+    }
+
+    /**
+     * Called by attach once a Creative is on a Post: a DRAFT that passes the readiness checklist becomes READY
+     * (updated in the caller's transaction WITHOUT raising {@code version}, so the render just attached stays current); one that does not stays DRAFT and the
+     * first blocking item is reported as the reason. Any other state is left as it is. The checklist's own
+     * {@code state} item ("still a draft") is ignored: it is what this promotion resolves.
+     */
+    public AttachStateOutcome promoteOnAttach(Creative creative) {
+        if (!Creative.STATE_DRAFT.equals(creative.getState())) {
+            return new AttachStateOutcome(creative.getState(), null);
+        }
+        ReadinessItem blocker = readinessOf(creative).items().stream()
+                .filter(i -> i.blocking() && !i.ok() && !"state".equals(i.key()))
+                .findFirst().orElse(null);
+        if (blocker != null) {
+            return new AttachStateOutcome(creative.getState(),
+                    "Stays a draft because " + blocker.message() + ".");
+        }
+        // A bulk update, not save(): the flip is not a content change, and a JPA save would bump the version,
+        // making the render just attached read as stale. The entity is deliberately left unmodified (setting
+        // the state would dirty it and bump the version at flush); the update clears the persistence context.
+        int changed = creativeRepository.updateStateKeepingVersion(creative.getId(), Creative.STATE_DRAFT,
+                Creative.STATE_READY, java.time.OffsetDateTime.now());
+        // 0 rows: the state moved concurrently, so report what is stored now.
+        String state = changed > 0 ? Creative.STATE_READY
+                : creativeRepository.findById(creative.getId()).map(Creative::getState).orElse(creative.getState());
+        return new AttachStateOutcome(state, null);
     }
 
     /**
@@ -1011,6 +1119,8 @@ public class CreativeService {
                     .audio(toAudio(base.getAudio()))
                     .slideshow(toSlideshow(base.getSlideshow()))
                     .slideStyle(SlideshowStyles.fromStored(objectMapper, base.getSlideStyle()))
+                    .slideshowSpec(base.getSlideshowSpec() != null
+                            ? objectMapper.convertValue(base.getSlideshowSpec(), SPEC_MAP) : null)
                     .layoutOverrides(base.getLayoutOverrides() != null
                             ? objectMapper.convertValue(base.getLayoutOverrides(), CreativeLayoutOverrides.class) : null);
         }
@@ -1039,6 +1149,11 @@ public class CreativeService {
                     && !draft.getSlides().equals(toSlidesMap(base.getSlides()))) {
                 merged.setSlideStyle(null);
             }
+            // Likewise the base's spec describes the base's slides: different slides need their own spec.
+            if (draft.getSlideshowSpec() == null && base != null
+                    && !draft.getSlides().equals(toSlidesMap(base.getSlides()))) {
+                merged.setSlideshowSpec(null);
+            }
         }
         if (draft.getSlideAltText() != null) merged.setSlideAltText(draft.getSlideAltText());
         if (draft.getMotion() != null) merged.setMotion(draft.getMotion());
@@ -1050,6 +1165,13 @@ public class CreativeService {
         } else if (merged.getKind() == null || !Creative.KIND_CAROUSEL.equals(merged.getKind().getValue())) {
             // The base style belongs to a CAROUSEL: another kind must not carry it (it would 422 on slideStyle).
             merged.setSlideStyle(null);
+        }
+        if (draft.getSlideshowSpec() != null) {
+            // An empty spec ({} or an explicit null) clears the base's.
+            merged.setSlideshowSpec(draft.getSlideshowSpec().isEmpty() ? null : draft.getSlideshowSpec());
+        } else if (merged.getKind() == null || !Creative.KIND_CAROUSEL.equals(merged.getKind().getValue())) {
+            // The base spec belongs to a CAROUSEL: another kind must not carry it (it would 422 on slideshowSpecKind).
+            merged.setSlideshowSpec(null);
         }
         if (draft.getLayoutOverrides() != null) merged.setLayoutOverrides(draft.getLayoutOverrides());
         // The base's pinned typeOverrides are deliberately not copied in (see buildDraftSpec): they are kept
@@ -1490,6 +1612,120 @@ public class CreativeService {
         return out;
     }
 
+    private static final TypeReference<Map<String, Object>> SPEC_MAP = new TypeReference<>() { };
+
+    /**
+     * The spec to store for a request value: null for absent, null or empty ({@code {}} is how an explicit JSON
+     * null reaches us), otherwise a copy with any client-sent {@code resolvedStyle} removed.
+     */
+    private JsonNode toSpecNode(Map<String, Object> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return null;
+        }
+        JsonNode node = objectMapper.valueToTree(raw);
+        SlideshowSpecs.stripResolvedStyle((com.fasterxml.jackson.databind.node.ObjectNode) node);
+        return node;
+    }
+
+    /**
+     * A slideshow spec is CAROUSEL-only ({@code slideshowSpecKind}), structurally valid
+     * ({@code slideshowSpecInvalid}), names only IMAGE media of this project ({@code slideshowSpecMedia} — one
+     * query for all refs), and has one slide per entry of every non-empty {@code slides} list
+     * ({@code slideshowSpecSlideCount}).
+     */
+    private List<Violation> slideshowSpecViolations(String projectId, String kind, JsonNode spec,
+                                                    Map<String, List<String>> slides) {
+        List<Violation> out = new ArrayList<>();
+        if (spec == null) {
+            return out;
+        }
+        if (!Creative.KIND_CAROUSEL.equals(kind)) {
+            out.add(new Violation(SlideshowSpecs.FIELD, SlideshowSpecs.RULE_KIND,
+                    "slideshowSpec only applies to a CAROUSEL creative, not " + kind));
+            return out;
+        }
+        List<SlideshowSpecs.Problem> problems = new ArrayList<>(SlideshowSpecs.validate(spec));
+        boolean structural = problems.isEmpty();
+        List<SlideshowSpecs.ImageRef> refs = SlideshowSpecs.imageRefs(spec);
+        Set<String> wanted = new HashSet<>();
+        for (SlideshowSpecs.ImageRef ref : refs) {
+            String id = SlideshowSpecs.mediaId(ref.value());
+            if (id == null) {
+                problems.add(new SlideshowSpecs.Problem(ref.field(), SlideshowSpecs.RULE_MEDIA, ref.field()
+                        + " must be media:<id> of an image in this project's media library"));
+            } else {
+                wanted.add(id);
+            }
+        }
+        Map<String, CreativePhoto> found = new HashMap<>();
+        if (!wanted.isEmpty()) {
+            for (CreativePhoto photo : photoRepository.findAllByIdIn(wanted)) {
+                if (projectId.equals(photo.getProjectId())) {
+                    found.put(photo.getId(), photo);
+                }
+            }
+        }
+        for (SlideshowSpecs.ImageRef ref : refs) {
+            String id = SlideshowSpecs.mediaId(ref.value());
+            if (id == null) {
+                continue;
+            }
+            CreativePhoto photo = found.get(id);
+            if (photo == null) {
+                problems.add(new SlideshowSpecs.Problem(ref.field(), SlideshowSpecs.RULE_MEDIA,
+                        ref.field() + " " + ref.value() + " is not media in this project"));
+            } else if (!CreativePhoto.MEDIA_KIND_IMAGE.equals(photo.getMediaKind())) {
+                problems.add(new SlideshowSpecs.Problem(ref.field(), SlideshowSpecs.RULE_MEDIA,
+                        ref.field() + " " + ref.value() + " is not an image"));
+            }
+        }
+        if (structural) {
+            int count = spec.get("slides").size();
+            new java.util.TreeMap<>(slides).forEach((key, list) -> {
+                if (!list.isEmpty() && list.size() != count) {
+                    problems.add(new SlideshowSpecs.Problem(SlideshowSpecs.FIELD + ".slides", SlideshowSpecs.RULE_SLIDE_COUNT,
+                            "slideshowSpec has " + count + " slides but slides[\"" + key + "\"] has " + list.size()));
+                }
+            });
+        }
+        problems.forEach(p -> out.add(new Violation(p.field(), p.ruleId(), p.message())));
+        return out;
+    }
+
+    private static com.fasterxml.jackson.databind.node.ArrayNode emptyDiff() {
+        return com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.arrayNode();
+    }
+
+    /**
+     * Records an APPLIED revision of {@code saved}'s spec, in the caller's transaction. {@code saved} must
+     * already be flushed so {@code creative_version} is the version after the save.
+     */
+    private void recordSpecRevision(Creative saved, String source, JsonNode textDiff, User caller) {
+        Integer max = revisionRepository.findMaxRevisionNo(saved.getId());
+        CreativeRevision revision = new CreativeRevision();
+        revision.setProjectId(saved.getProjectId());
+        revision.setCreativeId(saved.getId());
+        revision.setRevisionNo((max == null ? 0 : max) + 1);
+        revision.setCreativeVersion(saved.getVersion());
+        revision.setStatus(CreativeRevision.STATUS_APPLIED);
+        revision.setSource(source);
+        revision.setSpec(saved.getSlideshowSpec());
+        revision.setSlides(saved.getSlides());
+        revision.setSlideAltText(saved.getSlideAltText());
+        revision.setSlideStyle(saved.getSlideStyle());
+        revision.setTextDiff(textDiff);
+        revision.setAuthorUserId(caller.getId());
+        revision.setAppliedAt(java.time.OffsetDateTime.now());
+        revisionRepository.save(revision);
+    }
+
+    /** The newest {@value #MAX_REVISIONS} slideshow-spec revisions of a Creative, newest first. */
+    public List<CreativeRevision> listRevisions(String projectId, String creativeId, User caller) {
+        return revisionService.listSettled(projectId, creativeId, caller, MAX_REVISIONS);
+    }
+
+    static final int MAX_REVISIONS = 50;
+
     /** {@code creative.slideshow} JSON -&gt; the typed DTO, or null when unset. */
     private CreativeSlideshow toSlideshow(JsonNode node) {
         return node != null && !node.isNull() ? objectMapper.convertValue(node, CreativeSlideshow.class) : null;
@@ -1717,8 +1953,8 @@ public class CreativeService {
 
     private void requireEditor(String projectId, User caller) {
         requireMember(projectId, caller);
-        if (!projectSecurityService.isAdminOrCreator(projectId, caller.getId())) {
-            throw new ForbiddenException("Only ADMIN or CREATOR can manage Creatives");
+        if (!projectSecurityService.isEditor(projectId, caller.getId())) {
+            throw new ForbiddenException("Requires the Editor role (or Admin) to manage Creatives");
         }
     }
 }

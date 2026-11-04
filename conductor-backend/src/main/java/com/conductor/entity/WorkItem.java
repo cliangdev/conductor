@@ -170,7 +170,7 @@ public class WorkItem {
     @Column(name = "current_review_round", nullable = false)
     private int currentReviewRound = 0;
 
-    // --- Delivery tracking (V167/V168). Workflow-agnostic: any Work Item can carry these. ---
+    // --- Delivery tracking (V178/V179). Workflow-agnostic: any Work Item can carry these. ---
 
     /** P0..P3 stored as 0..3; null means no priority. */
     @JdbcTypeCode(SqlTypes.SMALLINT)

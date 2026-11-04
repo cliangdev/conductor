@@ -15,13 +15,11 @@ import { apiPatch, apiErrorMessage } from '@/lib/api'
 import { useAvailableTransitionsState, useBlockedReason } from './useAvailableTransitions'
 import { DEFAULT_WORKFLOW_SLUG, statusMeta, useWorkflowView } from '@/lib/workflows'
 
-type UserRole = 'ADMIN' | 'CREATOR' | 'REVIEWER'
-
 interface StatusDropdownProps {
   projectId: string
   issueId: string
   currentStatus: string
-  userRole: UserRole
+  canEdit: boolean
   token: string
   onStatusChanged: (newStatus: string) => void
   /** Called with the field keys a refused move needs filled in first, so the page can point at them. */
@@ -77,7 +75,7 @@ export function StatusDropdown({
   projectId,
   issueId,
   currentStatus,
-  userRole,
+  canEdit,
   token,
   onStatusChanged,
   onMissingFields,
@@ -101,14 +99,14 @@ export function StatusDropdown({
     transitions,
     loading: transitionsLoading,
     error: transitionsError,
-  } = useAvailableTransitionsState(projectId, issueId, currentStatus, userRole, token, !lazy || menuOpen)
+  } = useAvailableTransitionsState(projectId, issueId, currentStatus, canEdit, token, !lazy || menuOpen)
   // TIK-4 and the publish gate: the one reason a move is refused, shared with every other status
   // control on the page so they all disable the same move for the same reason.
   const blockedReason = useBlockedReason(view, blockedMoves)
 
   // REVIEWERs (and any state with no available moves) see a read-only indicator — unless there is a
   // verdict of theirs to give, which is the one move a reviewer owns.
-  if ((userRole === 'REVIEWER' || (!lazy && transitions.length === 0)) && !reviewVerdict) {
+  if ((!canEdit || (!lazy && transitions.length === 0)) && !reviewVerdict) {
     return trigger === 'ring' ? (
       <StatusRing status={currentStatus} category={category} label={displayLabel} />
     ) : (

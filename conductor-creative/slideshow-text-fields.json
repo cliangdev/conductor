@@ -1,0 +1,28 @@
+{
+  "$comment": "Editable text in a compose_slideshow spec. Shared source for the CLI (conductor-tools/src/lib/slideshow/text-fields.ts), the web editor and the backend (SlideshowTextFields.java); parity tests on both sides keep them equal. A pattern is a dotted path from one slide, `[]` = any index of that array. A concrete path (`texts[0].t`, `rows[1].items[2]`) is editable when replacing each index with `[]` gives a pattern here AND the value at that path is already a string. Edits only replace existing strings: they never add or remove array entries or create absent fields.",
+  "patterns": [
+    "texts[].t",
+    "callouts[].label",
+    "title",
+    "date",
+    "items[]",
+    "items[].t",
+    "paras[]",
+    "photos[].badge",
+    "photos[].label",
+    "rows[].k",
+    "rows[].items[]",
+    "days[].d",
+    "days[].t",
+    "days[].icon",
+    "head",
+    "sections[].h",
+    "sections[].items[]",
+    "count",
+    "ex",
+    "lines[].k",
+    "lines[].v",
+    "bubbles[].t"
+  ],
+  "maxTextLength": 500
+}

@@ -184,7 +184,7 @@ public class WorkflowController implements WorkflowsApi {
                     .map(this::toSidebarDto)
                     .collect(Collectors.toList()));
         }
-        boolean canSeeToken = projectSecurityService.isAdminOrCreator(projectId, userId);
+        boolean canSeeToken = projectSecurityService.isEditor(projectId, userId);
         // Filtering is domain/query logic and lives in the service; the controller stays a thin adapter.
         List<WorkflowDefinition> defs = workflowService.listWorkflows(projectId, lifecycle, state, sidebar);
         Map<String, Long> wiCounts = workflowViewService.workItemCountsBySlug(projectId, defs);
@@ -223,7 +223,7 @@ public class WorkflowController implements WorkflowsApi {
         WorkflowDefinition def = workflowService.getWorkflow(projectId, workflowId);
         WorkflowDefinitionDto dto = toDto(def);
         // The webhook token is a bearer secret for triggering the run; only those who manage workflows see it.
-        if (!projectSecurityService.isAdminOrCreator(projectId, userId)) {
+        if (!projectSecurityService.isEditor(projectId, userId)) {
             dto.setWebhookToken(null);
         }
         return ResponseEntity.ok(dto);

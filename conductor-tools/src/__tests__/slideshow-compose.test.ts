@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateSync } from 'node:zlib'
 import { writeProvenanceSidecar } from '../lib/provenance-sidecar.js'
+import { readImageDimensions } from '../lib/image-dimensions.js'
 import { composeSlideshow, type SlideshowSpec } from '../lib/slideshow/index.js'
 
 function crc32(buf: Buffer): number {
@@ -34,8 +35,8 @@ function solidPng(w: number, h: number, rgb: [number, number, number]): Buffer {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(raw)), chunk('IEND', Buffer.alloc(0))])
 }
 const dims = (file: string) => {
-  const b = readFileSync(file)
-  return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) }
+  const info = readImageDimensions(new Uint8Array(readFileSync(file)))
+  return { w: info?.width, h: info?.height, type: info?.contentType }
 }
 
 async function browserAvailable(): Promise<boolean> {
@@ -76,16 +77,16 @@ describe.skipIf(!hasBrowser)('composeSlideshow (real browser)', () => {
     ],
   })
 
-  it('renders 1080x1920 and 1080x1350 PNGs, writes the resolved spec and cleans up', async () => {
+  it('renders 1080x1920 and 1080x1350 JPEGs, writes the resolved spec and cleans up', async () => {
     const out = join(tmp, 'out1')
     const res = await composeSlideshow(spec(), out, { specDir: tmp })
     expect(res.checks.filter((c) => c.severity === 'error')).toEqual([])
     expect(res.passed).toBe(true)
     expect(res.slidePaths['9x16']).toHaveLength(3)
     expect(res.slidePaths['4x5']).toHaveLength(3)
-    expect(dims(res.slidePaths['9x16']![0]!)).toEqual({ w: 1080, h: 1920 })
-    expect(dims(res.slidePaths['4x5']![2]!)).toEqual({ w: 1080, h: 1350 })
-    expect(res.slidePaths['9x16']![0]).toBe(join(out, 'demo-9x16-01.png'))
+    expect(dims(res.slidePaths['9x16']![0]!)).toEqual({ w: 1080, h: 1920, type: 'image/jpeg' })
+    expect(dims(res.slidePaths['4x5']![2]!)).toEqual({ w: 1080, h: 1350, type: 'image/jpeg' })
+    expect(res.slidePaths['9x16']![0]).toBe(join(out, 'demo-9x16-01.jpg'))
     const resolved = JSON.parse(readFileSync(res.specPath, 'utf8'))
     expect(resolved.slides[0].bg).toBe(join(tmp, 'photo.png'))
     expect(readdirSync(out).filter((f) => f.endsWith('.html'))).toEqual([])
@@ -108,7 +109,7 @@ describe.skipIf(!hasBrowser)('composeSlideshow (real browser)', () => {
     expect(res.checks.map((c) => c.rule)).toEqual(expect.arrayContaining(['image', 'textSize', 'wordsPerLine']))
     expect(res.checks.find((c) => c.rule === 'wordsPerLine')?.severity).toBe('warning')
     await expect(composeSlideshow({ id: 'w', slides: [{ bg: 'https://example.com/a.png' }] }, join(tmp, 'out4'), { specDir: tmp })).rejects.toThrow(/local files only/)
-    expect(existsSync(join(tmp, 'out4', 'w-9x16-01.png'))).toBe(false)
+    expect(existsSync(join(tmp, 'out4', 'w-9x16-01.jpg'))).toBe(false)
   }, 60000)
 
   describe('provenance sidecars', () => {

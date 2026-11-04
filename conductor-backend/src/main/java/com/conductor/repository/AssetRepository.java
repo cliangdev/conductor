@@ -107,4 +107,13 @@ public interface AssetRepository extends JpaRepository<Asset, String> {
     long countByMediaId(String mediaId);
 
     boolean existsByMediaIdAndIdNot(String mediaId, String id);
+
+    /**
+     * Whether the Work Item holds a frame of any render of one Creative: one indexed lookup, however many
+     * frames the Creative has produced.
+     */
+    @Query("SELECT COUNT(a) > 0 FROM Asset a WHERE a.workItem.id = :workItemId AND a.creativeFrameId IN "
+            + "(SELECT f.id FROM CreativeRenderFrame f WHERE f.creativeId = :creativeId)")
+    boolean existsByWorkItemIdUsingCreative(@Param("workItemId") String workItemId,
+                                            @Param("creativeId") String creativeId);
 }

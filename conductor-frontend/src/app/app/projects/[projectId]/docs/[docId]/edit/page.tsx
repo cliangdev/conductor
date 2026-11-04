@@ -5,39 +5,29 @@ export const dynamic = 'force-dynamic'
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { apiGet, apiErrorMessage } from '@/lib/api'
+import { apiErrorMessage } from '@/lib/api'
 import { getDoc } from '@/lib/docs-api'
 import type { ProjectDoc } from '@/lib/docs-api'
 import { DocEditor } from '@/components/docs/DocEditor'
-import type { MemberRole } from '@/types'
-
-interface Member {
-  userId: string
-  role: MemberRole
-}
+import { usePermissions } from '@/contexts/PermissionsContext'
 
 export default function DocEditPage() {
   const { projectId, docId } = useParams<{ projectId: string; docId: string }>()
-  const { accessToken, user } = useAuth()
+  const { accessToken } = useAuth()
   const router = useRouter()
 
   const [doc, setDoc] = useState<ProjectDoc | null>(null)
-  const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
+  const { can, loading: permissionsLoading } = usePermissions()
+  const canEdit = can('doc.edit')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!accessToken || !user) return
+    if (!accessToken) return
 
     async function load() {
       try {
-        const [fetchedDoc, members] = await Promise.all([
-          getDoc(projectId, docId, accessToken!),
-          apiGet<Member[]>(`/api/v1/projects/${projectId}/members`, accessToken!),
-        ])
-        setDoc(fetchedDoc)
-        const me = members.find((m) => m.userId === user!.id)
-        if (me) setUserRole(me.role)
+        setDoc(await getDoc(projectId, docId, accessToken!))
       } catch (err) {
         setError(apiErrorMessage(err, 'Failed to load document'))
       } finally {
@@ -46,7 +36,7 @@ export default function DocEditPage() {
     }
 
     load()
-  }, [accessToken, user, projectId, docId])
+  }, [accessToken, projectId, docId])
 
   function handleSaved(updatedDoc: ProjectDoc) {
     router.push(`/app/projects/${projectId}/docs/${updatedDoc.id}`)
@@ -56,7 +46,8 @@ export default function DocEditPage() {
     router.push(`/app/projects/${projectId}/docs/${docId}`)
   }
 
-  if (loading) {
+  // Wait for the role too: the editor closes itself for a reader, so an unresolved role must not look like one.
+  if (loading || permissionsLoading) {
     return (
       <div className="flex items-center justify-center h-64 text-muted-foreground">
         Loading…
@@ -80,7 +71,7 @@ export default function DocEditPage() {
         doc={doc}
         projectId={projectId}
         token={accessToken!}
-        userRole={userRole}
+        canEdit={canEdit}
         onSaved={handleSaved}
         onCancel={handleCancel}
       />

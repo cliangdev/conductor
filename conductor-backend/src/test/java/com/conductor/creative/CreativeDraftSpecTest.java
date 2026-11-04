@@ -85,12 +85,13 @@ class CreativeDraftSpecTest {
         service = new CreativeService(creativeRepository, photoRepository, brandKitRepository, brandKitService,
                 projectRepository, registry, new CreativeValidator(registry),
                 new CreativeSpecBuilder(registry, storage, objectMapper), security, storage, mock(StorageObjectReferences.class), objectMapper,
-                renderService, experimentRepository, frameRepository, renderRepository, assetRepository);
+                renderService, experimentRepository, frameRepository, renderRepository, assetRepository,
+                mock(CreativeRevisionRepository.class), mock(CreativeRevisionService.class));
 
         caller = new User();
         caller.setId("user-1");
         when(security.isProjectMember(eq(PROJECT), anyString())).thenReturn(true);
-        when(security.isAdminOrCreator(eq(PROJECT), anyString())).thenReturn(true);
+        when(security.isEditor(eq(PROJECT), anyString())).thenReturn(true);
 
         kit = new BrandKit();
         kit.setId("kit-1");
@@ -281,6 +282,40 @@ class CreativeDraftSpecTest {
     }
 
     @Test
+    void draftOverlayClearsTheBaseSlideshowSpecOnlyWhenSlidesChangeWithoutASpec() {
+        Creative base = baseCreative();
+        base.setKind(Creative.KIND_CAROUSEL);
+        base.setSlides(objectMapper.valueToTree(Map.of("9x16", List.of("a", "b"))));
+        base.setSlideshowSpec(objectMapper.valueToTree(Map.of("id", "x", "slides", List.of(Map.of(), Map.of()))));
+
+        var keep = service.overlayOnBase(base, draftRequest("x").caption("changed"));
+        assertThat(keep.getSlideshowSpec()).containsKey("id");
+
+        var same = service.overlayOnBase(base, draftRequest("x").slides(Map.of("9x16", List.of("a", "b"))));
+        assertThat(same.getSlideshowSpec()).containsKey("id");
+
+        var cleared = service.overlayOnBase(base, draftRequest("x").slides(Map.of("9x16", List.of("b", "a"))));
+        assertThat(cleared.getSlideshowSpec()).isNull();
+
+        var sent = service.overlayOnBase(base, draftRequest("x").slides(Map.of("9x16", List.of("b", "a")))
+                .slideshowSpec(Map.of("id", "y", "slides", List.of(Map.of(), Map.of()))));
+        assertThat(sent.getSlideshowSpec()).containsEntry("id", "y");
+
+        var emptied = service.overlayOnBase(base, draftRequest("x").slideshowSpec(Map.of()));
+        assertThat(emptied.getSlideshowSpec()).isNull();
+    }
+
+    @Test
+    void draftOverlayDoesNotCarryTheBaseSlideshowSpecToAnotherKind() {
+        Creative base = baseCreative();
+        base.setKind(Creative.KIND_CAROUSEL);
+        base.setSlideshowSpec(objectMapper.valueToTree(Map.of("id", "x", "slides", List.of(Map.of()))));
+
+        var still = service.overlayOnBase(base, draftRequest("x").kind(CreativeKind.STILL));
+        assertThat(still.getSlideshowSpec()).isNull();
+    }
+
+    @Test
     void aCarouselDraftWithALocalTrackGetsTheFullSlideshowSpec() {
         LocalMediaInfo slide = new LocalMediaInfo(MediaKind.IMAGE).width(1080).height(1920);
         CreativeDraftSpecRequest request = draftRequest("x")
@@ -413,7 +448,7 @@ class CreativeDraftSpecTest {
 
     @Test
     void aReviewerCannotBuildADraftSpecJustAsTheyCannotCreate() {
-        when(security.isAdminOrCreator(eq(PROJECT), anyString())).thenReturn(false);
+        when(security.isEditor(eq(PROJECT), anyString())).thenReturn(false);
 
         assertThatThrownBy(() -> service.buildDraftSpec(PROJECT, draftRequest("Hello"), caller))
                 .isInstanceOf(ForbiddenException.class);

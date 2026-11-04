@@ -173,11 +173,8 @@ top-level item that has sub-items. The attention lists cover the whole tree (tas
 finished items and plain childless top-level items such as Posts; `needsInput` lists the item that asked, not
 the PRD above it. One forecast is computed per active item.
 
-## Later tranches
+## Migrations and follow-ups
 
-- **Tranche 2 (web):** Plan tab (tree + dependency graph) on the PRD page, priority/milestone/appetite in
-  the properties panel, project Overview, Now / Next / Later roadmap with a milestone strip, milestone settings.
-- **Tranche 3 (agents + forecast + health):** the server half is described above (forecast, health updates,
-  delivery overview; migration V173). Still to come in the same tranche: `/conductor:breakdown`, the
-  `conductor-critic` and `conductor-verifier` subagents, the `get_forecast` / `draft_health_update` MCP tools,
-  and the web views that read these endpoints. Not built: `NEEDS_INPUT` and health-changed notification signals.
+Schema: V178–V183 (delivery columns, milestones, dependencies, criteria, agent sessions, the `TASK` Workflow
+seed) and V184 (health updates). Not built yet: `NEEDS_INPUT` and health-changed notification signals, and a
+parent filter on the coordinator's agent-facing Work Item list.

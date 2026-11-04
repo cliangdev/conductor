@@ -5,6 +5,8 @@ import { Command } from 'commander'
 vi.mock('fs')
 const renderCreativeMock = vi.fn()
 vi.mock('../lib/creative-render.js', () => ({ renderCreative: (...args: unknown[]) => renderCreativeMock(...args) }))
+const renderSlidesMock = vi.fn()
+vi.mock('../mcp/tools/slideshow-render.js', () => ({ renderSlides: (...args: unknown[]) => renderSlidesMock(...args) }))
 
 import { registerCreative, describeConfigFailure } from '../commands/creative.js'
 
@@ -86,5 +88,66 @@ describe('conductor creative render, headless (env only)', () => {
     expect(describeConfigFailure(new Error('Invalid config: missing required fields'), {})).toBe(
       'Invalid config: missing required fields'
     )
+  })
+})
+
+describe('conductor creative render-slides', () => {
+  const REV = '11111111-1111-1111-1111-111111111111'
+  async function runSlides(...args: string[]): Promise<{ errors: string; logs: string }> {
+    const errors: string[] = []
+    const logs: string[] = []
+    const e = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => void errors.push(a.join(' ')))
+    const l = vi.spyOn(console, 'log').mockImplementation((...a: unknown[]) => void logs.push(a.join(' ')))
+    const program = new Command()
+    registerCreative(program)
+    await program.parseAsync(['node', 'conductor', 'creative', 'render-slides', ...args])
+    e.mockRestore()
+    l.mockRestore()
+    return { errors: errors.join('\n'), logs: logs.join('\n') }
+  }
+  const env = () => {
+    process.env['CONDUCTOR_API_URL'] = 'https://api.test'
+    process.env['CONDUCTOR_API_KEY'] = 'run-key'
+    process.env['CONDUCTOR_PROJECT_ID'] = 'proj-9'
+  }
+
+  it('runs with the run-scoped env and no config file, exit 0 on a completed revision', async () => {
+    env()
+    renderSlidesMock.mockResolvedValue({ ok: true, outcome: 'completed', revisionId: REV, slides: [1, 3], ratios: ['9x16', '4x5'], uploaded: 4, warnings: 0 })
+    const { logs } = await runSlides(REV, '--creative', UUID, '--workflow-run-id', 'run-77')
+    expect(process.exitCode).toBeUndefined()
+    const [params, config] = renderSlidesMock.mock.calls[0]!
+    expect(params).toMatchObject({ revisionId: REV, creativeId: UUID, workflowRunId: 'run-77' })
+    expect(config).toMatchObject({ apiUrl: 'https://api.test', apiKey: 'run-key', projectId: 'proj-9' })
+    expect(logs).toMatch(/slides 1, 3 re-rendered at 9x16, 4x5 \(4 images uploaded/)
+  })
+
+  it('exits 1 and lists the failing checks when the layout checks failed', async () => {
+    env()
+    renderSlidesMock.mockResolvedValue({
+      ok: false,
+      outcome: 'checks-failed',
+      revisionId: REV,
+      error: '1 layout check failed; nothing was changed.',
+      checks: [{ slide: 3, ratio: '9x16', rule: 'safeZone', severity: 'error', message: 'too low' }],
+    })
+    const { errors } = await runSlides(REV, '--creative', UUID)
+    expect(process.exitCode).toBe(1)
+    expect(errors).toMatch(/slide 3 9x16 safeZone: too low/)
+  })
+
+  it('exits 1 with the message when the job crashes', async () => {
+    env()
+    renderSlidesMock.mockRejectedValue(new Error('browser exploded'))
+    const { errors } = await runSlides(REV, '--creative', UUID)
+    expect(process.exitCode).toBe(1)
+    expect(errors).toMatch(/browser exploded/)
+  })
+
+  it('names the missing variables when there is no login and no env', async () => {
+    const { errors } = await runSlides(REV, '--creative', UUID)
+    expect(process.exitCode).toBe(1)
+    expect(errors).toMatch(/CONDUCTOR_API_URL and CONDUCTOR_API_KEY/)
+    expect(renderSlidesMock).not.toHaveBeenCalled()
   })
 })

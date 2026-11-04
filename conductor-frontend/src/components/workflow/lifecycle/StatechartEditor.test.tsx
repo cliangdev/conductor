@@ -52,4 +52,25 @@ describe('StatechartEditor', () => {
 
     expect(screen.getByLabelText('Skill')).toBeInTheDocument()
   })
+  it('shows the reviewer role options with their UI names, values unchanged', () => {
+    const def = emptyDefinition()
+    def.transitions[0].requiresReview = true
+    render(<StatechartEditor value={def} onChange={vi.fn()} />)
+
+    const select = screen.getByLabelText('Reviewer role') as HTMLSelectElement
+    const options = Array.from(select.options).map((o) => [o.value, o.textContent])
+    expect(options).toEqual([['', 'any'], ['ADMIN', 'Admin'], ['CREATOR', 'Editor'], ['REVIEWER', 'Reviewer']])
+  })
+
+  it('binds "Require a reviewer other than the author" to requireIndependentReviewer', () => {
+    const def = emptyDefinition()
+    def.transitions[0].requiresReview = true
+    const onChange = vi.fn()
+    render(<StatechartEditor value={def} onChange={onChange} />)
+
+    fireEvent.click(screen.getByLabelText('Require a reviewer other than the author'))
+
+    const next = onChange.mock.calls[0][0]
+    expect(next.transitions[0].requireIndependentReviewer).toBe(true)
+  })
 })

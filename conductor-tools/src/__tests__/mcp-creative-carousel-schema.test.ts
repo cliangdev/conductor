@@ -22,6 +22,28 @@ describe('CAROUSEL tool schemas', () => {
     expect(props('preview_creative_draft')['slidePaths']!.type).toBe('object')
   })
 
+  it('preview_creative_draft takes slideshowSpecPath', () => {
+    expect(props('preview_creative_draft')['slideshowSpecPath']!.type).toBe('string')
+  })
+
+  it('attach_slideshow_spec takes creativeId and specPath (required) and force', () => {
+    const tool = TOOLS.find((t) => t.name === 'attach_slideshow_spec')!
+    expect((tool.inputSchema as { required: string[] }).required).toEqual(['creativeId', 'specPath'])
+    expect(props('attach_slideshow_spec')['force']!.type).toBe('boolean')
+    expect(tool.description).toContain('get_creative')
+  })
+
+  it('update_creative_slide_text takes creativeId and edits (slide, field, text), and an optional version', () => {
+    const tool = TOOLS.find((t) => t.name === 'update_creative_slide_text')!
+    expect((tool.inputSchema as { required: string[] }).required).toEqual(['creativeId', 'edits'])
+    const edits = props('update_creative_slide_text')['edits'] as unknown as { type: string; maxItems: number; items: { required: string[] } }
+    expect(edits.type).toBe('array')
+    expect(edits.maxItems).toBe(50)
+    expect(edits.items.required).toEqual(['slide', 'field', 'text'])
+    expect(props('update_creative_slide_text')['version']!.type).toBe('number')
+    expect(tool.description).toContain('get_creative')
+  })
+
   it('list_creative_media takes labelPrefix', () => {
     expect(props('list_creative_media')['labelPrefix']!.type).toBe('string')
   })

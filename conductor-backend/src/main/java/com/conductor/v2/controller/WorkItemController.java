@@ -399,6 +399,7 @@ public class WorkItemController implements WorkItemsApi {
                 .scheduledFor(item.getScheduledFor())
                 .scheduleTimezone(item.getScheduleTimezone())
                 .publishOnApproval(item.isPublishOnApproval())
+                .currentReviewRound(item.getCurrentReviewRound())
                 // The generated model defaults this to an empty list; it is a list-only extra, so leave it
                 // absent unless the list was asked to enrich.
                 .publishTargets(null)

@@ -190,6 +190,17 @@ public class GcpStorageService implements StorageService {
     }
 
     @Override
+    public java.util.OptionalLong objectSize(String gcsPath) {
+        long startNanos = System.nanoTime();
+        try {
+            com.google.cloud.storage.Blob blob = storage.get(BlobId.of(bucketName, gcsPath));
+            return blob == null || blob.getSize() == null ? java.util.OptionalLong.empty() : java.util.OptionalLong.of(blob.getSize());
+        } finally {
+            RequestStats.recordGcsCall(System.nanoTime() - startNanos);
+        }
+    }
+
+    @Override
     public void markCacheable(String gcsPath) {
         long startNanos = System.nanoTime();
         try {

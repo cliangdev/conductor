@@ -7,7 +7,7 @@ vi.mock('@/lib/api', () => ({ apiGet: (...a: unknown[]) => apiGet(...a) }))
 import { useAvailableTransitions } from './useAvailableTransitions'
 
 function Consumer({ id }: { id: string }) {
-  const t = useAvailableTransitions('p1', 'wi-1', 'DRAFT', 'ADMIN', 'tok')
+  const t = useAvailableTransitions('p1', 'wi-1', 'DRAFT', true, 'tok')
   return <span data-testid={id}>{t.map((x) => x.toStatus).join(',')}</span>
 }
 
@@ -29,8 +29,8 @@ describe('useAvailableTransitions', () => {
     expect(apiGet).toHaveBeenCalledTimes(1)
   })
 
-  function Lazy({ enabled, role = 'ADMIN' }: { enabled: boolean; role?: 'ADMIN' | 'REVIEWER' }) {
-    const t = useAvailableTransitions('p1', 'wi-2', 'DRAFT', role, 'tok', enabled)
+  function Lazy({ enabled, canEdit = true }: { enabled: boolean; canEdit?: boolean }) {
+    const t = useAvailableTransitions('p1', 'wi-2', 'DRAFT', canEdit, 'tok', enabled)
     return <span data-testid="lazy">{t.map((x) => x.toStatus).join(',')}</span>
   }
 
@@ -44,7 +44,7 @@ describe('useAvailableTransitions', () => {
   })
 
   it('never fetches for a REVIEWER, even when enabled', async () => {
-    render(<Lazy enabled role="REVIEWER" />)
+    render(<Lazy enabled canEdit={false} />)
     await new Promise((r) => setTimeout(r, 10))
     expect(apiGet).not.toHaveBeenCalled()
   })

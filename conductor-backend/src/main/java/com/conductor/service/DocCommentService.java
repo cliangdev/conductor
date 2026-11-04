@@ -92,7 +92,7 @@ public class DocCommentService {
         if (actor.user() != null) {
             boolean isAuthor = comment.getAuthor() != null
                     && comment.getAuthor().getId().equals(actor.userId());
-            allowed = isAuthor || projectSecurityService.isAdminOrCreator(projectId, actor.userId());
+            allowed = isAuthor || projectSecurityService.isEditor(projectId, actor.userId());
         } else {
             allowed = comment.getAuthor() == null;
         }

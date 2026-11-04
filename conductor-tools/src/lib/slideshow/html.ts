@@ -1,4 +1,4 @@
-import { slideCss } from './css.js'
+import { BUNDLED_FONTS, slideCss, type BundledFamily } from './css.js'
 import { fontFamilyNames, isGenericFamily, resolveSlideshowStyle, type ResolvedSlideshowStyle } from './style.js'
 import type { SlideRatio, SlideshowSpec, SlideSpec } from './spec.js'
 
@@ -33,6 +33,15 @@ const CHECK_SCRIPT = String.raw`
     try { await document.fonts.ready; } catch (e) {}
     await Promise.all(Array.prototype.map.call(document.images, function (im) { return im.complete ? 0 : new Promise(function (r) { im.onload = im.onerror = r; }); }));
     if (M.needsTT && !document.fonts.check('700 60px TT')) add('font', 'error', 'TikTok Sans did not load (document.fonts.check failed)');
+    // the bundled Inter / Source Serif 4 / Courier Prime this slide's type uses: a face that will not load would fall back to whatever the machine has
+    for (var bi = 0; bi < (M.bundled || []).length; bi++) {
+      var bf = M.bundled[bi];
+      for (var wi = 0; wi < bf.weights.length; wi++) {
+        var got = [];
+        try { got = await document.fonts.load(bf.weights[wi] + ' 60px "' + bf.family + '"'); } catch (e) {}
+        if (!got.length) { add('font', 'error', 'bundled font ' + bf.family + ' (' + bf.weights[wi] + ') did not load; the package install is incomplete (assets/fonts)'); break; }
+      }
+    }
     if (FF && M.firstFamily) {
       var loaded = faces.some(function (f) { return f && f.length > 0; });
       var probe = document.createElement('span');
@@ -72,15 +81,104 @@ const CHECK_SCRIPT = String.raw`
       var fs = parseFloat(getComputedStyle(el).fontSize);
       if (fs < 40) add('textSize', 'warning', label(el) + ' is ' + Math.round(fs) + 'px; text under 40px is hard to read on a phone');
     });
+    contrast();
     window.__CHECKS = out;
     window.__READY = true;
   }
+
+  // --- contrast (warnings): WCAG relative luminance, the same formula as conductor-creative/assertions.js ---
+  var LIN = []; for (var li = 0; li < 256; li++) { var lv = li / 255; LIN.push(lv <= 0.03928 ? lv / 12.92 : Math.pow((lv + 0.055) / 1.055, 2.4)); }
+  function lum(c) { return 0.2126 * LIN[Math.round(c[0])] + 0.7152 * LIN[Math.round(c[1])] + 0.0722 * LIN[Math.round(c[2])]; }
+  function ratio(a, b) { var l1 = lum(a), l2 = lum(b); return Math.round(((Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)) * 10) / 10; }
+  function rgba(str) {
+    var m = /^rgba?\(([0-9., ]+)\)$/.exec(String(str || '').trim());
+    if (!m) return null;
+    var p = m[1].split(/[, ]+/).filter(Boolean).map(Number);
+    return p.length >= 3 && p.every(function (n) { return isFinite(n); }) ? { c: [p[0], p[1], p[2]], a: p.length > 3 ? p[3] : 1 } : null;
+  }
+  var MIN_CONTRAST = 3, HIDE = null;
+  // the colour behind an element when something opaque is: its own or an ancestor's background (up to the slide, #s)
+  function opaqueBg(el) {
+    for (var n = el; n && n.nodeType === 1 && n.id !== 's'; n = n.parentElement) {
+      var b = rgba(getComputedStyle(n).backgroundColor);
+      if (b && b.a >= 0.95) return b.c;
+    }
+    return null;
+  }
+  // a text outline or halo wide enough to carry the text on its own: a stroke of 2px or more, or a shadow blurred 2px or more
+  function halo(cs) {
+    var sw = parseFloat(cs.webkitTextStrokeWidth);
+    var sc = rgba(cs.webkitTextStrokeColor);
+    if (sw >= 2 && sc && sc.a >= 0.5) return sc.c;
+    var re = /(rgba?\([^)]*\))\s+(-?[0-9.]+)px\s+(-?[0-9.]+)px\s+([0-9.]+)px/g, m;
+    while ((m = re.exec(cs.textShadow || ''))) {
+      var c = rgba(m[1]);
+      if (parseFloat(m[4]) >= 2 && c && c.a >= 0.5) return c.c;
+    }
+    return null;
+  }
+  function contrast() {
+    window.__overImage = [];
+    Array.prototype.forEach.call(document.querySelectorAll('[data-fg][data-ts]'), function (el) {
+      var r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) return;
+      var cs = getComputedStyle(el), fg = rgba(cs.color);
+      if (!fg) return;
+      var against = opaqueBg(el), what = 'its background';
+      if (!against) { against = halo(cs); what = 'its outline'; }
+      if (against) {
+        var cr = ratio(fg.c, against);
+        if (cr < MIN_CONTRAST) add('contrast', 'warning', label(el) + ' has ' + cr + ':1 contrast against ' + what + ' (' + MIN_CONTRAST + ':1 is the minimum for large text)');
+      } else {
+        window.__overImage.push({ label: label(el), fg: fg.c, rect: [r.left, r.top, r.width, r.height] });
+      }
+    });
+  }
+  // Text with no box or outline sits straight on the slide. A file: image taints a canvas, so the caller renders the
+  // slide with its text hidden (__hideText), takes a screenshot and hands it back here as a data: URL to measure.
+  window.__hideText = function (on) {
+    if (!HIDE) { HIDE = document.createElement('style'); HIDE.textContent = '[data-fg][data-ts]{color:transparent!important;text-shadow:none!important;-webkit-text-stroke-color:transparent!important}'; }
+    if (on) document.head.appendChild(HIDE); else HIDE.remove();
+  };
+  window.__sampleContrast = async function (dataUrl) {
+    var found = [];
+    try {
+      var im = new Image();
+      im.src = dataUrl;
+      await im.decode();
+      var cv = document.createElement('canvas');
+      cv.width = W; cv.height = H;
+      var cx = cv.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(im, 0, 0, W, H);
+      (window.__overImage || []).forEach(function (t) {
+        var x = Math.max(0, Math.floor(t.rect[0])), y = Math.max(0, Math.floor(t.rect[1]));
+        var w = Math.min(W - x, Math.ceil(t.rect[2])), h = Math.min(H - y, Math.ceil(t.rect[3]));
+        if (w < 1 || h < 1) return;
+        var d = cx.getImageData(x, y, w, h).data, sum = 0, n = 0;
+        for (var py = 0; py < h; py += 3) for (var px = 0; px < w; px += 3) { var i = (py * w + px) * 4; sum += lum([d[i], d[i + 1], d[i + 2]]); n++; }
+        if (!n) return;
+        var l = sum / n, l2 = lum(t.fg);
+        var cr = Math.round(((Math.max(l, l2) + 0.05) / (Math.min(l, l2) + 0.05)) * 10) / 10;
+        if (cr < MIN_CONTRAST) found.push({ slide: M.slide, ratio: M.ratio, rule: 'contrast', severity: 'warning', message: t.label + ' has ' + cr + ':1 contrast against the image behind it (' + MIN_CONTRAST + ':1 is the minimum for large text); add a box or outline, dim the photo, or change the text colour' });
+      });
+    } catch (e) { /* an unreadable canvas: skip the check rather than report a guess */ }
+    return found;
+  };
   run().catch(function (e) {
     window.__CHECKS = [{ slide: M.slide, ratio: M.ratio, rule: 'render', severity: 'error', message: 'measuring failed: ' + (e && e.message) }];
     window.__READY = true;
   });
 })();
 `
+
+/** The bundled families a slide's type draws with (see BUNDLED_FONTS); the native TikTok Sans text is not one. */
+export function bundledFamiliesFor(sl: SlideSpec): BundledFamily[] {
+  const out: BundledFamily[] = []
+  if (sl.type === 'notes' || sl.type === 'week' || sl.type === 'messages' || (sl.type === 'grid' && (sl.photos ?? []).some((p) => p.badge))) out.push('Inter')
+  if (sl.type === 'placard') out.push('Source Serif 4')
+  if (sl.type === 'receipt') out.push('Courier Prime')
+  return out
+}
 
 function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio, style: ResolvedSlideshowStyle): string {
   const r4 = ratio === '4x5'
@@ -237,10 +335,20 @@ export function buildSlideHtml(
   // every family is a generic/system keyword); the bundled TikTok Sans is checked whenever any text uses it
   const firstFamily = style.fontFamily ? (fontFamilyNames(style.fontFamily).find((f) => !isGenericFamily(f)) ?? null) : null
   const needsTT = !style.fontFamily || sl.type === 'placard'
-  const meta = JSON.stringify({ slide: index + 1, ratio, lines, fontFamily: style.fontFamily, firstFamily, needsTT, fontUrl: style.fontUrl }).replace(/</g, '\\u003c')
+  const bundled = bundledFamiliesFor(sl)
+  const meta = JSON.stringify({
+    slide: index + 1,
+    ratio,
+    lines,
+    fontFamily: style.fontFamily,
+    firstFamily,
+    needsTT,
+    fontUrl: style.fontUrl,
+    ...(bundled.length ? { bundled: bundled.map((family) => ({ family, weights: BUNDLED_FONTS[family].faces.map(([w]) => w) })) } : {}),
+  }).replace(/</g, '\\u003c')
   const base = assetBase.endsWith('/') ? assetBase : `${assetBase}/`
   return (
-    `<!doctype html>\n<html style="--H:${FRAME_H[ratio]}px"><head><meta charset="utf-8">${style.fontUrl ? `<link rel="stylesheet" href="${esc(style.fontUrl)}">` : ''}<style>${slideCss(base, style)}</style></head>\n` +
+    `<!doctype html>\n<html style="--H:${FRAME_H[ratio]}px"><head><meta charset="utf-8">${style.fontUrl ? `<link rel="stylesheet" href="${esc(style.fontUrl)}">` : ''}<style>${slideCss(base, style, bundled)}</style></head>\n` +
     `<body><div id="s">${slideBody(sl, spec, ratio, style)}</div>\n` +
     `<script>window.__META=${meta};</script><script>${CHECK_SCRIPT}</script></body></html>\n`
   )

@@ -25,6 +25,10 @@ public interface CreativePhotoRepository extends JpaRepository<CreativePhoto, St
 
     List<CreativePhoto> findAllByIdIn(Collection<String> ids);
 
+    List<CreativePhoto> findAllByMintedForRevisionId(String revisionId);
+
+    long countByMintedForRevisionId(String revisionId);
+
     /** Blocked Media whose id is in {@code ids} or whose storage path is in {@code paths} (both non-empty). */
     @Query("select p from CreativePhoto p where p.blocked = true and (p.id in :ids or p.gcsPath in :paths)")
     List<CreativePhoto> findBlockedByIdsOrPaths(@Param("ids") Collection<String> ids,

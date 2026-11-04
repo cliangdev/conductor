@@ -13,6 +13,7 @@ import com.conductor.repository.PostPublishTargetAssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.service.AssetService;
+import com.conductor.service.FreezeBypass;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.PublishTargetService;
 import com.conductor.service.publish.PostFormat;
@@ -50,6 +51,7 @@ import java.util.Map;
 public class CreativeAttachService {
 
     private final CreativeRepository creativeRepository;
+    private final CreativeService creativeService;
     private final CreativeRenderRepository renderRepository;
     private final CreativeRenderFrameRepository frameRepository;
     private final AssetService assetService;
@@ -64,6 +66,7 @@ public class CreativeAttachService {
     private final ObjectMapper objectMapper;
 
     public CreativeAttachService(CreativeRepository creativeRepository,
+                                 CreativeService creativeService,
                                  CreativeRenderRepository renderRepository,
                                  CreativeRenderFrameRepository frameRepository,
                                  AssetService assetService,
@@ -77,6 +80,7 @@ public class CreativeAttachService {
                                  WorkflowDefinitionResolver workflowDefinitionResolver,
                                  ObjectMapper objectMapper) {
         this.creativeRepository = creativeRepository;
+        this.creativeService = creativeService;
         this.renderRepository = renderRepository;
         this.frameRepository = frameRepository;
         this.assetService = assetService;
@@ -102,8 +106,12 @@ public class CreativeAttachService {
     public record TargetSkip(String targetId, String platform, String reason) {
     }
 
+    /**
+     * {@code creativeState} is the Creative's state once the attach is done (a DRAFT that is ready is promoted to
+     * READY); {@code stateNote} is null, or the one-sentence reason it stayed DRAFT.
+     */
     public record AttachResult(List<AttachedAsset> assets, List<TargetUpdate> targetsUpdated,
-                               List<TargetSkip> targetsSkipped) {
+                               List<TargetSkip> targetsSkipped, String creativeState, String stateNote) {
     }
 
     @Transactional
@@ -241,7 +249,127 @@ public class CreativeAttachService {
 
         publishTargetService.replaceSelection(projectId, workItemId, selections, caller);
 
-        return new AttachResult(attachedAssets, updates, skipped);
+        CreativeService.AttachStateOutcome outcome = creativeService.promoteOnAttach(creative);
+        return new AttachResult(attachedAssets, updates, skipped, outcome.state(), outcome.note());
+    }
+
+    // ── re-pointing a Post at a re-rendered Creative (slide-text edits) ────────────────────────────
+
+    /** What {@link #reattach} did: how many of the Post's Creative assets it replaced. */
+    record ReattachResult(int assetsReplaced) {
+    }
+
+    /**
+     * Moves a Post from the frames of this Creative it holds today onto the same frames of {@code render} (a
+     * newer SUCCEEDED render of the same Creative), for {@link CreativeEditPropagator}. Not an endpoint and not
+     * {@link #attach}: attach keeps a destination's own chosen media, whereas this is exactly the case where
+     * every destination that carries the Creative must carry its new slides.
+     *
+     * <p>Least invasive by construction: every old Creative asset is swapped for the new render's frame with the
+     * same placement, slide index and kind (image or video) <em>in place</em> in each destination's selection,
+     * so the order, the destinations that carry the Creative, and every per-target option ({@code carouselAs},
+     * caption override, alt text, format) are exactly as they were. Destinations that inherit stay inheriting,
+     * and assets the author picked from elsewhere are untouched. The new selection goes through {@link
+     * PublishTargetService#replaceSelection} like any other edit, so the bundle hash changes; the old assets are
+     * then deleted (their frames, and the stored objects, belong to the Creative and are not touched).
+     *
+     * <p>Runs under {@link FreezeBypass#CREATIVE_EDIT_PROPAGATION}: the caller has already put the Post in the
+     * status the edit calls for (back to review, or a new round) in this same transaction. Package-private on
+     * purpose, and no controller reaches it. A Post whose old asset has no counterpart in the new render is
+     * refused (the caller's transaction rolls back) rather than left half-moved.
+     *
+     * @param creativeFrames every frame of {@code creative}, any render (the caller loads them once for all Posts)
+     */
+    @Transactional
+    ReattachResult reattach(String projectId, String workItemId, Creative creative, CreativeRender render,
+                            List<CreativeRenderFrame> creativeFrames) {
+        Map<String, CreativeRenderFrame> frameById = new LinkedHashMap<>();
+        Map<String, CreativeRenderFrame> newByKey = new LinkedHashMap<>();
+        for (CreativeRenderFrame frame : creativeFrames) {
+            frameById.put(frame.getId(), frame);
+            if (render.getId().equals(frame.getRenderId()) && !frame.isSheet()) {
+                newByKey.put(frameKey(frame), frame);
+            }
+        }
+        List<Asset> postAssets = assetRepository.findAllByWorkItemId(workItemId);
+        List<Asset> stale = postAssets.stream()
+                .filter(a -> a.getCreativeFrameId() != null && frameById.containsKey(a.getCreativeFrameId()))
+                .filter(a -> !render.getId().equals(frameById.get(a.getCreativeFrameId()).getRenderId()))
+                .toList();
+        if (stale.isEmpty()) {
+            return new ReattachResult(0);
+        }
+
+        // The new frames this Post needs, one per old placement/slide/kind, with the asset type the old one had.
+        Map<String, CreativeRenderFrame> needed = new LinkedHashMap<>();
+        Map<String, String> typeByKey = new LinkedHashMap<>();
+        Map<String, String> keyOfStale = new LinkedHashMap<>();
+        Map<String, String> newFrameOfKey = new LinkedHashMap<>();
+        for (Asset asset : postAssets) {
+            CreativeRenderFrame held = asset.getCreativeFrameId() == null ? null : frameById.get(asset.getCreativeFrameId());
+            if (held != null && render.getId().equals(held.getRenderId())) {
+                // A frame of the new render already on the Post (a partial earlier move): reuse it.
+                newFrameOfKey.put(frameKey(held), asset.getId());
+            }
+        }
+        for (Asset asset : stale) {
+            String key = frameKey(frameById.get(asset.getCreativeFrameId()));
+            CreativeRenderFrame replacement = newByKey.get(key);
+            if (replacement == null) {
+                throw new BusinessException("Render " + render.getId() + " has no frame to replace '"
+                        + asset.getLabel() + "' (" + key + ")");
+            }
+            keyOfStale.put(asset.getId(), key);
+            if (!newFrameOfKey.containsKey(key)) {
+                needed.putIfAbsent(key, replacement);
+                typeByKey.putIfAbsent(key, asset.getType());
+            }
+        }
+
+        List<String> keys = new ArrayList<>(needed.keySet());
+        List<AssetService.StoredObjectInput> inputs = new ArrayList<>();
+        for (String key : keys) {
+            CreativeRenderFrame frame = needed.get(key);
+            inputs.add(new AssetService.StoredObjectInput(typeByKey.get(key),
+                    "Creative " + creative.displayId() + " " + frame.getPlacementKey(), frame.getGcsPath(),
+                    frame.getContentType(), frame.getSizeBytes(), frame.getWidth(), frame.getHeight(), frame.getId(),
+                    frame.getDurationSeconds()));
+        }
+        List<Asset> created = assetService.createAllFromStoredObjects(projectId, workItemId, inputs,
+                FreezeBypass.CREATIVE_EDIT_PROPAGATION);
+        for (int i = 0; i < keys.size(); i++) {
+            newFrameOfKey.put(keys.get(i), created.get(i).getId());
+        }
+        Map<String, String> replacementOf = new LinkedHashMap<>();
+        keyOfStale.forEach((oldId, key) -> replacementOf.put(oldId, newFrameOfKey.get(key)));
+
+        // Every destination's selection, with only the swapped ids different.
+        List<PostPublishTarget> targets = targetRepository.findAllByWorkItemId(workItemId);
+        Map<String, List<String>> customAssetIds = currentCustomAssetIds(targets);
+        List<PublishTargetService.TargetSelection> selections = new ArrayList<>();
+        for (PostPublishTarget target : targets) {
+            List<String> own = target.isCustomMedia() ? customAssetIds.getOrDefault(target.getId(), List.of()) : List.of();
+            List<String> remapped = new ArrayList<>();
+            for (String id : own) {
+                String swapped = replacementOf.getOrDefault(id, id);
+                if (!remapped.contains(swapped)) {
+                    remapped.add(swapped);
+                }
+            }
+            selections.add(selectionFor(target, remapped, target.isCustomMedia() && remapped.isEmpty()));
+        }
+        publishTargetService.replaceSelection(projectId, workItemId, selections, null,
+                FreezeBypass.CREATIVE_EDIT_PROPAGATION);
+
+        assetRepository.flush();
+        assetRepository.deleteAll(stale);
+        return new ReattachResult(stale.size());
+    }
+
+    /** Which slot of a render a frame fills: placement, slide index and image-or-video. */
+    private static String frameKey(CreativeRenderFrame frame) {
+        boolean video = frame.getContentType() != null && frame.getContentType().startsWith("video/");
+        return frame.getPlacementKey() + "|" + frame.getSequenceIndex() + "|" + (video ? "video" : "image");
     }
 
     /** Every custom-media target's stored selection, in order, read in one query. */
@@ -300,8 +428,8 @@ public class CreativeAttachService {
         if (!projectSecurityService.isProjectMember(projectId, caller.getId())) {
             throw new EntityNotFoundException("Project not found");
         }
-        if (!projectSecurityService.isAdminOrCreator(projectId, caller.getId())) {
-            throw new ForbiddenException("Only ADMIN or CREATOR can attach a Creative to a Post");
+        if (!projectSecurityService.isEditor(projectId, caller.getId())) {
+            throw new ForbiddenException("Requires the Editor role (or Admin) to attach a Creative to a Post");
         }
     }
 }
