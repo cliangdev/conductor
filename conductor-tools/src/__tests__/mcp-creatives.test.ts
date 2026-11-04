@@ -1407,6 +1407,16 @@ describe('attach_creative_to_post', () => {
     )
   })
 
+  it('passes creativeState and stateNote through so the caller sees why a Creative stayed DRAFT', async () => {
+    mocked(apiPost).mockResolvedValue({
+      assets: [],
+      creativeState: 'DRAFT',
+      stateNote: 'Stays a draft because caption is missing: the post needs primary text.',
+    })
+    const result = await attachCreativeToPost({ creativeId: 'c1', workItemId: 'w1', renderId: 'r9' }, config)
+    expect(result).toMatchObject({ creativeState: 'DRAFT', stateNote: expect.stringContaining('caption is missing') })
+  })
+
   it('falls back to the latest SUCCEEDED, non-preview render when none is given', async () => {
     mocked(apiGet).mockResolvedValue([
       { id: 'r2', state: 'RUNNING', previewOnly: false },

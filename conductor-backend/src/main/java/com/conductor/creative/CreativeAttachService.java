@@ -50,6 +50,7 @@ import java.util.Map;
 public class CreativeAttachService {
 
     private final CreativeRepository creativeRepository;
+    private final CreativeService creativeService;
     private final CreativeRenderRepository renderRepository;
     private final CreativeRenderFrameRepository frameRepository;
     private final AssetService assetService;
@@ -64,6 +65,7 @@ public class CreativeAttachService {
     private final ObjectMapper objectMapper;
 
     public CreativeAttachService(CreativeRepository creativeRepository,
+                                 CreativeService creativeService,
                                  CreativeRenderRepository renderRepository,
                                  CreativeRenderFrameRepository frameRepository,
                                  AssetService assetService,
@@ -77,6 +79,7 @@ public class CreativeAttachService {
                                  WorkflowDefinitionResolver workflowDefinitionResolver,
                                  ObjectMapper objectMapper) {
         this.creativeRepository = creativeRepository;
+        this.creativeService = creativeService;
         this.renderRepository = renderRepository;
         this.frameRepository = frameRepository;
         this.assetService = assetService;
@@ -102,8 +105,12 @@ public class CreativeAttachService {
     public record TargetSkip(String targetId, String platform, String reason) {
     }
 
+    /**
+     * {@code creativeState} is the Creative's state once the attach is done (a DRAFT that is ready is promoted to
+     * READY); {@code stateNote} is null, or the one-sentence reason it stayed DRAFT.
+     */
     public record AttachResult(List<AttachedAsset> assets, List<TargetUpdate> targetsUpdated,
-                               List<TargetSkip> targetsSkipped) {
+                               List<TargetSkip> targetsSkipped, String creativeState, String stateNote) {
     }
 
     @Transactional
@@ -241,7 +248,8 @@ public class CreativeAttachService {
 
         publishTargetService.replaceSelection(projectId, workItemId, selections, caller);
 
-        return new AttachResult(attachedAssets, updates, skipped);
+        CreativeService.AttachStateOutcome outcome = creativeService.promoteOnAttach(creative);
+        return new AttachResult(attachedAssets, updates, skipped, outcome.state(), outcome.note());
     }
 
     /** Every custom-media target's stored selection, in order, read in one query. */
