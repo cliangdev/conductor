@@ -1,10 +1,12 @@
 package com.conductor.creative;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -17,6 +19,18 @@ public interface CreativeRepository extends JpaRepository<Creative, String> {
     @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT c FROM Creative c WHERE c.id = :id AND c.projectId = :projectId")
     Optional<Creative> findByIdAndProjectIdForUpdate(@Param("id") String id, @Param("projectId") String projectId);
+
+    /**
+     * Moves a Creative from {@code fromState} to {@code toState} WITHOUT raising its {@code version}: a bulk
+     * update bypasses JPA's {@code @Version} bump. Used where a state flip is not a content change, so the
+     * renders already made for this version must keep reading as current. Flushes pending changes first and
+     * clears the persistence context afterwards (the loaded entity would otherwise be stale), so callers must
+     * not rely on entities loaded before the call. Returns the rows changed (0 when the state had moved on).
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("UPDATE Creative c SET c.state = :toState, c.updatedAt = :now WHERE c.id = :id AND c.state = :fromState")
+    int updateStateKeepingVersion(@Param("id") String id, @Param("fromState") String fromState,
+                                  @Param("toState") String toState, @Param("now") OffsetDateTime now);
 
     List<Creative> findAllByProjectIdOrderByNumberDescVariantLetterAsc(String projectId);
 

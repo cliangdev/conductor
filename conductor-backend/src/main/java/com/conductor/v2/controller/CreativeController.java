@@ -397,7 +397,9 @@ public class CreativeController implements CreativesApi {
         List<AttachCreativeTargetSkip> skipped = result.targetsSkipped().stream()
                 .map(s -> new AttachCreativeTargetSkip(s.targetId(), s.platform(), s.reason()))
                 .toList();
-        return ResponseEntity.ok(new AttachCreativeResponse(assets, updated, skipped));
+        return ResponseEntity.ok(new AttachCreativeResponse(assets, updated, skipped)
+                .creativeState(CreativeState.fromValue(result.creativeState()))
+                .stateNote(result.stateNote()));
     }
 
     // ── Slideshow-spec revisions ─────────────────────────────────────────
