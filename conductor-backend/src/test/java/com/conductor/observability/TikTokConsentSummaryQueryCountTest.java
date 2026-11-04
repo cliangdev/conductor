@@ -193,6 +193,10 @@ class TikTokConsentSummaryQueryCountTest extends AbstractNoneWebIntegrationTest 
         assertThat(manyQueries).isLessThanOrEqualTo(8);
     }
 
+    /** Request, Posts, targets, consents, assets, connections, membership: no per-Post query. */
+    private static final int PAGE_QUERY_BUDGET = 8;
+    private static final int STATUS_QUERY_BUDGET = 7;
+
     @Test
     void pageListsExactlyThePostsWaitingOnConsent() {
         Fixture f = fixture();
@@ -221,8 +225,8 @@ class TikTokConsentSummaryQueryCountTest extends AbstractNoneWebIntegrationTest 
         asSession(many, () -> requestService.page(many.project().getId(), null)); // creator info is cached per account
         int manyQueries = asSession(many, () -> count(() -> requestService.page(many.project().getId(), null)));
 
-        System.out.println("CONSENT-PAGE-QUERY-COUNTS: sets=1 -> " + fewQueries + ", sets=5 -> " + manyQueries);
-        assertThat(manyQueries).isEqualTo(fewQueries);
+        assertThat(manyQueries).as("page queries for 30 Posts vs 6").isEqualTo(fewQueries);
+        assertThat(manyQueries).isLessThanOrEqualTo(PAGE_QUERY_BUDGET);
     }
 
     @Test
@@ -242,8 +246,8 @@ class TikTokConsentSummaryQueryCountTest extends AbstractNoneWebIntegrationTest 
         assertThat(status.items()).hasSize(10);
         int manyQueries = count(() -> requestService.status(many.project().getId(), manyRequest));
 
-        System.out.println("CONSENT-STATUS-QUERY-COUNTS: sets=1 -> " + fewQueries + ", sets=5 -> " + manyQueries);
-        assertThat(manyQueries).isEqualTo(fewQueries);
+        assertThat(manyQueries).as("status queries for 10 Posts vs 2").isEqualTo(fewQueries);
+        assertThat(manyQueries).isLessThanOrEqualTo(STATUS_QUERY_BUDGET);
     }
 
     /** Runs {@code call} as the fixture's admin in their own browser session, as the consent page needs. */
@@ -257,10 +261,7 @@ class TikTokConsentSummaryQueryCountTest extends AbstractNoneWebIntegrationTest 
     private int count(Runnable call) {
         try (RequestStats.Scope scope = RequestStats.start()) {
             call.run();
-            RequestStats stats = scope.stats();
-            System.out.println("CONSENT-QUERY-DETAIL " + stats.dbQueries() + " queries "
-                    + stats.topRepeatedSql(12));
-            return stats.dbQueries();
+            return scope.stats().dbQueries();
         }
     }
 

@@ -547,23 +547,27 @@ public class PublishTargetService {
     }
 
     /**
-     * {@link #views} for the targets of many Posts at once, in a fixed number of queries; each target is
-     * resolved against its own Post. Keyed by target id.
+     * {@link #views} for the targets of many Posts at once, from the Posts' assets and selection rows the
+     * caller has already loaded: no query here. Each target is resolved against its own Post. Keyed by
+     * target id.
      */
-    @Transactional(readOnly = true)
-    public Map<String, TargetView> viewsAcross(List<PostPublishTarget> targets) {
-        if (targets == null || targets.isEmpty()) {
-            return Map.of();
-        }
-        Map<String, PublishTargetMediaResolver.EffectiveMedia> media = mediaResolver.effectiveMediaForTargets(targets);
+    public Map<String, TargetView> viewsAcross(List<WorkItem> posts, Map<String, List<PostPublishTarget>> targetsByPost,
+                                               List<Asset> assets, List<PostPublishTargetAsset> selectionRows) {
+        List<PostPublishTarget> targets = posts.stream()
+                .flatMap(post -> targetsByPost.getOrDefault(post.getId(), List.of()).stream())
+                .toList();
+        Map<String, PublishTargetMediaResolver.EffectiveMedia> media =
+                mediaResolver.effectiveMediaForTargets(targets, assets, selectionRows);
         Map<String, TargetView> views = new LinkedHashMap<>();
-        for (PostPublishTarget target : targets) {
-            PublishTargetMediaResolver.EffectiveMedia effective = media.getOrDefault(
-                    target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE);
-            views.put(target.getId(), new TargetView(target,
-                    target.isCustomMedia() ? effective.assetIds() : null,
-                    effective.assetIds(),
-                    mediaResolver.effectiveCaption(target, target.getWorkItem())));
+        for (WorkItem post : posts) {
+            for (PostPublishTarget target : targetsByPost.getOrDefault(post.getId(), List.of())) {
+                PublishTargetMediaResolver.EffectiveMedia effective = media.getOrDefault(
+                        target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE);
+                views.put(target.getId(), new TargetView(target,
+                        target.isCustomMedia() ? effective.assetIds() : null,
+                        effective.assetIds(),
+                        mediaResolver.effectiveCaption(target, post)));
+            }
         }
         return views;
     }

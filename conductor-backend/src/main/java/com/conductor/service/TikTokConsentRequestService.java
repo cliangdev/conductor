@@ -129,28 +129,31 @@ public class TikTokConsentRequestService {
         User user = projectSecurityService.requireMemberUser(projectId);
 
         List<String> candidates = workItemIds == null
-                ? targetRepository.findPendingTikTokWorkItemIds(projectId).stream()
-                        .map(id -> workItemRepository.findById(id).orElse(null))
-                        .filter(item -> item != null)
-                        .sorted(Comparator.comparing(WorkItem::getSequenceNumber,
-                                Comparator.nullsLast(Comparator.naturalOrder())))
-                        .map(WorkItem::getId)
-                        .toList()
+                ? targetRepository.findPendingTikTokWorkItemIds(projectId)
                 : new ArrayList<>(new LinkedHashSet<>(workItemIds));
-
-        List<Item> items = new ArrayList<>();
+        // Ids are looked up together; only a display id ("RE-80") falls back to its own lookup.
+        Map<String, WorkItem> byId = workItemsInProject(projectId, candidates);
+        List<WorkItem> resolved = new ArrayList<>();
         List<Skipped> skipped = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (String id : candidates) {
-            WorkItem workItem = resolve(projectId, id);
+            WorkItem workItem = byId.containsKey(id) ? byId.get(id) : resolve(projectId, id);
             if (workItem == null) {
                 skipped.add(new Skipped(id, null, "NOT_FOUND"));
-                continue;
+            } else if (seen.add(workItem.getId())) { // the same Post may be named twice, by uuid and display id
+                resolved.add(workItem);
             }
-            if (!seen.add(workItem.getId())) {
-                continue; // the same Post named twice, e.g. by uuid and by display id
-            }
-            PublishConsentService.ConsentState consent = consentService.currentState(workItem);
+        }
+        if (workItemIds == null) {
+            resolved.sort(Comparator.comparing(WorkItem::getSequenceNumber,
+                    Comparator.nullsLast(Comparator.naturalOrder())));
+        }
+
+        Map<String, PublishConsentService.Snapshot> snapshots =
+                consentService.snapshots(resolved.stream().map(WorkItem::getId).toList());
+        List<Item> items = new ArrayList<>();
+        for (WorkItem workItem : resolved) {
+            PublishConsentService.ConsentState consent = snapshots.get(workItem.getId()).state();
             String displayId = displayIdOf(workItem);
             switch (consent.verdict()) {
                 case NOT_REQUIRED -> skipped.add(new Skipped(workItem.getId(), displayId, "NOT_REQUIRED"));
@@ -228,7 +231,8 @@ public class TikTokConsentRequestService {
                 .filter(java.util.Objects::nonNull)
                 .map(workItem -> item(workItem, snapshots.get(workItem.getId()).state()))
                 .toList();
-        boolean allValid = items.stream().allMatch(item -> item.consent().valid());
+        // A request whose Posts are all gone has nothing consented, so it never completes on its own.
+        boolean allValid = !items.isEmpty() && items.stream().allMatch(item -> item.consent().valid());
         if (request.getCompletedAt() == null && allValid) {
             request.setCompletedAt(OffsetDateTime.now());
             request = requestRepository.save(request);
@@ -288,12 +292,13 @@ public class TikTokConsentRequestService {
             }
             ids = TikTokConsentRequestIds.parse(request.getWorkItemIds());
         } else {
-            ids = targetRepository.findPendingTikTokWorkItemIds(projectId).stream().distinct().toList();
+            ids = targetRepository.findPendingTikTokWorkItemIds(projectId);
         }
 
         // Set-based: a fixed number of queries however many Posts are on the page.
         Map<String, WorkItem> workItems = workItemsInProject(projectId, ids);
-        Map<String, PublishConsentService.Snapshot> snapshots = consentService.snapshots(workItems.keySet());
+        PublishConsentService.Batch batch = consentService.load(workItems.keySet());
+        Map<String, PublishConsentService.Snapshot> snapshots = batch.snapshots();
         List<WorkItem> shown = ids.stream()
                 .map(workItems::get)
                 .filter(item -> item != null && !snapshots.get(item.getId()).consentTargets().isEmpty())
@@ -306,9 +311,10 @@ public class TikTokConsentRequestService {
                             Comparator.nullsLast(Comparator.naturalOrder())))
                     .toList();
         }
-        Map<String, PublishTargetService.TargetView> views = publishTargetService.viewsAcross(shown.stream()
-                .flatMap(item -> snapshots.get(item.getId()).consentTargets().stream())
-                .toList());
+        Map<String, List<PostPublishTarget>> consentTargets = new java.util.HashMap<>();
+        snapshots.forEach((id, snapshot) -> consentTargets.put(id, snapshot.consentTargets()));
+        Map<String, PublishTargetService.TargetView> views = publishTargetService.viewsAcross(
+                shown, consentTargets, batch.assets(), batch.selectionRows());
 
         List<PagePost> posts = new ArrayList<>();
         Map<String, TikTokCreatorInfoService.Creator> creators = new LinkedHashMap<>();
