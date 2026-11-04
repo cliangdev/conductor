@@ -28,7 +28,7 @@ describe('PostsUsingCreativePanel', () => {
       { id: 'w1', displayId: 'RE-88', title: 'Pasta, 3 ways', status: 'SCHEDULED', statusLabel: 'Scheduled' },
     ])
     render(<PostsUsingCreativePanel projectId="p" creativeId="c1" token="t" />)
-    const link = await screen.findByRole('link', { name: 'Pasta, 3 ways' })
+    const link = await screen.findByRole('link', { name: /RE-88.*Pasta, 3 ways.*Scheduled/ })
     expect(link).toHaveAttribute('href', '/app/projects/p/marketing/posts/RE-88')
     expect(screen.getByText('Scheduled')).toBeInTheDocument()
     expect((apiGet as ReturnType<typeof vi.fn>).mock.calls[0]![0]).toBe('/api/v2/projects/p/work-items?creativeId=c1&workflow=MARKETING')
@@ -80,7 +80,7 @@ describe('PostsUsingCreativePanel', () => {
 
     nav.loading = false
     rerender(<PostsUsingCreativePanel projectId="p" creativeId="c1" token="t" />)
-    const link = await screen.findByRole('link', { name: 'A post' })
+    const link = await screen.findByRole('link', { name: /RE-1.*A post.*DRAFT/ })
     expect(link).toHaveAttribute('href', '/app/projects/p/marketing/posts/RE-1')
     expect(apiGet).toHaveBeenCalledTimes(1)
   })

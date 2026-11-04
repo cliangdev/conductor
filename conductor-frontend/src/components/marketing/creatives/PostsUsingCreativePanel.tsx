@@ -73,28 +73,43 @@ export function PostsUsingCreativePanel({
       </CardHeader>
       <CardContent>
         {shown === null ? (
-          <Skeleton className="h-8 w-full" />
+          <div className="px-4 py-3">
+            <Skeleton className="h-8 w-full" />
+          </div>
         ) : error ? (
-          <p className="text-sm text-destructive">{error}</p>
+          <p className="px-4 py-3 text-sm text-destructive">{error}</p>
         ) : shown.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
+          <p className="px-4 py-3 text-sm text-muted-foreground">
             {unavailable ? 'Posts using this creative cannot be listed right now.' : 'No posts use this creative yet.'}
           </p>
         ) : (
           <ul className="divide-y divide-border">
-            {shown.map((p) => (
-              <li key={p.id} className="flex items-center gap-3 py-2 text-sm">
-                <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">{p.displayId}</span>
-                {postsHref ? (
-                  <Link prefetch={false} href={`${postsHref}/${p.displayId}`} className="min-w-0 flex-1 truncate text-foreground hover:underline">
-                    {p.title}
-                  </Link>
-                ) : (
+            {shown.map((p) => {
+              // The whole row is the link (Card rows pad themselves; CardContent has no padding).
+              const row = (
+                <>
+                  <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">{p.displayId}</span>
                   <span className="min-w-0 flex-1 truncate text-foreground">{p.title}</span>
-                )}
-                <span className="shrink-0 text-xs text-muted-foreground">{p.statusLabel ?? p.status}</span>
-              </li>
-            ))}
+                  <span className="shrink-0 text-xs text-muted-foreground">{p.statusLabel ?? p.status}</span>
+                </>
+              )
+              const rowClass = 'flex min-h-[38px] items-center gap-3 px-4 py-2 text-sm'
+              return (
+                <li key={p.id}>
+                  {postsHref ? (
+                    <Link
+                      prefetch={false}
+                      href={`${postsHref}/${p.displayId}`}
+                      className={`${rowClass} transition-colors hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring`}
+                    >
+                      {row}
+                    </Link>
+                  ) : (
+                    <div className={rowClass}>{row}</div>
+                  )}
+                </li>
+              )
+            })}
           </ul>
         )}
       </CardContent>
