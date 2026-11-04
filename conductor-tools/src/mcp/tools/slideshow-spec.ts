@@ -16,6 +16,7 @@ import {
   mapSpecImages,
   mediaRef,
   prepareSpecForCreative,
+  ratioOfSize,
   specLocalImages,
   type ComposeOptions,
   type ComposeResult,
@@ -265,13 +266,11 @@ async function downloadMedia(config: Config, mediaId: string, into: string): Pro
   return file
 }
 
-/** The ratio a stored list is, from its first image: 1080x1920 is 9x16, 1080x1350 is 4x5; anything else is not comparable. */
+/** The ratio a stored list is, from its first image, within 2%: 9x16 or 4x5; anything else cannot be re-composed. */
 async function ratioOfImage(file: string): Promise<SlideRatio | undefined> {
   const info = readImageDimensions(new Uint8Array(await readFile(file)))
-  if (!info) return undefined
-  if (info.width === 1080 && info.height === 1920) return '9x16'
-  if (info.width === 1080 && info.height === 1350) return '4x5'
-  return undefined
+  const ratio = info ? ratioOfSize(info.width, info.height) : undefined
+  return ratio === '9x16' || ratio === '4x5' ? ratio : undefined
 }
 
 export async function attachSlideshowSpec(
@@ -318,7 +317,7 @@ export async function attachSlideshowSpec(
     for (const [placement, ids] of stored) {
       const first = await download(ids[0]!, temp)
       const ratio = COMPOSE_RATIOS[placement] ?? (await ratioOfImage(first))
-      if (!ratio) skipped.push(`${placement} (its images are not 1080x1920 or 1080x1350, so they cannot be re-composed)`)
+      if (!ratio) skipped.push(`${placement} (its images are not 9:16 or 4:5, so they cannot be re-composed)`)
       else comparable.push({ placement, ratio, ids, first })
     }
     if (comparable.length === 0 && !params.force) {

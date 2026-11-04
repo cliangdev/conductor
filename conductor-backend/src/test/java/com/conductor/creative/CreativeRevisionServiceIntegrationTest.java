@@ -292,7 +292,7 @@ class CreativeRevisionServiceIntegrationTest extends AbstractNoneWebIntegrationT
     // ── stale PENDING revisions ─────────────────────────────────────────────
 
     @Test
-    void aPendingRevisionWhoseRunFailedReadsAsFailedWithTheRunsErrorAndIsStoredSo() {
+    void aPendingRevisionWhoseRunFailedReadsAsFailedWithTheRunsErrorAndTheNextWriteStoresIt() {
         Fixture f = carousel(2);
         CreativeRevision r = edit(f, edit(1, "texts[0].t", "One")).revision();
         setRunStatus(r.getWorkflowRunId(), WorkflowRunStatus.RUNNING);
@@ -304,9 +304,52 @@ class CreativeRevisionServiceIntegrationTest extends AbstractNoneWebIntegrationT
         assertThat(view.pendingRevision()).isNull();
         assertThat(view.latestRevision().getStatus()).isEqualTo("FAILED");
         assertThat(view.latestRevision().getError()).isNotBlank();
+        // The Creative read is a read-only transaction: it reports the settled state but writes nothing.
+        assertThat(revisionRepository.findById(r.getId()).orElseThrow().getStatus()).isEqualTo("PENDING");
+        // A writable path (here the revision list) stores it.
+        assertThat(creativeService.listRevisions(project.getId(), f.creative.getId(), admin).get(0).getStatus())
+                .isEqualTo("FAILED");
         CreativeRevision stored = revisionRepository.findById(r.getId()).orElseThrow();
         assertThat(stored.getStatus()).isEqualTo("FAILED");
         assertThat(stored.getError()).isEqualTo(view.latestRevision().getError());
+    }
+
+    @Test
+    void settlingAStaleRevisionJoinsTheCallersTransactionInsteadOfOpeningItsOwn() {
+        Fixture f = carousel(2);
+        CreativeRevision r = edit(f, edit(1, "texts[0].t", "One")).revision();
+        setRunStatus(r.getWorkflowRunId(), WorkflowRunStatus.FAILED);
+
+        // Rolled back with the caller: had it committed in a transaction of its own, the row would stay FAILED.
+        new TransactionTemplate(transactionManager).executeWithoutResult(tx -> {
+            assertThat(revisionService.listSettled(project.getId(), f.creative.getId(), admin, 5).get(0).getStatus())
+                    .isEqualTo("FAILED");
+            tx.setRollbackOnly();
+        });
+        assertThat(revisionRepository.findById(r.getId()).orElseThrow().getStatus()).isEqualTo("PENDING");
+
+        // An edit that is refused after settling rolls the settling back too.
+        assertThat(ruleIds(() -> revisionService.edit(project.getId(), f.creative.getId(),
+                creativeRepository.findById(f.creative.getId()).orElseThrow().getVersion(),
+                List.of(new SlideshowTextFields.Edit(1, "texts[0].t", "First")), "EDITOR", admin)))
+                .containsExactly("slideTextEditNoop");
+        assertThat(revisionRepository.findById(r.getId()).orElseThrow().getStatus()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void aReadOnlyTransactionSettlesInMemoryAndWritesNothing() {
+        Fixture f = carousel(2);
+        CreativeRevision r = edit(f, edit(1, "texts[0].t", "One")).revision();
+        setRunStatus(r.getWorkflowRunId(), WorkflowRunStatus.CANCELLED);
+        TransactionTemplate readOnly = new TransactionTemplate(transactionManager);
+        readOnly.setReadOnly(true);
+
+        CreativeRevisionService.RevisionHeads heads = readOnly.execute(tx -> revisionService.heads(f.creative.getId()));
+
+        assertThat(heads.pending()).isNull();
+        assertThat(heads.latest().getStatus()).isEqualTo("FAILED");
+        assertThat(heads.latest().getError()).isEqualTo("The render run was cancelled.");
+        assertThat(revisionRepository.findById(r.getId()).orElseThrow().getStatus()).isEqualTo("PENDING");
     }
 
     @Test
@@ -395,22 +438,115 @@ class CreativeRevisionServiceIntegrationTest extends AbstractNoneWebIntegrationT
     }
 
     @Test
-    void aOneByOneListIsLeftAloneWithAWarning() {
+    void aDefaultListOfAnyShapeWithin2PercentOf916IsReplacedAndTheDetailSaysSo() {
+        // 720x1280 is exactly 9:16 but not 1080x1920: the backend, not the pixel size, decides the ratio.
+        Fixture f = carouselWithLists(Map.of("default", 1280), 720, 3);
+        CreativeRevision pending = edit(f, edit(2, "texts[0].t", "Second!")).revision();
+
+        CreativeRevisionService.RevisionDetail detail =
+                revisionService.getDetail(project.getId(), f.creative.getId(), pending.getId(), user(admin));
+        assertThat(detail.renderLists()).containsExactly(new CreativeRevisionService.RenderList("default", "9x16"));
+
+        CreativePhoto replacement = photo(1080, 1920, false);
+        CreativeRevision applied = complete(pending, media("9x16", 2, replacement));
+        assertThat(applied.getStatus()).isEqualTo("APPLIED");
+        assertThat(slides(creativeRepository.findById(f.creative.getId()).orElseThrow(), "default"))
+                .containsExactly(f.lists.get("default").get(0), replacement.getId(), f.lists.get("default").get(2));
+    }
+
+    @Test
+    void theDetailListsEveryListToRenderWithItsRatio() {
+        Fixture f = carouselWithLists(Map.of("9x16", 1920, "4x5", 1350), 2);
+        CreativeRevision pending = edit(f, edit(1, "texts[0].t", "A")).revision();
+
+        assertThat(revisionService.getDetail(project.getId(), f.creative.getId(), pending.getId(), user(admin)).renderLists())
+                .containsExactlyInAnyOrder(new CreativeRevisionService.RenderList("9x16", "9x16"),
+                        new CreativeRevisionService.RenderList("4x5", "4x5"));
+    }
+
+    @Test
+    void ratiosAreClassifiedWithATolerance() {
+        assertThat(CreativeRevisionService.classify(1080, 1920)).isEqualTo("9x16");
+        assertThat(CreativeRevisionService.classify(720, 1280)).isEqualTo("9x16");
+        assertThat(CreativeRevisionService.classify(1080, 1350)).isEqualTo("4x5");
+        assertThat(CreativeRevisionService.classify(1080, 1340)).isEqualTo("4x5");
+        assertThat(CreativeRevisionService.classify(1080, 1080)).isEqualTo("1x1");
+        assertThat(CreativeRevisionService.classify(1080, 1200)).isNull();   // 0.9: neither
+        assertThat(CreativeRevisionService.classify(1920, 1080)).isNull();
+        assertThat(CreativeRevisionService.classify(null, 1080)).isNull();
+        assertThat(CreativeRevisionService.classify(0, 0)).isNull();
+    }
+
+    @Test
+    void aCreativeWithAOneByOneListIsRefusedAtEditTimeAndNothingIsRecorded() {
         Fixture f = carouselWithLists(Map.of("9x16", 1920, "1x1", 1080), 2);
+
+        assertThatThrownBy(() -> edit(f, edit(1, "texts[0].t", "First!")))
+                .isInstanceOfSatisfying(CreativeValidationException.class, e -> {
+                    assertThat(e.violations()).extracting(CreativeValidationException.Violation::ruleId)
+                            .containsExactly("slideTextEditUnsupportedRatio");
+                    assertThat(e.violations().get(0).message()).isEqualTo(
+                            "Text editing isn't available for Creatives with 1x1 slides yet."
+                                    + " Re-compose it locally with compose_slideshow.");
+                });
+        assertThat(revisionRepository.findFirstByCreativeIdAndStatus(f.creative.getId(), "PENDING")).isEmpty();
+        assertThat(revisionRepository.findAllByCreativeIdOrderByRevisionNoDesc(f.creative.getId(),
+                org.springframework.data.domain.PageRequest.of(0, 10))).hasSize(1); // just the create's
+    }
+
+    @Test
+    void aDefaultListOfSquareImagesIsRefusedToo() {
+        Fixture f = carouselWithLists(Map.of("default", 1080), 2);
+
+        assertThat(ruleIds(() -> edit(f, edit(1, "texts[0].t", "First!"))))
+                .containsExactly("slideTextEditUnsupportedRatio");
+    }
+
+    @Test
+    void aCreativeThatGainedAOneByOneListAfterTheEditFailsTheRevisionOnComplete() {
+        Fixture f = carousel(2);
         CreativeRevision pending = edit(f, edit(1, "texts[0].t", "First!")).revision();
+        Creative c = creativeRepository.findById(f.creative.getId()).orElseThrow();
+        Map<String, List<String>> lists = new LinkedHashMap<>(f.lists);
+        lists.put("1x1", images(2, 1080, 1080, true));
+        c.setSlides(objectMapper.valueToTree(lists));
+        c = creativeRepository.saveAndFlush(c);
+        pending.setBaseVersion(c.getVersion());
+        revisionRepository.save(pending);
         CreativePhoto replacement = photo(1080, 1920, false);
 
-        CreativeRevision applied = complete(pending, media("9x16", 1, replacement));
+        CreativeRevision result = complete(pending, media("9x16", 1, replacement, "4x5", 1, photo(1080, 1350, false)));
 
-        assertThat(applied.getStatus()).isEqualTo("APPLIED");
-        Creative after = creativeRepository.findById(f.creative.getId()).orElseThrow();
-        assertThat(slides(after, "9x16").get(0)).isEqualTo(replacement.getId());
-        assertThat(slides(after, "1x1")).isEqualTo(f.lists.get("1x1"));
-        assertThat(applied.getChecks()).anySatisfy(c -> {
-            assertThat(c.path("rule").asText()).isEqualTo("render");
-            assertThat(c.path("severity").asText()).isEqualTo("warning");
-            assertThat(c.path("message").asText()).isEqualTo("1x1 slides were not re-rendered");
-        });
+        assertThat(result.getStatus()).isEqualTo("FAILED");
+        assertThat(result.getError()).contains("1x1 slides");
+        assertThat(photoRepository.findById(replacement.getId()).orElseThrow().isChecked()).isFalse();
+        assertThat(creativeRepository.findById(c.getId()).orElseThrow().getVersion()).isEqualTo(c.getVersion());
+    }
+
+    @Test
+    void aFailureAfterTheMediaChecksLeavesTheUploadedMediaUnchecked() {
+        Fixture f = carousel(3);
+        CreativeRevision pending = edit(f, edit(3, "texts[0].t", "Third!")).revision();
+        // The 4x5 list lost its last slide behind the edit's back (and the version guard was kept happy).
+        Creative c = creativeRepository.findById(f.creative.getId()).orElseThrow();
+        Map<String, List<String>> lists = new LinkedHashMap<>(f.lists);
+        lists.put("4x5", new ArrayList<>(f.four.subList(0, 2)));
+        c.setSlides(objectMapper.valueToTree(lists));
+        c = creativeRepository.saveAndFlush(c);
+        pending.setBaseVersion(c.getVersion());
+        revisionRepository.save(pending);
+        CreativePhoto new916 = photo(1080, 1920, false);
+        CreativePhoto new45 = photo(1080, 1350, false);
+
+        CreativeRevision result = complete(pending, media("9x16", 3, new916, "4x5", 3, new45));
+
+        assertThat(result.getStatus()).isEqualTo("FAILED");
+        assertThat(result.getError()).contains("Slide 3 is past the end of the 4x5 list");
+        assertThat(photoRepository.findById(new916.getId()).orElseThrow().isChecked()).isFalse();
+        assertThat(photoRepository.findById(new45.getId()).orElseThrow().isChecked()).isFalse();
+        Creative after = creativeRepository.findById(c.getId()).orElseThrow();
+        assertThat(after.getVersion()).isEqualTo(c.getVersion());
+        assertThat(slides(after, "9x16")).isEqualTo(f.nine);
     }
 
     @Test
@@ -701,6 +837,9 @@ class CreativeRevisionServiceIntegrationTest extends AbstractNoneWebIntegrationT
         assertThat(applied.getError()).contains("could not be rendered");
         assertThat(creativeRepository.findById(f.creative.getId()).orElseThrow().getVersion()).isEqualTo(c.getVersion() + 1);
         assertThat(events).isEmpty();
+        // A refusal is thrown before anything is written: no half-made render is committed with the apply.
+        assertThat(renderRepository.findAllByCreativeIdOrderByRequestedAtDesc(f.creative.getId(),
+                org.springframework.data.domain.PageRequest.of(0, 5))).isEmpty();
     }
 
     @Test
@@ -936,10 +1075,14 @@ class CreativeRevisionServiceIntegrationTest extends AbstractNoneWebIntegrationT
     }
 
     private Fixture carouselWithLists(Map<String, Integer> heightsByKey, int count) {
+        return carouselWithLists(heightsByKey, 1080, count);
+    }
+
+    private Fixture carouselWithLists(Map<String, Integer> heightsByKey, int width, int count) {
         Map<String, List<String>> lists = new LinkedHashMap<>();
         for (String key : List.of("9x16", "4x5", "1x1", "default")) {
             if (heightsByKey.containsKey(key)) {
-                lists.put(key, images(count, 1080, heightsByKey.get(key), true));
+                lists.put(key, images(count, width, heightsByKey.get(key), true));
             }
         }
         String[] words = {"First", "Second", "Third", "Fourth"};

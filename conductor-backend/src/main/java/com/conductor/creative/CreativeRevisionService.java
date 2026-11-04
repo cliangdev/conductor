@@ -68,6 +68,8 @@ public class CreativeRevisionService {
     public static final String RULE_POST_MISMATCH = "slideTextEditPostMismatch";
     /** The 409 {@code code} for "the Post named by {@code postId} is not in its review status". */
     public static final String CODE_POST_NOT_IN_REVIEW = "slideTextEditPostNotInReview";
+    /** A slide list that is not 9x16 or 4x5 (1x1, or a shape that is neither): the composer cannot re-render it. */
+    public static final String RULE_UNSUPPORTED_RATIO = "slideTextEditUnsupportedRatio";
     /** The 409 {@code code} for "a slide-text revision is still rendering". */
     public static final String CODE_EDIT_ACTIVE = "SLIDE_EDIT_ACTIVE";
 
@@ -77,6 +79,10 @@ public class CreativeRevisionService {
 
     private static final List<String> RENDERED_RATIOS = List.of("9x16", "4x5");
     private static final Map<String, Double> RATIO_VALUES = Map.of("9x16", 9.0 / 16.0, "4x5", 4.0 / 5.0, "1x1", 1.0);
+    /** Relative aspect tolerance when classifying a list by its images: the same 2% the validator allows. */
+    private static final double RATIO_TOLERANCE = CreativeValidator.CAROUSEL_ASPECT_TOLERANCE;
+    static final String UNSUPPORTED_1X1 = "Text editing isn't available for Creatives with 1x1 slides yet."
+            + " Re-compose it locally with compose_slideshow.";
 
     private final CreativeRevisionRepository revisionRepository;
     private final CreativeRepository creativeRepository;
@@ -136,7 +142,18 @@ public class CreativeRevisionService {
 
     /** A revision plus the parts of the Creative the render job needs next to it. */
     public record RevisionDetail(CreativeRevision revision, List<Integer> changedSlides, JsonNode slides,
-                                 JsonNode slideStyle) {
+                                 JsonNode slideStyle, List<RenderList> renderLists) {
+    }
+
+    /** A stored slide list the render job re-renders, and the ratio ({@code 9x16} / {@code 4x5}) it is made at. */
+    public record RenderList(String list, String ratio) {
+    }
+
+    /**
+     * Which of a Creative's lists are re-rendered, or why it cannot be: {@code unsupported} is the user-facing
+     * reason (set when any non-empty list is 1x1 or any other shape the composer does not make).
+     */
+    record RenderPlan(List<RenderList> lists, String unsupported) {
     }
 
     // ── the edit ────────────────────────────────────────────────────────────
@@ -187,6 +204,10 @@ public class CreativeRevisionService {
             throw violation("slideshowSpec", RULE_SPEC_MISSING,
                     "This Creative has no stored slideshow spec, so its slide text cannot be edited."
                             + " Attach the spec it was made from first.");
+        }
+        RenderPlan plan = planRenderLists(toSlidesMap(creative.getSlides()));
+        if (plan.unsupported() != null) {
+            throw violation("slides", RULE_UNSUPPORTED_RATIO, plan.unsupported());
         }
         if (post != null) {
             requirePostInReviewUsing(projectId, creative, post);
@@ -292,7 +313,8 @@ public class CreativeRevisionService {
         CreativeRevision revision = findRevision(creativeId, revisionId);
         authorize(projectId, creativeId, revision, caller, false);
         resolveStale(revision);
-        return new RevisionDetail(revision, changedSlides(revision), creative.getSlides(), creative.getSlideStyle());
+        return new RevisionDetail(revision, changedSlides(revision), creative.getSlides(), creative.getSlideStyle(),
+                planRenderLists(toSlidesMap(creative.getSlides())).lists());
     }
 
     /** The distinct 1-based slides a revision's text diff touches, ascending. */
@@ -373,24 +395,17 @@ public class CreativeRevisionService {
             return failed(revision, VERSION_MOVED_ON, checks);
         }
 
-        // Which lists get which ratio's slides.
+        // Which lists get which ratio's slides: the same plan the render job was given.
         Map<String, List<String>> slides = toSlidesMap(creative.getSlides());
+        RenderPlan plan = planRenderLists(slides);
+        if (plan.unsupported() != null) {
+            return failed(revision, plan.unsupported(), checks);
+        }
         Map<String, String> ratioOfList = new LinkedHashMap<>();
         Set<String> ratiosNeeded = new LinkedHashSet<>();
-        boolean leftAlone = false;
-        Map<String, CreativePhoto> sizeProbe = firstImages(slides);
-        for (Map.Entry<String, List<String>> list : slides.entrySet()) {
-            if (list.getValue().isEmpty()) {
-                continue;
-            }
-            String ratio = "default".equals(list.getKey())
-                    ? ratioOfImage(sizeProbe.get(list.getValue().get(0))) : list.getKey();
-            if (ratio == null || "1x1".equals(ratio)) {
-                leftAlone = true;
-            } else {
-                ratioOfList.put(list.getKey(), ratio);
-                ratiosNeeded.add(ratio);
-            }
+        for (RenderList list : plan.lists()) {
+            ratioOfList.put(list.list(), list.ratio());
+            ratiosNeeded.add(list.ratio());
         }
 
         List<Integer> changed = changedSlides(revision);
@@ -411,13 +426,9 @@ public class CreativeRevisionService {
                 return failed(revision, "Media " + id + " is not an uploaded image of this project", checks);
             }
         }
-        for (String id : mediaIds) {
-            // The composer's own output: nothing in it to check for burned-in text.
-            photos.get(id).setChecked(true);
-        }
-        photoRepository.saveAll(photos.values());
 
-        // Replace the changed entries of every list that gets re-rendered.
+        // Replace the changed entries of every list that gets re-rendered. All of this is computed before anything
+        // is written, so a refusal leaves the Creative and the uploaded media exactly as they were.
         Map<String, List<String>> updated = new LinkedHashMap<>();
         for (Map.Entry<String, List<String>> list : slides.entrySet()) {
             List<String> entries = new ArrayList<>(list.getValue());
@@ -434,6 +445,12 @@ public class CreativeRevisionService {
             updated.put(list.getKey(), entries);
         }
 
+        for (CreativePhoto p : photos.values()) {
+            // The composer's own output: nothing in it to check for burned-in text.
+            p.setChecked(true);
+        }
+        photoRepository.saveAll(photos.values());
+
         creative.setSlides(objectMapper.valueToTree(updated));
         creative.setSlideshowSpec(revision.getSpec());
         creative = creativeRepository.saveAndFlush(creative);
@@ -446,11 +463,6 @@ public class CreativeRevisionService {
         revision.setSlideStyle(creative.getSlideStyle());
         revision.setAltTextFlags(altTextFlags(revision.getTextDiff(), toStringList(creative.getSlideAltText())));
         ArrayNode stored = objectMapper.valueToTree(checks);
-        if (leftAlone) {
-            // No slide / ratio: it is about the Creative's 1x1 list(s) as a whole.
-            stored.addObject().put("rule", "render").put("severity", "warning")
-                    .put("message", "1x1 slides were not re-rendered");
-        }
         revision.setChecks(stored.isEmpty() ? null : stored);
         revision.setError(null);
         revision = revisionRepository.save(revision);
@@ -560,8 +572,14 @@ public class CreativeRevisionService {
 
     /**
      * A PENDING revision whose workflow run is over without having completed it (failed, cancelled, never picked
-     * up, or finished without reporting) can never finish: it becomes FAILED with the run's reason, stored in its
-     * own transaction so it also holds from a read-only caller. Returns whether {@code revision} was settled.
+     * up, or finished without reporting) can never finish: it becomes FAILED with the run's reason. Returns whether
+     * {@code revision} was settled.
+     *
+     * <p>This runs in the caller's transaction and never opens one of its own (a second pooled connection while
+     * the caller holds one, and possibly a row lock, can starve a small pool). In a writable transaction, or none,
+     * the settled state is stored (and flushed, so a new PENDING revision may be inserted right after). In a
+     * read-only transaction (the Creative read) nothing can be written: the caller sees the revision as FAILED,
+     * and the next edit, revision read or revision list stores it.
      */
     boolean resolveStale(CreativeRevision revision) {
         if (!CreativeRevision.STATUS_PENDING.equals(revision.getStatus())) {
@@ -571,21 +589,12 @@ public class CreativeRevisionService {
         if (reason == null) {
             return false;
         }
-        String id = revision.getId();
-        // The row as the other transaction leaves it: FAILED by us, or already settled by someone else.
-        CreativeRevision settled = newTx.execute(status -> revisionRepository.findById(id).map(r -> {
-            if (CreativeRevision.STATUS_PENDING.equals(r.getStatus())) {
-                r.setStatus(CreativeRevision.STATUS_FAILED);
-                r.setError(reason);
-                revisionRepository.save(r);
-            }
-            return r;
-        }).orElse(null));
-        if (settled != null) {
-            revision.setStatus(settled.getStatus());
-            revision.setError(settled.getError());
+        revision.setStatus(CreativeRevision.STATUS_FAILED);
+        revision.setError(reason);
+        if (!TransactionSynchronizationManager.isCurrentTransactionReadOnly()) {
+            revisionRepository.saveAndFlush(revision);
         }
-        return !CreativeRevision.STATUS_PENDING.equals(revision.getStatus());
+        return true;
     }
 
     private String staleReason(CreativeRevision revision) {
@@ -727,38 +736,79 @@ public class CreativeRevisionService {
         return null;
     }
 
-    /** The first image of every non-empty list, loaded in one query (for the ratio of a {@code default} list). */
-    private Map<String, CreativePhoto> firstImages(Map<String, List<String>> slides) {
-        Set<String> ids = new LinkedHashSet<>();
-        slides.values().forEach(list -> {
-            if (!list.isEmpty()) {
-                ids.add(list.get(0));
+    /**
+     * Which of the Creative's lists the render job re-renders, each with its ratio. A {@code 9x16} / {@code 4x5}
+     * list is that ratio; a {@code default} list takes the ratio of its images (within 2%). Any non-empty list that
+     * is 1x1, or a shape that is neither 9:16 nor 4:5, makes the Creative unsupported: the composer cannot re-render
+     * it, and applying the new text without it would leave its slides saying the old words.
+     */
+    RenderPlan planRenderLists(Map<String, List<String>> slides) {
+        Set<String> imageIds = new LinkedHashSet<>();
+        slides.forEach((key, list) -> {
+            if ("default".equals(key)) {
+                imageIds.addAll(list);
             }
         });
-        Map<String, CreativePhoto> out = new HashMap<>();
-        if (!ids.isEmpty()) {
-            photoRepository.findAllByIdIn(ids).forEach(p -> out.put(p.getId(), p));
+        Map<String, CreativePhoto> images = new HashMap<>();
+        if (!imageIds.isEmpty()) {
+            photoRepository.findAllByIdIn(imageIds).forEach(p -> images.put(p.getId(), p));
         }
-        return out;
+        List<RenderList> lists = new ArrayList<>();
+        for (Map.Entry<String, List<String>> list : slides.entrySet()) {
+            if (list.getValue().isEmpty()) {
+                continue;
+            }
+            String key = list.getKey();
+            if ("1x1".equals(key) || ("default".equals(key) && isOneByOne(list.getValue(), images))) {
+                return new RenderPlan(List.of(), UNSUPPORTED_1X1);
+            }
+            String ratio = "default".equals(key) ? ratioOfEntries(list.getValue(), images)
+                    : RENDERED_RATIOS.contains(key) ? key : null;
+            if (ratio == null) {
+                return new RenderPlan(List.of(), "Text editing isn't available for Creatives whose " + key
+                        + " slides are not 9:16 or 4:5 yet. Re-compose it locally with compose_slideshow.");
+            }
+            lists.add(new RenderList(key, ratio));
+        }
+        return new RenderPlan(lists, null);
     }
 
-    /** The closest of 9x16 / 4x5 / 1x1 to an image's shape, or null when its size is unknown. */
-    static String ratioOfImage(CreativePhoto photo) {
-        if (photo == null || photo.getWidth() == null || photo.getHeight() == null
-                || photo.getWidth() <= 0 || photo.getHeight() <= 0) {
+    private static boolean isOneByOne(List<String> ids, Map<String, CreativePhoto> images) {
+        return ids.stream().allMatch(id -> "1x1".equals(classify(images.get(id))));
+    }
+
+    /** The one ratio every image of a list shares, or null when one is unknown, off-shape, 1x1 or they differ. */
+    private static String ratioOfEntries(List<String> ids, Map<String, CreativePhoto> images) {
+        String common = null;
+        for (String id : ids) {
+            String ratio = classify(images.get(id));
+            if (ratio == null || (common != null && !common.equals(ratio))) {
+                return null;
+            }
+            common = ratio;
+        }
+        return RENDERED_RATIOS.contains(common) ? common : null;
+    }
+
+    /** 9x16, 4x5 or 1x1 when an image's shape is within the tolerance of it; null when it is none or unknown. */
+    static String classify(CreativePhoto photo) {
+        if (photo == null) {
             return null;
         }
-        double shape = (double) photo.getWidth() / photo.getHeight();
-        String best = null;
-        double bestDistance = Double.MAX_VALUE;
+        return classify(photo.getWidth(), photo.getHeight());
+    }
+
+    static String classify(Integer width, Integer height) {
+        if (width == null || height == null || width <= 0 || height <= 0) {
+            return null;
+        }
+        double shape = (double) width / height;
         for (Map.Entry<String, Double> ratio : RATIO_VALUES.entrySet()) {
-            double distance = Math.abs(Math.log(shape / ratio.getValue()));
-            if (distance < bestDistance) {
-                best = ratio.getKey();
-                bestDistance = distance;
+            if (Math.abs(shape - ratio.getValue()) / ratio.getValue() <= RATIO_TOLERANCE) {
+                return ratio.getKey();
             }
         }
-        return best;
+        return null;
     }
 
     private static String describe(List<SlideshowCheck> errors) {

@@ -124,6 +124,12 @@ describe('slideshowSpecView', () => {
     expect(view.slideshowSpec).toMatchObject({ id: 'big', slides: 30, omitted: expect.stringMatching(/textFields/) })
     expect(JSON.stringify(view.slideshowSpec).length).toBeLessThan(600)
   })
+  it('flags text as not editable when a 1x1 list exists', () => {
+    const spec = { id: 'a', slides: [{ type: 'photo', texts: [{ t: 'Hello', y: 30 }] }] }
+    expect(slideshowSpecView(spec, { '9x16': ['a'], '1x1': ['b'] })).toMatchObject({ textEditable: false, textEditNote: expect.stringMatching(/1x1 slides/) })
+    expect(slideshowSpecView(spec, { '9x16': ['a'], '1x1': [] })).not.toHaveProperty('textEditable')
+    expect(slideshowSpecView(spec, null)).not.toHaveProperty('textEditable')
+  })
   it('has nothing for no spec', () => {
     expect(slideshowSpecView(null)).toBeUndefined()
     expect(slideshowSpecView(undefined)).toBeUndefined()

@@ -117,6 +117,12 @@ describe('update_creative_slide_text', () => {
     )
   })
 
+  it('surfaces the unsupported-ratio refusal for a Creative with 1x1 slides, message intact', async () => {
+    const message = "Text editing isn't available for Creatives with 1x1 slides yet. Re-compose it locally with compose_slideshow."
+    mocked(apiPost).mockRejectedValue(new ApiError(422, 'invalid', { violations: [{ field: 'slides', ruleId: 'slideTextEditUnsupportedRatio', message }] }))
+    await expect(updateCreativeSlideText({ creativeId: 'c1', version: 1, edits: [{ slide: 1, field: 'title', text: 'T' }] }, config)).rejects.toThrow(`[slides] ${message}`)
+  })
+
   it('rejects malformed edits before calling the API', async () => {
     const bad = (edits: unknown) => updateCreativeSlideText({ creativeId: 'c1', edits: edits as never }, config)
     await expect(bad([])).rejects.toThrow(/edits is required/)
@@ -182,6 +188,23 @@ describe('get_creative revisions', () => {
     const r = await getCreative({ creativeId: 'c1' }, config)
     expect(r['pendingRevision']).toMatchObject({ id: 'rev-2', workflowRunId: 'run-9', note: expect.stringMatching(/rendering/) })
     expect(r['latestRevision']).toEqual({ id: 'rev-2', revisionNo: 3, status: 'PENDING' })
+  })
+
+  it('says the text is not editable when the Creative has a 1x1 list', async () => {
+    const spec = { id: 'a', slides: [{ type: 'photo', texts: [{ t: 'Hello', y: 30 }] }] }
+    mockReads(creative({ slideshowSpec: spec, slides: { '9x16': ['m1'], '1x1': ['m2'] } }))
+    const r = await getCreative({ creativeId: 'c1' }, config)
+    expect(r['textFields']).toEqual([{ slide: 1, path: 'texts[0].t', text: 'Hello' }])
+    expect(r['textEditable']).toBe(false)
+    expect(r['textEditNote']).toBe("Text editing isn't available for Creatives with 1x1 slides yet. Re-compose it locally with compose_slideshow.")
+  })
+
+  it('says nothing about editability for a 9x16 / 4x5 Creative', async () => {
+    const spec = { id: 'a', slides: [{ type: 'photo', texts: [{ t: 'Hello', y: 30 }] }] }
+    mockReads(creative({ slideshowSpec: spec, slides: { '9x16': ['m1'], '4x5': ['m2'] } }))
+    const r = await getCreative({ creativeId: 'c1' }, config)
+    expect('textEditable' in r).toBe(false)
+    expect('textEditNote' in r).toBe(false)
   })
 
   it('adds nothing for a Creative with no revision fields', async () => {

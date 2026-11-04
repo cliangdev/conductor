@@ -313,7 +313,8 @@ class CreativeControllerRunTokenTest {
         runIsTheRenderRunForCr1();
         RenderCaller run = new RenderCaller.RunCaller("run-1", "proj-1", "cr-1");
         when(revisionService.getDetail("proj-1", "cr-1", "rv-1", run))
-                .thenReturn(new CreativeRevisionService.RevisionDetail(revision(), java.util.List.of(2), null, null));
+                .thenReturn(new CreativeRevisionService.RevisionDetail(revision(), java.util.List.of(2), null, null,
+                        java.util.List.of(new CreativeRevisionService.RenderList("9x16", "9x16"))));
         when(revisionService.complete(eq("proj-1"), eq("cr-1"), eq("rv-1"), any(), eq(run))).thenReturn(revision());
         when(revisionService.fail(eq("proj-1"), eq("cr-1"), eq("rv-1"), any(), eq(run))).thenReturn(revision());
 
