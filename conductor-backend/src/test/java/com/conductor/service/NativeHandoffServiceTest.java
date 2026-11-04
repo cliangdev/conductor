@@ -226,8 +226,8 @@ class NativeHandoffServiceTest {
     }
 
     @Test
-    void aYouTubeTargetFarInTheFutureIsHandedOffImmediatelyBecauseYouTubeHasNoThirtyDayLimit() {
-        PostPublishTarget target = pendingNative("youtube", Duration.ofDays(400));
+    void aYouTubeTargetWithinADayIsHandedOffImmediately() {
+        PostPublishTarget target = pendingNative("youtube", Duration.ofHours(23));
         given(target);
 
         service.handoffForPost(target.getWorkItem());
@@ -237,6 +237,16 @@ class NativeHandoffServiceTest {
                 .containsEntry("publish_at", target.getFireTime().toInstant().toString())
                 .containsEntry("privacy_status", "private")
                 .containsEntry("description", "Doors open at nine.");
+    }
+
+    @Test
+    void aYouTubeTargetMoreThanADayOutIsDeferredSoTheUploadDoesNotSpendTheChannelsDailyCap() {
+        given(pendingNative("youtube", Duration.ofDays(20)));
+
+        service.handoffForPost(post(NativeHandoffService.SCHEDULED_STATUS));
+
+        verifyNoInteractions(actionInvocationService);
+        verify(bulkUpdate, never()).executeUpdate();
     }
 
     // --- [auto] ...and is deferred and later completed for far-future fire times -----------------
@@ -259,7 +269,7 @@ class NativeHandoffServiceTest {
     }
 
     @Test
-    void theDeferredSweepLooksFurtherAheadThanFacebooksWindowSoYouTubeIsNeverStranded() {
+    void theDeferredSweepLooksFurtherAheadThanFacebooksWindowSoNoTargetIsStranded() {
         given(pendingNative("youtube", Duration.ofDays(400)));
 
         OffsetDateTime now = OffsetDateTime.now();
@@ -268,6 +278,10 @@ class NativeHandoffServiceTest {
         ArgumentCaptor<OffsetDateTime> horizon = ArgumentCaptor.forClass(OffsetDateTime.class);
         verify(targetRepository).findNativeHandoffTargets(horizon.capture());
         assertThat(horizon.getValue()).isAfter(now.plus(NativeHandoffService.FACEBOOK_MAX_LEAD));
+        // Too far out to upload yet; the same row is handed off once it is inside YouTube's day.
+        verifyNoInteractions(actionInvocationService);
+
+        service.runTick(now.plusDays(399).plusHours(1));
         verify(actionInvocationService).invoke(any(), eq("publish_video"), any(), anyString(), any());
     }
 

@@ -39,6 +39,14 @@ public class PublishPlatformRegistry {
     public static final Duration FACEBOOK_MAX_LEAD = Duration.ofDays(75);
     /** Facebook's Reels endpoint schedules at most 29 days ahead, unlike the Page feed's 75. */
     public static final Duration FACEBOOK_REEL_MAX_LEAD = Duration.ofDays(29);
+    /**
+     * How early a YouTube upload goes out. YouTube itself schedules any distance ahead, but every
+     * scheduled video is uploaded at hand-off, and a channel may only upload so many videos in a rolling
+     * 24 hours ({@code uploadLimitExceeded}). Handing off at approval meant scheduling a month of Posts
+     * spent a day's uploads at once, and the rest were refused. A day's lead spreads uploads out to the
+     * posting cadence, and editing a Post before then no longer uses up an upload.
+     */
+    public static final Duration YOUTUBE_MAX_LEAD = Duration.ofHours(24);
 
     /**
      * The lead an app-managed destination needs: twice the dispatch poller's 30-second tick, so a Post
@@ -83,7 +91,7 @@ public class PublishPlatformRegistry {
                     new ConfirmAction("get_video_status", "video_id", "video_id", PlatformLiveness::youtubeIsLive),
                     new MetricsAction("get_video_statistics", 50),
                     youtubeOptionParams(),
-                    Duration.ZERO, null,
+                    Duration.ZERO, YOUTUBE_MAX_LEAD,
                     Set.of()),
             new PublishPlatform("tiktok", "TikTok", "tiktok", "tiktok_post", "TikTok (manual)",
                     PublishLane.APP_MANAGED,

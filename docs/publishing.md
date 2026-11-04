@@ -219,6 +219,11 @@ Each target has a **lane**, which decides who does the posting:
 | `APP_MANAGED` | Conductor | Instagram, TikTok | Conductor holds the post and calls the platform when it comes due |
 | `MANUAL` | A person | all four | Conductor calls nothing; the target is flagged for a human |
 
+A native hand-off waits until the fire time is within the platform's maximum lead: 75 days for a Facebook
+feed post, 29 for a reel, and **24 hours for YouTube**. YouTube accepts any `publishAt`, but the hand-off
+*is* the video upload, and YouTube caps how many videos a channel may upload in a rolling 24 hours
+(`uploadLimitExceeded`, a 400). Uploading the day before keeps a batch scheduled weeks ahead within that cap.
+
 Automated targets are derived from the project's ACTIVE connections — connect an account and it
 appears, disconnect it and it stops being offered. A manual target is derived from nothing and is
 always offered, one per platform.
