@@ -116,7 +116,7 @@ export function CarouselSlidesSection({
   }
 
   return (
-    <Card className="space-y-4 p-4" data-testid="carousel-slides-section">
+    <Card id="creative-slides" tabIndex={-1} className="space-y-4 p-4 focus:outline-none" data-testid="carousel-slides-section">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Finished images</h3>
 
       <Tabs

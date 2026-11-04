@@ -51,6 +51,7 @@ import { BrandSetupNotice } from '@/components/marketing/brand/BrandSetupNotice'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
 import { CarouselSlidesSection } from '@/components/marketing/creatives/CarouselSlidesSection'
 import { CLIP_PLACEMENT_KEYS, nearestAspectPlacement } from '@/components/marketing/creatives/clipPlacement'
+import { ReadinessCard } from '@/components/marketing/creatives/ReadinessCard'
 import { PostsUsingCreativePanel } from '@/components/marketing/creatives/PostsUsingCreativePanel'
 import { CreativePerformancePanel } from '@/components/marketing/creatives/CreativePerformancePanel'
 import { FullSizeViewer } from '@/components/marketing/creatives/FullSizeViewer'
@@ -79,6 +80,7 @@ import {
   getCreativeRegistry,
   listCreativePhotos,
   patchCreative,
+  patchCreativePhoto,
   type AudioSource,
   type CreativeSlideshow,
   type Creative,
@@ -751,6 +753,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   const [saveError, setSaveError] = useState<ApiError | null>(null)
   const [conflict, setConflict] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [markingReady, setMarkingReady] = useState(false)
+  const [markingChecked, setMarkingChecked] = useState(false)
   const [photoPickerOpen, setPhotoPickerOpen] = useState(false)
   // Which sequence beat's photo the shared PhotoPicker modal is targeting; null means the
   // Creative's own main photo. One modal instance is reused for both (see its onSelect below).
@@ -1106,6 +1110,63 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     }
   }
 
+  function refreshReadiness() {
+    getCreativeReadiness(projectId, creativeId, token).then(setReadiness).catch(() => setReadiness(null))
+  }
+
+  // "Mark ready": only the state changes, so unsaved edits in the form stay where they are.
+  async function handleMarkReady() {
+    if (!creative) return
+    setMarkingReady(true)
+    try {
+      const updated = await patchCreative(projectId, creativeId, { version: creative.version, state: 'READY' }, token)
+      setCreative(updated)
+      setForm((prev) => (prev ? { ...prev, state: updated.state } : prev))
+      refreshReadiness()
+      showToast('Creative marked ready')
+    } catch (err) {
+      if ((err as ApiError).status === 409) setConflict(true)
+      else showToast(apiErrorMessage(err, 'Could not mark this Creative ready'), 'error')
+    } finally {
+      setMarkingReady(false)
+    }
+  }
+
+  function focusAndScroll(el: HTMLElement | null) {
+    if (!el) return
+    el.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    el.focus({ preventScroll: true })
+  }
+
+  function focusAltText() {
+    const slideInputs = Array.from(document.querySelectorAll<HTMLInputElement>('[aria-label^="Alt text for slide"]'))
+    const firstEmpty = slideInputs.find((el) => !el.value.trim())
+    focusAndScroll(firstEmpty ?? document.getElementById('creative-alt-text'))
+  }
+
+  // "I've checked them": the person has looked at the images, so record that on each unchecked one.
+  async function handleMarkImagesChecked() {
+    if (!creative) return
+    const ids = new Set<string>()
+    if (creative.photoId) ids.add(creative.photoId)
+    for (const list of Object.values(creative.slides ?? {})) for (const id of list) ids.add(id)
+    for (const beat of creative.sequence ?? []) if (beat.photoId) ids.add(beat.photoId)
+    setMarkingChecked(true)
+    try {
+      const resolved = await Promise.all(
+        Array.from(ids).map((id) => photoById.get(id) ?? getCreativePhoto(projectId, id, token).catch(() => null)),
+      )
+      const unchecked = resolved.filter((m): m is CreativePhoto => !!m && m.mediaKind !== 'VIDEO' && m.mediaKind !== 'AUDIO' && !m.checked)
+      await Promise.all(unchecked.map((m) => patchCreativePhoto(projectId, m.id, { checked: true }, token)))
+      listCreativePhotos(projectId, token, true).then(setPhotos).catch(() => undefined)
+      refreshReadiness()
+    } catch (err) {
+      showToast(apiErrorMessage(err, 'Could not mark the images checked'), 'error')
+    } finally {
+      setMarkingChecked(false)
+    }
+  }
+
   async function handleReload() {
     setConflict(false)
     setSaveError(null)
@@ -1165,6 +1226,13 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     )
   }
 
+  // In-place fixes the Readiness card can offer (the card shows a button only for a key listed here).
+  const readinessActions: Record<string, () => void | Promise<void>> = {
+    altText: focusAltText,
+    caption: () => focusAndScroll(document.getElementById('creative-caption')),
+    slides: () => focusAndScroll(document.getElementById('creative-slides')),
+    photoChecked: handleMarkImagesChecked,
+  }
   const layoutOptions = Object.keys(registry.layouts)
   const carouselViolations = [
     ...new Set(
@@ -2001,19 +2069,15 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           )}
 
           {readiness && (
-            <Card className="space-y-1.5 p-4">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Readiness</h3>
-              <ul className="space-y-1">
-                {readiness.items.map((item) => (
-                  <li
-                    key={item.key}
-                    className={cn('text-sm', item.ok ? 'text-status-approved' : item.blocking ? 'text-destructive' : 'text-status-progress')}
-                  >
-                    {item.message}
-                  </li>
-                ))}
-              </ul>
-            </Card>
+            <ReadinessCard
+              readiness={readiness}
+              state={creative.state}
+              canManage={canManage}
+              onMarkReady={handleMarkReady}
+              markingReady={markingReady}
+              actions={readinessActions}
+              busyKeys={markingChecked ? ['photoChecked'] : []}
+            />
           )}
 
           {form.kind === 'CAROUSEL' && creative.slideshowSpec && (
