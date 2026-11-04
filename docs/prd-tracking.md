@@ -175,6 +175,6 @@ the PRD above it. One forecast is computed per active item.
 
 ## Migrations and follow-ups
 
-Schema: V178–V183 (delivery columns, milestones, dependencies, criteria, agent sessions, the `TASK` Workflow
-seed) and V184 (health updates). Not built yet: `NEEDS_INPUT` and health-changed notification signals, and a
+Schema: V179–V184 (delivery columns, milestones, dependencies, criteria, agent sessions, the `TASK` Workflow
+seed) and V185 (health updates). Not built yet: `NEEDS_INPUT` and health-changed notification signals, and a
 parent filter on the coordinator's agent-facing Work Item list.
