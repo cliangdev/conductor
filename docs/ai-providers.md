@@ -82,7 +82,7 @@ save-time validation error.
 `GET /api/v1/projects/{projectId}/agents/providers/{provider}/models` backs the Agents-form model
 picker: it calls the provider's live models-list API with the project's stored key and returns what that
 account can actually use today, instead of a hardcoded list going stale as vendors ship new models. Only
-ADMIN/CREATOR can call it — like `verify`, it decrypts and spends the project's key against the vendor,
+Editors (or Admins) can call it — like `verify`, it decrypts and spends the project's key against the vendor,
 so it's gated the same way, not just membership.
 
 - **Claude**: no filtering — Anthropic's models-list API only returns general-purpose Claude chat models.

@@ -11,11 +11,13 @@ import { invalidateMembersCache } from '@/lib/workflows'
 const PROJECT = 'p-1'
 
 function Probe() {
-  const { role, loading } = usePermissions()
+  const { roles, loading, can } = usePermissions()
   const canManage = useCan('integration.appCredential.manage')
   return (
     <div>
-      <span data-testid="role">{role ?? 'none'}</span>
+      <span data-testid="role">{roles.length ? roles.join(',') : 'none'}</span>
+      <span data-testid="edit">{String(can('issue.edit'))}</span>
+      <span data-testid="review">{String(can('review.submit'))}</span>
       <span data-testid="loading">{String(loading)}</span>
       <span data-testid="can">{String(canManage)}</span>
     </div>
@@ -32,12 +34,12 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)
 })
 
-function serverSays(role: string) {
+function serverSays(role: string | undefined, roles?: string[]) {
   fetchMock.mockResolvedValue({
     ok: true,
     status: 200,
     headers: { get: () => 'application/json' },
-    json: async () => [{ userId: 'u-1', name: 'Me', email: 'me@example.com', avatarUrl: null, role, joinedAt: 'x' }],
+    json: async () => [{ userId: 'u-1', name: 'Me', email: 'me@example.com', avatarUrl: null, role, roles, joinedAt: 'x' }],
   })
 }
 
@@ -87,5 +89,42 @@ describe('PermissionsProvider', () => {
     )
     await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'))
     expect(screen.getByTestId('can').textContent).toBe('false')
+  })
+
+  it('holds a set of roles: an Editor + Reviewer can both edit and review', async () => {
+    serverSays('CREATOR', ['CREATOR', 'REVIEWER'])
+    render(
+      <PermissionsProvider projectId={PROJECT}>
+        <Probe />
+      </PermissionsProvider>
+    )
+    await waitFor(() => expect(screen.getByTestId('role').textContent).toBe('CREATOR,REVIEWER'))
+    expect(screen.getByTestId('edit').textContent).toBe('true')
+    expect(screen.getByTestId('review').textContent).toBe('true')
+  })
+
+  it('treats an empty set as a read-only Viewer', async () => {
+    serverSays('REVIEWER', [])
+    render(
+      <PermissionsProvider projectId={PROJECT}>
+        <Probe />
+      </PermissionsProvider>
+    )
+    await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'))
+    expect(screen.getByTestId('role').textContent).toBe('none')
+    expect(screen.getByTestId('edit').textContent).toBe('false')
+    expect(screen.getByTestId('review').textContent).toBe('false')
+  })
+
+  it('still works against a server that sends only the legacy role', async () => {
+    serverSays('REVIEWER')
+    render(
+      <PermissionsProvider projectId={PROJECT}>
+        <Probe />
+      </PermissionsProvider>
+    )
+    await waitFor(() => expect(screen.getByTestId('role').textContent).toBe('REVIEWER'))
+    expect(screen.getByTestId('edit').textContent).toBe('false')
+    expect(screen.getByTestId('review').textContent).toBe('true')
   })
 })

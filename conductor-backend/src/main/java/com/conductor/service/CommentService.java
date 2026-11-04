@@ -271,7 +271,7 @@ public class CommentService {
         Comment comment = findCommentInWorkItem(workItemId, commentId);
 
         boolean isAuthor = comment.getAuthor().getId().equals(caller.getId());
-        boolean isAdmin = projectSecurityService.isAdminOrCreator(projectId, caller.getId());
+        boolean isAdmin = projectSecurityService.isEditor(projectId, caller.getId());
 
         if (!isAuthor && !isAdmin) {
             throw new ForbiddenException("Only the comment author or a project admin can delete this comment");

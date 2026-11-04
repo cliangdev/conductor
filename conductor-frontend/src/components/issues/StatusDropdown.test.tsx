@@ -124,7 +124,7 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
       transitions: [{ toStatus: 'IN_REVIEW', label: 'Submit for review' }],
     })
 
-    render(<StatusDropdown {...baseProps} userRole="CREATOR" />)
+    render(<StatusDropdown {...baseProps} canEdit />)
 
     await waitFor(() =>
       expect(apiGet).toHaveBeenCalledWith(
@@ -145,7 +145,7 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
     let finish: () => void = () => {}
     ;(apiPatch as ReturnType<typeof vi.fn>).mockReturnValue(new Promise<void>((resolve) => { finish = resolve }))
     const onStatusChanged = vi.fn()
-    render(<StatusDropdown {...baseProps} onStatusChanged={onStatusChanged} userRole="CREATOR" />)
+    render(<StatusDropdown {...baseProps} onStatusChanged={onStatusChanged} canEdit />)
 
     fireEvent.click(await waitFor(() => itemFor('Submit for review')))
 
@@ -166,7 +166,7 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
       transitions: [{ toStatus: 'CLOSED', label: 'Close' }],
     })
 
-    render(<StatusDropdown {...baseProps} currentStatus="CODE_REVIEW" userRole="CREATOR" />)
+    render(<StatusDropdown {...baseProps} currentStatus="CODE_REVIEW" canEdit />)
 
     await waitFor(() => expect(apiGet).toHaveBeenCalled())
     expect(screen.queryByText('Done')).not.toBeInTheDocument()
@@ -181,7 +181,7 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
       <StatusDropdown
         {...baseProps}
         currentStatus="IN_REVIEW"
-        userRole="ADMIN"
+        canEdit
         reviewVerdict={{ toStatus: 'SCHEDULED', label: 'Approve', submit }}
       />
     )
@@ -199,7 +199,7 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
       <StatusDropdown
         {...baseProps}
         currentStatus="IN_REVIEW"
-        userRole="REVIEWER"
+        canEdit={false}
         reviewVerdict={{ toStatus: 'SCHEDULED', label: 'Approve', submit }}
       />
     )
@@ -213,7 +213,7 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
     vi.mocked(apiGet).mockResolvedValueOnce({ workflow: 'MARKETING', currentStatus: 'IN_REVIEW', transitions: [] })
     const submit = vi.fn(async () => { throw new Error('nope') })
     render(
-      <StatusDropdown {...baseProps} currentStatus="IN_REVIEW" userRole="ADMIN" reviewVerdict={{ toStatus: 'SCHEDULED', label: 'Approve', submit }} />
+      <StatusDropdown {...baseProps} currentStatus="IN_REVIEW" canEdit reviewVerdict={{ toStatus: 'SCHEDULED', label: 'Approve', submit }} />
     )
     fireEvent.click(itemFor('Approve'))
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not record your approval'))
@@ -229,7 +229,7 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
       Object.assign(new Error('Cannot move to DONE'), { status: 400, missingFields: ['verdict', 'lesson'] })
     )
     const onMissingFields = vi.fn()
-    render(<StatusDropdown {...baseProps} userRole="CREATOR" onMissingFields={onMissingFields} />)
+    render(<StatusDropdown {...baseProps} canEdit onMissingFields={onMissingFields} />)
     await waitFor(() => expect(apiGet).toHaveBeenCalled())
     fireEvent.click(await screen.findByText('Finish'))
     await waitFor(() => expect(onMissingFields).toHaveBeenCalledWith(['verdict', 'lesson']))
@@ -241,7 +241,7 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
     vi.mocked(apiGet).mockResolvedValueOnce({ workflow: 'MARKETING', currentStatus: 'CHANGES_REQUESTED', transitions: [{ toStatus: 'IN_REVIEW', label: 'Resubmit' }] })
     const reason = 'the fire time is less than 1 minute in the future — schedule it at least 1 minute out'
     render(
-      <StatusDropdown {...baseProps} currentStatus="CHANGES_REQUESTED" userRole="ADMIN" blockedMoves={{ IN_REVIEW: reason }} />
+      <StatusDropdown {...baseProps} currentStatus="CHANGES_REQUESTED" canEdit blockedMoves={{ IN_REVIEW: reason }} />
     )
     const item = await waitFor(() => itemFor('Resubmit'))
     expect(item).toHaveAttribute('aria-disabled', 'true')
@@ -252,7 +252,7 @@ describe('StatusDropdown (COND-18 available-transitions)', () => {
   })
 
   it('renders a read-only badge for REVIEWER and does not fetch transitions', () => {
-    render(<StatusDropdown {...baseProps} userRole="REVIEWER" />)
+    render(<StatusDropdown {...baseProps} canEdit={false} />)
     expect(screen.getByText('Draft')).toBeInTheDocument()
     // REVIEWER never queries available-transitions (the WorkflowView hook is stubbed here).
     expect(apiGet).not.toHaveBeenCalled()
@@ -273,7 +273,7 @@ describe('StatusDropdown (TIK-4 TikTok consent gate)', () => {
   async function renderPost(reason: string | null) {
     render(
       <TikTokPublishGateProvider reason={reason}>
-        <StatusDropdown {...baseProps} workflowSlug="MARKETING" userRole="CREATOR" />
+        <StatusDropdown {...baseProps} workflowSlug="MARKETING" canEdit />
       </TikTokPublishGateProvider>
     )
     await waitFor(() => expect(screen.getByText('Submit for approval')).toBeInTheDocument())
@@ -339,7 +339,7 @@ describe('StatusDropdown (TIK-4 TikTok consent gate)', () => {
 
   it('leaves a Post with no TikTok target unaffected (no gate in context)', async () => {
     ;(apiPatch as ReturnType<typeof vi.fn>).mockResolvedValue({})
-    render(<StatusDropdown {...baseProps} workflowSlug="MARKETING" userRole="CREATOR" />)
+    render(<StatusDropdown {...baseProps} workflowSlug="MARKETING" canEdit />)
     await waitFor(() => expect(screen.getByText('Submit for approval')).toBeInTheDocument())
 
     const submit = itemFor('Submit for approval')
@@ -367,7 +367,7 @@ describe('StatusDropdown (TIK-4 TikTok consent gate)', () => {
 
     render(
       <TikTokPublishGateProvider reason={GATE_REASON}>
-        <StatusDropdown {...baseProps} userRole="CREATOR" />
+        <StatusDropdown {...baseProps} canEdit />
       </TikTokPublishGateProvider>
     )
     await waitFor(() => expect(screen.getByText('Submit for review')).toBeInTheDocument())
@@ -389,14 +389,14 @@ describe('StatusDropdown lazy (list rows and board cards)', () => {
   })
 
   it('does not read the moves until the menu opens, and keeps an interactive trigger', async () => {
-    render(<StatusDropdown {...baseProps} userRole="CREATOR" lazy />)
+    render(<StatusDropdown {...baseProps} canEdit lazy />)
     await new Promise((r) => setTimeout(r, 10))
     expect(apiGet).not.toHaveBeenCalled()
     expect(screen.getByRole('button')).toBeInTheDocument()
   })
 
   it('never reads the moves for a REVIEWER', async () => {
-    render(<StatusDropdown {...baseProps} userRole="REVIEWER" lazy />)
+    render(<StatusDropdown {...baseProps} canEdit={false} lazy />)
     await new Promise((r) => setTimeout(r, 10))
     expect(apiGet).not.toHaveBeenCalled()
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
@@ -404,7 +404,7 @@ describe('StatusDropdown lazy (list rows and board cards)', () => {
 
   it('still reads eagerly when not lazy', async () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue({ workflow: 'ENGINEERING', transitions: [] })
-    render(<StatusDropdown {...baseProps} userRole="CREATOR" />)
+    render(<StatusDropdown {...baseProps} canEdit />)
     await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1))
   })
 })

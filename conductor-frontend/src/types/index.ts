@@ -26,14 +26,19 @@ export interface Member {
   name: string
   email: string
   avatarUrl: string | null
-  role: MemberRole
+  /** Held roles. Absent on an older server — read through `memberRoles()`. */
+  roles?: MemberRole[]
+  /** @deprecated Primary role only; read through `memberRoles()`. */
+  role?: MemberRole
   joinedAt: string
 }
 
 export interface Invite {
   id: string
   email: string
-  role: MemberRole
+  roles?: MemberRole[]
+  /** @deprecated Read through `memberRoles()`. */
+  role?: MemberRole
   expiresAt: string
   token?: string
 }

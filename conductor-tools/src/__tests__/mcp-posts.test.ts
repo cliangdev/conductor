@@ -23,7 +23,7 @@ vi.mock('../lib/mp4-probe.js', () => ({
 
 import { mkdtemp } from 'node:fs/promises'
 import { apiGet, apiPost, apiPatch, apiPut } from '../mcp/api.js'
-import { createPost, getPostStatus, submitPost, listPosts, submitReview, nextSlot, getPostAnalytics, listTopPosts } from '../mcp/tools/posts.js'
+import { createPost, getPostStatus, submitPost, assignReviewers, listPosts, submitReview, nextSlot, getPostAnalytics, listTopPosts } from '../mcp/tools/posts.js'
 
 const config: Config = {
   apiKey: 'k',
@@ -539,7 +539,21 @@ describe('get_post_status / submit_post / list_posts / submit_review', () => {
     expect(result['status']).toBe('IN_REVIEW')
     expect(result['statusLabel']).toBe('In Review')
     expect(result['reviewers']).toEqual([{ userId: 'u-r', name: 'Rita' }])
-    expect((result['warnings'] as string[]).join(' ')).toContain('Carl Creator holds the CREATOR role')
+    expect((result['warnings'] as string[]).join(' ')).toContain("Carl Creator doesn't hold the Reviewer role")
+  })
+
+  it('assignReviewers accepts roles-array and legacy role-only members, refuses editor-only', async () => {
+    serve({
+      '/api/v1/projects/proj-1/members': [
+        { userId: 'u-1', name: 'Multi', email: 'm@x.test', role: 'CREATOR', roles: ['CREATOR', 'REVIEWER'] },
+        { userId: 'u-2', name: 'Legacy', email: 'l@x.test', role: 'REVIEWER' },
+        { userId: 'u-3', name: 'Ed', email: 'e@x.test', role: 'CREATOR', roles: ['CREATOR'] },
+      ],
+    })
+    mocked(apiPost).mockResolvedValue({})
+    const r = await assignReviewers(config, 'w1', ['Multi', 'Legacy', 'Ed'])
+    expect(r.assigned.map((a) => a.userId)).toEqual(['u-1', 'u-2'])
+    expect(r.problems.join(' ')).toContain("Ed doesn't hold the Reviewer role")
   })
 
   it('list_posts spans every publishing Workflow and filters by window and platform', async () => {

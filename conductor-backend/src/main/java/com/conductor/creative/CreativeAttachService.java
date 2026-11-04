@@ -300,8 +300,8 @@ public class CreativeAttachService {
         if (!projectSecurityService.isProjectMember(projectId, caller.getId())) {
             throw new EntityNotFoundException("Project not found");
         }
-        if (!projectSecurityService.isAdminOrCreator(projectId, caller.getId())) {
-            throw new ForbiddenException("Only ADMIN or CREATOR can attach a Creative to a Post");
+        if (!projectSecurityService.isEditor(projectId, caller.getId())) {
+            throw new ForbiddenException("Requires the Editor role (or Admin) to attach a Creative to a Post");
         }
     }
 }

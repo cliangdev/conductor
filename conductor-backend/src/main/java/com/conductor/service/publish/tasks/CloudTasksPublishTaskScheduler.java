@@ -109,7 +109,7 @@ public class CloudTasksPublishTaskScheduler implements PublishTaskScheduler {
      * computing "a minute from now" a second apart must still agree.
      */
     static String taskName(PublishTask task, OffsetDateTime deliverAt) {
-        String step = task.kind() == PublishTaskKind.CONFIRM
+        String step = task.kind() == PublishTaskKind.CONFIRM || task.kind() == PublishTaskKind.PERMALINK
                 ? "a" + task.attempt()
                 : "f" + task.fireTime().toEpochSecond();
         return task.kind().name().toLowerCase(java.util.Locale.ROOT) + "-" + task.targetId() + "-" + step
@@ -129,7 +129,7 @@ public class CloudTasksPublishTaskScheduler implements PublishTaskScheduler {
                 .append("/internal/v1/publish-targets/").append(task.targetId())
                 .append('/').append(task.kind().pathSegment())
                 .append("?fireTime=").append(task.fireTimeEpochSecond());
-        if (task.kind() == PublishTaskKind.CONFIRM) {
+        if (task.kind() == PublishTaskKind.CONFIRM || task.kind() == PublishTaskKind.PERMALINK) {
             url.append("&attempt=").append(task.attempt());
         }
         return url.toString();

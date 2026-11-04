@@ -1,6 +1,7 @@
 package com.conductor.service;
 
 import com.conductor.entity.MemberRole;
+import com.conductor.entity.MemberRoles;
 import com.conductor.entity.User;
 import com.conductor.exception.ForbiddenException;
 import jakarta.persistence.EntityNotFoundException;
@@ -59,23 +60,40 @@ public class ProjectSecurityService {
     }
 
     /**
-     * Like {@link #requireProjectAccess}, but a human caller must additionally hold ADMIN or CREATOR.
+     * Like {@link #requireProjectAccess}, but a human caller must additionally be an editor (CREATOR or ADMIN).
      * Machine credentials pass: they are issued per project and act on its behalf.
      */
     public ProjectActor requireProjectEditor(String projectId) {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         Object principal = auth != null ? auth.getPrincipal() : null;
         if (principal instanceof User user) {
-            // One membership read answers both "is a member" and "has the role".
-            MemberRole role = projectMemberRepository.findByProjectIdAndUserId(projectId, user.getId())
-                    .map(member -> member.getRole())
+            // One membership read answers both "is a member" and "may edit".
+            Set<MemberRole> roles = effectiveRoles(projectId, user.getId())
                     .orElseThrow(() -> new ForbiddenException("Not a member of this project"));
-            if (role != MemberRole.ADMIN && role != MemberRole.CREATOR) {
-                throw new ForbiddenException("Requires ADMIN or CREATOR role");
+            if (!roles.contains(MemberRole.CREATOR)) {
+                throw new ForbiddenException("Requires the Editor role (or Admin)");
             }
             return ProjectActor.of(user);
         }
         // Machine credentials pass: they are issued per project and act on its behalf.
+        return requireProjectAccess(projectId);
+    }
+
+    /**
+     * Like {@link #requireProjectAccess}, but a human caller must additionally be able to review
+     * (REVIEWER or ADMIN). Machine credentials pass, as for {@link #requireProjectEditor}.
+     */
+    public ProjectActor requireReviewer(String projectId) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        Object principal = auth != null ? auth.getPrincipal() : null;
+        if (principal instanceof User user) {
+            Set<MemberRole> roles = effectiveRoles(projectId, user.getId())
+                    .orElseThrow(() -> new ForbiddenException("Not a member of this project"));
+            if (!roles.contains(MemberRole.REVIEWER)) {
+                throw new ForbiddenException("Requires the Reviewer role (or Admin)");
+            }
+            return ProjectActor.of(user);
+        }
         return requireProjectAccess(projectId);
     }
 
@@ -176,7 +194,7 @@ public class ProjectSecurityService {
 
     private static final class Memberships {
         final Set<String> members = ConcurrentHashMap.newKeySet();
-        final Map<String, MemberRole> roles = new ConcurrentHashMap<>();
+        final Map<String, Set<MemberRole>> roles = new ConcurrentHashMap<>();
     }
 
     private static Memberships requestMemberships() {
@@ -210,29 +228,53 @@ public class ProjectSecurityService {
         return member;
     }
 
+    /** Whether the user holds {@code role}; ADMIN implies every role. */
+    public boolean hasRole(String projectId, String userId, MemberRole role) {
+        return effectiveRoles(projectId, userId).map(roles -> roles.contains(role)).orElse(false);
+    }
+
     public boolean isProjectAdmin(String projectId, String userId) {
-        return memberRole(projectId, userId).map(role -> role == MemberRole.ADMIN).orElse(false);
+        return hasRole(projectId, userId, MemberRole.ADMIN);
     }
 
-    public boolean isAdminOrCreator(String projectId, String userId) {
-        return memberRole(projectId, userId)
-                .map(role -> role == MemberRole.ADMIN || role == MemberRole.CREATOR)
-                .orElse(false);
+    /** Whether the user may edit content: holds CREATOR (or ADMIN, which implies it). */
+    public boolean isEditor(String projectId, String userId) {
+        return hasRole(projectId, userId, MemberRole.CREATOR);
     }
 
-    private Optional<MemberRole> memberRole(String projectId, String userId) {
+    /**
+     * Refuses a member who cannot edit (a Reviewer-only member or a read-only Viewer) with a 403. Callers
+     * that must hide a project from non-members check membership first; this throws for a non-member too.
+     */
+    public void requireEditor(String projectId, String userId) {
+        if (!isEditor(projectId, userId)) {
+            throw new ForbiddenException(
+                    "Requires the Editor role (or Admin); members without it can read and comment only");
+        }
+    }
+
+    /** Whether the user may review work: holds REVIEWER (or ADMIN, which implies it). */
+    public boolean canReview(String projectId, String userId) {
+        return hasRole(projectId, userId, MemberRole.REVIEWER);
+    }
+
+    /**
+     * The roles a member effectively holds (ADMIN expands to all three; an empty set is a read-only
+     * viewer), or empty when the user is not a member. The single place roles are resolved.
+     */
+    public Optional<Set<MemberRole>> effectiveRoles(String projectId, String userId) {
         Memberships cache = requestMemberships();
         String key = membershipKey(projectId, userId);
-        MemberRole known = cache == null ? null : cache.roles.get(key);
+        Set<MemberRole> known = cache == null ? null : cache.roles.get(key);
         if (known != null) {
             return Optional.of(known);
         }
-        Optional<MemberRole> role = projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
-                .map(member -> member.getRole());
-        if (role.isPresent() && cache != null) {
-            cache.roles.put(key, role.get());
+        Optional<Set<MemberRole>> roles = projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
+                .map(member -> MemberRoles.effective(member.getRoles()));
+        if (roles.isPresent() && cache != null) {
+            cache.roles.put(key, roles.get());
             cache.members.add(key);
         }
-        return role;
+        return roles;
     }
 }

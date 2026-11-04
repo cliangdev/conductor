@@ -6,7 +6,9 @@
 
 import { cloneElement, isValidElement, useId, useState } from 'react'
 import { ChevronRightIcon, PlusIcon, Trash2Icon, XIcon } from 'lucide-react'
+import { ROLE_LABELS } from '@/lib/permissions'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
@@ -493,11 +495,17 @@ export function StatechartEditor({
                       <option value="">any</option>
                       {REVIEWER_ROLE_OPTIONS.map((r) => (
                         <option key={r} value={r}>
-                          {r}
+                          {ROLE_LABELS[r]}
                         </option>
                       ))}
                     </Select>
                   </label>
+                  <Checkbox
+                    checked={!!t.requireIndependentReviewer}
+                    onCheckedChange={(on) => updateTransition(i, { requireIndependentReviewer: on || undefined })}
+                    label="Require a reviewer other than the author"
+                    className="text-xs"
+                  />
                 </div>
               )}
 

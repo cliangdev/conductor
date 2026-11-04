@@ -99,8 +99,8 @@ public class WorkflowSecretsService {
     }
 
     private void requireAdminOrCreator(String projectId, String userId) {
-        if (!projectSecurityService.isAdminOrCreator(projectId, userId)) {
-            throw new ForbiddenException("Only ADMIN or CREATOR can manage workflow secrets");
+        if (!projectSecurityService.isEditor(projectId, userId)) {
+            throw new ForbiddenException("Requires the Editor role (or Admin) to manage workflow secrets");
         }
     }
 }
