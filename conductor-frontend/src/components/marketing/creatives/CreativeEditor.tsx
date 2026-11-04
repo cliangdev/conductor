@@ -66,6 +66,7 @@ import {
   getCreativeRevision,
   hasSquareSlides,
   SQUARE_SLIDES_NOTE,
+  noSpecNote,
   staleAltSlides,
   type TextChange,
 } from '@/components/marketing/creatives/slideText'
@@ -1916,7 +1917,10 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                           ? 'Save your changes first.'
                           : null,
                     }
-                  : undefined
+                  : canManage && creative.slideStyle
+                    ? // A compose_slideshow carousel committed without its spec: the text is part of the images.
+                      { onEdit: () => {}, unavailableNote: noSpecNote(creative.displayId), disabledReason: null }
+                    : undefined
               }
               revisionNote={revisionNote}
               staleAltSlides={

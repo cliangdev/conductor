@@ -89,6 +89,20 @@ describe('CreativeEditor — editing slide text', () => {
     expect(screen.queryByTestId('creative-revisions')).not.toBeInTheDocument()
   })
 
+  it('explains why a composed slideshow saved without its spec has no Edit text', async () => {
+    mockGets(creative({ slideshowSpec: null, slideStyle: { textSize: 60 } }))
+    open()
+    expect(await screen.findByTestId('edit-slide-text-unavailable')).toHaveTextContent('saved without its spec')
+    expect(screen.queryByTestId('edit-slide-text')).not.toBeInTheDocument()
+  })
+
+  it('says nothing about a spec for a carousel of plain images (no slide style)', async () => {
+    mockGets(creative({ slideshowSpec: null, slideStyle: null }))
+    open()
+    await screen.findByTestId('carousel-slides-section')
+    expect(screen.queryByTestId('edit-slide-text-unavailable')).not.toBeInTheDocument()
+  })
+
   it('offers no Edit text for a Creative with 1x1 slides, and says why', async () => {
     mockGets(creative({ slides: { '9x16': ['s1', 's2', 's3'], '4x5': ['t1', 't2', 't3'], '1x1': ['q1', 'q2', 'q3'] } }))
     open()
