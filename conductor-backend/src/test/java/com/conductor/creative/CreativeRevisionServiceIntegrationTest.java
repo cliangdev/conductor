@@ -914,7 +914,13 @@ class CreativeRevisionServiceIntegrationTest extends AbstractNoneWebIntegrationT
         RenderCaller own = new RenderCaller.RunCaller(pending.getWorkflowRunId(), project.getId(), f.creative.getId());
         RenderCaller otherRun = new RenderCaller.RunCaller("some-other-run", project.getId(), f.creative.getId());
         RenderCaller otherCreative = new RenderCaller.RunCaller(pending.getWorkflowRunId(), project.getId(), "cr-other");
-        CompleteCreativeRevisionRequest request = media("9x16", 1, photo(1080, 1920, false), "4x5", 1, photo(1080, 1350, false));
+        // a run token may only name images its own revision minted
+        CreativePhoto tall = photo(1080, 1920, false);
+        CreativePhoto wide = photo(1080, 1350, false);
+        tall.setMintedForRevisionId(pending.getId());
+        wide.setMintedForRevisionId(pending.getId());
+        photoRepository.saveAll(List.of(tall, wide));
+        CompleteCreativeRevisionRequest request = media("9x16", 1, tall, "4x5", 1, wide);
 
         assertThatThrownBy(() -> revisionService.getDetail(project.getId(), f.creative.getId(), pending.getId(), otherRun))
                 .isInstanceOf(ForbiddenException.class);

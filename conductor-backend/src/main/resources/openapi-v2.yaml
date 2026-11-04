@@ -5062,8 +5062,9 @@ paths:
         the changed slide entries are replaced in every affected list, `slideshowSpec` is set to the revision's
         spec, `version` is bumped, alt-text flags and the snapshots are stored and the revision is APPLIED; then
         the Creative is re-rendered (instantly without a track, as a queued render run with one). Every
-        validation runs before anything is written: a FAILED revision leaves the Creative and the uploaded media
-        untouched. A Creative that has gained a 1x1 (or other unsupported) list since the edit was accepted FAILS
+        validation runs before anything is written: a FAILED revision leaves the Creative untouched, and the images
+        the revision minted that did not end up in the Creative are deleted (so are those of a revision failed through
+        `.../fail`). A run token may only name images minted for this revision (anything else FAILS it). A Creative that has gained a 1x1 (or other unsupported) list since the edit was accepted FAILS
         the revision too. Auth: the revision's own run token, or a project
         ADMIN / CREATOR.
       operationId: completeCreativeRevision
@@ -5209,7 +5210,10 @@ paths:
         `.../media/{mediaId}/confirm`, and report the ids to `.../complete`. The photo endpoints refuse a workflow run
         token; this is the one place a run may create Media, and only an image, only for its own PENDING revision.
         The Media is attributed to the revision's author (the system acting for them) when a run token calls, and to
-        the caller otherwise. Same body and response as `createCreativePhoto`, restricted to image content types.
+        the caller otherwise; the author must still be an ADMIN / CREATOR, else the revision is FAILED with that reason
+        and the call is a 403. The image is marked as this revision's (`.../confirm` and a run token's `.../complete`
+        accept only such images), and at most one image per changed slide and ratio may be minted (409 past that).
+        Same body and response as `createCreativePhoto`, restricted to image content types.
         Auth: the revision's own run token, or a project ADMIN / CREATOR.
       operationId: createCreativeRevisionMedia
       security:
@@ -5257,7 +5261,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: A run token for another run or Creative, or a caller who is not ADMIN or CREATOR
+          description: >-
+            A run token for another run or Creative, a caller who is not ADMIN or CREATOR, or (run token) a revision
+            whose author is no longer an editor (the revision is FAILED)
           content:
             application/json:
               schema:
@@ -5269,7 +5275,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: The revision is no longer PENDING
+          description: The revision is no longer PENDING, or it has already minted an image for every changed slide and ratio
           content:
             application/json:
               schema:
@@ -5281,9 +5287,9 @@ paths:
         - creatives
       summary: Confirm an image uploaded for a PENDING revision
       description: >-
-        Marks the image minted by `.../revisions/{revisionId}/media` as UPLOADED. Only an image still
-        awaiting its upload that was minted for this revision (by its author, after the revision was created) can be
-        confirmed here; any other Media is a 404. Auth as `.../media`.
+        Marks the image minted by `.../revisions/{revisionId}/media` as UPLOADED. Only an image minted for this
+        revision can be confirmed here; any other Media is a 404. The bytes must already be in storage (else 400) and
+        the size is read from storage: `sizeBytes` in the body is ignored. Auth as `.../media`.
       operationId: confirmCreativeRevisionMedia
       security:
         - bearerAuth: []
@@ -5323,7 +5329,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/CreativePhotoResponse"
         "400":
-          description: Disallowed size
+          description: The bytes are not in storage yet, or their size is disallowed
           content:
             application/json:
               schema:

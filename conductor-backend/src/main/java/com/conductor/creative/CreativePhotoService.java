@@ -502,47 +502,64 @@ public class CreativePhotoService {
     @Transactional
     public PhotoView createPhoto(String projectId, CreateCreativePhotoRequest request, User caller) {
         requireEditor(projectId, caller);
-        return create(projectId, request, caller.getId());
+        return create(projectId, request, caller.getId(), null, null);
     }
 
     /**
-     * An image minted for a slide-text revision's re-rendered slide. The caller (the revision service) has already
-     * authorized it against the PENDING revision; {@code createdBy} is the person it is attributed to. Images only.
+     * An image minted for a slide-text revision's re-rendered slide, marked as that revision's. The caller (the
+     * revision service) has already authorized it against the PENDING revision; {@code createdBy} is the person it
+     * is attributed to. Images only.
      */
     @Transactional
-    public PhotoView createImageForRevision(String projectId, CreateCreativePhotoRequest request, String createdBy) {
-        MediaTypeInfo typeInfo = request.getContentType() != null
-                ? ALLOWED_TYPES.get(normalize(request.getContentType().getValue())) : null;
-        if (typeInfo == null || !CreativePhoto.MEDIA_KIND_IMAGE.equals(typeInfo.mediaKind())) {
-            throw new BusinessException("A re-rendered slide is an image; content type '"
-                    + (request.getContentType() != null ? request.getContentType().getValue() : null)
-                    + "' is not allowed.");
-        }
-        return create(projectId, request, createdBy);
+    public PhotoView createImageForRevision(String projectId, CreateCreativePhotoRequest request, String createdBy,
+                                            String revisionId) {
+        return create(projectId, request, createdBy, CreativePhoto.MEDIA_KIND_IMAGE, revisionId);
+    }
+
+    /** How many images this revision has minted so far. */
+    @Transactional(readOnly = true)
+    public long countMintedForRevision(String revisionId) {
+        return photoRepository.countByMintedForRevisionId(revisionId);
     }
 
     /**
-     * Confirms an image minted by {@link #createImageForRevision}: only a still-pending image of this project made
-     * by {@code createdBy} at or after {@code notBefore} (the revision's creation); anything else is a 404, so a run
-     * cannot reach Media it did not mint.
+     * Confirms an image minted for this revision: only one this revision minted (anything else is a 404, so a run
+     * cannot reach Media it did not mint) that is still pending. The size is taken from storage, not from the
+     * client: an object that has not arrived is a 400, and the stored size must be within the image ceiling.
      */
     @Transactional
-    public PhotoView confirmImageForRevision(String projectId, String photoId, Long observedSizeBytes, String createdBy,
-                                             java.time.OffsetDateTime notBefore) {
+    public PhotoView confirmImageForRevision(String projectId, String photoId, String revisionId) {
         CreativePhoto photo = findPhoto(projectId, photoId);
-        if (!CreativePhoto.MEDIA_KIND_IMAGE.equals(photo.getMediaKind())
-                || !CreativePhoto.UPLOAD_STATUS_PENDING.equals(photo.getUploadStatus())
-                || !java.util.Objects.equals(createdBy, photo.getCreatedBy())
-                || photo.getCreatedAt() == null || photo.getCreatedAt().isBefore(notBefore)) {
+        if (!revisionId.equals(photo.getMintedForRevisionId())) {
             throw new EntityNotFoundException("Photo not found");
         }
-        if (observedSizeBytes != null) {
-            photo.setSizeBytes(requireAllowedSize(observedSizeBytes, photo.getMediaKind()));
+        if (!CreativePhoto.UPLOAD_STATUS_PENDING.equals(photo.getUploadStatus())) {
+            throw new ConflictException("This image is already confirmed");
         }
+        long stored = storageService.objectSize(photo.getGcsPath()).orElseThrow(() -> new BusinessException(
+                "The image has not been uploaded: PUT the bytes to the uploadUrl, then confirm."));
+        photo.setSizeBytes(requireAllowedSize(stored, photo.getMediaKind()));
         photo.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
         photo = photoRepository.save(photo);
         storageService.markCacheable(photo.getGcsPath());
         return toView(photo);
+    }
+
+    /**
+     * Removes the images a revision minted that are not in {@code keep} (the ones that ended up in the Creative):
+     * what a failed or rejected render job left behind. Their objects go too, unless something else uses them.
+     */
+    @Transactional
+    public void deleteMintedForRevision(String revisionId, java.util.Collection<String> keep) {
+        List<CreativePhoto> orphans = photoRepository.findAllByMintedForRevisionId(revisionId).stream()
+                .filter(p -> !keep.contains(p.getId())).toList();
+        if (orphans.isEmpty()) {
+            return;
+        }
+        List<String> paths = new ArrayList<>();
+        orphans.forEach(p -> paths.addAll(mediaPaths(p)));
+        photoRepository.deleteAll(orphans);
+        storageReferences.deleteUnreferencedAfterCommit(paths, log);
     }
 
     /** Views (with signed download URLs) of the named Media of this project; the caller has authorized the read. */
@@ -556,12 +573,17 @@ public class CreativePhotoService {
                 .map(this::toView).toList();
     }
 
-    private PhotoView create(String projectId, CreateCreativePhotoRequest request, String createdBy) {
+    private PhotoView create(String projectId, CreateCreativePhotoRequest request, String createdBy,
+                             String requiredKind, String mintedForRevisionId) {
         String contentType = request.getContentType() != null ? request.getContentType().getValue() : null;
         MediaTypeInfo typeInfo = ALLOWED_TYPES.get(normalize(contentType));
         if (typeInfo == null) {
             throw new BusinessException("Content type '" + contentType + "' is not allowed for a Creative photo."
                     + " Allowed types: " + ALLOWED_TYPES.keySet().stream().sorted().toList());
+        }
+        if (requiredKind != null && !requiredKind.equals(typeInfo.mediaKind())) {
+            throw new BusinessException("Content type '" + contentType + "' is " + typeInfo.mediaKind()
+                    + "; this upload takes " + requiredKind + " only.");
         }
         // mediaKind defaults to IMAGE (the OpenAPI schema's default), but the content type is always the
         // source of truth for which kind this actually is — an explicit mediaKind is only ever a sanity
@@ -608,6 +630,7 @@ public class CreativePhotoService {
         photo.setFocal(objectMapper.createObjectNode());
         photo.setUploadStatus(CreativePhoto.UPLOAD_STATUS_PENDING);
         photo.setCreatedBy(createdBy);
+        photo.setMintedForRevisionId(mintedForRevisionId);
         photo = photoRepository.save(photo);
 
         String signedUploadUrl = storageService.generateSignedUploadUrl(gcsPath, normalize(contentType), UPLOAD_URL_EXPIRY_MINUTES);

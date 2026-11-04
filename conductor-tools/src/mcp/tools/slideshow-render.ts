@@ -2,8 +2,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Config } from '../config.js'
-import { apiGet, apiPost, putBytes } from '../api.js'
+import { apiGet, apiPost } from '../api.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
+import { mintPutConfirmImage } from './creatives.js'
 import {
   composeSlideshow,
   isMediaRef,
@@ -123,24 +124,14 @@ export async function uploadRevisionSlide(revisionBase: string, params: SlideUpl
   if (!info || info.contentType !== 'image/jpeg') {
     throw new Error(`The composed slide ${params.filePath} is ${info?.contentType ?? 'not an image'}, not image/jpeg; slides are stored as JPEG.`)
   }
-  const mint = await apiPost<{ id: string; uploadUrl: string | null }>(
-    `${revisionBase}/media`,
-    {
-      label: params.label,
-      contentType: info.contentType,
-      sizeBytes: bytes.byteLength,
-      width: info.width,
-      height: info.height,
-      source: params.source ?? null,
-      licence: params.licence ?? null,
-      aiGenerated: !!params.aiGenerated,
-    },
+  const media = await mintPutConfirmImage(
+    bytes,
+    info,
+    { label: params.label, source: params.source, licence: params.licence, aiGenerated: params.aiGenerated },
+    { mint: `${revisionBase}/media`, confirm: (id) => `${revisionBase}/media/${id}/confirm` },
     config
   )
-  if (!mint.uploadUrl) throw new Error('The mint response carried no uploadUrl; cannot upload the slide.')
-  await putBytes(mint.uploadUrl, info.contentType, bytes)
-  const confirmed = await apiPost<Record<string, unknown>>(`${revisionBase}/media/${mint.id}/confirm`, { sizeBytes: bytes.byteLength }, config)
-  return { media: confirmed }
+  return { media }
 }
 
 function summarise(checks: SlideshowCheck[]): string {
@@ -162,7 +153,7 @@ export async function renderSlides(params: RenderSlidesParams, config: Config, o
     // The revision detail carries every Media this job reads; a run-scoped key may not call the photo endpoints.
     if (!Array.isArray(detail.media)) throw new Error("The backend did not send the revision's media (media); it needs updating.")
     const mediaById = new Map(detail.media.map((m) => [m.id, m]))
-    const mediaInfo = async (id: string): Promise<MediaInfo> => {
+    const mediaInfo = (id: string): MediaInfo => {
       const found = mediaById.get(id)
       if (!found) throw new Error(`The revision detail did not include media ${id}.`)
       return found
@@ -201,7 +192,7 @@ export async function renderSlides(params: RenderSlidesParams, config: Config, o
     })
     const download = options.download ?? downloadMedia
     const local = new Map<string, string>()
-    for (const [ref, id] of refs) local.set(ref, await download(await mediaInfo(id), temp))
+    for (const [ref, id] of refs) local.set(ref, await download(mediaInfo(id), temp))
     const composable = mapSpecImages(subSpec, (value) => (value && isMediaRef(value) ? local.get(value) : value))
 
     log(`re-composing slide${changed.length === 1 ? '' : 's'} ${changed.join(', ')} at ${ratios.join(', ')}`)
@@ -236,7 +227,7 @@ export async function renderSlides(params: RenderSlidesParams, config: Config, o
       slideMedia[ratio] = {}
       for (let j = 0; j < changed.length; j++) {
         const slide = changed[j]!
-        const old = await mediaInfo(replaced.get(ratio)![slide - 1]!)
+        const old = mediaInfo(replaced.get(ratio)![slide - 1]!)
         const result = await upload(
           {
             filePath: files[j]!,

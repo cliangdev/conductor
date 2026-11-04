@@ -3,42 +3,37 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { composeSlideshow } from '../lib/slideshow/index.js'
+import { findBrowserFactory, type BrowserFactory } from '../lib/creative-browser.js'
 
-async function browserAvailable(): Promise<boolean> {
+/** One launch with the same fallbacks the composer uses; the factory is reused by the tests. */
+async function probe(): Promise<BrowserFactory | null> {
   try {
-    const { chromium } = await import('playwright-core')
-    for (const options of [{ channel: 'chrome' }, { channel: 'msedge' }, {}]) {
-      try {
-        const browser = await chromium.launch(options)
-        await browser.close()
-        return true
-      } catch {
-        continue
-      }
-    }
+    const factory = await findBrowserFactory()
+    await (await factory()).close()
+    return factory
   } catch {
-    /* no playwright */
+    return null
   }
-  return false
 }
-const hasBrowser = await browserAvailable()
+const browserFactory = await probe()
 
-describe.skipIf(!hasBrowser)('composeSlideshow output format (real browser)', () => {
-  it('writes JPEG slides (.jpg, FFD8FF) when asked, PNG otherwise', async () => {
+describe.skipIf(!browserFactory)('composeSlideshow output format (real browser)', () => {
+  const spec = { id: 'fmt', slides: [{ bgColor: '#336699', texts: [{ t: 'hello there', y: 40 }] }] }
+  const first = async (options: Parameters<typeof composeSlideshow>[2]): Promise<string> => {
     const out = mkdtempSync(join(tmpdir(), 'ss-format-'))
     try {
-      const spec = { id: 'fmt', slides: [{ bgColor: '#336699', texts: [{ t: 'hello there', y: 40 }] }] }
-      const jpeg = await composeSlideshow(spec, join(out, 'jpeg'), { ratios: ['9x16'], format: 'jpeg', jpegQuality: 92 })
-      const jpegFile = jpeg.slidePaths['9x16']![0]!
-      expect(jpegFile).toMatch(/\.jpg$/)
-      expect([...readFileSync(jpegFile).subarray(0, 3)]).toEqual([0xff, 0xd8, 0xff])
-
-      const png = await composeSlideshow(spec, join(out, 'png'), { ratios: ['9x16'] })
-      const pngFile = png.slidePaths['9x16']![0]!
-      expect(pngFile).toMatch(/\.png$/)
-      expect([...readFileSync(pngFile).subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47])
+      const result = await composeSlideshow(spec, out, { ratios: ['9x16'], browserFactory: browserFactory!, ...options })
+      return result.slidePaths['9x16']![0]!.replace(/.*\./, '') + ':' + readFileSync(result.slidePaths['9x16']![0]!).subarray(0, 4).toString('hex')
     } finally {
       rmSync(out, { recursive: true, force: true })
     }
+  }
+
+  it('writes JPEG slides by default: a .jpg starting FFD8FF (Instagram and TikTok photo posts refuse PNG)', async () => {
+    expect((await first({})).startsWith('jpg:ffd8ff')).toBe(true)
+  }, 120000)
+
+  it('writes PNG only when asked for', async () => {
+    expect(await first({ format: 'png' })).toBe('png:89504e47')
   }, 120000)
 })

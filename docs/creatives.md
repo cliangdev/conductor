@@ -406,7 +406,8 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   `messages`, `grid`, `stack` (with labelled before/after), `tier`, `week`, `receipt` and `placard`; up
   to 35 slides. Text is native box or stroke text placed by `y` (percent of the 9:16 frame). The field
   reference is `conductor-tools/src/lib/slideshow/spec.ts`.
-- **Output:** PNG slides at 1080x1920 (`9x16`) and 1080x1350 (`4x5`), written under
+- **Output:** JPEG slides (quality 92; Instagram feed images and TikTok photo posts refuse PNG, so a committed
+  slide must not be one) at 1080x1920 (`9x16`) and 1080x1350 (`4x5`), written under
   `.conductor/slideshows/`, plus layout `checks` (spill, safe zones, text size) and `passed`. Nothing is
   sent to Conductor.
 - **Then a CAROUSEL.** The returned `slidePaths` go to `preview_creative_draft({kind: "CAROUSEL",
@@ -617,10 +618,14 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   - **Run token, JPEG.** The run-scoped key may not call the photo endpoints, so the job reads and writes Media
     only through the revision: `GET .../revisions/{id}` carries `media` (signed download urls and provenance of the
     changed slides' images and of the slides being replaced), and `POST .../revisions/{id}/media` +
-    `.../media/{mediaId}/confirm` mint and confirm the new images (images only, PENDING revisions only, attributed
-    to the revision's author; confirm refuses Media the revision did not mint). Slides are composed as JPEG at
-    quality 92 (`format: 'jpeg'`), like every stored slide and frame: Instagram and TikTok photo posts refuse PNG,
-    and the job refuses to upload anything that is not `image/jpeg`.
+    `.../media/{mediaId}/confirm` mint and confirm the new images. A mint takes images only, on a PENDING
+    revision, at most one per changed slide and ratio (409 past that), credited to the revision's author, who must
+    still be an editor (else the revision is FAILED with that reason); it marks the image as the revision's
+    (`creative_photo.minted_for_revision_id`, V177). Confirm accepts only such an image, and only once its bytes are
+    in storage (the size comes from storage, not the client); a run token's `complete` accepts only such images.
+    Whatever a revision minted that did not end up in the Creative (a failed or stale revision, a rejected
+    `complete`, an extra upload) is deleted. Slides are composed as JPEG at quality 92 (the composer's default),
+    like every stored frame, and the job refuses to upload anything that is not `image/jpeg`.
     `CreativeRevisionRunTokenApiTest` drives all of it with a real run token.
   - **The job.** The render Workflow runs `conductor creative render-slides <revisionId> --creative <id>
     [--workflow-run-id <id>]` in the render image with the run's scoped key (`CONDUCTOR_API_KEY`,

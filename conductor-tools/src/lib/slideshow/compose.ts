@@ -27,7 +27,10 @@ export interface ComposeOptions {
   kitLabel?: string
   /** An inline style over the spec's own `style` and the kit's. Resolved and validated once, here. */
   style?: SlideshowStyle | null
-  /** The slides' file format: `png` (default, lossless) or `jpeg` (what stored slides are; Instagram and TikTok photo posts refuse PNG). */
+  /**
+   * The slides' file format: `jpeg` (default; what a Creative stores, since Instagram feed images and TikTok photo
+   * posts refuse PNG) or `png` (lossless, only when asked for).
+   */
   format?: 'png' | 'jpeg'
   /** JPEG quality 1-100 (default 92); ignored for png. */
   jpegQuality?: number
@@ -203,7 +206,7 @@ export async function composeSlideshow(specInput: unknown, outDir: string, optio
           await page.goto(pathToFileURL(htmlFile).href)
           await page.waitForFunction('window.__READY === true', null, { timeout: 30000 })
           checks.push(...((await page.evaluate('window.__CHECKS')) as SlideshowCheck[]))
-          const jpeg = options.format === 'jpeg'
+          const jpeg = (options.format ?? 'jpeg') === 'jpeg'
           const png = join(out, `${htmlSpec.id}-${ratio}-${nn}.${jpeg ? 'jpg' : 'png'}`)
           await page.screenshot(jpeg ? { path: png, type: 'jpeg', quality: options.jpegQuality ?? 92 } : { path: png })
           files.push(png)

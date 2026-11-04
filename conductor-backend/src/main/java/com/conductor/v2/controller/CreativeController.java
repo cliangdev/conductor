@@ -477,9 +477,9 @@ public class CreativeController implements CreativesApi {
     public ResponseEntity<CreativePhotoResponse> confirmCreativeRevisionMedia(String projectId, String creativeId,
             String revisionId, String mediaId, ConfirmCreativePhotoRequest request) {
         RenderCaller caller = renderCaller(projectId, creativeId);
-        Long sizeBytes = request != null ? request.getSizeBytes() : null;
+        // The body's sizeBytes is ignored here: the size is read from storage.
         return ResponseEntity.ok(toResponse(
-                revisionService.confirmMedia(projectId, creativeId, revisionId, mediaId, sizeBytes, caller)));
+                revisionService.confirmMedia(projectId, creativeId, revisionId, mediaId, caller)));
     }
 
     @Override
