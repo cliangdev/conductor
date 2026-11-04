@@ -22,7 +22,7 @@ import java.sql.PreparedStatement;
  * file {@code WorkflowSeeder} loads. Idempotent via {@code WHERE NOT EXISTS} guards, so re-running on a
  * rolling deploy, or running against a database with zero projects, inserts nothing.
  */
-public class V183__seed_task_workflow extends BaseJavaMigration {
+public class V184__seed_task_workflow extends BaseJavaMigration {
 
     private static final String DEFINITION_RESOURCE = "/schema/examples/task.workflow.json";
 
