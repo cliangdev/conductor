@@ -27,5 +27,9 @@ public interface PublishConsentRepository extends JpaRepository<PublishConsent, 
     @Query("SELECT c.workItem.id, c.consentHash FROM PublishConsent c WHERE c.workItem.id IN :workItemIds")
     List<Object[]> findHashesByWorkItemIdIn(@Param("workItemIds") Collection<String> workItemIds);
 
+    /** As {@link #findByWorkItemId}, for many Posts in one statement. */
+    @EntityGraph(attributePaths = "consentedBy")
+    List<PublishConsent> findAllByWorkItemIdIn(Collection<String> workItemIds);
+
     void deleteByWorkItemId(String workItemId);
 }

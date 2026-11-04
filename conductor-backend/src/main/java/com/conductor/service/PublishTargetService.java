@@ -546,6 +546,28 @@ public class PublishTargetService {
                 .toList();
     }
 
+    /**
+     * {@link #views} for the targets of many Posts at once, in a fixed number of queries; each target is
+     * resolved against its own Post. Keyed by target id.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, TargetView> viewsAcross(List<PostPublishTarget> targets) {
+        if (targets == null || targets.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, PublishTargetMediaResolver.EffectiveMedia> media = mediaResolver.effectiveMediaForTargets(targets);
+        Map<String, TargetView> views = new LinkedHashMap<>();
+        for (PostPublishTarget target : targets) {
+            PublishTargetMediaResolver.EffectiveMedia effective = media.getOrDefault(
+                    target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE);
+            views.put(target.getId(), new TargetView(target,
+                    target.isCustomMedia() ? effective.assetIds() : null,
+                    effective.assetIds(),
+                    mediaResolver.effectiveCaption(target, target.getWorkItem())));
+        }
+        return views;
+    }
+
     /** The Post's targets as {@link TargetView}s — what every read path returns. */
     @Transactional(readOnly = true)
     public List<TargetView> listSelectedTargetViews(String projectId, String workItemId, User caller) {

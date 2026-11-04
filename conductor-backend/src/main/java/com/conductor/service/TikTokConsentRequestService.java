@@ -220,11 +220,14 @@ public class TikTokConsentRequestService {
         TikTokConsentRequest request = requestRepository.findByIdAndProjectId(requestId, projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Consent request not found"));
 
-        List<Item> items = new ArrayList<>();
-        for (String id : TikTokConsentRequestIds.parse(request.getWorkItemIds())) {
-            workItemRepository.findById(id).ifPresent(workItem -> items.add(
-                    item(workItem, consentService.currentState(workItem))));
-        }
+        List<String> ids = TikTokConsentRequestIds.parse(request.getWorkItemIds());
+        Map<String, WorkItem> workItems = workItemsInProject(projectId, ids);
+        Map<String, PublishConsentService.Snapshot> snapshots = consentService.snapshots(workItems.keySet());
+        List<Item> items = ids.stream()
+                .map(workItems::get)
+                .filter(java.util.Objects::nonNull)
+                .map(workItem -> item(workItem, snapshots.get(workItem.getId()).state()))
+                .toList();
         boolean allValid = items.stream().allMatch(item -> item.consent().valid());
         if (request.getCompletedAt() == null && allValid) {
             request.setCompletedAt(OffsetDateTime.now());
@@ -285,47 +288,64 @@ public class TikTokConsentRequestService {
             }
             ids = TikTokConsentRequestIds.parse(request.getWorkItemIds());
         } else {
-            ids = targetRepository.findPendingTikTokWorkItemIds(projectId).stream()
-                    .map(id -> workItemRepository.findById(id).orElse(null))
-                    // Without a request the page is the to-do list: consented Posts are not on it.
-                    .filter(item -> item != null && !consentService.currentState(item).valid())
+            ids = targetRepository.findPendingTikTokWorkItemIds(projectId).stream().distinct().toList();
+        }
+
+        // Set-based: a fixed number of queries however many Posts are on the page.
+        Map<String, WorkItem> workItems = workItemsInProject(projectId, ids);
+        Map<String, PublishConsentService.Snapshot> snapshots = consentService.snapshots(workItems.keySet());
+        List<WorkItem> shown = ids.stream()
+                .map(workItems::get)
+                .filter(item -> item != null && !snapshots.get(item.getId()).consentTargets().isEmpty())
+                .toList();
+        if (request == null) {
+            // Without a request the page is the to-do list: consented Posts are not on it.
+            shown = shown.stream()
+                    .filter(item -> !snapshots.get(item.getId()).state().valid())
                     .sorted(Comparator.comparing(WorkItem::getSequenceNumber,
                             Comparator.nullsLast(Comparator.naturalOrder())))
-                    .map(WorkItem::getId)
                     .toList();
         }
+        Map<String, PublishTargetService.TargetView> views = publishTargetService.viewsAcross(shown.stream()
+                .flatMap(item -> snapshots.get(item.getId()).consentTargets().stream())
+                .toList());
 
         List<PagePost> posts = new ArrayList<>();
         Map<String, TikTokCreatorInfoService.Creator> creators = new LinkedHashMap<>();
-        for (String id : ids) {
-            WorkItem workItem = workItemRepository.findById(id)
-                    .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
-                    .orElse(null);
-            if (workItem == null) {
-                continue;
-            }
-            List<PostPublishTarget> targets = consentService.consentTargetsOf(workItem);
-            if (targets.isEmpty()) {
-                continue;
-            }
-            PublishConsentService.ConsentState consent = consentService.currentState(workItem);
-            boolean valid = consent.valid();
+        Map<String, Connection> connections = new java.util.HashMap<>();
+        connectionRepository.findAllById(views.values().stream()
+                        .map(view -> view.target().getConnectionId())
+                        .filter(java.util.Objects::nonNull)
+                        .distinct()
+                        .toList())
+                .forEach(connection -> connections.put(connection.getId(), connection));
+        for (WorkItem workItem : shown) {
+            PublishConsentService.Snapshot snapshot = snapshots.get(workItem.getId());
+            boolean valid = snapshot.state().valid();
             List<PageTarget> pageTargets = new ArrayList<>();
-            for (PublishTargetService.TargetView view : publishTargetService.views(workItem, targets)) {
-                pageTargets.add(new PageTarget(view.target(), view.effectiveAssetIds(), view.effectiveCaption(),
-                        valid ? storedChoice(view.target().getPublishOptions()) : null));
-                String connectionId = view.target().getConnectionId();
-                if (connectionId != null && !creators.containsKey(connectionId)) {
-                    Connection connection = connectionRepository.findById(connectionId).orElse(null);
-                    if (connection != null) {
-                        creators.put(connectionId, creatorInfoService.get(connection));
-                    }
+            for (PostPublishTarget target : snapshot.consentTargets()) {
+                PublishTargetService.TargetView view = views.get(target.getId());
+                pageTargets.add(new PageTarget(target, view.effectiveAssetIds(), view.effectiveCaption(),
+                        valid ? storedChoice(target.getPublishOptions()) : null));
+                String connectionId = target.getConnectionId();
+                if (connectionId != null && !creators.containsKey(connectionId) && connections.containsKey(connectionId)) {
+                    creators.put(connectionId, creatorInfoService.get(connections.get(connectionId)));
                 }
             }
-            posts.add(new PagePost(workItem, displayIdOf(workItem), consent, consentService.consentEtag(workItem),
-                    pageTargets));
+            posts.add(new PagePost(workItem, displayIdOf(workItem), snapshot.state(), snapshot.etag(), pageTargets));
         }
         return new Page(request, posts, List.copyOf(creators.values()));
+    }
+
+    /** The Posts among {@code ids} that are in this project, in one query; keyed by id. */
+    private Map<String, WorkItem> workItemsInProject(String projectId, List<String> ids) {
+        Map<String, WorkItem> byId = new LinkedHashMap<>();
+        for (WorkItem item : workItemRepository.findAllById(ids)) {
+            if (item.getProject() != null && projectId.equals(item.getProject().getId())) {
+                byId.put(item.getId(), item);
+            }
+        }
+        return byId;
     }
 
     private String nameOf(String userId) {

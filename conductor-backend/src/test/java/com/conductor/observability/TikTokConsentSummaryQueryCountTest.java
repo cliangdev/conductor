@@ -40,6 +40,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * {@code GET /tiktok-consent/summary} ({@link TikTokConsentRequestService#pendingCount}) must cost the same
  * number of queries for 1 Post as for many, and must count exactly the Posts whose consent does not stand.
+ * The consent page ({@link TikTokConsentRequestService#page}) and a request's status poll
+ * ({@link TikTokConsentRequestService#status}) must not grow with the number of Posts either.
  */
 class TikTokConsentSummaryQueryCountTest extends AbstractNoneWebIntegrationTest {
 
@@ -189,6 +191,77 @@ class TikTokConsentSummaryQueryCountTest extends AbstractNoneWebIntegrationTest 
         System.out.println("CONSENT-SUMMARY-QUERY-COUNTS: sets=1 -> " + fewQueries + ", sets=5 -> " + manyQueries);
         assertThat(manyQueries).isEqualTo(fewQueries);
         assertThat(manyQueries).isLessThanOrEqualTo(8);
+    }
+
+    @Test
+    void pageListsExactlyThePostsWaitingOnConsent() {
+        Fixture f = fixture();
+        int expected = mixedSet(f);
+        TikTokConsentRequestService.Page page = asSession(f, () -> requestService.page(f.project().getId(), null));
+        assertThat(page.posts()).hasSize(expected);
+        assertThat(page.posts()).allSatisfy(post -> {
+            assertThat(post.consent().valid()).isFalse();
+            assertThat(post.targets()).hasSize(1);
+            assertThat(post.etag()).isEqualTo(consentService.consentEtag(post.workItem()));
+        });
+        assertThat(page.creators()).hasSize(1);
+    }
+
+    @Test
+    void pageIsConstantInTheNumberOfPosts() {
+        Fixture few = fixture();
+        mixedSet(few);
+        asSession(few, () -> requestService.page(few.project().getId(), null)); // warm up
+        int fewQueries = asSession(few, () -> count(() -> requestService.page(few.project().getId(), null)));
+
+        Fixture many = fixture();
+        for (int i = 0; i < 5; i++) {
+            mixedSet(many);
+        }
+        asSession(many, () -> requestService.page(many.project().getId(), null)); // creator info is cached per account
+        int manyQueries = asSession(many, () -> count(() -> requestService.page(many.project().getId(), null)));
+
+        System.out.println("CONSENT-PAGE-QUERY-COUNTS: sets=1 -> " + fewQueries + ", sets=5 -> " + manyQueries);
+        assertThat(manyQueries).isEqualTo(fewQueries);
+    }
+
+    @Test
+    void requestStatusIsConstantInTheNumberOfPosts() {
+        Fixture few = fixture();
+        mixedSet(few);
+        String fewRequest = requestService.create(few.project().getId(), null).request().getId();
+        requestService.status(few.project().getId(), fewRequest); // warm up
+        int fewQueries = count(() -> requestService.status(few.project().getId(), fewRequest));
+
+        Fixture many = fixture();
+        for (int i = 0; i < 5; i++) {
+            mixedSet(many);
+        }
+        String manyRequest = requestService.create(many.project().getId(), null).request().getId();
+        TikTokConsentRequestService.Status status = requestService.status(many.project().getId(), manyRequest);
+        assertThat(status.items()).hasSize(10);
+        int manyQueries = count(() -> requestService.status(many.project().getId(), manyRequest));
+
+        System.out.println("CONSENT-STATUS-QUERY-COUNTS: sets=1 -> " + fewQueries + ", sets=5 -> " + manyQueries);
+        assertThat(manyQueries).isEqualTo(fewQueries);
+    }
+
+    /** Runs {@code call} as the fixture's admin in their own browser session, as the consent page needs. */
+    private <T> T asSession(Fixture f, java.util.function.Supplier<T> call) {
+        UsernamePasswordAuthenticationToken session = new UsernamePasswordAuthenticationToken(f.admin(), null, List.of());
+        session.setDetails(new JwtAuthenticationDetails(new MockHttpServletRequest(), true));
+        SecurityContextHolder.getContext().setAuthentication(session);
+        return call.get();
+    }
+
+    private int count(Runnable call) {
+        try (RequestStats.Scope scope = RequestStats.start()) {
+            call.run();
+            RequestStats stats = scope.stats();
+            System.out.println("CONSENT-QUERY-DETAIL " + stats.dbQueries() + " queries "
+                    + stats.topRepeatedSql(12));
+            return stats.dbQueries();
+        }
     }
 
     private int measure(Fixture f) {

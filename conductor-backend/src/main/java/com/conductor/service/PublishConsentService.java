@@ -386,9 +386,12 @@ public class PublishConsentService {
     /** The Post's TikTok targets that publish through the API — the ones a creator has to consent for. */
     private List<PostPublishTarget> consentTargets(String workItemId) {
         return targetRepository.findAllByWorkItemId(workItemId).stream()
-                .filter(target -> target.getLane() != PublishLane.MANUAL)
-                .filter(target -> PLATFORM_TIKTOK.equals(normalized(target.getPlatform())))
+                .filter(PublishConsentService::isConsentTarget)
                 .toList();
+    }
+
+    private static boolean isConsentTarget(PostPublishTarget target) {
+        return target.getLane() != PublishLane.MANUAL && PLATFORM_TIKTOK.equals(normalized(target.getPlatform()));
     }
 
     private Map<String, TikTokCreatorInfoService.Creator> creatorsFor(List<PostPublishTarget> targets) {
@@ -590,9 +593,7 @@ public class PublishConsentService {
     }
 
     private boolean requiresConsent(List<PostPublishTarget> allTargets) {
-        return allTargets.stream()
-                .filter(target -> target.getLane() != PublishLane.MANUAL)
-                .anyMatch(target -> PLATFORM_TIKTOK.equals(normalized(target.getPlatform())));
+        return allTargets.stream().anyMatch(PublishConsentService::isConsentTarget);
     }
 
     private ConsentState state(WorkItem workItem) {
@@ -701,6 +702,50 @@ public class PublishConsentService {
             }
         }
         return valid;
+    }
+
+    /** One Post's consent as the consent page and a consent request show it. */
+    public record Snapshot(List<PostPublishTarget> consentTargets, ConsentState state, String etag) {}
+
+    /**
+     * {@link #consentTargetsOf}, {@link #currentState} and {@link #consentEtag} for many Posts in a fixed
+     * number of queries (targets, consents with who gave them, per-target media, assets) however many Posts
+     * there are. Keyed by Work Item id; every id asked for is present.
+     */
+    @Transactional(readOnly = true)
+    public Map<String, Snapshot> snapshots(java.util.Collection<String> workItemIds) {
+        if (workItemIds == null || workItemIds.isEmpty()) {
+            return Map.of();
+        }
+        List<PostPublishTarget> all = targetRepository.findAllByWorkItemIdIn(workItemIds);
+        Map<String, List<PostPublishTarget>> targetsByPost = new java.util.HashMap<>();
+        for (PostPublishTarget target : all) {
+            targetsByPost.computeIfAbsent(target.getWorkItem().getId(), key -> new ArrayList<>()).add(target);
+        }
+        Map<String, PublishConsent> consents = new java.util.HashMap<>();
+        for (PublishConsent consent : consentRepository.findAllByWorkItemIdIn(workItemIds)) {
+            consents.put(consent.getWorkItem().getId(), consent);
+        }
+        Map<String, List<String>> selections = selectionsByTarget(all);
+        Map<String, List<Asset>> assetsByPost = new java.util.HashMap<>();
+        for (Asset asset : assetRepository.findAllByWorkItemIdIn(workItemIds)) {
+            assetsByPost.computeIfAbsent(asset.getWorkItem().getId(), key -> new ArrayList<>()).add(asset);
+        }
+        Map<String, Snapshot> snapshots = new LinkedHashMap<>();
+        for (String id : workItemIds) {
+            List<PostPublishTarget> targets = targetsByPost.getOrDefault(id, List.of());
+            PublishConsent consent = consents.get(id);
+            String hash = subjectHash(targets(targets, selections),
+                    assetTuples(assetsByPost.getOrDefault(id, List.of())));
+            Verdict verdict = !requiresConsent(targets) ? Verdict.NOT_REQUIRED
+                    : consent == null ? Verdict.NEVER_GIVEN
+                    : hash.equals(consent.getConsentHash()) ? Verdict.VALID : Verdict.SUPERSEDED;
+            List<PostPublishTarget> consentTargets = targets.stream()
+                    .filter(PublishConsentService::isConsentTarget)
+                    .toList();
+            snapshots.put(id, new Snapshot(consentTargets, ConsentState.of(verdict, consent), etagOf(hash)));
+        }
+        return snapshots;
     }
 
     private List<Map<String, Object>> targets(List<PostPublishTarget> targets,
