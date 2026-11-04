@@ -502,6 +502,61 @@ public class CreativePhotoService {
     @Transactional
     public PhotoView createPhoto(String projectId, CreateCreativePhotoRequest request, User caller) {
         requireEditor(projectId, caller);
+        return create(projectId, request, caller.getId());
+    }
+
+    /**
+     * An image minted for a slide-text revision's re-rendered slide. The caller (the revision service) has already
+     * authorized it against the PENDING revision; {@code createdBy} is the person it is attributed to. Images only.
+     */
+    @Transactional
+    public PhotoView createImageForRevision(String projectId, CreateCreativePhotoRequest request, String createdBy) {
+        MediaTypeInfo typeInfo = request.getContentType() != null
+                ? ALLOWED_TYPES.get(normalize(request.getContentType().getValue())) : null;
+        if (typeInfo == null || !CreativePhoto.MEDIA_KIND_IMAGE.equals(typeInfo.mediaKind())) {
+            throw new BusinessException("A re-rendered slide is an image; content type '"
+                    + (request.getContentType() != null ? request.getContentType().getValue() : null)
+                    + "' is not allowed.");
+        }
+        return create(projectId, request, createdBy);
+    }
+
+    /**
+     * Confirms an image minted by {@link #createImageForRevision}: only a still-pending image of this project made
+     * by {@code createdBy} at or after {@code notBefore} (the revision's creation); anything else is a 404, so a run
+     * cannot reach Media it did not mint.
+     */
+    @Transactional
+    public PhotoView confirmImageForRevision(String projectId, String photoId, Long observedSizeBytes, String createdBy,
+                                             java.time.OffsetDateTime notBefore) {
+        CreativePhoto photo = findPhoto(projectId, photoId);
+        if (!CreativePhoto.MEDIA_KIND_IMAGE.equals(photo.getMediaKind())
+                || !CreativePhoto.UPLOAD_STATUS_PENDING.equals(photo.getUploadStatus())
+                || !java.util.Objects.equals(createdBy, photo.getCreatedBy())
+                || photo.getCreatedAt() == null || photo.getCreatedAt().isBefore(notBefore)) {
+            throw new EntityNotFoundException("Photo not found");
+        }
+        if (observedSizeBytes != null) {
+            photo.setSizeBytes(requireAllowedSize(observedSizeBytes, photo.getMediaKind()));
+        }
+        photo.setUploadStatus(CreativePhoto.UPLOAD_STATUS_UPLOADED);
+        photo = photoRepository.save(photo);
+        storageService.markCacheable(photo.getGcsPath());
+        return toView(photo);
+    }
+
+    /** Views (with signed download URLs) of the named Media of this project; the caller has authorized the read. */
+    @Transactional(readOnly = true)
+    public List<PhotoView> viewsOf(String projectId, java.util.Collection<String> ids) {
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        return photoRepository.findAllByIdIn(ids).stream()
+                .filter(p -> projectId.equals(p.getProjectId()))
+                .map(this::toView).toList();
+    }
+
+    private PhotoView create(String projectId, CreateCreativePhotoRequest request, String createdBy) {
         String contentType = request.getContentType() != null ? request.getContentType().getValue() : null;
         MediaTypeInfo typeInfo = ALLOWED_TYPES.get(normalize(contentType));
         if (typeInfo == null) {
@@ -552,7 +607,7 @@ public class CreativePhotoService {
         photo.setAiGenerated(Boolean.TRUE.equals(request.getAiGenerated()));
         photo.setFocal(objectMapper.createObjectNode());
         photo.setUploadStatus(CreativePhoto.UPLOAD_STATUS_PENDING);
-        photo.setCreatedBy(caller.getId());
+        photo.setCreatedBy(createdBy);
         photo = photoRepository.save(photo);
 
         String signedUploadUrl = storageService.generateSignedUploadUrl(gcsPath, normalize(contentType), UPLOAD_URL_EXPIRY_MINUTES);

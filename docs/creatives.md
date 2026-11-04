@@ -614,6 +614,14 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   `[field] message` per violation (`slideshowSpecMissing`, `slideTextEditInvalid`, `slideTextEditNoop`,
   `slideTextEditUnsupportedRatio`). `get_creative` adds `textEditable: false` and a `textEditNote` beside
   `textFields` when the Creative's `slides` has a `1x1` list.
+  - **Run token, JPEG.** The run-scoped key may not call the photo endpoints, so the job reads and writes Media
+    only through the revision: `GET .../revisions/{id}` carries `media` (signed download urls and provenance of the
+    changed slides' images and of the slides being replaced), and `POST .../revisions/{id}/media` +
+    `.../media/{mediaId}/confirm` mint and confirm the new images (images only, PENDING revisions only, attributed
+    to the revision's author; confirm refuses Media the revision did not mint). Slides are composed as JPEG at
+    quality 92 (`format: 'jpeg'`), like every stored slide and frame: Instagram and TikTok photo posts refuse PNG,
+    and the job refuses to upload anything that is not `image/jpeg`.
+    `CreativeRevisionRunTokenApiTest` drives all of it with a real run token.
   - **The job.** The render Workflow runs `conductor creative render-slides <revisionId> --creative <id>
     [--workflow-run-id <id>]` in the render image with the run's scoped key (`CONDUCTOR_API_KEY`,
     `CONDUCTOR_API_URL`, `CONDUCTOR_PROJECT_ID`), or on a person's machine with their own `conductor login`.
@@ -628,7 +636,7 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
     browser itself, also between two full composes). Checks come back numbered 1..n of the sub-spec and are mapped
     to the real slide numbers; the composer's "no provenance sidecar" warning is dropped (it is about committing
     local files). Any `error` check posts `.../revisions/{id}/fail` with `{error, checks}` and uploads nothing.
-    Otherwise each PNG is uploaded as media labelled `<displayId> slide <n> <ratio> r<revisionNo>` with the
+    Otherwise each slide is uploaded as media labelled `<displayId> slide <n> <ratio> r<revisionNo>` with the
     source, licence and `aiGenerated` copied from the media it replaces, and `.../complete` gets
     `{slideMedia: {ratio: {slide: mediaId}}, checks}`; the backend then applies it or rejects it (for instance
     because the Creative changed meanwhile). A crash posts `/fail` with the message, then exits 1; a failed layout

@@ -5199,6 +5199,160 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/marketing/creatives/{creativeId}/revisions/{revisionId}/media:
+    post:
+      tags:
+        - creatives
+      summary: Mint a signed upload for a re-rendered slide of a PENDING revision
+      description: >-
+        Called by the render job for each slide image it composed: mint here, `PUT` the bytes to `uploadUrl`, then
+        `.../media/{mediaId}/confirm`, and report the ids to `.../complete`. The photo endpoints refuse a workflow run
+        token; this is the one place a run may create Media, and only an image, only for its own PENDING revision.
+        The Media is attributed to the revision's author (the system acting for them) when a run token calls, and to
+        the caller otherwise. Same body and response as `createCreativePhoto`, restricted to image content types.
+        Auth: the revision's own run token, or a project ADMIN / CREATOR.
+      operationId: createCreativeRevisionMedia
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: revisionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCreativePhotoRequest"
+      responses:
+        "201":
+          description: The pending image and its signed upload URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativePhotoResponse"
+        "400":
+          description: Disallowed content type (only images), or a disallowed size
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A run token for another run or Creative, or a caller who is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Revision, Creative or media not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The revision is no longer PENDING
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/revisions/{revisionId}/media/{mediaId}/confirm:
+    post:
+      tags:
+        - creatives
+      summary: Confirm an image uploaded for a PENDING revision
+      description: >-
+        Marks the image minted by `.../revisions/{revisionId}/media` as UPLOADED. Only an image still
+        awaiting its upload that was minted for this revision (by its author, after the revision was created) can be
+        confirmed here; any other Media is a 404. Auth as `.../media`.
+      operationId: confirmCreativeRevisionMedia
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: revisionId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: mediaId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmCreativePhotoRequest"
+      responses:
+        "200":
+          description: The confirmed, UPLOADED image
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativePhotoResponse"
+        "400":
+          description: Disallowed size
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A run token for another run or Creative, or a caller who is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Revision, Creative or media not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The revision is no longer PENDING
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/marketing/creatives/{creativeId}/performance:
     get:
       tags:
@@ -11770,6 +11924,15 @@ components:
             - $ref: "#/components/schemas/SlideshowStyle"
           nullable: true
           description: The Creative's current slide style, if any.
+        media:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativePhotoResponse"
+          description: >-
+            The Media the render job reads, each with a signed download `url` and its provenance (`source`,
+            `licence`, `aiGenerated`): the images the changed slides of `spec` use, and the entries of the
+            Creative's `slides` lists at the changed positions (the slides being replaced). A run token cannot
+            read `GET .../photos/{photoId}`, so the job takes everything it reads from here.
 
     CreativeRevisionRenderList:
       type: object

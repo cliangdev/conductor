@@ -6,11 +6,9 @@ import type { Config } from '../mcp/config.js'
 
 vi.mock('../mcp/api.js', () => ({ apiGet: vi.fn(), apiPost: vi.fn(), apiPatch: vi.fn(), putBytes: vi.fn(), ApiError: class ApiError extends Error {} }))
 vi.mock('../lib/creative-render.js', () => ({ renderCreative: vi.fn(), renderDraft: vi.fn(), renderViaApi: vi.fn() }))
-vi.mock('../mcp/tools/creatives.js', () => ({ uploadCreativeMedia: vi.fn() }))
 
-import { apiGet, apiPost } from '../mcp/api.js'
-import { uploadCreativeMedia } from '../mcp/tools/creatives.js'
-import { renderSlides } from '../mcp/tools/slideshow-render.js'
+import { apiGet, apiPost, putBytes } from '../mcp/api.js'
+import { renderSlides, uploadRevisionSlide } from '../mcp/tools/slideshow-render.js'
 
 const config: Config = { apiKey: 'run-key', projectId: 'proj-1', projectName: '', email: '', apiUrl: 'https://api.test' }
 const mocked = <T>(fn: T) => fn as unknown as ReturnType<typeof vi.fn>
@@ -41,6 +39,8 @@ function detail(over: Record<string, unknown> = {}) {
       { list: '4x5', ratio: '4x5' },
     ],
     slideStyle: { boxBg: '#ffffff', accent: '#ff2d55' },
+    // The revision detail carries every Media the job reads: a run-scoped key may not call the photo endpoints.
+    media: Object.values(media),
     ...over,
   }
 }
@@ -66,6 +66,7 @@ const compose = vi.fn(async (spec: { slides: unknown[] }, outDir: string, option
     checks: composeChecks,
   }
 })
+const upload = vi.fn()
 const download = vi.fn(async (m: { id: string }, into: string) => path.join(into, `${m.id}.png`))
 
 beforeEach(() => {
@@ -77,15 +78,16 @@ beforeEach(() => {
   download.mockClear()
   mocked(apiGet).mockImplementation(async (url: string) => {
     if (url === `${base}/revisions/${REV}`) return current
-    const m = /photos\/(.+)$/.exec(url)
-    if (m) return media[m[1]!] ?? { id: m[1] }
+    // A run-scoped key cannot read the photo endpoints, so the job must never call them.
     throw new Error(`unexpected GET ${url}`)
   })
   mocked(apiPost).mockResolvedValue({})
-  mocked(uploadCreativeMedia).mockImplementation(async (p: { label: string }) => ({ media: { id: `new:${p.label}` }, warnings: [] }))
+  upload.mockReset()
+  upload.mockImplementation(async (p: { label: string }) => ({ media: { id: `new:${p.label}` } }))
 })
 
-const run = (o: Record<string, unknown> = {}) => renderSlides({ revisionId: REV, creativeId: CREATIVE }, config, { compose: compose as never, download: download as never, ...o })
+const run = (o: Record<string, unknown> = {}) =>
+  renderSlides({ revisionId: REV, creativeId: CREATIVE }, config, { compose: compose as never, download: download as never, upload: upload as never, ...o })
 const posts = (suffix: string) => mocked(apiPost).mock.calls.filter((c) => (c[0] as string).endsWith(suffix))
 
 describe('renderSlides', () => {
@@ -104,8 +106,12 @@ describe('renderSlides', () => {
     expect(download.mock.calls.map((c) => (c[0] as { id: string }).id).sort()).toEqual([ID(1), ID(2)])
     expect(options.ratios).toEqual(['9x16', '4x5'])
     expect(options.style).toEqual({ boxBg: '#ffffff', accent: '#ff2d55' })
+    // slides are stored as JPEG at quality 92 (Instagram and TikTok photo posts refuse PNG)
+    expect(options).toMatchObject({ format: 'jpeg', jpegQuality: 92 })
+    // nothing is read from the photo endpoints
+    expect(mocked(apiGet).mock.calls.map((c) => c[0] as string).filter((u) => u.includes('/photos/'))).toEqual([])
 
-    const uploads = mocked(uploadCreativeMedia).mock.calls.map((c) => c[0] as Record<string, unknown>)
+    const uploads = mocked(upload).mock.calls.map((c) => c[0] as Record<string, unknown>)
     expect(uploads.map((u) => u['label'])).toEqual(['12a slide 1 9x16 r4', '12a slide 3 9x16 r4', '12a slide 1 4x5 r4', '12a slide 3 4x5 r4'])
     expect(uploads[0]).toMatchObject({ source: 'src 11', licence: 'Own work', aiGenerated: false })
     expect(uploads[1]).toMatchObject({ source: 'src 13', licence: 'Licensed', aiGenerated: true })
@@ -137,8 +143,7 @@ describe('renderSlides', () => {
     current = detail({ slides: { default: [ID(31), ID(32), ID(33)] }, renderLists: [{ list: 'default', ratio: '9x16' }] })
     const r = await run()
     expect(r).toMatchObject({ ok: true, ratios: ['9x16'], uploaded: 2 })
-    expect(mocked(uploadCreativeMedia).mock.calls[0]![0]).toMatchObject({ source: 'src 31' })
-    expect(mocked(apiGet).mock.calls.map((c) => c[0] as string).filter((u) => u.includes(`/photos/${ID(32)}`))).toHaveLength(0)
+    expect(mocked(upload).mock.calls[0]![0]).toMatchObject({ source: 'src 31' })
   })
 
   it('renders a default list once per ratio', async () => {
@@ -163,9 +168,9 @@ describe('renderSlides', () => {
       slides: { default: [ID(13), ID(12), ID(13)], '9x16': [ID(11), ID(12), ID(13)] },
       renderLists: [{ list: 'default', ratio: '9x16' }, { list: '9x16', ratio: '9x16' }],
     })
-    mocked(uploadCreativeMedia).mockClear()
+    mocked(upload).mockClear()
     await run()
-    expect((mocked(uploadCreativeMedia).mock.calls[0]![0] as Record<string, unknown>)['source']).toBe('src 11')
+    expect((mocked(upload).mock.calls[0]![0] as Record<string, unknown>)['source']).toBe('src 11')
   })
 
   it('fails when the backend names nothing to render (the Creative cannot be text-edited)', async () => {
@@ -179,7 +184,7 @@ describe('renderSlides', () => {
     current = detail({ renderLists: undefined })
     await expect(run()).rejects.toThrow(/did not say which slide lists to re-render/)
     expect(compose).not.toHaveBeenCalled()
-    expect(mocked(uploadCreativeMedia)).not.toHaveBeenCalled()
+    expect(mocked(upload)).not.toHaveBeenCalled()
   })
 
   it('refuses a ratio it cannot compose instead of skipping the list', async () => {
@@ -196,7 +201,7 @@ describe('renderSlides', () => {
     ]
     const r = await run()
     expect(r).toMatchObject({ ok: false, outcome: 'checks-failed' })
-    expect(mocked(uploadCreativeMedia)).not.toHaveBeenCalled()
+    expect(mocked(upload)).not.toHaveBeenCalled()
     expect(posts('/complete')).toHaveLength(0)
     const fail = posts('/fail')
     expect(fail).toHaveLength(1)
@@ -219,7 +224,7 @@ describe('renderSlides', () => {
   it('on a crash tries POST /fail with the error and rethrows', async () => {
     compose.mockRejectedValueOnce(new Error('browser exploded'))
     await expect(run()).rejects.toThrow('browser exploded')
-    expect(mocked(uploadCreativeMedia)).not.toHaveBeenCalled()
+    expect(mocked(upload)).not.toHaveBeenCalled()
     expect(posts('/fail')).toHaveLength(1)
     expect(posts('/fail')[0]![1]).toEqual({ error: 'browser exploded' })
   })
@@ -242,10 +247,91 @@ describe('renderSlides', () => {
     mocked(apiGet).mockImplementation(async (url: string) => {
       if (url === `${base}/revisions/${REV}`) return current
       if (url === base) return { displayId: '7b' }
-      return media[/photos\/(.+)$/.exec(url)![1]!] ?? {}
+      throw new Error(`unexpected GET ${url}`)
     })
     await run()
-    expect((mocked(uploadCreativeMedia).mock.calls[0]![0] as { label: string }).label).toBe('7b slide 1 9x16 r4')
+    expect((mocked(upload).mock.calls[0]![0] as { label: string }).label).toBe('7b slide 1 9x16 r4')
+  })
+})
+
+it('fails clearly when an older backend sends no media in the revision detail', async () => {
+  current = detail({ media: undefined })
+  await expect(run()).rejects.toThrow(/did not send the revision's media/)
+  expect(compose).not.toHaveBeenCalled()
+})
+
+/** A minimal JPEG: SOI, a SOF0 segment carrying the size, EOI. */
+function jpegBytes(width: number, height: number): Buffer {
+  return Buffer.from([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, height >> 8, height & 255, width >> 8, width & 255, 0x03, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1, 0xff, 0xd9])
+}
+const PNG_BYTES = Buffer.from('89504e470d0a1a0a0000000d49484452000004380000078008060000', 'hex')
+
+describe('uploadRevisionSlide', () => {
+  const revisionBase = `${base}/revisions/${REV}`
+  const file = (name: string, bytes: Buffer): string => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-test-'))
+    const f = path.join(dir, name)
+    fs.writeFileSync(f, bytes)
+    return f
+  }
+
+  it('mints through the revision, uploads image/jpeg, confirms, and never touches the photo endpoints', async () => {
+    mocked(apiPost).mockImplementation(async (url: string) =>
+      url.endsWith('/media') ? { id: 'm-1', uploadUrl: 'https://upload.test/m-1' } : { id: 'm-1', uploadStatus: 'UPLOADED' }
+    )
+    const result = await uploadRevisionSlide(
+      revisionBase,
+      { filePath: file('s.jpg', jpegBytes(1080, 1920)), label: '12a slide 1 9x16 r4', source: 'src', licence: 'Own work', aiGenerated: true },
+      config
+    )
+
+    expect(result.media).toMatchObject({ id: 'm-1' })
+    const [mintUrl, mintBody] = mocked(apiPost).mock.calls[0]!
+    expect(mintUrl).toBe(`${revisionBase}/media`)
+    expect(mintBody).toMatchObject({ contentType: 'image/jpeg', width: 1080, height: 1920, source: 'src', licence: 'Own work', aiGenerated: true })
+    expect(mocked(putBytes)).toHaveBeenCalledWith('https://upload.test/m-1', 'image/jpeg', expect.anything())
+    expect(mocked(apiPost).mock.calls[1]![0]).toBe(`${revisionBase}/media/m-1/confirm`)
+    expect(mocked(apiPost).mock.calls.map((c) => c[0] as string).filter((u) => u.includes('/marketing/photos'))).toEqual([])
+  })
+
+  it('refuses a PNG slide instead of storing a format TikTok photo posts reject', async () => {
+    await expect(uploadRevisionSlide(revisionBase, { filePath: file('s.png', PNG_BYTES), label: 'x' }, config)).rejects.toThrow(/image\/png, not image\/jpeg/)
+    expect(mocked(apiPost)).not.toHaveBeenCalled()
+    expect(mocked(putBytes)).not.toHaveBeenCalled()
+  })
+})
+
+describe('renderSlides default upload', () => {
+  it('uploads the composed JPEGs as image/jpeg through the revision media endpoints', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-test-'))
+    const composeJpeg = vi.fn(async (spec: { slides: unknown[] }, outDir: string, options: { ratios?: string[] }) => ({
+      slidePaths: Object.fromEntries(
+        (options.ratios ?? []).map((r) => [
+          r,
+          spec.slides.map((_, i) => {
+            const f = path.join(dir, `${r}-${i + 1}.jpg`)
+            fs.writeFileSync(f, jpegBytes(1080, r === '9x16' ? 1920 : 1350))
+            return f
+          }),
+        ])
+      ),
+      checks: [],
+    }))
+    let n = 0
+    mocked(apiPost).mockImplementation(async (url: string) => {
+      if (url.endsWith('/media')) return { id: `m-${++n}`, uploadUrl: `https://upload.test/m-${n}` }
+      if (url.endsWith('/confirm')) return { id: url.split('/').slice(-2)[0] }
+      return {}
+    })
+    const r = await renderSlides({ revisionId: REV, creativeId: CREATIVE }, config, { compose: composeJpeg as never, download: download as never })
+
+    expect(r).toMatchObject({ ok: true, uploaded: 4 })
+    const contentTypes = mocked(putBytes).mock.calls.map((c) => c[1])
+    expect(contentTypes).toEqual(['image/jpeg', 'image/jpeg', 'image/jpeg', 'image/jpeg'])
+    const mints = posts('/media').map((c) => c[1] as { contentType: string })
+    expect(mints.map((m) => m.contentType)).toEqual(['image/jpeg', 'image/jpeg', 'image/jpeg', 'image/jpeg'])
+    expect(posts('/complete')).toHaveLength(1)
+    expect(mocked(apiGet).mock.calls.map((c) => c[0] as string).filter((u) => u.includes('/photos/'))).toEqual([])
   })
 })
 

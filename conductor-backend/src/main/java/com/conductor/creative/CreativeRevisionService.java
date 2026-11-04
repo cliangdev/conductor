@@ -102,6 +102,7 @@ public class CreativeRevisionService {
     private final WorkflowDefinitionResolver workflowResolver;
     private final CreativeEditImpacts impacts;
     private final PlatformTransactionManager transactionManager;
+    private final CreativePhotoService photoService;
     private final TransactionTemplate newTx;
 
     public CreativeRevisionService(CreativeRevisionRepository revisionRepository,
@@ -118,7 +119,9 @@ public class CreativeRevisionService {
                                    UserRepository userRepository,
                                    WorkflowDefinitionResolver workflowResolver,
                                    CreativeEditImpacts impacts,
-                                   PlatformTransactionManager transactionManager) {
+                                   PlatformTransactionManager transactionManager,
+                                   CreativePhotoService photoService) {
+        this.photoService = photoService;
         this.impacts = impacts;
         this.transactionManager = transactionManager;
         this.cancellationService = cancellationService;
@@ -144,7 +147,8 @@ public class CreativeRevisionService {
 
     /** A revision plus the parts of the Creative the render job needs next to it. */
     public record RevisionDetail(CreativeRevision revision, List<Integer> changedSlides, JsonNode slides,
-                                 JsonNode slideStyle, List<RenderList> renderLists) {
+                                 JsonNode slideStyle, List<RenderList> renderLists,
+                                 List<CreativePhotoService.PhotoView> media) {
     }
 
     /** A stored slide list the render job re-renders, and the ratio ({@code 9x16} / {@code 4x5}) it is made at. */
@@ -320,8 +324,80 @@ public class CreativeRevisionService {
         CreativeRevision revision = findRevision(creativeId, revisionId);
         authorize(projectId, creativeId, revision, caller, false);
         resolveStale(revision);
-        return new RevisionDetail(revision, changedSlides(revision), creative.getSlides(), creative.getSlideStyle(),
-                planRenderLists(toSlidesMap(creative.getSlides())).lists());
+        List<Integer> changed = changedSlides(revision);
+        List<RenderList> lists = planRenderLists(toSlidesMap(creative.getSlides())).lists();
+        List<CreativePhotoService.PhotoView> media = revision.getStatus().equals(CreativeRevision.STATUS_PENDING)
+                ? photoService.viewsOf(projectId, mediaTheJobReads(revision, creative, changed, lists)) : List.of();
+        return new RevisionDetail(revision, changed, creative.getSlides(), creative.getSlideStyle(), lists, media);
+    }
+
+    /**
+     * The Media a render job reads for a revision: the images the changed slides of the candidate spec use, and
+     * the entries of the re-rendered lists at the changed positions (the slides being replaced, for provenance).
+     * Nothing else: a run token reads this much and no more.
+     */
+    private Set<String> mediaTheJobReads(CreativeRevision revision, Creative creative, List<Integer> changed,
+                                         List<RenderList> lists) {
+        Set<String> ids = new LinkedHashSet<>();
+        JsonNode specSlides = revision.getSpec() != null ? revision.getSpec().get("slides") : null;
+        if (specSlides != null && specSlides.isArray()) {
+            com.fasterxml.jackson.databind.node.ObjectNode only = objectMapper.createObjectNode();
+            ArrayNode picked = only.putArray("slides");
+            for (int n : changed) {
+                if (n >= 1 && n <= specSlides.size()) {
+                    picked.add(specSlides.get(n - 1));
+                }
+            }
+            for (SlideshowSpecs.ImageRef ref : SlideshowSpecs.imageRefs(only)) {
+                String id = SlideshowSpecs.mediaId(ref.value());
+                if (id != null) {
+                    ids.add(id);
+                }
+            }
+        }
+        Map<String, List<String>> slides = toSlidesMap(creative.getSlides());
+        for (RenderList list : lists) {
+            List<String> entries = slides.get(list.list());
+            for (int n : changed) {
+                if (entries != null && n >= 1 && n <= entries.size() && entries.get(n - 1) != null) {
+                    ids.add(entries.get(n - 1));
+                }
+            }
+        }
+        return ids;
+    }
+
+    // ── the render job's uploads ────────────────────────────────────────────
+
+    /**
+     * Mints an image upload for a re-rendered slide of a PENDING revision. The photo endpoints refuse a run token;
+     * this is the narrow door instead: the revision's own run (or an editor), an image, a PENDING revision. A run
+     * token's Media is attributed to the revision's author, the person the system is acting for.
+     */
+    @Transactional
+    public CreativePhotoService.PhotoView createMedia(String projectId, String creativeId, String revisionId,
+            com.conductor.generated.v2.model.CreateCreativePhotoRequest request, RenderCaller caller) {
+        CreativeRevision revision = findRevision(creativeId, revisionId);
+        findCreative(projectId, creativeId);
+        authorize(projectId, creativeId, revision, caller, true);
+        requirePending(revision);
+        return photoService.createImageForRevision(projectId, request, uploader(revision, caller));
+    }
+
+    /** Confirms an image minted by {@link #createMedia} for this revision. */
+    @Transactional
+    public CreativePhotoService.PhotoView confirmMedia(String projectId, String creativeId, String revisionId,
+            String mediaId, Long sizeBytes, RenderCaller caller) {
+        CreativeRevision revision = findRevision(creativeId, revisionId);
+        findCreative(projectId, creativeId);
+        authorize(projectId, creativeId, revision, caller, true);
+        requirePending(revision);
+        return photoService.confirmImageForRevision(projectId, mediaId, sizeBytes, uploader(revision, caller),
+                revision.getCreatedAt());
+    }
+
+    private static String uploader(CreativeRevision revision, RenderCaller caller) {
+        return caller instanceof RenderCaller.UserCaller u ? u.user().getId() : revision.getAuthorUserId();
     }
 
     /** The distinct 1-based slides a revision's text diff touches, ascending. */
