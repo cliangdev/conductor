@@ -227,6 +227,80 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         assertThat(assetRepository.findAllByWorkItemId(post.getId())).isEmpty();
     }
 
+    // ── the Creative's state after an attach ────────────────────────────────────────────────────
+
+    /** Makes {@link #creative} pass its readiness checklist: caption, alt text and a checked photo with provenance. */
+    private void makeCreativeReady() {
+        creative.setCaption("One sentence plans your week.");
+        creative.setAltText("A calendar with one line written on it");
+        creative.setPhotoId(slideImage().getId());
+        creative = creativeRepository.save(creative);
+    }
+
+    private CreativeAttachService.AttachResult attachRender() {
+        CreativeRender render = newRender();
+        newFrame(render, "9x16", null, "tiktok", 1080, 1920);
+        return attachService.attach(project.getId(), creative.getId(), render.getId(), post.getId(), admin);
+    }
+
+    @Test
+    void aDraftThatPassesReadinessBecomesReadyWhenAttached() {
+        makeCreativeReady();
+        int versionBefore = creativeRepository.findById(creative.getId()).orElseThrow().getVersion();
+
+        CreativeAttachService.AttachResult result = attachRender();
+
+        assertThat(result.creativeState()).isEqualTo(Creative.STATE_READY);
+        assertThat(result.stateNote()).isNull();
+        Creative saved = creativeRepository.findById(creative.getId()).orElseThrow();
+        assertThat(saved.getState()).isEqualTo(Creative.STATE_READY);
+        // Promoting is not a content change: the version holds, so the render just attached is still current.
+        assertThat(saved.getVersion()).isEqualTo(versionBefore);
+        assertThat(renderRepository.findAll()).filteredOn(r -> creative.getId().equals(r.getCreativeId()))
+                .allSatisfy(r -> assertThat(r.getCreativeVersion()).isEqualTo(saved.getVersion()));
+    }
+
+    @Test
+    void aDraftWithABlockingIssueStaysDraftWithANoteButIsStillAttached() {
+        // No caption, alt text or photo: the first blocking item is the caption.
+        CreativeAttachService.AttachResult result = attachRender();
+
+        assertThat(result.assets()).hasSize(1);
+        assertThat(result.creativeState()).isEqualTo(Creative.STATE_DRAFT);
+        assertThat(result.stateNote()).startsWith("Stays a draft because caption is missing");
+        assertThat(creativeRepository.findById(creative.getId()).orElseThrow().getState())
+                .isEqualTo(Creative.STATE_DRAFT);
+        assertThat(assetRepository.findAllByWorkItemId(post.getId())).hasSize(1);
+    }
+
+    @Test
+    void aReadyCreativeStaysReadyAndItsVersionIsNotBumped() {
+        makeCreativeReady();
+        creative.setState(Creative.STATE_READY);
+        creative = creativeRepository.save(creative);
+        int versionBefore = creative.getVersion();
+
+        CreativeAttachService.AttachResult result = attachRender();
+
+        assertThat(result.creativeState()).isEqualTo(Creative.STATE_READY);
+        assertThat(result.stateNote()).isNull();
+        assertThat(creativeRepository.findById(creative.getId()).orElseThrow().getVersion()).isEqualTo(versionBefore);
+    }
+
+    @Test
+    void anArchivedCreativeIsLeftArchivedEvenWhenItWouldBeReady() {
+        makeCreativeReady();
+        creative.setState(Creative.STATE_ARCHIVED);
+        creative = creativeRepository.save(creative);
+
+        CreativeAttachService.AttachResult result = attachRender();
+
+        assertThat(result.creativeState()).isEqualTo(Creative.STATE_ARCHIVED);
+        assertThat(result.stateNote()).isNull();
+        assertThat(creativeRepository.findById(creative.getId()).orElseThrow().getState())
+                .isEqualTo(Creative.STATE_ARCHIVED);
+    }
+
     // ── frames are JPEG, so an attached Instagram feed target clears the media-format gate ────────
 
     @Test

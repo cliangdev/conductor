@@ -14,6 +14,7 @@ import java.util.List;
  * @param requiresReview whether the engine blocks this transition until a Review is recorded
  * @param reviewOutcomes allowed review verdicts (present when {@code requiresReview})
  * @param reviewerRole   project role that approves the gate ({@code ADMIN}|{@code CREATOR}|{@code REVIEWER}), or null
+ * @param requireIndependentReviewer when true, the creator's own approval does not count toward the gate
  * @param trigger        the system event that fires this edge automatically (e.g. {@code pr_merged}), or null
  *                       for a human-driven transition
  * @param steps          automated actions on this transition (≤3)
@@ -25,7 +26,15 @@ public record StatechartTransition(String from,
                                    List<String> reviewOutcomes,
                                    String reviewerRole,
                                    String trigger,
-                                   List<StatechartStep> steps) {
+                                   List<StatechartStep> steps,
+                                   boolean requireIndependentReviewer) {
+
+    /** A transition that allows self-approval (the default). */
+    public StatechartTransition(String from, String to, String label, boolean requiresReview,
+                                List<String> reviewOutcomes, String reviewerRole, String trigger,
+                                List<StatechartStep> steps) {
+        this(from, to, label, requiresReview, reviewOutcomes, reviewerRole, trigger, steps, false);
+    }
 
     public StatechartTransition {
         reviewOutcomes = reviewOutcomes == null ? List.of() : List.copyOf(reviewOutcomes);
@@ -46,6 +55,7 @@ public record StatechartTransition(String from,
                 Json.stringList(node, "reviewOutcomes"),
                 Json.text(node, "reviewerRole"),
                 Json.text(node, "trigger"),
-                steps);
+                steps,
+                Json.bool(node, "requireIndependentReviewer"));
     }
 }

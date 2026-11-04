@@ -1,6 +1,6 @@
 {
   "name": "@cliangdev/conductor",
-  "version": "0.46.0",
+  "version": "0.49.0",
   "description": "Agentic software development platform — AI-driven PRD, implementation, and beyond",
   "license": "SEE LICENSE IN ../LICENSE",
   "repository": {
@@ -23,7 +23,7 @@
     "scripts/"
   ],
   "scripts": {
-    "build": "tsc && node scripts/build-creative.mjs",
+    "build": "tsc && node scripts/build-creative.mjs && node scripts/sync-slideshow-core.mjs",
     "typecheck:fast": "tsgo --noEmit",
     "dev": "ts-node src/index.ts",
     "test": "vitest run",

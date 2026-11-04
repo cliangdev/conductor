@@ -21,7 +21,6 @@ import {
 import type { IssueAssignee, Member } from '@/components/workitems/listTypes'
 import type { WorkItemAsset, WorkItemDeliveryFields } from '@/types/workItem'
 import type { DetailReview, DetailReviewer } from '@/components/workitems/detailTypes'
-import type { MemberRole } from '@/types'
 
 function ReviewerRow({
   reviewer,
@@ -74,7 +73,7 @@ export function WorkItemPropertiesPanel({
   projectId,
   issueId,
   status,
-  userRole,
+  canEdit,
   token,
   workflowSlug,
   onStatusChanged,
@@ -112,7 +111,7 @@ export function WorkItemPropertiesPanel({
   projectId: string
   issueId: string
   status: string
-  userRole: MemberRole
+  canEdit: boolean
   token: string
   workflowSlug: string
   onStatusChanged: (status: string) => void
@@ -191,7 +190,7 @@ export function WorkItemPropertiesPanel({
           projectId={projectId}
           issueId={issueId}
           currentStatus={status}
-          userRole={userRole}
+          canEdit={canEdit}
           token={token}
           workflowSlug={workflowSlug}
           onStatusChanged={onStatusChanged}
@@ -210,7 +209,7 @@ export function WorkItemPropertiesPanel({
           tags={tags}
           known={knownTags}
           onKnownTagsNeeded={onKnownTagsNeeded}
-          canEdit={userRole !== 'REVIEWER'}
+          canEdit={canEdit}
           onChanged={onTagsChanged}
         />
       </PanelSection>
@@ -224,14 +223,14 @@ export function WorkItemPropertiesPanel({
           scheduledFor={scheduledFor}
           scheduleTimezone={scheduleTimezone}
           publishOnApproval={publishOnApproval}
-          canEdit={userRole !== 'REVIEWER'}
+          canEdit={canEdit}
           onChanged={onScheduleChanged}
         />
       </PanelSection>
       )}
 
       <PanelSection label="Assignee">
-        {userRole === 'REVIEWER' ? (
+        {!canEdit ? (
           assignee ? (
             <div className="flex items-center gap-2">
               <UserAvatar name={assignee.name} avatarUrl={assignee.avatarUrl} size={5} />
@@ -264,7 +263,7 @@ export function WorkItemPropertiesPanel({
           projectId={projectId}
           issueId={issueId}
           token={token}
-          canEdit={userRole !== 'REVIEWER'}
+          canEdit={canEdit}
           delivery={delivery}
           parent={deliveryParent}
           onChanged={(patch) => onDeliveryChanged?.(patch)}
@@ -359,7 +358,7 @@ export function WorkItemPropertiesPanel({
         progress={delivery?.progress}
       />
 
-      {onDelete && userRole !== 'REVIEWER' && (
+      {onDelete && canEdit && (
         <PanelSection label="Remove">
           <button type="button" onClick={onDelete} className="text-sm text-destructive hover:underline">
             Delete this {noun.toLowerCase()}

@@ -135,7 +135,7 @@ class ProjectServiceTest {
     void updateMemberRoleThrowsAccessDeniedForNonAdmin() {
         when(projectSecurityService.isProjectAdmin("proj-1", "creator-id")).thenReturn(false);
 
-        UpdateMemberRoleRequest request = new UpdateMemberRoleRequest("REVIEWER");
+        UpdateMemberRoleRequest request = new UpdateMemberRoleRequest().role("REVIEWER");
 
         assertThatThrownBy(() -> projectService.updateMemberRole("proj-1", "some-user", request, creator))
                 .isInstanceOf(AccessDeniedException.class);
@@ -146,9 +146,9 @@ class ProjectServiceTest {
         when(projectSecurityService.isProjectAdmin("proj-1", "creator-id")).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "creator-id"))
                 .thenReturn(Optional.of(adminMember));
-        when(projectMemberRepository.countByProjectIdAndRole("proj-1", MemberRole.ADMIN)).thenReturn(1L);
+        when(projectMemberRepository.countAdmins("proj-1")).thenReturn(1L);
 
-        UpdateMemberRoleRequest request = new UpdateMemberRoleRequest("CREATOR");
+        UpdateMemberRoleRequest request = new UpdateMemberRoleRequest().role("CREATOR");
 
         assertThatThrownBy(() -> projectService.updateMemberRole("proj-1", "creator-id", request, creator))
                 .isInstanceOf(BusinessException.class)
@@ -172,10 +172,10 @@ class ProjectServiceTest {
         when(projectSecurityService.isProjectAdmin("proj-1", "creator-id")).thenReturn(true);
         when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "creator-id"))
                 .thenReturn(Optional.of(adminMember));
-        when(projectMemberRepository.countByProjectIdAndRole("proj-1", MemberRole.ADMIN)).thenReturn(2L);
+        when(projectMemberRepository.countAdmins("proj-1")).thenReturn(2L);
         when(projectMemberRepository.save(any(ProjectMember.class))).thenReturn(adminMember);
 
-        UpdateMemberRoleRequest request = new UpdateMemberRoleRequest("CREATOR");
+        UpdateMemberRoleRequest request = new UpdateMemberRoleRequest().role("CREATOR");
 
         MemberResponse response = projectService.updateMemberRole("proj-1", "creator-id", request, creator);
 
@@ -196,7 +196,7 @@ class ProjectServiceTest {
         // A member removing themselves (leave) still cannot drop the last admin.
         when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "creator-id"))
                 .thenReturn(Optional.of(adminMember));
-        when(projectMemberRepository.countByProjectIdAndRole("proj-1", MemberRole.ADMIN)).thenReturn(1L);
+        when(projectMemberRepository.countAdmins("proj-1")).thenReturn(1L);
 
         assertThatThrownBy(() -> projectService.removeMember("proj-1", "creator-id", creator))
                 .isInstanceOf(BusinessException.class)
@@ -223,5 +223,74 @@ class ProjectServiceTest {
         projectService.removeMember("proj-1", "member-user-2", creator);
 
         verify(projectMemberRepository).delete(nonAdminMember);
+    }
+
+    @Test
+    void resolveRequestedRolesAcceptsRolesOrLegacyRoleButNotBothOrNeither() {
+        assertThat(ProjectService.resolveRequestedRoles(java.util.List.of("CREATOR", "REVIEWER"), null))
+                .containsExactlyInAnyOrder(MemberRole.CREATOR, MemberRole.REVIEWER);
+        assertThat(ProjectService.resolveRequestedRoles(null, "reviewer")).containsExactly(MemberRole.REVIEWER);
+        assertThat(ProjectService.resolveRequestedRoles(java.util.List.of(), null)).isEmpty();
+
+        assertThatThrownBy(() -> ProjectService.resolveRequestedRoles(java.util.List.of("CREATOR"), "CREATOR"))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> ProjectService.resolveRequestedRoles(null, null))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> ProjectService.resolveRequestedRoles(null, "OWNER"))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("Invalid role");
+    }
+
+    @Test
+    void demotingTheLastAdminToTwoNonAdminRolesIsRefused() {
+        when(projectSecurityService.isProjectAdmin("proj-1", "creator-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "creator-id"))
+                .thenReturn(Optional.of(adminMember));
+        when(projectMemberRepository.countAdmins("proj-1")).thenReturn(1L);
+
+        UpdateMemberRoleRequest request = new UpdateMemberRoleRequest()
+                .roles(java.util.List.of(com.conductor.generated.model.MemberRoleName.CREATOR,
+                        com.conductor.generated.model.MemberRoleName.REVIEWER));
+
+        assertThatThrownBy(() -> projectService.updateMemberRole("proj-1", "creator-id", request, creator))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Cannot remove the last project admin");
+    }
+
+    @Test
+    void theLastAdminMayKeepAdminWhileGainingOtherRoles() {
+        when(projectSecurityService.isProjectAdmin("proj-1", "creator-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "creator-id"))
+                .thenReturn(Optional.of(adminMember));
+        when(projectMemberRepository.save(any(ProjectMember.class))).thenReturn(adminMember);
+
+        MemberResponse response = projectService.updateMemberRole("proj-1", "creator-id",
+                new UpdateMemberRoleRequest().roles(java.util.List.of(
+                        com.conductor.generated.model.MemberRoleName.ADMIN,
+                        com.conductor.generated.model.MemberRoleName.REVIEWER)), creator);
+
+        assertThat(adminMember.getRole()).isEqualTo(MemberRole.ADMIN);
+        assertThat(response.getRoles()).hasSize(2);
+        verify(projectMemberRepository, never()).countAdmins(any());
+    }
+
+    @Test
+    void emptyRolesMakeTheMemberAReadOnlyViewerWithLegacyRoleReviewer() {
+        User other = new User();
+        other.setId("other");
+        ProjectMember member = new ProjectMember();
+        member.setProject(testProject);
+        member.setUser(other);
+        member.setRoles(java.util.Set.of(MemberRole.CREATOR));
+        member.setJoinedAt(OffsetDateTime.now());
+        when(projectSecurityService.isProjectAdmin("proj-1", "creator-id")).thenReturn(true);
+        when(projectMemberRepository.findByProjectIdAndUserId("proj-1", "other")).thenReturn(Optional.of(member));
+        when(projectMemberRepository.save(any(ProjectMember.class))).thenReturn(member);
+
+        MemberResponse response = projectService.updateMemberRole("proj-1", "other",
+                new UpdateMemberRoleRequest().roles(java.util.List.of()), creator);
+
+        assertThat(member.getRoles()).isEmpty();
+        assertThat(response.getRole()).isEqualTo("REVIEWER");
+        assertThat(response.getRoles()).isEmpty();
     }
 }

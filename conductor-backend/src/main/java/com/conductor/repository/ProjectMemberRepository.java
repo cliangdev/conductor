@@ -1,6 +1,5 @@
 package com.conductor.repository;
 
-import com.conductor.entity.MemberRole;
 import com.conductor.entity.ProjectMember;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -34,7 +33,9 @@ public interface ProjectMemberRepository extends JpaRepository<ProjectMember, St
 
     boolean existsByProjectIdAndUserId(String projectId, String userId);
 
-    @Query("SELECT COUNT(pm) FROM ProjectMember pm WHERE pm.project.id = :projectId AND pm.role = :role")
-    long countByProjectIdAndRole(@Param("projectId") String projectId, @Param("role") MemberRole role);
+    /** Members holding ADMIN (the last-admin guard). */
+    @Query(value = "SELECT COUNT(*) FROM project_members WHERE project_id = :projectId AND 'ADMIN' = ANY(roles)",
+            nativeQuery = true)
+    long countAdmins(@Param("projectId") String projectId);
 
 }

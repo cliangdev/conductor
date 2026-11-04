@@ -24,8 +24,10 @@ const base = 'file:///f/'
 
 describe('slideCss', () => {
   it('renders the native look byte-for-byte unchanged when no style is given', () => {
-    // sha256 of the stylesheet before slideshow styles existed (slideCss('file:///f/'))
-    expect(createHash('sha256').update(slideCss(base)).digest('hex')).toBe('fff75b978d82f8583b814686a9beb8f04bb34236e13c07630eb3dc2b6610f2ea')
+    // sha256 of slideCss('file:///f/'). It last changed when the system-UI slide types moved to the bundled Inter /
+    // Source Serif 4 / Courier Prime; slideshow-html-stability.test.ts shows the photo and screen slides' HTML is
+    // otherwise unchanged from before.
+    expect(createHash('sha256').update(slideCss(base)).digest('hex')).toBe('ef00a9bfd17a51a7ecc2d0ec70a900aee8cbb7706d0f51c0415f280ce5d2ee3b')
     expect(slideCss(base, NATIVE_STYLE)).toBe(slideCss(base))
     expect(slideCss(base, resolveSlideshowStyle())).toBe(slideCss(base))
   })
@@ -192,11 +194,12 @@ describe('buildSlideHtml with a style', () => {
     expect(dark).toMatch(/class="box dark" data-fg[^>]*>one/)
   })
 
-  it('keeps the system-font slide types on their own fonts', () => {
+  it('keeps the system-UI slide types on the bundled fonts, whatever the style font', () => {
     const css = slideCss(base, resolveSlideshowStyle({ fontFamily: 'Poppins' }))
-    expect(css).toMatch(/\.notes\{[^}]*font-family:-apple-system/)
-    expect(css).toMatch(/\.msgs\{[^}]*font-family:-apple-system/)
-    expect(css).toMatch(/\.receipt\{[^}]*"Courier New"/)
+    expect(css).toMatch(/\.notes\{[^}]*font-family:"Inter",sans-serif/)
+    expect(css).toMatch(/\.msgs\{[^}]*font-family:"Inter",sans-serif/)
+    expect(css).toMatch(/\.receipt\{[^}]*"Courier Prime",monospace/)
+    expect(css).toMatch(/\.placard\{[^}]*"Source Serif 4",serif/)
   })
 })
 

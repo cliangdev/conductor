@@ -4,7 +4,7 @@ import { can } from './permissions'
 
 describe('SETTINGS_NAV gating', () => {
   const keysFor = (role: 'ADMIN' | 'CREATOR' | 'REVIEWER') =>
-    visibleNavEntries(SETTINGS_NAV, (cap) => can(role, cap)).map((e) => e.key)
+    visibleNavEntries(SETTINGS_NAV, (cap) => can([role], cap)).map((e) => e.key)
 
   it('gates Milestones on the capability the backend enforces', () => {
     expect(SETTINGS_NAV.find((e) => e.key === 'settings-milestones')?.permission).toBe('milestone.manage')

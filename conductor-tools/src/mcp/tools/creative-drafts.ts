@@ -19,6 +19,8 @@ import {
   uploadCreativeMedia,
   type CreativeFields,
 } from './creatives.js'
+import { chooseDraftSpec, uploadSpecImages } from './slideshow-spec.js'
+import { listTextFields, specLocalImages, type SlideshowSpec } from '../../lib/slideshow/index.js'
 
 /**
  * Draft-first Creatives: render a Creative on this machine from a spec the backend resolves WITHOUT
@@ -56,6 +58,10 @@ export interface PreviewCreativeDraftParams extends CreativeFields {
   /** CAROUSEL only: the slides as local image files (or existing media ids), ordered per placement,
    * e.g. {"4x5": ["/art/01.png", "/art/02.png"]}; each path becomes a `local:<key>` entry of `slides`. */
   slidePaths?: Record<string, string[]>
+  /** CAROUSEL only: the slideshow spec the slides were composed from (a compose_slideshow output `spec.json` or a
+   * source spec). Kept with the draft and stored on the Creative at commit so its text stays editable. Default: the
+   * `spec.json` beside the slide files, when compose_slideshow wrote it for them. */
+  slideshowSpecPath?: string
   /** Preview edits on top of this saved Creative: only the fields given here change. */
   baseCreativeId?: string
   /** Where to write the draft (default `<projectRoot>/.conductor/drafts/<YYYYMMDD-HHMMSS>-<slug>/`). */
@@ -82,6 +88,12 @@ export interface DraftFile {
   localProvenance?: Record<string, SidecarProvenance>
   /** sha256 of the spec the backend returned. */
   specSha256: string
+  /** CAROUSEL: where the slideshow spec was read from. The draft keeps its own copy below, so a later edit of that file cannot change what is committed. */
+  slideshowSpecPath?: string
+  /** CAROUSEL: the slideshow spec as previewed (image paths absolute, no resolvedStyle); sent to the Creative at commit with each image uploaded and rewritten to `media:<id>`. */
+  slideshowSpec?: SlideshowSpec
+  /** absolute image path -> media id, filled in as commit uploads the spec's images (so a retry never re-uploads). */
+  specImages?: Record<string, string>
   /** key -> media id, filled in as `commit_creative_draft` uploads (so a retry never re-uploads). */
   uploaded?: Record<string, string>
 }
@@ -118,6 +130,8 @@ export interface PreviewCreativeDraftSuccess {
   files: Array<{ placementKey: string; index?: number; file: string; width?: number; height?: number }>
   /** CAROUSEL only: one contact sheet image per placement (per ten slides). */
   sheets?: Array<{ placementKey: string; file: string; slides: number }>
+  /** CAROUSEL only: the slideshow spec kept with the draft (it travels with the Creative at commit); absent when none applies. */
+  slideshowSpec?: { path: string; slides: number; textFields: number }
   /** CAROUSEL with a track only: the slideshow MP4 rendered on this machine (the full video, not a sheet). */
   slideshowVideoPath?: string
   slideshowDurationSeconds?: number
@@ -216,7 +230,7 @@ type Beat = Record<string, unknown>
 /** Splits the tool params into the create-creative body (with `local:<key>` references) and the key ->
  * file map, refusing a combination that names the same slot twice. */
 function buildDraftRequest(params: PreviewCreativeDraftParams): { request: Record<string, unknown>; localFiles: Record<string, string> } {
-  const { photoPath, clipPath, audioPath, slidePaths, baseCreativeId: _b, draftDir: _d, full: _f, ...fields } = params as PreviewCreativeDraftParams & {
+  const { photoPath, clipPath, audioPath, slidePaths, slideshowSpecPath: _s, baseCreativeId: _b, draftDir: _d, full: _f, ...fields } = params as PreviewCreativeDraftParams & {
     variantOf?: unknown
   }
   const request: Record<string, unknown> = { ...fields }
@@ -331,13 +345,16 @@ async function carouselPreview(input: {
   localProvenance: Record<string, SidecarProvenance>
   draftDir: string
   readiness: unknown
+  /** The slideshow spec kept with the draft, and notes about one that was dropped. */
+  spec?: { path: string; slides: number; textFields: number }
+  specNotes: string[]
   log: (...args: unknown[]) => void
 }): Promise<PreviewCreativeDraftSuccess> {
   const { request, localFiles, draftDir, localProvenance } = input
   const slides = (request['slides'] ?? {}) as Record<string, string[]>
   const SHEET_SLIDES = 10
   const sheets: Array<{ placementKey: string; file: string; slides: number }> = []
-  const notes: string[] = []
+  const notes: string[] = [...input.specNotes]
   let image: PreviewCreativeDraftSuccess['image']
 
   for (const [placement, refs] of Object.entries(slides)) {
@@ -370,6 +387,7 @@ async function carouselPreview(input: {
     ...(image ? { image } : {}),
     files: sheets.map((sh) => ({ placementKey: sh.placementKey, file: sh.file })),
     sheets,
+    ...(input.spec ? { slideshowSpec: input.spec } : {}),
     readiness: input.readiness,
     warnings: [],
     checks: [],
@@ -383,6 +401,9 @@ async function carouselPreview(input: {
       'Nothing has been saved to Conductor, and the slides are used exactly as they are (no brand layout is applied). ' +
       'Show the contact sheet(s) to the person and check the order, the crop and any burned-in text. ' +
       'Resolve any blocking readiness item (caption, alt text, photoChecked) you can fix now. ' +
+      (input.spec
+        ? `The slideshow spec (${input.spec.slides} slides, ${input.spec.textFields} editable text fields) is kept with the draft and is stored on the Creative at commit, so its text can be edited later. `
+        : '') +
       'Only after they approve, call commit_creative_draft({draftDir, photoChecked: true}); to change something, call preview_creative_draft again.',
   }
 }
@@ -419,13 +440,18 @@ export async function previewCreativeDraft(
   }
   let isCarousel = params.kind === 'CAROUSEL' || (!!params.slidePaths && !params.kind)
   let baseAudio: { source?: string } | null | undefined
+  let baseHasSpec = false
+  if (params.slideshowSpecPath && !isCarousel && !params.baseCreativeId) {
+    return { ok: false, rendered: false, error: 'slideshowSpecPath is for kind CAROUSEL (with slidePaths).' }
+  }
   if (params.baseCreativeId && (isCarousel || !params.kind)) {
     // Editing a saved Creative without naming its kind: a CAROUSEL base takes the carousel path, and
     // its saved audio decides whether the slideshow video is rendered.
     try {
-      const base = await apiGet<{ kind?: string; audio?: { source?: string } | null }>(`${creativesBase(config)}/${params.baseCreativeId}`, config)
+      const base = await apiGet<{ kind?: string; audio?: { source?: string } | null; slideshowSpec?: unknown }>(`${creativesBase(config)}/${params.baseCreativeId}`, config)
       if (!isCarousel) isCarousel = base?.kind === 'CAROUSEL'
       baseAudio = base?.audio
+      baseHasSpec = !!base?.slideshowSpec
     } catch {
       /* unknown kind: treat as a rendered Creative */
     }
@@ -454,6 +480,25 @@ export async function previewCreativeDraft(
     }
   } catch (err) {
     return { ok: false, rendered: false, error: err instanceof Error ? err.message : String(err) }
+  }
+
+  // The slideshow spec the slides came from rides in the draft, not in the draft-spec call (which only knows
+  // uploaded media, not local files); commit uploads its images and sends it with the Creative.
+  let slideshow: { spec: SlideshowSpec; path: string } | undefined
+  const specNotes: string[] = []
+  if (isCarousel) {
+    const choice = await chooseDraftSpec({
+      slideshowSpecPath: params.slideshowSpecPath,
+      slideFiles: Object.entries(localFiles).filter(([k]) => k.startsWith('slide-')).map(([, v]) => v),
+      slideLists: (request['slides'] ?? {}) as Record<string, string[]>,
+      projectRoot,
+    })
+    if (choice.error) return { ok: false, rendered: false, error: choice.error }
+    specNotes.push(...choice.notes)
+    if (choice.spec && choice.path) slideshow = { spec: choice.spec, path: choice.path }
+    else if (params.baseCreativeId && baseHasSpec && params.slidePaths) {
+      specNotes.push('The base Creative has a slideshow spec, and these slides replace its slides without one, so committing will clear that spec. Pass slideshowSpecPath to keep one.')
+    }
   }
 
   const full = !!params.full
@@ -510,11 +555,22 @@ export async function previewCreativeDraft(
     localMedia,
     ...(Object.keys(localProvenance).length ? { localProvenance } : {}),
     specSha256: createHash('sha256').update(JSON.stringify(spec)).digest('hex'),
+    ...(slideshow ? { slideshowSpecPath: slideshow.path, slideshowSpec: slideshow.spec } : {}),
   }
   await writeFile(join(draftDir, 'draft.json'), JSON.stringify(draft, null, 2))
 
   if (isCarousel) {
-    const sheetResult = await carouselPreview({ request, localFiles, localMedia, localProvenance, draftDir, readiness: response.readiness, log })
+    const sheetResult = await carouselPreview({
+      request,
+      localFiles,
+      localMedia,
+      localProvenance,
+      draftDir,
+      readiness: response.readiness,
+      specNotes,
+      ...(slideshow ? { spec: { path: slideshow.path, slides: slideshow.spec.slides.length, textFields: listTextFields(slideshow.spec).length } } : {}),
+      log,
+    })
     if (!carouselVideo) return sheetResult
     const video = await renderDraft({ spec, localFiles, outDir: draftDir }, log)
     if (!video.ok || !video.manifest) {
@@ -629,6 +685,8 @@ export interface CommitCreativeDraftResult {
   frames: unknown[]
   readiness?: unknown
   uploaded: Record<string, string>
+  /** CAROUSEL: whether the slideshow spec was stored with the Creative, and how many of its images were uploaded for it. */
+  slideshowSpec?: { attached: boolean; images: number }
   warnings: string[]
   renderError?: string
   nextStep: string
@@ -672,8 +730,22 @@ export async function commitCreativeDraft(
     }
   }
 
+  // Same for the slideshow spec's image files.
+  if (draft.slideshowSpec) {
+    for (const path of specLocalImages(draft.slideshowSpec)) {
+      if (draft.specImages?.[path]) continue
+      try {
+        await stat(path)
+      } catch {
+        throw new Error(`The slideshow spec's image no longer exists: ${path}`)
+      }
+    }
+  }
+
   const warnings: string[] = []
   const uploaded: Record<string, string> = { ...(draft.uploaded ?? {}) }
+  const specImages: Record<string, string> = { ...(draft.specImages ?? {}) }
+  const persist = () => writeFile(join(draftDir, 'draft.json'), JSON.stringify({ ...draft, uploaded, specImages }, null, 2))
   for (const [key, path] of Object.entries(draft.localFiles)) {
     if (uploaded[key]) continue
     // A file's own sidecar provenance wins; the call's params cover files without one.
@@ -687,7 +759,7 @@ export async function commitCreativeDraft(
     uploaded[key] = id
     warnings.push(...result.warnings)
     // Persist as we go: a failure further on must not re-upload what already landed.
-    await writeFile(join(draftDir, 'draft.json'), JSON.stringify({ ...draft, uploaded }, null, 2))
+    await persist()
   }
 
   if (params.photoChecked === true) {
@@ -704,6 +776,20 @@ export async function commitCreativeDraft(
     return id
   }) as Record<string, unknown>
 
+  // The slideshow spec: each distinct input image (background photos, screenshots, grid and week images) is
+  // uploaded once, with its own sidecar provenance when it has one, and the spec goes with the Creative as media refs.
+  let specImagesUploaded = 0
+  if (draft.slideshowSpec) {
+    const stored = await uploadSpecImages(draft.slideshowSpec, config, {
+      fallback: { source: params.source, licence: params.licence, aiGenerated: params.aiGenerated },
+      done: specImages,
+      onUploaded: persist,
+    })
+    specImagesUploaded = stored.uploaded
+    warnings.push(...stored.warnings)
+    fields['slideshowSpec'] = stored.spec
+  }
+
   let created: Record<string, unknown>
   if (draft.baseCreativeId) {
     const current = await getCreative({ creativeId: draft.baseCreativeId }, config)
@@ -719,8 +805,11 @@ export async function commitCreativeDraft(
 
   await writeFile(
     join(draftDir, 'draft.json'),
-    JSON.stringify({ ...draft, uploaded, committed: true, committedAt: new Date().toISOString(), creativeId }, null, 2)
+    JSON.stringify({ ...draft, uploaded, specImages, committed: true, committedAt: new Date().toISOString(), creativeId }, null, 2)
   )
+  if (draft.slideshowSpec && !created['slideshowSpec']) {
+    warnings.push('The server did not return slideshowSpec on the saved Creative; it may be an older backend that ignores the field. Check with get_creative.')
+  }
 
   // A CAROUSEL is finished images: the server assembles its frames in one call, unless it has a track,
   // in which case the slideshow MP4 is encoded here (renderCreative routes it, checking the saved audio).
@@ -740,6 +829,7 @@ export async function commitCreativeDraft(
     frames: rendered.frames,
     readiness: verified?.['readiness'],
     uploaded,
+    ...(draft.slideshowSpec ? { slideshowSpec: { attached: !!created['slideshowSpec'], images: specImagesUploaded } } : {}),
     warnings,
     ...(renderError ? { renderError } : {}),
     nextStep: rendered.ok

@@ -117,6 +117,8 @@ const CREATIVE_TOOLS = [
   'render_creative',
   'preview_creative',
   'preview_creative_draft',
+  'attach_slideshow_spec',
+  'update_creative_slide_text',
   'attach_creative_to_post',
   'create_experiment',
   'delete_creative',
@@ -124,6 +126,8 @@ const CREATIVE_TOOLS = [
 import { CodexConfirmationRequired } from '../lib/image-generation.js'
 import { generateCreativeImage, type GenerateCreativeImageParams } from './tools/creative-images.js'
 import { composeSlideshowTool, type ComposeSlideshowParams } from './tools/slideshow.js'
+import { attachSlideshowSpec, type AttachSlideshowSpecParams } from './tools/slideshow-spec.js'
+import { updateCreativeSlideText, type UpdateCreativeSlideTextParams } from './tools/slideshow-text.js'
 import {
   listProjectDocs,
   readProjectDoc,
@@ -1267,7 +1271,7 @@ export const TOOLS = [
         publishOnApproval: { type: 'boolean', description: 'Publish as soon as approved (optional, default false). No fire time is chosen here: entering the scheduled status stamps the earliest time every destination accepts.' },
         timezone: { type: 'string', description: 'IANA zone the schedule is authored in (optional — defaults to this machine\'s)' },
         submit: { type: 'boolean', description: 'Submit for review once ready (default true). false leaves it in Draft.' },
-        reviewers: { type: 'array', items: { type: 'string' }, description: 'Reviewers to assign, by name, email or user id (must hold the REVIEWER or ADMIN role)' },
+        reviewers: { type: 'array', items: { type: 'string' }, description: 'Reviewers to assign, by name, email or user id (must hold the Reviewer role, or be an Admin)' },
         workflow: { type: 'string', description: 'Workflow slug (optional — required only when more than one Workflow publishes)' },
       },
       required: ['text', 'targets'],
@@ -1372,7 +1376,7 @@ export const TOOLS = [
   },
   {
     name: 'set_marketing_benchmark',
-    description: 'Record or replace the industry benchmark for one metric. The value must come from a source you read in this session, never from memory: sourceUrl (the page) and checkedOn (the day you read it) are required. metricRef is CHANNEL.metric (e.g. STORE.conversion_rate) or PRODUCT.<key>. A count or currency total (downloads, spend) is stated per 28 days and prorated to the report window; a rate or ratio is compared as stated. Requires ADMIN or CREATOR. Verify with get_marketing_report (benchmarks).',
+    description: 'Record or replace the industry benchmark for one metric. The value must come from a source you read in this session, never from memory: sourceUrl (the page) and checkedOn (the day you read it) are required. metricRef is CHANNEL.metric (e.g. STORE.conversion_rate) or PRODUCT.<key>. A count or currency total (downloads, spend) is stated per 28 days and prorated to the report window; a rate or ratio is compared as stated. Requires the Editor role (or Admin). Verify with get_marketing_report (benchmarks).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1391,7 +1395,7 @@ export const TOOLS = [
   },
   {
     name: 'delete_marketing_benchmark',
-    description: 'Remove the stored benchmark for a metric (idempotent). Requires ADMIN or CREATOR. Verify with get_marketing_report (benchmarks).',
+    description: 'Remove the stored benchmark for a metric (idempotent). Requires the Editor role (or Admin). Verify with get_marketing_report (benchmarks).',
     inputSchema: {
       type: 'object',
       properties: { metricRef: { type: 'string', description: 'CHANNEL.metric or PRODUCT.<key>' } },
@@ -1400,7 +1404,7 @@ export const TOOLS = [
   },
   {
     name: 'submit_review',
-    description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned REVIEWER or ADMIN. Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step the person does in their own browser (request_tiktok_consent hands them the link), not this tool. Returns the confirmation table.',
+    description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned member holding the Reviewer role (or an Admin). Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step the person does in their own browser (request_tiktok_consent hands them the link), not this tool. Returns the confirmation table.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1551,7 +1555,7 @@ export const TOOLS = [
   },
   {
     name: 'get_creative',
-    description: "One Creative in full: its fields (including audio, slideshow and, for a CAROUSEL or CLIP, renderedVideo — the latest video frame), its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
+    description: "One Creative in full: its fields (including audio, slideshow and, for a CAROUSEL or CLIP, renderedVideo — the latest video frame), for a CAROUSEL composed with compose_slideshow, slideshowSpec (the editable spec; summarised when large) and textFields (each editable text as {slide, path, text}, slides from 1), latestRevision (the newest slide-text edit: status PENDING / APPLIED / FAILED, error, and failingChecks by slide, ratio and rule) and pendingRevision while one renders, its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1735,7 +1739,7 @@ export const TOOLS = [
   },
   {
     name: 'compose_slideshow',
-    description: "Compose organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Native look by default; brandKitId applies that kit's slideshowStyle and style overrides on top. Slide types: photo, screen, notes, grid, stack, tier, week, receipt, placard, messages. Returns paths, checks, passed, the resolved `style` (spec.json keeps your input style and adds it as `resolvedStyle`) and the first slide as an image. If passed is false, fix and call again. Next: preview_creative_draft({kind: \"CAROUSEL\", slidePaths, slideStyle: style}). Nothing is sent to Conductor.",
+    description: "Compose organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Native look by default; brandKitId applies that kit's slideshowStyle and style overrides on top. Slide types: photo, screen, notes, grid, stack, tier, week, receipt, placard, messages. Returns paths, checks, passed, the resolved `style` (spec.json keeps your input style and adds it as `resolvedStyle`) and the first slide as an image. If passed is false, fix and call again. Next: preview_creative_draft({kind: \"CAROUSEL\", slidePaths, slideStyle: style}); the spec.json beside the slides travels with the Creative at commit, which makes its text editable later. Nothing is sent to Conductor.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1750,7 +1754,7 @@ export const TOOLS = [
   },
   {
     name: 'preview_creative_draft',
-    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. For kind CAROUSEL pass slidePaths instead of a photo: it returns one contact sheet per placement (slides in order), readiness and per-slide aspect violations; with a track (audio.trackId or audioPath) it also renders the slideshow MP4 on this machine and returns its path as slideshowVideoPath. Violations come back as a structured error and nothing is rendered.",
+    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. For kind CAROUSEL pass slidePaths instead of a photo (the spec.json compose_slideshow wrote beside them is kept with the draft, or pass slideshowSpecPath): it returns one contact sheet per placement (slides in order), readiness and per-slide aspect violations; with a track (audio.trackId or audioPath) it also renders the slideshow MP4 on this machine and returns its path as slideshowVideoPath. Violations come back as a structured error and nothing is rendered.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1777,6 +1781,7 @@ export const TOOLS = [
           additionalProperties: { type: 'array', items: { type: 'string' } },
           description: 'CAROUSEL only: slide image files on this machine in order per placement (keys default, 4x5, 9x16, 1x1); an entry may also be an existing media id. Use instead of slides.',
         },
+        slideshowSpecPath: { type: 'string', description: "CAROUSEL only: the slideshow spec these slides were composed from (a compose_slideshow output spec.json or a source spec). Default: the spec.json beside slidePaths. It is stored on the Creative at commit (its images uploaded), so the text can be edited later." },
         baseCreativeId: { type: 'string', description: 'Preview edits on top of this saved Creative: only the fields given here change (optional). commit_creative_draft then updates it.' },
         draftDir: { type: 'string', description: 'Folder to write the draft into (optional — defaults to <project>/.conductor/drafts/<timestamp>-<slug>/)' },
         full: { type: 'boolean', description: 'Render every placement at full size instead of one contact sheet (optional, default false; slower, and the image shown is the first placement)' },
@@ -1785,7 +1790,7 @@ export const TOOLS = [
   },
   {
     name: 'commit_creative_draft',
-    description: "Save a draft the person has APPROVED: uploads its local files, creates the Creative (or updates baseCreativeId's), then renders the real frames (a CAROUSEL's are assembled on the server, plus its slideshow MP4 here when it has a track). Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; the params below cover files without one. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
+    description: "Save a draft the person has APPROVED: uploads its local files (and, for a CAROUSEL, the images of its slideshow spec, stored with the Creative), creates the Creative (or updates baseCreativeId's), then renders the real frames (a CAROUSEL's are assembled on the server, plus its slideshow MP4 here when it has a track). Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; the params below cover files without one. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1799,8 +1804,48 @@ export const TOOLS = [
     },
   },
   {
+    name: 'attach_slideshow_spec',
+    description: "Backfill: store a slideshow spec on a CAROUSEL Creative that was committed without one, so its text becomes editable. Re-composes the spec here at each ratio the Creative has, compares every slide with the stored image (lowest tile SSIM) and refuses if any is below 0.95 unless force is true. Uploads the spec's images and saves the spec with the Creative's current version. Returns what was attached and the per-slide similarity summary. Call get_creative after to verify slideshowSpec and textFields.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
+        specPath: { type: 'string', description: 'A slideshow spec .json: a source spec (relative image paths resolve against its folder) or a compose_slideshow output spec.json' },
+        force: { type: 'boolean', description: 'Attach even when slides differ from a fresh render, or when the Creative already has a spec (optional)' },
+      },
+      required: ['creativeId', 'specPath'],
+    },
+  },
+  {
+    name: 'update_creative_slide_text',
+    description: "Edit the text of a slideshow (CAROUSEL) Creative's slides. Only a Creative with a stored slideshow spec can be edited (get_creative shows slideshowSpec and textFields; attach_slideshow_spec adds one to an older Creative). Each edit names a slide (from 1), the field (a textFields path such as texts[0].t) and the new text; it replaces an existing text and never adds or removes one. Starts a render of just the changed slides in the workspace's render Workflow and returns at once with revisionId, the diff, and where it renders; the Creative does not change until the render passes its layout checks (text spill, safe zones, size). Call get_creative to follow it: latestRevision.status is APPLIED when done, or FAILED with failingChecks (then nothing changed; shorten the text and retry). Refused with a conflict while another edit or render of this Creative is running, or when version is stale. Refused (422) for a Creative with 1x1 slides, which the composer does not re-render: re-compose it locally with compose_slideshow (get_creative says textEditable: false).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
+        edits: {
+          type: 'array',
+          description: 'Up to 50 text replacements',
+          minItems: 1,
+          maxItems: 50,
+          items: {
+            type: 'object',
+            properties: {
+              slide: { type: 'number', description: 'Slide number, from 1' },
+              field: { type: 'string', description: 'The path of one of get_creative textFields, e.g. texts[0].t or rows[1].items[0]' },
+              text: { type: 'string', description: 'The new text (at most 500 characters; keep line breaks as \\n)' },
+            },
+            required: ['slide', 'field', 'text'],
+          },
+        },
+        version: { type: 'number', description: "The Creative's version from get_creative (optional — defaults to the current version; pass it to refuse if the Creative changed since you read it)" },
+      },
+      required: ['creativeId', 'edits'],
+    },
+  },
+  {
     name: 'attach_creative_to_post',
-    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. A CAROUSEL goes to Instagram feed (4x5), Facebook feed (1x1, else 4x5) and TikTok (9x16); Reels, Stories and YouTube cannot take its photos. A CAROUSEL with a track also has a slideshow video: per target, carouselAs (photos | video) in publish options picks which is sent (default video for TikTok and YouTube, photos for Instagram and Facebook feed). Uses the latest SUCCEEDED, non-preview render unless renderId is given (a CLIP or CAROUSEL with none is rendered first). Call get_post_status (postId) to verify.",
+    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. A CAROUSEL goes to Instagram feed (4x5), Facebook feed (1x1, else 4x5) and TikTok (9x16); Reels, Stories and YouTube cannot take its photos. A CAROUSEL with a track also has a slideshow video: per target, carouselAs (photos | video) in publish options picks which is sent (default video for TikTok and YouTube, photos for Instagram and Facebook feed). Uses the latest SUCCEEDED, non-preview render unless renderId is given (a CLIP or CAROUSEL with none is rendered first). A DRAFT Creative that passes readiness becomes READY on attach; the result's creativeState is its state afterwards and stateNote, when set, says why it stayed DRAFT. Call get_post_status (postId) to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -2932,6 +2977,13 @@ export async function runMcpServer(): Promise<void> {
               config
             )
           )
+        }
+        case 'attach_slideshow_spec': {
+          const result = await attachSlideshowSpec(params as unknown as AttachSlideshowSpecParams, config)
+          return result.ok ? successResponse(result) : errorResponse(result)
+        }
+        case 'update_creative_slide_text': {
+          return successResponse(await updateCreativeSlideText(params as unknown as UpdateCreativeSlideTextParams, config))
         }
         case 'attach_creative_to_post': {
           return successResponse(

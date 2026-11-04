@@ -150,4 +150,12 @@ public interface PostPublishTargetRepository extends JpaRepository<PostPublishTa
     /** Whether this project has ever published at least one destination — the gate the "what works"
      *  weekly connector's health check and its feed provisioner both read. */
     boolean existsByWorkItem_Project_IdAndState(String projectId, PostPublishTargetState state);
+
+    /**
+     * Which of these Work Items already have a destination that went out: the Post is partly published, and
+     * what is live cannot be taken back.
+     */
+    @Query("SELECT DISTINCT t.workItem.id FROM PostPublishTarget t WHERE t.workItem.id IN :workItemIds "
+            + "AND t.state = com.conductor.entity.PostPublishTargetState.PUBLISHED")
+    List<String> findWorkItemIdsWithPublishedTarget(@Param("workItemIds") java.util.Collection<String> workItemIds);
 }

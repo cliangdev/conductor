@@ -10,6 +10,7 @@ import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { WorkItemScheduleField } from '@/components/workitems/WorkItemScheduleField'
 import { statusMeta } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
+import type { PostContentChange } from './contentChanges'
 import { PostContentSection } from './PostContentSection'
 
 export interface PostDetailBodyProps {
@@ -18,7 +19,7 @@ export interface PostDetailBodyProps {
   token: string
   status: string
   workflowView?: WorkflowView
-  userRole: 'ADMIN' | 'CREATOR' | 'REVIEWER'
+  canEdit: boolean
   description?: string | null
   scheduledFor?: string | null
   scheduleTimezone?: string | null
@@ -28,6 +29,11 @@ export interface PostDetailBodyProps {
   onCaptionSaved: (description: string) => void
   onAssetsChanged: () => void | Promise<void>
   onScheduleChanged: (scheduledFor: string | null, scheduleTimezone: string | null, publishOnApproval?: boolean) => void
+  /** The slide-text change to show as "Changed since last review", if there is one. */
+  contentChange?: PostContentChange | null
+  /** The viewer is a reviewer of this Post while it is in review. */
+  reviewerFix?: boolean
+  onTextChanged?: () => void | Promise<void>
 }
 
 export function PostDetailBody({
@@ -36,7 +42,7 @@ export function PostDetailBody({
   token,
   status,
   workflowView,
-  userRole,
+  canEdit,
   description,
   scheduledFor,
   scheduleTimezone,
@@ -46,8 +52,10 @@ export function PostDetailBody({
   onCaptionSaved,
   onAssetsChanged,
   onScheduleChanged,
+  contentChange,
+  reviewerFix,
+  onTextChanged,
 }: PostDetailBodyProps) {
-  const canEdit = userRole !== 'REVIEWER'
   const meta = statusMeta(workflowView, status)
   const noun = workflowView?.noun ?? 'Post'
   // "Went out" once the Post is done or anything has published; "Goes out" while it is still ahead.
@@ -89,6 +97,9 @@ export function PostDetailBody({
         canEdit={canEdit}
         onCaptionSaved={onCaptionSaved}
         onAssetsChanged={onAssetsChanged}
+        contentChange={contentChange}
+        reviewerFix={reviewerFix}
+        onTextChanged={onTextChanged}
       />
     </>
   )

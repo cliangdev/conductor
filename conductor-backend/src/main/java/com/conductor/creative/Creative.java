@@ -157,6 +157,14 @@ public class Creative {
     @Column(name = "slide_style", columnDefinition = "jsonb")
     private JsonNode slideStyle;
 
+    /**
+     * The editable slideshow spec ({@code {id, grain?, style?, slides[]}}, image fields {@code media:<id>}) a
+     * CAROUSEL's slides were composed from; null when none stored. See V174__creative_slideshow_spec.sql.
+     */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "slideshow_spec", columnDefinition = "jsonb")
+    private JsonNode slideshowSpec;
+
     @Version
     @Column(name = "version", nullable = false)
     private int version;
@@ -288,6 +296,8 @@ public class Creative {
 
     public JsonNode getSlideStyle() { return slideStyle; }
     public void setSlideStyle(JsonNode slideStyle) { this.slideStyle = slideStyle; }
+    public JsonNode getSlideshowSpec() { return slideshowSpec; }
+    public void setSlideshowSpec(JsonNode slideshowSpec) { this.slideshowSpec = slideshowSpec; }
 
     public JsonNode getSlideshow() { return slideshow; }
     public void setSlideshow(JsonNode slideshow) { this.slideshow = slideshow; }

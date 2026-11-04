@@ -70,4 +70,12 @@ class WorkItemControllerTest {
         assertThat(response.getThumbnailUrl()).isNull();
         assertThat(json).doesNotContain("publishTargets").doesNotContain("\"creative\"").doesNotContain("https://");
     }
+
+    @Test
+    void theResponseCarriesTheCurrentReviewRound() {
+        WorkItem item = workItem(null, "Agent (ceo)");
+        item.setCurrentReviewRound(3);
+
+        assertThat(WorkItemController.toResponse(item, 0L).getCurrentReviewRound()).isEqualTo(3);
+    }
 }

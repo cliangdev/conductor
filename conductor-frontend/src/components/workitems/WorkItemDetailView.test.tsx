@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { WorkflowView } from '@/types/workItem'
@@ -215,6 +215,10 @@ const PUBLISH_OPTIONS = [
 ]
 let PUBLISH_SELECTION: unknown[] = []
 let PREFLIGHT: Record<string, unknown> = {}
+// A Post's media (some from a Creative), its slide-text changes and the Creative those come from.
+let ASSETS: unknown[] = []
+let CONTENT_CHANGES: unknown[] = []
+let SLIDESHOW_CREATIVE: object | null = null
 
 // Secondary sections held back to prove the page does not wait on them; every GET is recorded.
 let holdSecondary = false
@@ -228,11 +232,13 @@ vi.mock('@/lib/api', () => ({
     if (url.endsWith('/work-items/wi-broken')) return Promise.reject(new Error('parent down'))
     if (/\/work-items\/[^/]+$/.test(url) && !url.includes('?')) return Promise.resolve(ISSUE)
     if (url.endsWith('/tree')) return Promise.resolve({ id: 'wi-1', displayId: 'COND-42', title: 'My PRD', type: 'PRD', status: 'IN_REVIEW', childCount: 0, criteriaTotal: 0, criteriaMet: 0, children: [] })
+    if (url.endsWith('/content-changes')) return Promise.resolve({ changes: CONTENT_CHANGES })
+    if (url.endsWith('/marketing/creatives/cr-1')) return SLIDESHOW_CREATIVE ? Promise.resolve(SLIDESHOW_CREATIVE) : Promise.reject(new Error('no creative'))
     if (url.includes('/documents')) return Promise.resolve(DOCS)
     if (url.includes('/comments')) return Promise.resolve(COMMENTS)
     if (url.includes('/reviewers')) return Promise.resolve(REVIEWERS)
     if (url.includes('/reviews')) return failReviews ? Promise.reject(new Error('reviews down')) : Promise.resolve(REVIEWS)
-    if (url.includes('/assets')) return Promise.resolve([])
+    if (url.includes('/assets')) return Promise.resolve(ASSETS)
     if (url.includes('/available-transitions')) return Promise.resolve({ workflow: 'ENGINEERING', transitions: TRANSITIONS })
     if (url.endsWith('/projects/proj-1/publish-targets')) return Promise.resolve(PUBLISH_OPTIONS)
     if (url.endsWith('/work-items/wi-1/publish-targets')) return Promise.resolve(PUBLISH_SELECTION)
@@ -250,6 +256,7 @@ vi.mock('@/lib/api', () => ({
 }))
 
 import { WorkItemDetailView } from './WorkItemDetailView'
+import { creative as creativeFixture } from '@/components/marketing/creatives/slideTextFixtures'
 import { invalidateMembersCache } from '@/lib/workflows'
 
 function resetFixtures() {
@@ -271,6 +278,9 @@ function resetFixtures() {
   REVIEWS = []
   viewOverride = null
   PUBLISH_SELECTION = []
+  ASSETS = []
+  CONTENT_CHANGES = []
+  SLIDESHOW_CREATIVE = null
   PREFLIGHT = {
     publishing: true,
     ready: true,
@@ -986,6 +996,71 @@ describe('a Post on a publishing Workflow', () => {
     expect(within(actions).getByRole('button', { name: 'Request changes' })).toBeInTheDocument()
     expect(await screen.findByText(/Locked while this post is in review/)).toBeInTheDocument()
   })
+
+  describe('slide text edits carried onto the Post', () => {
+    const frame = {
+      id: 'a1', issueId: 'wi-1', type: 'facebook_post', label: 'Slide 1', kind: 'file', ref: 'r1', done: false, createdAt: '', updatedAt: '',
+      uploadStatus: 'UPLOADED', contentType: 'image/png', width: 1080, height: 1920, previewUrl: 'https://s/a1.png',
+      creativeFrameId: 'f1', creativeId: 'cr-1', creativeDisplayId: '158a', placementKey: '9x16', sequenceIndex: 0,
+    }
+    const change = (over: Record<string, unknown> = {}) => ({
+      id: 'chg-1', creativeId: 'cr-1', creativeDisplayId: '158a', revisionId: 'rev-1', source: 'EDITOR', actorName: 'Ada Admin',
+      reviewRoundBefore: 1, reviewRoundAfter: 2, createdAt: '2026-07-10T00:00:00Z',
+      textDiff: [{ slide: 3, path: 'texts[0].t', old: 'Save time', new: 'Save money' }], ...over,
+    })
+
+    it('shows "Changed since last review" while the change opened the Post’s current round', async () => {
+      asPost('IN_REVIEW')
+      ISSUE = { ...ISSUE, currentReviewRound: 2 }
+      CONTENT_CHANGES = [change()]
+      await renderPost()
+      const card = await screen.findByTestId('changed-since-review')
+      expect(card).toHaveTextContent('Ada Admin changed the text on 158a')
+      expect(within(card).getByText('Slide 3 · Text 1')).toBeInTheDocument()
+    })
+
+    it('drops the card once the Post is in a later round', async () => {
+      asPost('IN_REVIEW')
+      ISSUE = { ...ISSUE, currentReviewRound: 3 }
+      CONTENT_CHANGES = [change()]
+      await renderPost()
+      await screen.findByTestId('post-media')
+      await waitFor(() => expect(getUrls.some((u) => u.endsWith('/content-changes'))).toBe(true))
+      expect(screen.queryByTestId('changed-since-review')).not.toBeInTheDocument()
+    })
+
+    it('lists the change on the Activity tab', async () => {
+      asPost('IN_REVIEW')
+      CONTENT_CHANGES = [change()]
+      await renderPost()
+      await userEvent.click(screen.getByRole('tab', { name: /^Activity/ }))
+      expect(await screen.findByTestId('activity-content-chg-1')).toHaveTextContent('changed the slide text on 158a')
+    })
+
+    it('offers the assigned reviewer "Fix text" on an In Review Post from a slideshow Creative', async () => {
+      asPost('IN_REVIEW')
+      ASSETS = [frame]
+      SLIDESHOW_CREATIVE = creativeFixture({ id: 'cr-1' })
+      await renderPost()
+      expect(await screen.findByTestId('fix-text')).toBeInTheDocument()
+    })
+
+    it('does not offer it before review, or to someone who is not a reviewer of the Post', async () => {
+      asPost('DRAFT')
+      ASSETS = [frame]
+      SLIDESHOW_CREATIVE = creativeFixture({ id: 'cr-1' })
+      const { unmount } = await renderPost()
+      await screen.findByTestId('post-media')
+      expect(screen.queryByTestId('fix-text')).not.toBeInTheDocument()
+      unmount()
+
+      asPost('IN_REVIEW')
+      REVIEWERS = [{ userId: 'user-2', name: 'Cara Creator', email: 'cara@x.com' }]
+      await renderPost()
+      await screen.findByTestId('post-media')
+      expect(screen.queryByTestId('fix-text')).not.toBeInTheDocument()
+    })
+  })
 })
 
 describe('HTML documents', () => {
@@ -1315,6 +1390,49 @@ describe('reading a document', () => {
     expect(within(dialog).getByRole('tabpanel', { name: /^prd\.md/ })).toBeInTheDocument()
   })
 
+  it('puts Full view in the document, not the tab bar, and moves focus to Exit in the same corner', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    const tablist = screen.getByRole('tablist', { name: 'Work item content' })
+    expect(within(tablist.parentElement!).queryByRole('button', { name: 'Full view' })).not.toBeInTheDocument()
+    const panel = document.getElementById('wi-tabpanel-main')!
+    await userEvent.click(within(panel).getByRole('button', { name: 'Full view' }))
+
+    const dialog = screen.getByRole('dialog')
+    const exit = within(dialog).getByRole('button', { name: 'Exit full view' })
+    expect(exit).toHaveFocus()
+    // Exit lives in the document's corner, so the header doesn't repeat it.
+    expect(within(dialog).getAllByRole('button', { name: 'Exit full view' })).toHaveLength(1)
+
+    await userEvent.click(exit)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Full view' })).toHaveFocus()
+  })
+
+  it('opens full view with F, but not while typing', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    const field = document.createElement('textarea')
+    document.body.appendChild(field)
+    field.focus()
+    await userEvent.keyboard('f')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    field.remove()
+
+    await userEvent.keyboard('f')
+    expect(screen.getByRole('dialog', { name: 'prd.md, full view' })).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('ignores F on the Activity tab', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    await userEvent.click(screen.getByRole('tab', { name: /activity/i }))
+    await userEvent.keyboard('f')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
   it('offers no full view on the Activity tab', async () => {
     await renderView()
     await screen.findByText('line one', { exact: false })
@@ -1322,3 +1440,122 @@ describe('reading a document', () => {
     expect(screen.queryByRole('button', { name: 'Full view' })).not.toBeInTheDocument()
   })
 })
+
+describe('a member who holds a set of roles', () => {
+  type Held = { roles?: string[]; role?: string }
+  const original = { ...MEMBERS[0] } as Record<string, unknown>
+  const holding = (held: Held) => {
+    delete (MEMBERS[0] as Record<string, unknown>).roles
+    Object.assign(MEMBERS[0], { role: 'REVIEWER' }, held)
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetFixtures()
+    failMembers = false
+    failReviews = false
+    holdSecondary = false
+    getUrls.length = 0
+    DOCS = []
+  })
+  afterEach(() => {
+    for (const k of Object.keys(MEMBERS[0])) delete (MEMBERS[0] as Record<string, unknown>)[k]
+    Object.assign(MEMBERS[0], original)
+  })
+
+  it('{Editor, Reviewer} gets both the edit controls and the review actions', async () => {
+    holding({ role: 'CREATOR', roles: ['CREATOR', 'REVIEWER'] })
+    await renderView()
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Request changes' })).toBeInTheDocument()
+    expect(screen.getByTestId('document-upload-input')).toBeInTheDocument()
+  })
+
+  it('{Editor} edits but gets no review actions, even when assigned', async () => {
+    holding({ role: 'CREATOR', roles: ['CREATOR'] })
+    await renderView()
+    expect(await screen.findByTestId('document-upload-input')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Request changes' })).not.toBeInTheDocument()
+  })
+
+  it('{} is a read-only Viewer: no edit controls and no review actions', async () => {
+    holding({ role: 'REVIEWER', roles: [] })
+    await renderView()
+    await new Promise((r) => setTimeout(r, 50)) // let the role read settle
+    expect(screen.queryByTestId('document-upload-input')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+  })
+
+  it('a server that sends only the legacy role still gates correctly', async () => {
+    holding({ role: 'CREATOR' })
+    await renderView()
+    expect(await screen.findByTestId('document-upload-input')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Approve' })).not.toBeInTheDocument()
+  })
+
+  it('only offers members who can review in the reviewer picker', async () => {
+    // user-2 holds Editor + Reviewer; user-3 is a plain Editor now.
+    Object.assign(MEMBERS[1], { roles: ['CREATOR', 'REVIEWER'] })
+    Object.assign(MEMBERS[2], { roles: ['CREATOR'] })
+    try {
+      REVIEWERS = []
+      await renderView()
+      const panel = within(screen.getByTestId('properties-panel'))
+      await userEvent.click(panel.getByRole('button', { name: /add reviewer/i }))
+      expect(await screen.findByText('Cara Creator')).toBeInTheDocument()
+      expect(screen.queryByText('Rita Reviewer')).not.toBeInTheDocument()
+    } finally {
+      delete (MEMBERS[1] as Record<string, unknown>).roles
+      delete (MEMBERS[2] as Record<string, unknown>).roles
+    }
+  })
+})
+
+describe('a Workflow that needs a reviewer other than the author', () => {
+  const independent: WorkflowView = {
+    ...VIEW,
+    transitions: [{ ...VIEW.transitions[0], requireIndependentReviewer: true }],
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetFixtures()
+    failMembers = false
+    failReviews = false
+    holdSecondary = false
+    getUrls.length = 0
+    DOCS = []
+    viewOverride = independent
+  })
+
+  it('withholds Approve from the author, says why, and keeps Request changes', async () => {
+    ISSUE = { ...ISSUE, createdBy: 'user-1' } // user-1 is the signed-in, assigned reviewer
+    await renderView()
+    const approve = await screen.findByRole('button', { name: 'Approve' })
+    expect(approve).toBeDisabled()
+    expect(screen.getByText('This Workflow needs a reviewer other than the author')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Request changes' })).toBeEnabled()
+  })
+
+  it('leaves Approve alone for a reviewer who is not the author', async () => {
+    await renderView() // createdBy is user-2
+    expect(await screen.findByRole('button', { name: 'Approve' })).toBeEnabled()
+    expect(screen.queryByText('This Workflow needs a reviewer other than the author')).not.toBeInTheDocument()
+  })
+
+  it('does not offer the author in the reviewer picker', async () => {
+    Object.assign(MEMBERS[1], { roles: ['CREATOR', 'REVIEWER'] }) // Cara, the author
+    ISSUE = { ...ISSUE, createdBy: 'user-2' }
+    REVIEWERS = []
+    try {
+      await renderView()
+      await userEvent.click(within(screen.getByTestId('properties-panel')).getByRole('button', { name: /add reviewer/i }))
+      expect(await screen.findByText('Rita Reviewer')).toBeInTheDocument()
+      expect(screen.queryByText('Cara Creator')).not.toBeInTheDocument()
+    } finally {
+      delete (MEMBERS[1] as Record<string, unknown>).roles
+    }
+  })
+})
+

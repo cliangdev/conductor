@@ -31,6 +31,7 @@ import java.util.Optional;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
@@ -96,7 +97,7 @@ class InviteControllerTest {
         InviteResponse response = new InviteResponse("invite-1", "invitee@example.com", "CREATOR", expiresAt)
                 .status("PENDING");
 
-        when(inviteService.createInvite(eq("proj-1"), eq("invitee@example.com"), eq("CREATOR"), eq(adminUser)))
+        when(inviteService.createInvite(eq("proj-1"), eq("invitee@example.com"), isNull(), eq("CREATOR"), eq(adminUser)))
                 .thenReturn(response);
 
         mockMvc.perform(post("/api/v1/projects/proj-1/invites")
@@ -112,7 +113,7 @@ class InviteControllerTest {
 
     @Test
     void createInviteDuplicateEmailReturns409() throws Exception {
-        when(inviteService.createInvite(any(), any(), any(), any()))
+        when(inviteService.createInvite(any(), any(), any(), any(), any()))
                 .thenThrow(new ConflictException("Invite already pending for this email"));
 
         mockMvc.perform(post("/api/v1/projects/proj-1/invites")
@@ -125,7 +126,7 @@ class InviteControllerTest {
 
     @Test
     void createInviteByNonAdminReturns403() throws Exception {
-        when(inviteService.createInvite(any(), any(), any(), eq(creatorUser)))
+        when(inviteService.createInvite(any(), any(), any(), any(), eq(creatorUser)))
                 .thenThrow(new AccessDeniedException("Only project admins can send invites"));
 
         mockMvc.perform(post("/api/v1/projects/proj-1/invites")
@@ -137,7 +138,7 @@ class InviteControllerTest {
 
     @Test
     void createInviteWithAdminRoleReturns400() throws Exception {
-        when(inviteService.createInvite(any(), any(), eq("ADMIN"), any()))
+        when(inviteService.createInvite(any(), any(), any(), eq("ADMIN"), any()))
                 .thenThrow(new BusinessException("Cannot invite with ADMIN role"));
 
         mockMvc.perform(post("/api/v1/projects/proj-1/invites")

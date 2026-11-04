@@ -96,6 +96,8 @@ class CreativeRenderDispatchIntegrationTest extends AbstractNoneWebIntegrationTe
         assertThat(result.getErrors()).isEmpty();
         assertThat(CreativeWorkflowProvisioner.hasMarker(yaml)).isTrue();
         assertThat(yaml).contains("CREATIVE_ID: ${{ event.creativeId }}")
+                .contains("REVISION_ID: ${{ event.revisionId }}")
+                .contains("conductor creative render-slides \"$REVISION_ID\"")
                 .contains("conductor_mcp: true")
                 .contains("docker://ghcr.io/cliangdev/conductor-render:1")
                 .contains("runs-on: self-hosted")
@@ -262,6 +264,26 @@ class CreativeRenderDispatchIntegrationTest extends AbstractNoneWebIntegrationTe
 
         assertThat(second.getId()).isEqualTo(first.getId());
         assertThat(second.getYaml()).isEqualTo(CreativeWorkflowProvisioner.readResource());
+        assertThat(workflowRepository.findByProjectId(project.getId())).hasSize(1);
+    }
+
+    @Test
+    void aSeededCopyFromBeforeSlideTextEditingIsRefreshedInPlaceToCarryTheRevisionBranch() {
+        WorkflowDefinition seeded = provisioner.ensureProvisioned(project.getId());
+        String old = CreativeWorkflowProvisioner.MARKER + "\nname: conductor-creative-render\non:\n  workflow_dispatch:\n"
+                + "    manual: false\njobs:\n  render:\n    runs-on: self-hosted\n    steps:\n      - id: render\n"
+                + "        uses: docker://ghcr.io/cliangdev/conductor-render:1\n        env:\n"
+                + "          CREATIVE_ID: ${{ event.creativeId }}\n"
+                + "        run: conductor creative render \"$CREATIVE_ID\"\n";
+        seeded.setYaml(old);
+        workflowRepository.save(seeded);
+        assertThat(workflowRepository.findById(seeded.getId()).orElseThrow().getYaml()).doesNotContain("render-slides");
+
+        WorkflowDefinition refreshed = provisioner.ensureProvisioned(project.getId());
+
+        assertThat(refreshed.getId()).isEqualTo(seeded.getId());
+        assertThat(workflowRepository.findById(seeded.getId()).orElseThrow().getYaml())
+                .contains("REVISION_ID: ${{ event.revisionId }}").contains("conductor creative render-slides");
         assertThat(workflowRepository.findByProjectId(project.getId())).hasSize(1);
     }
 

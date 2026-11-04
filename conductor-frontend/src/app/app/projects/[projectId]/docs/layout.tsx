@@ -1,19 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+
 import { useParams, useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { useEditorChrome } from '@/contexts/EditorChromeContext'
 import { DocTree } from '@/components/docs/DocTree'
 import { DocSearch } from '@/components/docs/DocSearch'
-import { fetchMembersCached } from '@/lib/workflows'
-import type { MemberRole } from '@/types'
+import { useCan } from '@/contexts/PermissionsContext'
 import { ChevronRightIcon, ChevronLeftIcon } from 'lucide-react'
-
-interface Member {
-  userId: string
-  role: MemberRole
-}
 
 export default function DocsLayout({
   children,
@@ -21,27 +15,10 @@ export default function DocsLayout({
   children: React.ReactNode
 }) {
   const { projectId } = useParams<{ projectId: string }>()
-  const { accessToken, user } = useAuth()
+  const { accessToken } = useAuth()
   const router = useRouter()
   const { fullscreen, docsTreeCollapsed, setDocsTreeCollapsed } = useEditorChrome()
-  const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
-
-  useEffect(() => {
-    if (!accessToken || !user) return
-
-    async function fetchRole() {
-      try {
-        // The shared members cache: one request for the whole project area, not one per page.
-        const members = (await fetchMembersCached(projectId, accessToken!)) as Member[]
-        const me = members.find((m) => m.userId === user!.id)
-        if (me) setUserRole(me.role)
-      } catch {
-        // Leave as REVIEWER on error
-      }
-    }
-
-    fetchRole()
-  }, [accessToken, projectId, user])
+  const canEdit = useCan('doc.edit')
 
   function handleDocSelect(docId: string) {
     router.push(`/app/projects/${projectId}/docs/${docId}`)
@@ -66,7 +43,7 @@ export default function DocsLayout({
                 <DocTree
                   projectId={projectId}
                   token={accessToken}
-                  userRole={userRole}
+                  canEdit={canEdit}
                   onDocSelect={handleDocSelect}
                 />
               </>

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 
 vi.mock('@/lib/api', () => ({
@@ -16,13 +16,15 @@ vi.mock('@/contexts/PermissionsContext', () => ({
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: () => true, refresh: vi.fn() }),
 }))
 
-import { apiDelete } from '@/lib/api'
+import { apiDelete, apiGet } from '@/lib/api'
 import { MARKETING_VIEW, option, selection } from '@/components/marketing/test-fixtures'
 import { buildRows, summarize, type DestinationActions, type DestinationsState } from '@/components/marketing/destinations/model'
 import { draftFromTargets } from '@/components/marketing/destinations/selectionState'
 import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { PostMediaSection } from './PostMediaSection'
 import { assetDisplayLabel, placementLabel } from './mediaGroups'
+import type { PostContentChange } from './contentChanges'
+import { creative as creativeFixture } from '@/components/marketing/creatives/slideTextFixtures'
 
 const ig = option({ platform: 'instagram', connectionId: 'ig', label: '@rexipe.ig' })
 const fb = option({ platform: 'facebook', connectionId: 'fb', label: 'Rexipe' })
@@ -290,6 +292,80 @@ describe('PostMediaSection', () => {
     setup({ destinations: undefined })
     expect(screen.getByText(/add destinations/i)).toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: /full size/i })).toHaveLength(5)
+  })
+})
+
+const CHANGE: PostContentChange = {
+  id: 'chg-1',
+  creativeId: 'cr-1',
+  creativeDisplayId: '18a',
+  revisionId: 'rev-1',
+  revisionNo: 2,
+  source: 'EDITOR',
+  actorName: 'Ada Admin',
+  fromStatus: 'APPROVED',
+  toStatus: 'IN_REVIEW',
+  reviewRoundBefore: 1,
+  reviewRoundAfter: 2,
+  textDiff: [{ slide: 3, path: 'texts[0].t', old: 'Save time on dinner', new: 'Save money on dinner' }],
+  createdAt: new Date().toISOString(),
+}
+
+describe('Changed since last review', () => {
+  it('shows the Creative, who changed it and the words that changed', () => {
+    setup({ contentChange: CHANGE })
+    const card = screen.getByTestId('changed-since-review')
+    expect(card).toHaveTextContent('Changed since last review')
+    expect(card).toHaveTextContent('Ada Admin changed the text on 18a')
+    expect(card).toHaveTextContent('review round 2')
+    expect(within(card).getByRole('link', { name: '18a' })).toHaveAttribute('href', '/app/projects/proj-1/marketing/creatives/cr-1')
+    expect(within(card).getByText('Slide 3 · Text 1')).toBeInTheDocument()
+    expect(within(card).getByText('time').tagName).toBe('DEL')
+    expect(within(card).getByText('money').tagName).toBe('INS')
+  })
+
+  it('says a reviewer’s fix stays in the round', () => {
+    setup({ contentChange: { ...CHANGE, source: 'REVIEWER', reviewRoundBefore: 2, reviewRoundAfter: 2 } })
+    expect(screen.getByTestId('changed-since-review')).toHaveTextContent('fixed the text on 18a')
+    expect(screen.getByTestId('changed-since-review')).toHaveTextContent('stays in this review round')
+  })
+
+  it('is absent when there is no current change', () => {
+    setup({ contentChange: null })
+    expect(screen.queryByTestId('changed-since-review')).not.toBeInTheDocument()
+  })
+})
+
+describe('Fix text', () => {
+  beforeEach(() => {
+    vi.mocked(apiGet).mockReset()
+  })
+
+  it('is offered to a reviewer when the Creative is a slideshow with a spec', async () => {
+    vi.mocked(apiGet).mockResolvedValue(creativeFixture({ id: 'cr-1' }))
+    setup({ reviewerFix: true, canEdit: false })
+    expect(await screen.findByTestId('fix-text')).toHaveTextContent('Fix text')
+    expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/creatives/cr-1', 'tok')
+  })
+
+  it('is not offered when the Creative has no stored spec', async () => {
+    vi.mocked(apiGet).mockResolvedValue(creativeFixture({ id: 'cr-1', slideshowSpec: null }))
+    setup({ reviewerFix: true, canEdit: false })
+    await waitFor(() => expect(apiGet).toHaveBeenCalled())
+    expect(screen.queryByTestId('fix-text')).not.toBeInTheDocument()
+  })
+
+  it('is not offered, and asks for nothing, to someone who is not a reviewer of the Post', () => {
+    setup({ reviewerFix: false })
+    expect(screen.queryByTestId('fix-text')).not.toBeInTheDocument()
+    expect(apiGet).not.toHaveBeenCalled()
+  })
+
+  it('opens the editor scoped to this Post', async () => {
+    vi.mocked(apiGet).mockResolvedValue(creativeFixture({ id: 'cr-1' }))
+    setup({ reviewerFix: true, canEdit: false })
+    await userEvent.click(await screen.findByTestId('fix-text'))
+    expect(await screen.findByRole('heading', { hidden: true, name: /Fix text · 158a/ })).toBeInTheDocument()
   })
 })
 
