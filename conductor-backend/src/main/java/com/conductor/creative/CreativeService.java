@@ -158,7 +158,18 @@ public class CreativeService {
         }
     }
 
-    public record ReadinessItem(String key, boolean ok, boolean blocking, String message) {
+    /**
+     * One readiness check. {@code mediaIds} is set only on {@code photoChecked}: the library media ids that
+     * check still counts as unchecked, so a client can mark exactly those (empty everywhere else).
+     */
+    public record ReadinessItem(String key, boolean ok, boolean blocking, String message, List<String> mediaIds) {
+        public ReadinessItem {
+            mediaIds = mediaIds == null ? List.of() : List.copyOf(mediaIds);
+        }
+
+        public ReadinessItem(String key, boolean ok, boolean blocking, String message) {
+            this(key, ok, blocking, message, List.of());
+        }
     }
 
     public record Readiness(boolean ready, List<ReadinessItem> items) {
@@ -776,13 +787,37 @@ public class CreativeService {
                 }
             }
         }
-        long unchecked = facts.values().stream().filter(f -> f == null || !f.isChecked()).count();
-        // A slideshow's text is composed into the image on purpose, so there is no stray burned-in text to look for.
-        boolean composed = isComposedSlideshow(creative);
-        items.add(new ReadinessItem("photoChecked", composed || unchecked == 0, true,
-                composed ? "slide text was made by the slideshow composer"
-                        : unchecked == 0 ? "every slide has been checked"
-                        : unchecked + " of " + facts.size() + " slide images have not been checked for burned-in text"));
+        // A slideshow's slides are composed from the photos its spec names, and those photos can carry
+        // watermarks or signs of their own, so the check looks at that INPUT set instead of the composed slides.
+        // (A slideStyle alone is not proof of a composer: any API client can send one.)
+        Map<String, MediaFacts> checkFacts = facts;
+        boolean fromSpec = hasContent(creative.getSlideshowSpec());
+        if (fromSpec) {
+            checkFacts = new LinkedHashMap<>();
+            for (SlideshowSpecs.ImageRef ref : SlideshowSpecs.imageRefs(creative.getSlideshowSpec())) {
+                String id = SlideshowSpecs.mediaId(ref.value());
+                String key = id != null ? id : ref.value();
+                if (!checkFacts.containsKey(key)) {
+                    checkFacts.put(key, media.find("slideshowSpec", key, CreativePhoto.MEDIA_KIND_IMAGE));
+                }
+            }
+        }
+        List<String> uncheckedIds = new ArrayList<>();
+        long unchecked = 0;
+        for (Map.Entry<String, MediaFacts> e : checkFacts.entrySet()) {
+            MediaFacts f = e.getValue();
+            if (f == null || !f.isChecked()) {
+                unchecked++;
+                if (f != null && !e.getKey().startsWith(MediaFacts.LOCAL_PREFIX)) {
+                    uncheckedIds.add(e.getKey());
+                }
+            }
+        }
+        String subject = fromSpec ? "photos the slides were made from" : "slide images";
+        items.add(new ReadinessItem("photoChecked", unchecked == 0, true,
+                unchecked == 0 ? (fromSpec ? "every photo the slides were made from has been checked" : "every slide has been checked")
+                        : unchecked + " of " + checkFacts.size() + " " + subject + " have not been checked for burned-in text",
+                uncheckedIds));
         long unprovenanced = facts.values().stream()
                 .filter(f -> f == null || !notBlank(f.getSource()) || !notBlank(f.getLicence())).count();
         items.add(new ReadinessItem("mediaProvenance", unprovenanced == 0, true,
@@ -794,12 +829,6 @@ public class CreativeService {
                         : "not AI-generated"));
     }
 
-    /** A CAROUSEL made by {@code compose_slideshow}: only that path sets a slide style or a slideshow spec. */
-    private static boolean isComposedSlideshow(Creative creative) {
-        return Creative.KIND_CAROUSEL.equals(creative.getKind())
-                && (hasContent(creative.getSlideStyle()) || hasContent(creative.getSlideshowSpec()));
-    }
-
     private static boolean hasContent(JsonNode node) {
         return node != null && !node.isNull() && !node.isMissingNode();
     }
@@ -807,9 +836,11 @@ public class CreativeService {
     private void addPhotoReadinessItems(MediaResolver media, Creative creative, List<ReadinessItem> items) {
         MediaFacts photo = media.find("photoId", creative.getPhotoId(), CreativePhoto.MEDIA_KIND_IMAGE);
         boolean photoChecked = photo != null && photo.isChecked();
+        boolean markable = photo != null && !photoChecked && !creative.getPhotoId().startsWith(MediaFacts.LOCAL_PREFIX);
         items.add(new ReadinessItem("photoChecked", photoChecked, true,
                 photo == null ? "no photo chosen"
-                        : photoChecked ? "photo has been checked" : "photo has not been checked for burned-in text"));
+                        : photoChecked ? "photo has been checked" : "photo has not been checked for burned-in text",
+                markable ? List.of(creative.getPhotoId()) : List.of()));
         // With no photo chosen, "photoChecked" above already carries that message once — this item is
         // only meaningful once there is a photo to have source/licence on.
         if (photo != null) {
