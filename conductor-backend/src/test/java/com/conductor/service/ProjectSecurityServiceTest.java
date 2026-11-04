@@ -87,9 +87,9 @@ class ProjectSecurityServiceTest {
         memberWithRole(MemberRole.CREATOR);
         ProjectSecurityService service = service();
 
-        assertThat(service.isAdminOrCreator(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service.isEditor(PROJECT_ID, "user-1")).isTrue();
         assertThat(service.isProjectAdmin(PROJECT_ID, "user-1")).isFalse();
-        assertThat(service.isAdminOrCreator(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service.isEditor(PROJECT_ID, "user-1")).isTrue();
         assertThat(service.isProjectMember(PROJECT_ID, "user-1")).isTrue();
 
         verify(projectMemberRepository, times(1)).findByProjectIdAndUserId(PROJECT_ID, "user-1");
@@ -236,7 +236,7 @@ class ProjectSecurityServiceTest {
         memberWithRole(MemberRole.REVIEWER);
         assertThatThrownBy(() -> service().requireProjectEditor(PROJECT_ID))
                 .isInstanceOf(ForbiddenException.class)
-                .hasMessageContaining("ADMIN or CREATOR");
+                .hasMessageContaining("Editor role");
     }
 
     // --- interactive principal ---
@@ -320,5 +320,104 @@ class ProjectSecurityServiceTest {
         // A project key has no membership row to hold a role; it is issued for the project and acts
         // on its behalf, which is what lets an agent maintain docs at all.
         assertThat(service().requireProjectEditor(PROJECT_ID).isMachine()).isTrue();
+    }
+
+    // --- multi-role sets ---
+
+    private void memberWithRoles(MemberRole... roles) {
+        ProjectMember member = new ProjectMember();
+        member.setRoles(java.util.EnumSet.copyOf(List.of(roles)));
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(member));
+    }
+
+    @Test
+    void adminImpliesEveryRole() {
+        memberWithRoles(MemberRole.ADMIN);
+
+        assertThat(service().effectiveRoles(PROJECT_ID, "user-1")).contains(java.util.Set.of(
+                MemberRole.ADMIN, MemberRole.CREATOR, MemberRole.REVIEWER));
+        assertThat(service().isEditor(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service().canReview(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service().isProjectAdmin(PROJECT_ID, "user-1")).isTrue();
+    }
+
+    @Test
+    void creatorPlusReviewerCanEditAndReviewButNotAdminister() {
+        memberWithRoles(MemberRole.CREATOR, MemberRole.REVIEWER);
+
+        assertThat(service().isEditor(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service().canReview(PROJECT_ID, "user-1")).isTrue();
+        assertThat(service().isProjectAdmin(PROJECT_ID, "user-1")).isFalse();
+    }
+
+    @Test
+    void creatorAloneCannotReviewAndReviewerAloneCannotEdit() {
+        memberWithRoles(MemberRole.CREATOR);
+        assertThat(service().canReview(PROJECT_ID, "user-1")).isFalse();
+
+        memberWithRoles(MemberRole.REVIEWER);
+        assertThat(service().isEditor(PROJECT_ID, "user-1")).isFalse();
+        assertThat(service().canReview(PROJECT_ID, "user-1")).isTrue();
+    }
+
+    @Test
+    void anEmptyRoleSetIsAMemberWithNoCapabilities() {
+        authenticateUser();
+        ProjectMember viewer = new ProjectMember();
+        viewer.setRoles(java.util.Set.of());
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(viewer));
+
+        assertThat(service().effectiveRoles(PROJECT_ID, "user-1")).contains(java.util.Set.of());
+        assertThat(service().isEditor(PROJECT_ID, "user-1")).isFalse();
+        assertThat(service().canReview(PROJECT_ID, "user-1")).isFalse();
+        assertThatThrownBy(() -> service().requireProjectEditor(PROJECT_ID)).isInstanceOf(ForbiddenException.class);
+        assertThatThrownBy(() -> service().requireReviewer(PROJECT_ID)).isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void requireReviewerAdmitsAReviewerAndRefusesAnEditorOnly() {
+        authenticateUser();
+
+        memberWithRoles(MemberRole.CREATOR, MemberRole.REVIEWER);
+        assertThat(service().requireReviewer(PROJECT_ID).userId()).isEqualTo("user-1");
+
+        memberWithRoles(MemberRole.CREATOR);
+        assertThatThrownBy(() -> service().requireReviewer(PROJECT_ID))
+                .isInstanceOf(ForbiddenException.class)
+                .hasMessageContaining("Reviewer role");
+    }
+
+    @Test
+    void aNonMemberHasNoEffectiveRoles() {
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-9")).thenReturn(Optional.empty());
+
+        assertThat(service().effectiveRoles(PROJECT_ID, "user-9")).isEmpty();
+        assertThat(service().hasRole(PROJECT_ID, "user-9", MemberRole.REVIEWER)).isFalse();
+    }
+
+    @Test
+    void effectiveRolesAreLoadedOnceForTheRequestAndCacheAnswersAllHelpers() {
+        bindRequest();
+        memberWithRoles(MemberRole.CREATOR, MemberRole.REVIEWER);
+        ProjectSecurityService service = service();
+
+        service.isEditor(PROJECT_ID, "user-1");
+        service.canReview(PROJECT_ID, "user-1");
+        service.isProjectAdmin(PROJECT_ID, "user-1");
+        service.effectiveRoles(PROJECT_ID, "user-1");
+
+        verify(projectMemberRepository, times(1)).findByProjectIdAndUserId(PROJECT_ID, "user-1");
+    }
+
+    @Test
+    void requireEditorRefusesAViewerAndAReviewerOnlyMemberButAdmitsAnEditor() {
+        memberWithRoles(MemberRole.REVIEWER);
+        assertThatThrownBy(() -> service().requireEditor(PROJECT_ID, "user-1"))
+                .isInstanceOf(ForbiddenException.class).hasMessageContaining("Editor role");
+
+        memberWithRoles(MemberRole.CREATOR);
+        service().requireEditor(PROJECT_ID, "user-1");
     }
 }

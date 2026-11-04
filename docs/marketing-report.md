@@ -41,7 +41,7 @@ The in-app feed may send `keyword:{keywordId}:{text}` rows. The report joins its
 An industry benchmark is stored per workspace and metric so a report can say how a number compares.
 
 - `GET /projects/{projectId}/marketing/benchmarks` lists them (any member).
-- `PUT /projects/{projectId}/marketing/benchmarks/{metricRef}` upserts one (ADMIN or CREATOR).
+- `PUT /projects/{projectId}/marketing/benchmarks/{metricRef}` upserts one (Editor role or Admin).
 - `DELETE` on the same path removes it (ADMIN or CREATOR, idempotent).
 
 `metricRef` is `CHANNEL.metric` (`STORE.conversion_rate`, `ADS.tap_through_rate`) or `PRODUCT.<key>`. A benchmark must name its source: `sourceName`, an http(s) `sourceUrl` and `checkedOn` (not in the future), so a figure is never recorded from memory.

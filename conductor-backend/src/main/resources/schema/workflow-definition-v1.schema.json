@@ -211,6 +211,10 @@
           "type": "string",
           "enum": ["ADMIN", "CREATOR", "REVIEWER"]
         },
+        "requireIndependentReviewer": {
+          "description": "When true, an approval by the Work Item's own creator does not count toward this gate. Default false (self-approval allowed).",
+          "type": "boolean"
+        },
         "trigger": {
           "description": "System event that fires this edge automatically. Must reference a registered system trigger (Java-enforced against SystemTriggerRegistry; the open string here just constrains the shape). 'pr_merged' advances a Work Item when a linked GitHub pull request merges and bypasses the Review gate (the merge is the authority); 'status_changed' fires on every status change and honors the Review gate. Omit for a human-driven transition.",
           "type": "string",

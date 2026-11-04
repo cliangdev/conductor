@@ -49,7 +49,7 @@ semantics:
 | `dueLabel` | – | What the Workflow calls a Work Item's due date (e.g. `Review on`). |
 | `metric` | – | `null` to opt out, else `{name, unit?, direction}`. |
 | `statuses` | ✓ | `{id, label?, category, initial?, terminal?}`; ≤10. `label` is the human display name (falls back to a humanized id). |
-| `transitions` | ✓ | `{from, to, label, requiresReview?, reviewOutcomes?, reviewerRole?, trigger?, steps?}`. |
+| `transitions` | ✓ | `{from, to, label, requiresReview?, reviewOutcomes?, reviewerRole?, requireIndependentReviewer?, trigger?, steps?}`. |
 | `triggers` | – | `{type: manual\|schedule\|status_changed\|webhook, …}`. |
 
 **Transition `trigger` (system-advanced edges):** a transition may declare `"trigger": "pr_merged"` to be
@@ -88,7 +88,7 @@ The `CODE_REVIEW → DONE` transition is a **server-enforced, role-scoped Review
 
 `WorkItemWorkflowService.validateTransition` blocks a `requiresReview` transition until an **APPROVED**
 review exists from a project member holding the transition's `reviewerRole` — or an `ADMIN`, who outranks
-any review role. When a transition declares no `reviewerRole`, any APPROVED review satisfies the gate. The
+any review role. When a transition declares no `reviewerRole`, any APPROVED review satisfies the gate. A member's roles are a set, so `reviewerRole` is met by any held role. Set `requireIndependentReviewer: true` to also refuse the Work Item creator's own approval (see [workflows](workflows.md#review-gate-requireindependentreviewer)). The
 doer projection (`available-transitions`) hides a review-gated edge until the gate is satisfied. Note the
 gate is bypassed for the system `pr_merged` trigger (the merge is the authority).
 
@@ -113,7 +113,7 @@ The whole stack now runs on the Workflow definition rather than hardcoded enums:
   published history. The Active/Done split in the UI is derived from status `category`
   (`open`/`in_progress` = active, `terminal` = done).
 - **Authoring.** Lifecycle workflows are created/edited as DRAFTs and promoted via
-  `POST .../workflows/{id}/publish` (ADMIN/CREATOR only), which runs the validator before snapshotting.
+  `POST .../workflows/{id}/publish` (Editor or Admin only), which runs the validator before snapshotting.
 
 The seed `engineering.workflow.json` reproduces today's exact transition set; existing issues keep working
 because their `current_status`/`item_type` mirror the former enum values and ENGINEERING's `initial` status

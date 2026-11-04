@@ -30,6 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -83,6 +84,8 @@ public class CreativeRenderService {
     private final StorageService storageService;
     private final StorageObjectReferences storageReferences;
     private final ObjectMapper objectMapper;
+    private final CreativeRevisionRenderLinker revisionRenderLinker;
+    private final PlatformTransactionManager transactionManager;
 
     public CreativeRenderService(CreativeRenderRepository renderRepository,
                                  CreativeRenderFrameRepository frameRepository,
@@ -95,7 +98,11 @@ public class CreativeRenderService {
                                  ProjectSecurityService projectSecurityService,
                                  StorageService storageService,
                                  StorageObjectReferences storageReferences,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper,
+                                 CreativeRevisionRenderLinker revisionRenderLinker,
+                                 PlatformTransactionManager transactionManager) {
+        this.revisionRenderLinker = revisionRenderLinker;
+        this.transactionManager = transactionManager;
         this.renderRepository = renderRepository;
         this.frameRepository = frameRepository;
         this.creativeRepository = creativeRepository;
@@ -132,7 +139,7 @@ public class CreativeRenderService {
             return requestClipRender(projectId, creative, request, caller);
         }
         if (Creative.KIND_CAROUSEL.equals(creative.getKind())) {
-            return requestCarouselRender(projectId, creative, request, caller);
+            return requestCarouselRender(projectId, creative, request, caller.requestedBy());
         }
         return requestStillRender(projectId, creative, request, caller);
     }
@@ -391,12 +398,12 @@ public class CreativeRenderService {
 
     private CreativeRender saveRunningRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
                                              RenderCaller caller) {
-        return saveRender(projectId, creative, request, caller, CreativeRender.STATE_RUNNING);
+        return saveRender(projectId, creative, request, caller.requestedBy(), CreativeRender.STATE_RUNNING);
     }
 
     /** A new non-preview render row in {@code state}; a SUCCEEDED one is also finished, in the same save. */
     private CreativeRender saveRender(String projectId, Creative creative, CreateCreativeRenderRequest request,
-                                      RenderCaller caller, String state) {
+                                      String requestedBy, String state) {
         CreativeRender render = new CreativeRender();
         render.setProjectId(projectId);
         render.setCreativeId(creative.getId());
@@ -405,7 +412,7 @@ public class CreativeRenderService {
         render.setPreviewOnly(false);
         render.setRenderer(request != null ? request.getRenderer() : null);
         render.setWorkflowRunId(request != null ? request.getWorkflowRunId() : null);
-        render.setRequestedBy(caller.requestedBy());
+        render.setRequestedBy(requestedBy);
         render.setRequestedAt(OffsetDateTime.now());
         if (CreativeRender.STATE_SUCCEEDED.equals(state)) {
             render.setFinishedAt(OffsetDateTime.now());
@@ -432,7 +439,7 @@ public class CreativeRenderService {
      * settles, SUCCEEDED in this one call — no layout, overlay or safe-zone check runs.
      */
     private CreateRenderResult requestCarouselRender(String projectId, Creative creative,
-                                                     CreateCreativeRenderRequest request, RenderCaller caller) {
+                                                     CreateCreativeRenderRequest request, String requestedBy) {
         if (request != null && Boolean.TRUE.equals(request.getPreviewOnly())) {
             throw new UnprocessableEntityException(
                     "CAROUSEL renders are assembled directly from the chosen images; there is no preview-only sheet");
@@ -449,12 +456,12 @@ public class CreativeRenderService {
         }
 
         boolean local = carouselNeedsLocalRender(audio);
-        // Local: the slide images are linked now, exactly as the instant path does; the local job adds one
-        // 9x16 video frame (no index) and completes the render.
-        CreativeRender render = saveRender(projectId, creative, request, caller,
-                local ? CreativeRender.STATE_RUNNING : CreativeRender.STATE_SUCCEEDED);
 
-        List<CreativeRenderFrame> frames = new ArrayList<>();
+        // Resolve every piece of media first: a refusal below must come before the first write, so a caller that
+        // catches it (an applied slide-text edit keeps its apply) never commits a half-written render.
+        record SlideFrame(String placementKey, int index, CreativePhoto media) {
+        }
+        List<SlideFrame> slideFrames = new ArrayList<>();
         for (String placementKey : placements) {
             List<String> mediaIds = slides.containsKey(placementKey) ? slides.get(placementKey) : slides.get("default");
             if (mediaIds == null) {
@@ -464,35 +471,63 @@ public class CreativeRenderService {
                 String mediaId = mediaIds.get(i);
                 CreativePhoto media = lookupMedia(projectId, mediaId)
                         .orElseThrow(() -> new BusinessException("No media with id " + mediaId + " in this project"));
-                // The frame links the slide's own object: nothing is copied.
-                String destPath = media.getGcsPath();
-
-                CreativeRenderFrame frame = new CreativeRenderFrame();
-                frame.setRenderId(render.getId());
-                frame.setCreativeId(creative.getId());
-                frame.setPlacementKey(placementKey);
-                frame.setSequenceIndex(i);
-                frame.setPlatform(registry.hasPlacement(placementKey) ? registry.placements().get(placementKey).platform() : null);
-                frame.setGcsPath(destPath);
-                frame.setContentType(media.getContentType());
-                frame.setWidth(media.getWidth() != null ? media.getWidth() : 0);
-                frame.setHeight(media.getHeight() != null ? media.getHeight() : 0);
-                frame.setSizeBytes(media.getSizeBytes());
-                frame.setWarnings(objectMapper.createArrayNode());
-                frameRepository.save(frame);
-                frames.add(frame);
+                slideFrames.add(new SlideFrame(placementKey, i, media));
             }
         }
+        List<MediaFacts> slideFacts = new ArrayList<>();
+        MediaFacts trackFacts = null;
         if (local) {
-            List<MediaFacts> slideFacts = new ArrayList<>();
             for (String id : videoList != null ? videoList : List.<String>of()) {
                 slideFacts.add(findMedia(projectId, id));
             }
+            trackFacts = findMedia(projectId, audio.getTrackId());
+        }
+
+        // Local: the slide images are linked now, exactly as the instant path does; the local job adds one
+        // 9x16 video frame (no index) and completes the render.
+        CreativeRender render = saveRender(projectId, creative, request, requestedBy,
+                local ? CreativeRender.STATE_RUNNING : CreativeRender.STATE_SUCCEEDED);
+
+        List<CreativeRenderFrame> frames = new ArrayList<>();
+        for (SlideFrame slide : slideFrames) {
+            CreativePhoto media = slide.media();
+            // The frame links the slide's own object: nothing is copied.
+            String destPath = media.getGcsPath();
+
+            CreativeRenderFrame frame = new CreativeRenderFrame();
+            frame.setRenderId(render.getId());
+            frame.setCreativeId(creative.getId());
+            frame.setPlacementKey(slide.placementKey());
+            frame.setSequenceIndex(slide.index());
+            frame.setPlatform(registry.hasPlacement(slide.placementKey())
+                    ? registry.placements().get(slide.placementKey()).platform() : null);
+            frame.setGcsPath(destPath);
+            frame.setContentType(media.getContentType());
+            frame.setWidth(media.getWidth() != null ? media.getWidth() : 0);
+            frame.setHeight(media.getHeight() != null ? media.getHeight() : 0);
+            frame.setSizeBytes(media.getSizeBytes());
+            frame.setWarnings(objectMapper.createArrayNode());
+            frameRepository.save(frame);
+            frames.add(frame);
+        }
+        if (local) {
             CreativeRenderSpec spec = specBuilder.buildCarousel(render.getId(), false, creative, kit, slideFacts,
-                    findMedia(projectId, audio.getTrackId()), audio, slideshow);
+                    trackFacts, audio, slideshow);
             return new CreateRenderResult(render, spec, frames);
         }
         return new CreateRenderResult(render, null, frames);
+    }
+
+    /**
+     * The instant CAROUSEL render of an applied slide-text edit (a slideshow without a music track): the slides
+     * are linked as they stand and the render is SUCCEEDED when this returns. Deliberately not
+     * {@code @Transactional}: it joins the caller's transaction, and a refusal ({@link CreativeValidationException},
+     * {@link BusinessException}) is thrown before anything is written (every slide's media is resolved before the
+     * render row is saved), so the caller may catch it and keep the apply it has already made.
+     */
+    CreativeRender renderCarouselForRevision(String projectId, Creative creative, String requestedBy) {
+        prefetchMedia(creative);
+        return requestCarouselRender(projectId, creative, null, requestedBy).render();
     }
 
     private Map<String, List<CreativeValidator.SlideEntry>> resolveSlideEntries(String projectId,
@@ -699,9 +734,20 @@ public class CreativeRenderService {
                 + suffix + "-poster.jpg";
     }
 
-    @Transactional
+    /**
+     * Not {@code @Transactional}: finishing the video render of an applied slide-text edit announces it, and the
+     * listeners open transactions of their own, which must not start while this one still holds its connection
+     * (see {@link AfterTransaction}).
+     */
     public RenderView completeRender(String projectId, String creativeId, String renderId,
                                      CompleteCreativeRenderRequest request, RenderCaller caller) {
+        return AfterTransaction.execute(transactionManager,
+                followUps -> completeRenderInTransaction(projectId, creativeId, renderId, request, caller, followUps));
+    }
+
+    private RenderView completeRenderInTransaction(String projectId, String creativeId, String renderId,
+                                                   CompleteCreativeRenderRequest request, RenderCaller caller,
+                                                   AfterTransaction.FollowUps followUps) {
         requireEditor(projectId, creativeId, caller);
         CreativeRender render = findRenderInCreative(projectId, creativeId, renderId);
         if (!render.isRunning()) {
@@ -719,6 +765,8 @@ public class CreativeRenderService {
         render.setState(CreativeRender.STATE_SUCCEEDED);
         render.setFinishedAt(OffsetDateTime.now());
         render = renderRepository.save(render);
+        // The video render of an applied slide-text edit: tie it to the revision and announce it.
+        revisionRenderLinker.onRenderSucceeded(render, followUps);
 
         List<CreativeRenderFrame> frames = frameRepository.findAllByRenderIdOrdered(renderId);
         if (request != null && request.getWarnings() != null) {
@@ -1138,8 +1186,8 @@ public class CreativeRenderService {
         switch (java.util.Objects.requireNonNull(caller, "caller")) {
             case RenderCaller.UserCaller u -> {
                 requireMember(projectId, creativeId, caller);
-                if (!projectSecurityService.isAdminOrCreator(projectId, u.user().getId())) {
-                    throw new ForbiddenException("Only ADMIN or CREATOR can manage Creative renders");
+                if (!projectSecurityService.isEditor(projectId, u.user().getId())) {
+                    throw new ForbiddenException("Requires the Editor role (or Admin) to manage Creative renders");
                 }
             }
             case RenderCaller.RunCaller r -> requireRunScope(projectId, creativeId, r);
@@ -1183,7 +1231,6 @@ public class CreativeRenderService {
                 RenderCaller.of(caller));
     }
 
-    @Transactional
     public RenderView completeRender(String projectId, String creativeId, String renderId,
                                      CompleteCreativeRenderRequest request, User caller) {
         return completeRender(projectId, creativeId, renderId, request, RenderCaller.of(caller));

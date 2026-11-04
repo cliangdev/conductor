@@ -78,6 +78,8 @@ export interface Issue {
 }
 
 export interface IssueWithReviewers extends Issue {
+  /** The author, when the list payload carries it; used to keep them out of an independent-review picker. */
+  createdBy?: string | null
   reviewers?: IssueReviewer[]
 }
 
@@ -86,7 +88,9 @@ export interface Member {
   name: string
   email: string
   avatarUrl?: string | null
-  role: MemberRole
+  roles?: MemberRole[]
+  /** @deprecated Read through `memberRoles()`. */
+  role?: MemberRole
 }
 
 export type ListView = 'active' | 'done' | 'all'

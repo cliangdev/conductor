@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -90,7 +91,7 @@ public class ProjectService {
         ProjectMember adminMember = new ProjectMember();
         adminMember.setProject(project);
         adminMember.setUser(creator);
-        adminMember.setRole(MemberRole.ADMIN);
+        adminMember.setRoles(Set.of(MemberRole.ADMIN));
         projectMemberRepository.save(adminMember);
 
         return project;
@@ -104,9 +105,9 @@ public class ProjectService {
         }
         // The caller's role in every project from one read of their memberships, and every member count
         // from one grouped count: three queries in total, however many workspaces they belong to.
-        Map<String, String> roleByProject = new HashMap<>();
+        Map<String, ProjectMember> memberByProject = new HashMap<>();
         for (ProjectMember m : projectMemberRepository.findByUserId(caller.getId())) {
-            roleByProject.put(m.getProject().getId(), m.getRole().name());
+            memberByProject.put(m.getProject().getId(), m);
         }
         Map<String, Long> countByProject = new HashMap<>();
         for (Object[] row : projectMemberRepository.countGroupedByProjectIds(
@@ -114,7 +115,7 @@ public class ProjectService {
             countByProject.put((String) row[0], (Long) row[1]);
         }
         return projects.stream()
-                .map(project -> toProjectSummary(project, roleByProject.get(project.getId()),
+                .map(project -> toProjectSummary(project, memberByProject.get(project.getId()),
                         countByProject.getOrDefault(project.getId(), 0L).intValue()))
                 .toList();
     }
@@ -177,13 +178,13 @@ public class ProjectService {
         ProjectMember member = projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
                 .orElseThrow(() -> new EntityNotFoundException("Member not found"));
 
-        MemberRole newRole = parseMemberRole(request.getRole());
+        Set<MemberRole> newRoles = resolveRequestedRoles(request.getRoles(), request.getRole());
 
-        if (member.getRole() == MemberRole.ADMIN && newRole != MemberRole.ADMIN) {
+        if (member.getRoles().contains(MemberRole.ADMIN) && !newRoles.contains(MemberRole.ADMIN)) {
             assertNotLastAdmin(projectId);
         }
 
-        member.setRole(newRole);
+        member.setRoles(newRoles);
         projectMemberRepository.save(member);
 
         return toMemberResponse(member);
@@ -200,7 +201,7 @@ public class ProjectService {
         ProjectMember member = projectMemberRepository.findByProjectIdAndUserId(projectId, userId)
                 .orElseThrow(() -> new EntityNotFoundException("Member not found"));
 
-        if (member.getRole() == MemberRole.ADMIN) {
+        if (member.getRoles().contains(MemberRole.ADMIN)) {
             assertNotLastAdmin(projectId);
         }
 
@@ -213,18 +214,33 @@ public class ProjectService {
      * member removal, including a member leaving.
      */
     private void assertNotLastAdmin(String projectId) {
-        long adminCount = projectMemberRepository.countByProjectIdAndRole(projectId, MemberRole.ADMIN);
+        long adminCount = projectMemberRepository.countAdmins(projectId);
         if (adminCount <= 1) {
             throw new BusinessException("Cannot remove the last project admin");
         }
     }
 
-    private MemberRole parseMemberRole(String role) {
-        try {
-            return MemberRole.valueOf(role.toUpperCase());
-        } catch (IllegalArgumentException e) {
-            throw new BusinessException("Invalid role: " + role);
+    /**
+     * The role set a request asks for: {@code roles} (possibly empty, meaning a read-only viewer) or the
+     * legacy single {@code role}. Sending both, or neither, is a 400.
+     */
+    static Set<MemberRole> resolveRequestedRoles(java.util.List<?> roles, String legacyRole) {
+        if (roles != null && legacyRole != null) {
+            throw new BusinessException("Send either 'roles' or 'role', not both");
         }
+        if (roles == null && legacyRole == null) {
+            throw new BusinessException("'roles' is required");
+        }
+        java.util.List<?> names = roles != null ? roles : java.util.List.of(legacyRole);
+        Set<MemberRole> result = java.util.EnumSet.noneOf(MemberRole.class);
+        for (Object name : names) {
+            try {
+                result.add(MemberRole.valueOf(String.valueOf(name).toUpperCase()));
+            } catch (IllegalArgumentException | NullPointerException e) {
+                throw new BusinessException("Invalid role: " + name);
+            }
+        }
+        return result;
     }
 
     String deriveKey(String name) {
@@ -265,7 +281,7 @@ public class ProjectService {
                 .description(project.getDescription());
     }
 
-    private ProjectSummary toProjectSummary(Project project, String role, int memberCount) {
+    private ProjectSummary toProjectSummary(Project project, ProjectMember member, int memberCount) {
         return new ProjectSummary(
                 project.getId(),
                 project.getName(),
@@ -273,7 +289,8 @@ public class ProjectService {
                 memberCount,
                 project.getCreatedAt())
                 .description(project.getDescription())
-                .role(role);
+                .role(member == null ? null : member.getRole().name())
+                .roles(member == null ? null : roleNames(member));
     }
 
     private ProjectDetail toProjectDetail(Project project, int memberCount) {
@@ -287,6 +304,11 @@ public class ProjectService {
                 .description(project.getDescription());
     }
 
+    private static java.util.List<com.conductor.generated.model.MemberRoleName> roleNames(ProjectMember member) {
+        return member.getRoles().stream()
+                .map(r -> com.conductor.generated.model.MemberRoleName.fromValue(r.name())).toList();
+    }
+
     private MemberResponse toMemberResponse(ProjectMember member) {
         User user = member.getUser();
         return new MemberResponse()
@@ -295,6 +317,7 @@ public class ProjectService {
                 .email(user.getEmail())
                 .avatarUrl(user.getAvatarUrl())
                 .role(member.getRole().name())
+                .roles(roleNames(member))
                 .joinedAt(member.getJoinedAt());
     }
 }

@@ -56,7 +56,8 @@ class CreativeControllerPhotoContractTest {
                 Mockito.mock(CreativeRegistry.class), new ObjectMapper(), Mockito.mock(CreativeRenderService.class),
                 Mockito.mock(CreativeAttachService.class), Mockito.mock(CreativePerformanceService.class),
                 Mockito.mock(CreativeExperimentService.class),
-                Mockito.mock(com.conductor.creative.CreativeRenderDispatchService.class));
+                Mockito.mock(com.conductor.creative.CreativeRenderDispatchService.class),
+                Mockito.mock(com.conductor.creative.CreativeRevisionService.class));
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();

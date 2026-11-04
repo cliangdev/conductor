@@ -11,9 +11,9 @@ let mockRole: 'ADMIN' | 'CREATOR' | 'REVIEWER' = 'ADMIN'
 // the shipped one, not a stand-in that would hide an ADMIN-only capability being mis-assigned.
 vi.mock('@/contexts/PermissionsContext', async () => {
   const { can } = await vi.importActual<typeof import('@/lib/permissions')>('@/lib/permissions')
-  const check = (capability: Parameters<typeof can>[1]) => can(mockRole, capability)
+  const check = (capability: Parameters<typeof can>[1]) => can([mockRole], capability)
   return {
-    usePermissions: () => ({ role: mockRole, loading: false, can: check, refresh: () => {} }),
+    usePermissions: () => ({ roles: [mockRole], loading: false, can: check, refresh: () => {} }),
     useCan: check,
   }
 })

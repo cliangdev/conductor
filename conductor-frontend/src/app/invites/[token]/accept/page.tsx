@@ -8,17 +8,22 @@ import { PartyPopper } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAuth } from '@/contexts/AuthContext'
+import { roleLabel } from '@/components/members/MemberRow'
+import { memberRoles } from '@/lib/permissions'
+import type { MemberRole } from '@/types'
 import { apiPost, apiErrorMessage, type ApiError } from '@/lib/api'
 
 interface AcceptInviteResponse {
   projectId: string
   projectName: string
-  role: string
+  roles?: MemberRole[]
+  /** @deprecated Older servers send only this. */
+  role?: MemberRole
 }
 
 type PageState =
   | { status: 'loading' }
-  | { status: 'success'; projectName: string; projectId: string; role: string }
+  | { status: 'success'; projectName: string; projectId: string; roles: MemberRole[] }
   | { status: 'error'; message: string }
 
 function errorMessageForStatus(status: number): string {
@@ -59,7 +64,7 @@ export default function AcceptInvitePage() {
           status: 'success',
           projectName: result.projectName,
           projectId: result.projectId,
-          role: result.role,
+          roles: memberRoles(result),
         })
         setTimeout(() => {
           router.push(`/app/projects/${result.projectId}`)
@@ -95,8 +100,8 @@ export default function AcceptInvitePage() {
               You&apos;ve joined {pageState.projectName}
             </h1>
             <p className="mt-2 text-muted-foreground">
-              You&apos;ve been added as a{' '}
-              <span className="font-medium text-foreground">{pageState.role.charAt(0) + pageState.role.slice(1).toLowerCase()}</span>
+              Your access:{' '}
+              <span className="font-medium text-foreground">{roleLabel(pageState.roles)}</span>
               . Redirecting you now…
             </p>
           </div>

@@ -21,6 +21,7 @@ import com.conductor.repository.AssetRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.ActionInvocationService;
 import com.conductor.service.StorageService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.ObjectProvider;
@@ -321,9 +322,59 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector, Chann
             };
         } catch (HttpClientErrorException e) {
             // PERMANENT: YouTube has already rejected this request; retrying it wastes attempts.
-            return ActionResult.error("YouTube rejected the " + actionId + " request: "
-                    + e.getStatusCode().value() + " " + e.getStatusText());
+            return ActionResult.error(describeClientError(actionId, e));
         }
+    }
+
+    /** YouTube's reason code when a channel has hit its upload cap. Returned as a 400, not a 403 quota error. */
+    static final String REASON_UPLOAD_LIMIT_EXCEEDED = "uploadLimitExceeded";
+
+    private static final ObjectMapper ERROR_MAPPER = new ObjectMapper();
+
+    /**
+     * The 4xx as a person can act on it. The status line alone ("400 Bad Request") says nothing: YouTube
+     * puts the reason in the body ({@code error.errors[0].reason} plus a message), and a bad title, a
+     * past {@code publishAt} and an exhausted upload cap all arrive as the same 400.
+     */
+    static String describeClientError(String actionId, HttpClientErrorException e) {
+        String prefix = "YouTube rejected the " + actionId + " request: " + e.getStatusCode().value() + " "
+                + e.getStatusText();
+        String reason = null;
+        String message = null;
+        try {
+            JsonNode error = ERROR_MAPPER.readTree(e.getResponseBodyAsString()).path("error");
+            JsonNode first = error.path("errors").path(0);
+            reason = textOrNull(first.path("reason"));
+            message = textOrNull(error.path("message"));
+            if (message == null) {
+                message = textOrNull(first.path("message"));
+            }
+        } catch (Exception ignored) {
+            // Not JSON (or no body): fall back to the status line.
+        }
+        if (REASON_UPLOAD_LIMIT_EXCEEDED.equals(reason)) {
+            return prefix + " (" + reason + "). This YouTube channel has hit its upload limit, which YouTube "
+                    + "sets per channel over a rolling 24 hours. Retry this destination after the limit clears, "
+                    + "or verify the channel in YouTube Studio to raise it.";
+        }
+        if (reason == null && message == null) {
+            return prefix;
+        }
+        StringBuilder text = new StringBuilder(prefix);
+        if (reason != null) {
+            text.append(" (").append(reason).append(")");
+        }
+        if (message != null) {
+            text.append(": ").append(message);
+        }
+        return text.toString();
+    }
+
+    private static String textOrNull(JsonNode node) {
+        if (node == null || !node.isTextual() || node.asText().isBlank()) {
+            return null;
+        }
+        return node.asText().trim();
     }
 
     /**

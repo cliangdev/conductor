@@ -1,6 +1,6 @@
 -- Delivery tracking on Work Items: priority, milestone, appetite (a time box) and cycle timestamps.
 -- Additive and nullable only (preview deploys share the prod DB). The milestone FK arrives with the
--- milestones table in V168; the column comes first so the partial index below can sit beside the others.
+-- milestones table in V179; the column comes first so the partial index below can sit beside the others.
 ALTER TABLE work_items ADD COLUMN IF NOT EXISTS priority      SMALLINT;
 ALTER TABLE work_items ADD COLUMN IF NOT EXISTS milestone_id  VARCHAR(36);
 ALTER TABLE work_items ADD COLUMN IF NOT EXISTS appetite      VARCHAR(32);

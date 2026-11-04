@@ -1,5 +1,23 @@
 import { NATIVE_STYLE, fontFamilyCss, type ResolvedSlideshowStyle } from './style.js'
 
+/**
+ * Open Font License families bundled beside TikTok Sans (assets/fonts) for the slide types that imitate a system
+ * UI. The Linux render image has none of the Apple fonts those slides used to ask for, so they ship their own:
+ * the output is the same on every machine. `file` is under the fonts folder; each family is a list of weights.
+ */
+export const BUNDLED_FONTS = {
+  Inter: { generic: 'sans-serif', faces: [[400, 'inter-400.woff2'], [600, 'inter-600.woff2'], [700, 'inter-700.woff2']] },
+  'Source Serif 4': { generic: 'serif', faces: [[400, 'source-serif-4-400.woff2'], [700, 'source-serif-4-700.woff2']] },
+  'Courier Prime': { generic: 'monospace', faces: [[400, 'courier-prime-400.ttf'], [700, 'courier-prime-700.ttf']] },
+} as const satisfies Record<string, { generic: string; faces: ReadonlyArray<readonly [number, string]> }>
+export type BundledFamily = keyof typeof BUNDLED_FONTS
+export const BUNDLED_FAMILIES = Object.keys(BUNDLED_FONTS) as BundledFamily[]
+
+const fontFaceCss = (family: BundledFamily, assetBase: string): string =>
+  BUNDLED_FONTS[family].faces
+    .map(([weight, file]) => `@font-face{font-family:"${family}";font-weight:${weight};src:url(${assetBase}${file}) format("${file.endsWith('.woff2') ? 'woff2' : 'truetype'}")}`)
+    .join('\n')
+
 /** #rrggbb as the shortest CSS hex (so the native look stays byte-identical to the original sheet). */
 const hex = (c: string): string => c.replace(/^#([0-9a-f])\1([0-9a-f])\2([0-9a-f])\3$/i, '#$1$2$3').toLowerCase()
 const rgba = (c: string, a: string): string => {
@@ -8,11 +26,13 @@ const rgba = (c: string, a: string): string => {
 }
 
 /**
- * Slide stylesheet. `assetBase` is the URL (ending in "/") of the folder holding the bundled TikTok Sans TTFs;
+ * Slide stylesheet. `assetBase` is the URL (ending in "/") of the folder holding the bundled fonts;
  * `style` restyles the native text and callouts (default: the native look). Slide types that imitate a system
- * UI (notes, week, receipt, placard, messages) keep their own fonts.
+ * UI (notes, grid badges, week, receipt, placard, messages) use the bundled Inter, Source Serif 4 and Courier
+ * Prime instead of Apple system fonts; `bundled` names the ones this slide uses, and only those are declared
+ * (so a photo slide's stylesheet carries no font it never loads).
  */
-export function slideCss(assetBase: string, style: ResolvedSlideshowStyle = NATIVE_STYLE): string {
+export function slideCss(assetBase: string, style: ResolvedSlideshowStyle = NATIVE_STYLE, bundled: readonly BundledFamily[] = []): string {
   const bg = hex(style.boxBg), ink = hex(style.boxInk), dbg = hex(style.darkBg), dink = hex(style.darkInk), sink = hex(style.strokeInk)
   const line = hex(style.outline), accent = hex(style.accent), line8 = rgba(style.outline, '.8')
   const face = style.fontFamily ? fontFamilyCss(style.fontFamily) : '"TT"'
@@ -20,7 +40,7 @@ export function slideCss(assetBase: string, style: ResolvedSlideshowStyle = NATI
 @font-face{font-family:"TT";font-weight:600;src:url(${assetBase}tiktok-sans-600.ttf)}
 @font-face{font-family:"TT";font-weight:700;src:url(${assetBase}tiktok-sans-700.ttf)}
 @font-face{font-family:"TT";font-weight:800;src:url(${assetBase}tiktok-sans-800.ttf)}
-*{box-sizing:border-box;margin:0;padding:0}
+${bundled.map((f) => `${fontFaceCss(f, assetBase)}\n`).join('')}*{box-sizing:border-box;margin:0;padding:0}
 html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
 #s{position:relative;width:1080px;height:var(--H);overflow:hidden;font-family:${face},-apple-system,"Helvetica Neue",sans-serif}
 .bg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
@@ -44,7 +64,7 @@ html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
 .callouts .ln{position:absolute;width:6px;margin-left:-3px;background:${accent};box-shadow:0 0 0 2px #fff,0 2px 8px rgba(0,0,0,.4)}
 .callouts .pill{position:absolute;width:max-content;max-width:560px;text-align:center;font-weight:700;font-size:42px;line-height:1.25;color:${ink};background:${bg};padding:6px 20px;border-radius:14px;box-shadow:0 6px 22px rgba(0,0,0,.45)}
 /* iOS Notes */
-.notes{position:absolute;inset:0;background:#fffefa;color:#1c1c1e;font-family:-apple-system,"SF Pro Text","Helvetica Neue",sans-serif;padding:0 70px}
+.notes{position:absolute;inset:0;background:#fffefa;color:#1c1c1e;font-family:"Inter",sans-serif;padding:0 70px}
 .notes .bar{display:flex;align-items:center;justify-content:space-between;color:#d9a400;font-size:52px;height:120px;margin-top:var(--top,120px)}
 .notes .bar b{font-weight:400}
 .notes .date{text-align:center;color:#8e8e93;font-size:36px;margin:6px 0 26px}
@@ -63,7 +83,7 @@ html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
 .grid img{width:100%;height:100%;object-fit:cover}
 .grid div.x img{filter:grayscale(1) brightness(.45)}
 .grid div.ok::after{content:"";position:absolute;inset:0;box-shadow:inset 0 0 0 8px #34c759}
-.badge{position:absolute;right:10px;bottom:8px;color:#fff;font:600 24px -apple-system,"Helvetica Neue",sans-serif;text-shadow:0 0 4px rgba(0,0,0,.8)}
+.badge{position:absolute;right:10px;bottom:8px;color:#fff;font:600 24px "Inter",sans-serif;text-shadow:0 0 4px rgba(0,0,0,.8)}
 .grid div.restore img{filter:saturate(.95) contrast(.96) sepia(.05)}
 .grid .cap{position:absolute;left:0;right:0;bottom:0;height:30%;background:linear-gradient(transparent,rgba(0,0,0,.75));display:flex;flex-direction:column;justify-content:flex-end;gap:6px;padding:0 14px 14px}
 .grid .cap b{display:block;height:9px;border-radius:5px;background:rgba(255,255,255,.75);width:80%}
@@ -85,7 +105,7 @@ html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
 .tier .v{flex:1;background:#1f1f22;color:#fff;display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:16px 22px;font-weight:700;font-size:var(--ts,40px);line-height:1.2}
 .tier .v span{background:#33333a;border-radius:12px;padding:10px 16px}
 /* week grid */
-.week{position:absolute;left:60px;right:60px;top:var(--top,260px);font-family:-apple-system,"Helvetica Neue",sans-serif;background:#fff;border-radius:36px;padding:34px 36px;box-shadow:0 30px 80px rgba(0,0,0,.35)}
+.week{position:absolute;left:60px;right:60px;top:var(--top,260px);font-family:"Inter",sans-serif;background:#fff;border-radius:36px;padding:34px 36px;box-shadow:0 30px 80px rgba(0,0,0,.35)}
 .week h3{font-size:56px;font-weight:700;color:#1c1c1e;margin-bottom:22px}
 .week .d{display:flex;align-items:center;gap:26px;padding:20px 0;border-top:2px solid #ececf0}
 .week .d b{flex:none;width:120px;font-size:40px;color:#8e8e93;font-weight:600;text-transform:uppercase}
@@ -94,20 +114,20 @@ html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
 .week .d span{font-size:52px;line-height:1.2;color:#1c1c1e}
 .week .d.fog span{color:#8e8e93}
 /* receipt */
-.receipt{position:absolute;left:150px;right:150px;top:var(--top,250px);background:#fbfaf6;color:#222;font-family:"Courier New",Courier,monospace;font-size:36px;line-height:1.35;padding:46px 46px 70px;box-shadow:0 30px 80px rgba(0,0,0,.4);transform:rotate(var(--rot,-1.5deg))}
+.receipt{position:absolute;left:150px;right:150px;top:var(--top,250px);background:#fbfaf6;color:#222;font-family:"Courier Prime",monospace;font-size:36px;line-height:1.35;padding:46px 46px 70px;box-shadow:0 30px 80px rgba(0,0,0,.4);transform:rotate(var(--rot,-1.5deg))}
 .receipt::after{content:"";position:absolute;left:0;right:0;bottom:-18px;height:20px;background:linear-gradient(-45deg,transparent 12px,#fbfaf6 0) 0 0/24px 20px repeat-x,linear-gradient(45deg,transparent 12px,#fbfaf6 0) 0 0/24px 20px repeat-x}
 .receipt .c{text-align:center}
 .receipt hr{border:0;border-top:3px dashed #999;margin:18px 0}
 .receipt .a{font-weight:700;margin-top:12px}
 .receipt .r{display:flex;justify-content:space-between}
 /* museum placard */
-.placard{position:absolute;left:90px;right:170px;top:var(--y);background:#f7f5ef;color:#1b1b1b;font-family:Georgia,"Times New Roman",serif;padding:34px 40px;box-shadow:0 18px 50px rgba(0,0,0,.45);border-radius:4px}
+.placard{position:absolute;left:90px;right:170px;top:var(--y);background:#f7f5ef;color:#1b1b1b;font-family:"Source Serif 4",serif;padding:34px 40px;box-shadow:0 18px 50px rgba(0,0,0,.45);border-radius:4px}
 .placard .ex{font:600 30px "TT";letter-spacing:.14em;text-transform:uppercase;color:#6b6457;margin-bottom:10px}
 .placard h4{font-size:60px;line-height:1.1;font-weight:700;margin-bottom:16px}
 .placard p{font-size:40px;line-height:1.38}
 .placard p i{font-style:normal;color:#6b6457}
 /* iMessage thread */
-.msgs{position:absolute;inset:0;background:#fff;font-family:-apple-system,"SF Pro Text","Helvetica Neue",sans-serif}
+.msgs{position:absolute;inset:0;background:#fff;font-family:"Inter",sans-serif}
 .msgs.clear{background:transparent}
 .msgs .in{position:absolute;left:60px;right:150px;top:var(--top,300px);display:flex;flex-direction:column;gap:14px}
 .msgs .ttl{text-align:center;font-size:48px;font-weight:600;color:#1c1c1e;margin-bottom:26px}

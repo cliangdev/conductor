@@ -53,6 +53,7 @@ public class DocumentService {
     public DocumentView createDocument(String projectId, String workItemId, String filename, String content,
                                        String contentType) {
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        projectSecurityService.requireProjectEditor(projectId);
 
         if (content != null) {
             byte[] contentBytes = content.getBytes(StandardCharsets.UTF_8);
@@ -105,6 +106,7 @@ public class DocumentService {
     public boolean upsertDocumentByFilename(String projectId, String workItemId, String filename, String content,
                                             String requestContentType) {
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        projectSecurityService.requireProjectEditor(projectId);
         String contentType = requestContentType != null ? requestContentType : "text/markdown";
 
         if (content != null) {
@@ -158,6 +160,7 @@ public class DocumentService {
     @Transactional
     public void deleteDocumentByFilename(String projectId, String workItemId, String filename) {
         findWorkItemInProject(projectId, workItemId);
+        projectSecurityService.requireProjectEditor(projectId);
         Document document = documentRepository.findByWorkItemIdAndFilename(workItemId, filename)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
         String storagePath = document.getStoragePath();
@@ -170,6 +173,7 @@ public class DocumentService {
     @Transactional
     public void deleteDocument(String projectId, String workItemId, String docId) {
         findWorkItemInProject(projectId, workItemId);
+        projectSecurityService.requireProjectEditor(projectId);
         Document document = documentRepository.findByIdAndWorkItemId(docId, workItemId)
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
         String storagePath = document.getStoragePath();

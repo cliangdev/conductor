@@ -3,7 +3,10 @@ package com.conductor.service.publish.tasks;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetState;
 import com.conductor.entity.PublishLane;
+import com.conductor.integration.connector.tiktok.TikTokPermalinkFollowUp;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.service.PublishOutcomeService;
+import com.conductor.service.publish.PermalinkFollowUp;
 import com.conductor.service.NativeHandoffService;
 import com.conductor.service.NativePublishConfirmationPoller;
 import com.conductor.service.publish.PostFormat;
@@ -17,6 +20,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
+import java.util.Optional;
 
 /**
  * What happens when a {@link PublishTask} arrives: the request-time entry point behind
@@ -57,6 +61,8 @@ public class PublishTaskHandler {
     private final NativeHandoffService nativeHandoffService;
     private final NativePublishConfirmationPoller confirmationPoller;
     private final PublishTaskScheduler scheduler;
+    private final PublishOutcomeService outcomeService;
+    private final TikTokPermalinkFollowUp tikTokPermalinkFollowUp;
     private final boolean dispatchEnabled;
     private final boolean handoffEnabled;
     private final boolean confirmEnabled;
@@ -67,6 +73,8 @@ public class PublishTaskHandler {
                               NativeHandoffService nativeHandoffService,
                               NativePublishConfirmationPoller confirmationPoller,
                               PublishTaskScheduler scheduler,
+                              PublishOutcomeService outcomeService,
+                              TikTokPermalinkFollowUp tikTokPermalinkFollowUp,
                               @Value("${conductor.post-publish.enabled:true}") boolean dispatchEnabled,
                               @Value("${conductor.native-handoff.enabled:true}") boolean handoffEnabled,
                               @Value("${conductor.native-publish-confirmation.enabled:true}")
@@ -77,6 +85,8 @@ public class PublishTaskHandler {
         this.nativeHandoffService = nativeHandoffService;
         this.confirmationPoller = confirmationPoller;
         this.scheduler = scheduler;
+        this.outcomeService = outcomeService;
+        this.tikTokPermalinkFollowUp = tikTokPermalinkFollowUp;
         this.dispatchEnabled = dispatchEnabled;
         this.handoffEnabled = handoffEnabled;
         this.confirmEnabled = confirmEnabled;
@@ -92,7 +102,9 @@ public class PublishTaskHandler {
             log.debug("{} arrived for publish target {}, which no longer exists", task.kind(), task.targetId());
             return;
         }
-        if (!task.matchesFireTime(target.getFireTime())) {
+        // A PERMALINK follow-up is guarded by the row's state and its stored publish handle instead: it
+        // runs after the row has published, and a reschedule cannot make its answer wrong.
+        if (task.kind() != PublishTaskKind.PERMALINK && !task.matchesFireTime(target.getFireTime())) {
             log.info("{} for publish target {} is stale (armed for {}, row now fires at {}); dropping",
                     task.kind(), task.targetId(), task.fireTime(), target.getFireTime());
             return;
@@ -101,6 +113,7 @@ public class PublishTaskHandler {
             case DISPATCH -> dispatch(task, target, now);
             case HANDOFF -> handoff(task, target, now);
             case CONFIRM -> confirm(task, target, now);
+            case PERMALINK -> permalink(task, target, now);
         }
     }
 
@@ -194,6 +207,50 @@ public class PublishTaskHandler {
             rearm(PublishTask.confirm(target.getId(), target.getFireTime(), now.plus(CONFIRM_INTERVAL),
                     task.attempt() + 1));
         }
+    }
+
+    /**
+     * Asks TikTok again for the link of a target that published without one. On an id the link goes
+     * through {@link PublishOutcomeService#recordSuccess}; otherwise the task is re-armed on the backoff,
+     * and past the last step the chain ends with a log line - the post may simply not be public.
+     */
+    private void permalink(PublishTask task, PostPublishTarget target, OffsetDateTime now) {
+        if (!dispatchEnabled) {
+            log.info("PERMALINK for publish target {} ignored: conductor.post-publish.enabled is false", target.getId());
+            return;
+        }
+        boolean hasLink = target.getPermalink() != null && !target.getPermalink().isBlank();
+        if (target.getState() != PostPublishTargetState.PUBLISHED || hasLink) {
+            log.debug("PERMALINK for publish target {} has nothing to do: row is {}{}", target.getId(),
+                    target.getState(), hasLink ? " and already has a link" : "");
+            return;
+        }
+        PermalinkFollowUp followUp = PermalinkFollowUp.parse(target.getResumeCheckpoint()).orElse(null);
+        if (followUp == null) {
+            log.debug("PERMALINK for publish target {} has nothing to do: no follow-up on the row", target.getId());
+            return;
+        }
+        Optional<TikTokPermalinkFollowUp.Found> found = Optional.empty();
+        try {
+            found = tikTokPermalinkFollowUp.check(target, followUp);
+        } catch (Exception e) {
+            log.warn("PERMALINK check {} for publish target {} failed: {}", task.attempt(), target.getId(),
+                    e.getMessage());
+        }
+        if (found.isPresent()) {
+            outcomeService.recordSuccess(target.getId(), found.get().postId(), found.get().permalink());
+            log.info("Target {} got its link after {} follow-up(s): {}", target.getId(), task.attempt() + 1,
+                    found.get().permalink());
+            return;
+        }
+        int next = task.attempt() + 1;
+        if (next >= PublishTaskArmer.PERMALINK_BACKOFF.size()) {
+            log.info("Giving up on a link for publish target {} (publish {}) after {} checks; the post may not "
+                    + "be public", target.getId(), followUp.publishId(), next);
+            return;
+        }
+        rearm(PublishTask.permalink(target.getId(), task.fireTime(),
+                now.plus(PublishTaskArmer.PERMALINK_BACKOFF.get(next)), next));
     }
 
     private static boolean arrivedEarly(OffsetDateTime fireTime, OffsetDateTime now) {

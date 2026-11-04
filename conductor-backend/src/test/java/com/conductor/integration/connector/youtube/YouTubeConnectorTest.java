@@ -587,6 +587,58 @@ class YouTubeConnectorTest {
     }
 
     @Test
+    void publishVideo_clientError_surfacesYouTubesReasonAndMessage() {
+        YouTubePublishAction publishAction = mock(YouTubePublishAction.class);
+        String body = """
+                {"error":{"code":400,"message":"The request metadata specifies an invalid scheduled publishing time.",
+                 "errors":[{"message":"The request metadata specifies an invalid scheduled publishing time.",
+                 "domain":"youtube.video","reason":"invalidPublishAt"}]}}""";
+        when(publishAction.publish(any(), any())).thenThrow(HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders.EMPTY,
+                body.getBytes(java.nio.charset.StandardCharsets.UTF_8), null));
+
+        ActionResult result = new YouTubeConnector(dataClient, publishAction)
+                .invoke("publish_video", Map.of("title", "hi"), ctx());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message())
+                .isEqualTo("YouTube rejected the publish_video request: 400 Bad Request (invalidPublishAt): "
+                        + "The request metadata specifies an invalid scheduled publishing time.");
+    }
+
+    @Test
+    void publishVideo_uploadLimitExceeded_saysTheChannelHitItsUploadCap() {
+        YouTubePublishAction publishAction = mock(YouTubePublishAction.class);
+        String body = """
+                {"error":{"code":400,"message":"The user has exceeded the number of videos they may upload.",
+                 "errors":[{"message":"The user has exceeded the number of videos they may upload.",
+                 "domain":"youtube.video","reason":"uploadLimitExceeded"}]}}""";
+        when(publishAction.publish(any(), any())).thenThrow(HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders.EMPTY,
+                body.getBytes(java.nio.charset.StandardCharsets.UTF_8), null));
+
+        ActionResult result = new YouTubeConnector(dataClient, publishAction)
+                .invoke("publish_video", Map.of("title", "hi"), ctx());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("uploadLimitExceeded").contains("upload limit")
+                .contains("24 hours");
+    }
+
+    @Test
+    void publishVideo_clientErrorWithNonJsonBody_fallsBackToTheStatusLine() {
+        YouTubePublishAction publishAction = mock(YouTubePublishAction.class);
+        when(publishAction.publish(any(), any())).thenThrow(HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST, "Bad Request", HttpHeaders.EMPTY,
+                "<html>nope</html>".getBytes(java.nio.charset.StandardCharsets.UTF_8), null));
+
+        ActionResult result = new YouTubeConnector(dataClient, publishAction)
+                .invoke("publish_video", Map.of("title", "hi"), ctx());
+
+        assertThat(result.message()).isEqualTo("YouTube rejected the publish_video request: 400 Bad Request");
+    }
+
+    @Test
     void publishVideo_serverError_throwsSoTheUploadResumesOnRetry() {
         YouTubePublishAction publishAction = mock(YouTubePublishAction.class);
         when(publishAction.publish(any(), any())).thenThrow(HttpServerErrorException.create(

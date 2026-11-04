@@ -26,6 +26,8 @@ export interface WorkflowTransitionView {
   label: string
   requiresReview?: boolean
   reviewerRole?: string | null
+  /** An approval from the item's own author does not satisfy the review. */
+  requireIndependentReviewer?: boolean
   trigger?: string | null
   /**
    * Allowed review verdicts for a review-gated edge. Not part of the lean WorkflowView contract

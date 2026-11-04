@@ -82,7 +82,7 @@ class GitHubAppControllerTest {
     @Test
     void listRepositories_rejectsReviewer_withAccessDenied() {
         authenticateAs("reviewer-1");
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "reviewer-1")).thenReturn(false);
+        when(projectSecurityService.isEditor(PROJECT_ID, "reviewer-1")).thenReturn(false);
 
         assertThatThrownBy(() -> controller.listGithubRepositories(PROJECT_ID, "conn-1"))
                 .isInstanceOf(AccessDeniedException.class);
@@ -93,7 +93,7 @@ class GitHubAppControllerTest {
     @Test
     void listRepositories_allowsAdminOrCreator_andReturnsRepos() {
         authenticateAs("admin-1");
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, "admin-1")).thenReturn(true);
 
         Connection conn = new Connection();
         conn.setProjectId(PROJECT_ID);
@@ -181,7 +181,7 @@ class GitHubAppControllerTest {
     @Test
     void startInstallation_rejectsNonAdminCreator() {
         authenticateAs("reviewer-1");
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "reviewer-1")).thenReturn(false);
+        when(projectSecurityService.isEditor(PROJECT_ID, "reviewer-1")).thenReturn(false);
 
         assertThatThrownBy(() -> controller.startGithubInstallation(PROJECT_ID))
                 .isInstanceOf(AccessDeniedException.class);
@@ -194,7 +194,7 @@ class GitHubAppControllerTest {
     @Test
     void bindGithubPat_firstBind_createsPatConnection_withGitHubSourcedExpiry() {
         authenticateAs("admin-1");
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, "admin-1")).thenReturn(true);
         when(connectionRepository.findByProjectIdAndConnectorId(PROJECT_ID, "github")).thenReturn(List.of());
         Instant githubExpiry = Instant.parse("2030-01-01T00:00:00Z");
         when(gitHubAppService.validatePersonalAccessToken("ghp_abc"))
@@ -220,7 +220,7 @@ class GitHubAppControllerTest {
     @Test
     void bindGithubPat_noExpiryHeader_fallsBackToRequestExpiresAt() {
         authenticateAs("admin-1");
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, "admin-1")).thenReturn(true);
         when(connectionRepository.findByProjectIdAndConnectorId(PROJECT_ID, "github")).thenReturn(List.of());
         when(gitHubAppService.validatePersonalAccessToken("ghp_classic"))
                 .thenReturn(new GitHubAppService.PatValidationResult("octocat", null));
@@ -238,7 +238,7 @@ class GitHubAppControllerTest {
     @Test
     void bindGithubPat_rebind_updatesExistingRow_doesNotCreateSecondConnection() {
         authenticateAs("admin-1");
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, "admin-1")).thenReturn(true);
         Connection existing = new Connection();
         existing.setId("conn-pat");
         existing.setProjectId(PROJECT_ID);
@@ -263,7 +263,7 @@ class GitHubAppControllerTest {
     @Test
     void bindGithubPat_concurrentFirstBind_losesInsertRace_recoversByReReadingWinningRow() {
         authenticateAs("admin-1");
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, "admin-1")).thenReturn(true);
         when(gitHubAppService.validatePersonalAccessToken("ghp_race"))
                 .thenReturn(new GitHubAppService.PatValidationResult("octocat", null));
 
@@ -295,7 +295,7 @@ class GitHubAppControllerTest {
     @Test
     void bindGithubPat_invalidToken_bubblesActionableBusinessException() {
         authenticateAs("admin-1");
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, "admin-1")).thenReturn(true);
         when(gitHubAppService.validatePersonalAccessToken("bad-token"))
                 .thenThrow(new BusinessException("GitHub rejected this token — check it's valid and hasn't expired"));
 
@@ -310,7 +310,7 @@ class GitHubAppControllerTest {
     @Test
     void bindGithubPat_blankToken_throwsBusinessException() {
         authenticateAs("admin-1");
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "admin-1")).thenReturn(true);
+        when(projectSecurityService.isEditor(PROJECT_ID, "admin-1")).thenReturn(true);
 
         assertThatThrownBy(() -> controller.bindGithubPat(PROJECT_ID, new BindGithubPatRequest().token("  ")))
                 .isInstanceOf(BusinessException.class);
@@ -321,7 +321,7 @@ class GitHubAppControllerTest {
     @Test
     void bindGithubPat_rejectsNonAdminCreator() {
         authenticateAs("reviewer-1");
-        when(projectSecurityService.isAdminOrCreator(PROJECT_ID, "reviewer-1")).thenReturn(false);
+        when(projectSecurityService.isEditor(PROJECT_ID, "reviewer-1")).thenReturn(false);
 
         assertThatThrownBy(() -> controller.bindGithubPat(PROJECT_ID, new BindGithubPatRequest().token("ghp_abc")))
                 .isInstanceOf(AccessDeniedException.class);

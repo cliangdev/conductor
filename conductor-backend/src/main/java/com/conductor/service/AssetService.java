@@ -193,6 +193,16 @@ public class AssetService {
      */
     @Transactional
     public List<Asset> createAllFromStoredObjects(String projectId, String workItemId, List<StoredObjectInput> inputs) {
+        return createAllFromStoredObjects(projectId, workItemId, inputs, FreezeBypass.NONE);
+    }
+
+    /**
+     * As above, with the freeze rule optionally waived for the one internal caller allowed to (see
+     * {@link FreezeBypass}); every other caller uses the overload without it.
+     */
+    @Transactional
+    public List<Asset> createAllFromStoredObjects(String projectId, String workItemId, List<StoredObjectInput> inputs,
+                                                  FreezeBypass bypass) {
         if (inputs.isEmpty()) {
             return List.of();
         }
@@ -200,7 +210,9 @@ public class AssetService {
         for (String type : inputs.stream().map(StoredObjectInput::type).distinct().toList()) {
             validateAssetType(projectId, workItem, type);
         }
-        guardFileAssetMutable(projectId, workItem);
+        if (bypass == FreezeBypass.NONE) {
+            guardFileAssetMutable(projectId, workItem);
+        }
 
         List<Asset> assets = new ArrayList<>();
         for (StoredObjectInput input : inputs) {
@@ -240,6 +252,7 @@ public class AssetService {
     @Transactional
     public List<Asset> addFromMedia(String projectId, String workItemId, List<String> mediaIds, User caller) {
         verifyMembership(projectId, caller.getId());
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         if (mediaIds == null || mediaIds.isEmpty() || mediaIds.size() > MAX_FROM_MEDIA) {
             throw new BusinessException("Add between 1 and " + MAX_FROM_MEDIA + " media items at a time");
@@ -289,6 +302,7 @@ public class AssetService {
     @Transactional
     public Asset createAsset(String projectId, String workItemId, AssetInput input, User caller) {
         verifyMembership(projectId, caller.getId());
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         validateAssetType(projectId, workItem, input.type());
         if (KIND_FILE.equals(input.kind())) {
@@ -320,6 +334,7 @@ public class AssetService {
     public FileAssetUploadTicket createFileAsset(String projectId, String workItemId, FileAssetInput input,
                                                  User caller) {
         verifyMembership(projectId, caller.getId());
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
         String contentType = AssetUploadPolicy.requireAllowedContentType(input.contentType());
@@ -379,6 +394,7 @@ public class AssetService {
     public Asset confirmUpload(String projectId, String workItemId, String assetId, Long observedSizeBytes,
                                User caller) {
         verifyMembership(projectId, caller.getId());
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         Asset asset = findAssetInWorkItem(workItemId, assetId);
         requireFileAsset(asset);
@@ -486,6 +502,7 @@ public class AssetService {
     public Asset patchAsset(String projectId, String workItemId, String assetId,
                             AssetPatch patch, User caller) {
         verifyMembership(projectId, caller.getId());
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         Asset asset = findAssetInWorkItem(workItemId, assetId);
         if (KIND_FILE.equals(asset.getKind())) {
@@ -507,6 +524,7 @@ public class AssetService {
     @Transactional
     public void deleteAsset(String projectId, String workItemId, String assetId, User caller) {
         verifyMembership(projectId, caller.getId());
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         Asset asset = findAssetInWorkItem(workItemId, assetId);
         if (KIND_FILE.equals(asset.getKind())) {
