@@ -201,6 +201,29 @@ public class ConnectionService {
         connectionRepository.save(c);
     }
 
+    /** Records the scopes the latest authorization granted; null clears the record (unknown). */
+    @Transactional
+    public void updateGrantedScopes(Connection c, List<String> scopes) {
+        try {
+            c.setGrantedScopes(scopes == null ? null : objectMapper.writeValueAsString(scopes));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to serialize granted scopes", e);
+        }
+        connectionRepository.save(c);
+    }
+
+    /** The recorded granted scopes, or null when the grant is unknown. */
+    public List<String> readGrantedScopes(Connection c) {
+        if (c.getGrantedScopes() == null || c.getGrantedScopes().isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(c.getGrantedScopes(), new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     @Transactional
     public void delete(String connectionId) {
         cacheRepository.deleteByConnectionId(connectionId);

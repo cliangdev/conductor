@@ -27,6 +27,8 @@ export interface ConnectionSummary {
   fetchedAt?: string | null
   /** The OAuth grant is stored but no account was chosen for it; the picker has to run again. */
   awaitingAccountSelection?: boolean
+  /** Scopes the connector now asks for that this grant lacks; empty when none or when the grant is unknown. */
+  missingScopes?: string[] | null
 }
 
 export interface ConnectionResponse {

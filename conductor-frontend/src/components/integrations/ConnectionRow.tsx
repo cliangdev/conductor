@@ -36,6 +36,8 @@ interface ConnectionRowProps {
   onDisconnect?: (connectionId: string) => void;
   /** Reopens the account picker for a grant whose selection never happened. */
   onChooseAccount?: (connectionId: string) => void;
+  /** Starts the connector's authorize flow again; re-authorizing the same account merges into this connection. */
+  onReconnect?: () => void;
   /** Opens the settings editor (config fields + replace key) for an API-key connection. */
   onEditSettings?: (connectionId: string) => void;
 }
@@ -51,6 +53,7 @@ export function ConnectionRow({
   disconnecting = false,
   onDisconnect,
   onChooseAccount,
+  onReconnect,
   onEditSettings,
 }: ConnectionRowProps) {
   const unhealthy = isUnhealthy(connection);
@@ -60,6 +63,10 @@ export function ConnectionRow({
   // it) leaves a row that reads ACTIVE yet can never publish. Without this the only way back to the
   // picker was the `?selectAccount=` marker the redirect carried, and that is gone after one navigation.
   const awaitingAccount = !unhealthy && connection.awaitingAccountSelection === true;
+  // The connector asks for permissions this grant predates. The connection still works, so this is a
+  // nudge, not an error: it never shows over an UNHEALTHY row, whose message already says reconnect.
+  const missingScopes = connection.missingScopes ?? [];
+  const needsPermissions = !unhealthy && !awaitingAccount && missingScopes.length > 0;
 
   return (
     <div className="bg-card rounded-lg border border-border p-4 flex items-center gap-4">
@@ -73,6 +80,7 @@ export function ConnectionRow({
               reads, and it names the fix rather than the diagnosis. */}
           {unhealthy && <StatusBadge status="ERROR" label="Needs reconnect" />}
           {awaitingAccount && <StatusBadge status="SETUP_REQUIRED" label="Choose an account" />}
+          {needsPermissions && <StatusBadge status="SETUP_REQUIRED" label="New permissions" />}
         </div>
         {awaitingAccount ? (
           <div className="text-xs text-muted-foreground mt-0.5">
@@ -86,6 +94,10 @@ export function ConnectionRow({
             {connection.healthCheckedAt && (
               <span className="text-muted-foreground"> · {timeAgo(connection.healthCheckedAt)}</span>
             )}
+          </div>
+        ) : needsPermissions ? (
+          <div data-testid="missing-scopes-note" className="text-xs text-muted-foreground mt-0.5">
+            Reconnect to grant: {missingScopes.join(', ')}
           </div>
         ) : (
           <div className="text-xs text-muted-foreground flex items-center gap-1">
@@ -109,6 +121,11 @@ export function ConnectionRow({
       {awaitingAccount && canMutate && onChooseAccount && (
         <Button type="button" size="sm" onClick={() => onChooseAccount(connection.id)}>
           Choose account
+        </Button>
+      )}
+      {(unhealthy || needsPermissions) && canMutate && onReconnect && (
+        <Button type="button" size="sm" variant={unhealthy ? 'default' : 'outline'} onClick={onReconnect}>
+          Reconnect
         </Button>
       )}
       {canMutate && onEditSettings && (

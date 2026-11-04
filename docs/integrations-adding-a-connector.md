@@ -77,6 +77,14 @@ capability interfaces it implements: `FetchConnector` (pull), `WebhookConnector`
    tokens) instead of adding a duplicate; existing duplicates are folded into it. Pick an id that
    survives a change of OAuth app (TikTok's `open_id` does not).
 
+   **New permissions.** Each authorization records the scopes it was granted on the connection
+   (`granted_scopes`): from the connector's optional `grantedScopes(userAccessToken)` hook (Meta reads
+   `/me/permissions`, so declined permissions count as missing), else the token response's `scope`, else
+   the scopes requested. When `oauthScopes()` later gains a scope, the connection reports it in
+   `missingScopes` and the integrations page shows a "New permissions" badge with a Reconnect button;
+   re-authorizing the same account merges into the existing connection. Connections authorized before
+   `granted_scopes` existed have no record and show no prompt until they are re-authorized once.
+
    (Custom, non-OAuth2 auth — like Apple's signed-JWT exchange — skips `OAuth2Connector` entirely and
    stays fully inside your connector package; see `integrations-apple-search-ads.md`.)
 4. **Outbound actions (only if applicable)** — implement `ActionConnector` instead of/in addition to
