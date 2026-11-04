@@ -1,13 +1,19 @@
 package com.conductor.creative;
 
 import com.conductor.entity.User;
+import com.conductor.entity.WorkItem;
 import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.v2.model.CompleteCreativeRevisionRequest;
 import com.conductor.generated.v2.model.FailCreativeRevisionRequest;
 import com.conductor.generated.v2.model.SlideshowCheck;
+import com.conductor.repository.AssetRepository;
+import com.conductor.repository.UserRepository;
+import com.conductor.repository.WorkItemRepository;
 import com.conductor.service.ProjectSecurityService;
+import com.conductor.workflow.lifecycle.Statechart;
+import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import com.conductor.workflow.WorkflowRunCancellationService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -21,7 +27,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -57,8 +62,17 @@ public class CreativeRevisionService {
     public static final String RULE_EDIT_INVALID = "slideTextEditInvalid";
     public static final String RULE_EDIT_NOOP = "slideTextEditNoop";
     public static final String RULE_SLIDE_MEDIA = "slideMediaInvalid";
+    /** 422: the Post named by {@code postId} does not use this Creative (or is not in this workspace's Posts). */
+    public static final String RULE_POST_MISMATCH = "slideTextEditPostMismatch";
+    /** The 409 {@code code} for "the Post named by {@code postId} is not in its review status". */
+    public static final String CODE_POST_NOT_IN_REVIEW = "slideTextEditPostNotInReview";
     /** A slide list that is not 9x16 or 4x5 (1x1, or a shape that is neither): the composer cannot re-render it. */
     public static final String RULE_UNSUPPORTED_RATIO = "slideTextEditUnsupportedRatio";
+    /**
+     * The 409 {@code code} (and {@code ruleId}) for "a reviewer of this Post may not fix text that would send
+     * other approved or scheduled Posts back to review: an editor must".
+     */
+    public static final String RULE_NEEDS_EDITOR = "slideTextEditNeedsEditor";
     /** The 409 {@code code} for "a slide-text revision is still rendering". */
     public static final String CODE_EDIT_ACTIVE = "SLIDE_EDIT_ACTIVE";
 
@@ -82,6 +96,12 @@ public class CreativeRevisionService {
     private final ProjectSecurityService projectSecurityService;
     private final ObjectMapper objectMapper;
     private final WorkflowRunCancellationService cancellationService;
+    private final WorkItemRepository workItemRepository;
+    private final AssetRepository assetRepository;
+    private final UserRepository userRepository;
+    private final WorkflowDefinitionResolver workflowResolver;
+    private final CreativeEditImpacts impacts;
+    private final PlatformTransactionManager transactionManager;
     private final TransactionTemplate newTx;
 
     public CreativeRevisionService(CreativeRevisionRepository revisionRepository,
@@ -93,8 +113,19 @@ public class CreativeRevisionService {
                                    ProjectSecurityService projectSecurityService,
                                    ObjectMapper objectMapper,
                                    WorkflowRunCancellationService cancellationService,
+                                   WorkItemRepository workItemRepository,
+                                   AssetRepository assetRepository,
+                                   UserRepository userRepository,
+                                   WorkflowDefinitionResolver workflowResolver,
+                                   CreativeEditImpacts impacts,
                                    PlatformTransactionManager transactionManager) {
+        this.impacts = impacts;
+        this.transactionManager = transactionManager;
         this.cancellationService = cancellationService;
+        this.workItemRepository = workItemRepository;
+        this.assetRepository = assetRepository;
+        this.userRepository = userRepository;
+        this.workflowResolver = workflowResolver;
         this.revisionRepository = revisionRepository;
         this.creativeRepository = creativeRepository;
         this.photoRepository = photoRepository;
@@ -129,16 +160,46 @@ public class CreativeRevisionService {
 
     // ── the edit ────────────────────────────────────────────────────────────
 
+    /** {@link #edit(String, String, Integer, List, String, User, String)} with no Post: an editor's edit. */
+    @Transactional
+    public EditResult edit(String projectId, String creativeId, Integer version,
+                           List<SlideshowTextFields.Edit> edits, String source, User caller) {
+        return edit(projectId, creativeId, version, edits, source, caller, null);
+    }
+
     /**
      * Records a PENDING revision of {@code creativeId}'s slideshow spec with {@code edits} applied and dispatches
      * the render of its changed slides. The checks run in the order the API documents them.
      *
+     * <p><b>Reviewer fix.</b> With a {@code postId} the caller may be an editor <em>or</em> a reviewer of that Post
+     * (even one whose project role is REVIEWER): the Post must use this Creative (else 422
+     * {@value #RULE_POST_MISMATCH}) and be in its review status (else 409 {@value #CODE_POST_NOT_IN_REVIEW}). A
+     * reviewer of the Post makes the revision {@code REVIEWER}, stamped with the Post and its current review round,
+     * which is what lets {@link CreativeEditPropagator} keep that Post in the same round. An editor who is not
+     * one of the Post's reviewers keeps {@code source}, with the Post and round recorded for the history.
+     *
      * @param source {@link CreativeRevision#SOURCE_EDITOR} or {@link CreativeRevision#SOURCE_MCP}
+     * @param postId the Post the edit is made from, or null
      */
     @Transactional
     public EditResult edit(String projectId, String creativeId, Integer version,
-                           List<SlideshowTextFields.Edit> edits, String source, User caller) {
-        requireEditor(projectId, caller);
+                           List<SlideshowTextFields.Edit> edits, String source, User caller, String postId) {
+        boolean reviewerOfPost = false;
+        boolean editor = true;
+        WorkItem post = null;
+        if (postId == null) {
+            requireEditor(projectId, caller);
+        } else {
+            requireMember(projectId, caller);
+            post = workItemRepository.findById(postId)
+                    .filter(w -> w.getProject() != null && projectId.equals(w.getProject().getId()))
+                    .orElseThrow(() -> new EntityNotFoundException("Post not found"));
+            reviewerOfPost = impacts.isReviewerOf(postId, caller);
+            editor = projectSecurityService.isEditor(projectId, caller.getId());
+            if (!reviewerOfPost && !editor) {
+                throw new ForbiddenException("Only ADMIN or CREATOR, or a reviewer of this Post, can edit its slide text");
+            }
+        }
         // The row lock serializes two edits (and an edit against a patch or a render dispatch).
         Creative creative = creativeRepository.findByIdAndProjectIdForUpdate(creativeId, projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Creative not found"));
@@ -151,6 +212,16 @@ public class CreativeRevisionService {
         RenderPlan plan = planRenderLists(toSlidesMap(creative.getSlides()));
         if (plan.unsupported() != null) {
             throw violation("slides", RULE_UNSUPPORTED_RATIO, plan.unsupported());
+        }
+        if (post != null) {
+            requirePostInReviewUsing(projectId, creative, post);
+            // The same computation affected-posts announces (as blockedReason), so the two cannot disagree.
+            String blocked = impacts.blockedReason(impacts.forCreative(projectId, creativeId), post.getId(),
+                    editor, reviewerOfPost);
+            if (blocked != null) {
+                throw new CreativeRenderDispatchException(HttpStatus.CONFLICT, RULE_NEEDS_EDITOR, blocked,
+                        Map.of("ruleId", RULE_NEEDS_EDITOR, "postId", post.getId()));
+            }
         }
         if (version == null || version != creative.getVersion()) {
             throw new ConflictException("This Creative changed since you read it (current version "
@@ -178,10 +249,14 @@ public class CreativeRevisionService {
         revision.setCreativeVersion(creative.getVersion());
         revision.setBaseVersion(creative.getVersion());
         revision.setStatus(CreativeRevision.STATUS_PENDING);
-        revision.setSource(source);
+        revision.setSource(reviewerOfPost ? CreativeRevision.SOURCE_REVIEWER : source);
         revision.setSpec(candidate);
         revision.setTextDiff(diff);
         revision.setAuthorUserId(caller.getId());
+        if (post != null) {
+            revision.setPostId(post.getId());
+            revision.setReviewRound(post.getCurrentReviewRound());
+        }
         revision = revisionRepository.saveAndFlush(revision);
 
         CreativeRenderDispatchService.RenderRunView run =
@@ -189,6 +264,26 @@ public class CreativeRevisionService {
         revision.setWorkflowRunId(run.runId());
         revision = revisionRepository.save(revision);
         return new EditResult(revision, run);
+    }
+
+    /**
+     * The Post an edit is made from must use this Creative (one of its frames is on the Post) and be in its
+     * Workflow's review status right now: that is the one place a reviewer may fix text.
+     */
+    private void requirePostInReviewUsing(String projectId, Creative creative, WorkItem post) {
+        if (!assetRepository.existsByWorkItemIdUsingCreative(post.getId(), creative.getId())) {
+            throw violation("postId", RULE_POST_MISMATCH, "That Post does not use this Creative.");
+        }
+        String slug = post.getWorkflow() != null ? post.getWorkflow() : "ENGINEERING";
+        Statechart chart = workflowResolver.resolveRequired(projectId, slug, post.getWorkflowVersion());
+        boolean inReview = com.conductor.service.AssetUploadPolicy.reviewGate(chart)
+                .map(com.conductor.workflow.lifecycle.StatechartTransition::from)
+                .filter(post.getCurrentStatus()::equals).isPresent();
+        if (!inReview) {
+            throw new CreativeRenderDispatchException(HttpStatus.CONFLICT, CODE_POST_NOT_IN_REVIEW,
+                    "That Post is not in review any more, so its text cannot be fixed from the review.",
+                    Map.of("postId", post.getId()));
+        }
     }
 
     /** Every edit checked on its own (so each bad one is reported, by index), then all applied in order. */
@@ -266,6 +361,12 @@ public class CreativeRevisionService {
         List<CreativeRevision> revisions = revisionRepository.findAllByCreativeIdOrderByRevisionNoDesc(
                 creative.getId(), org.springframework.data.domain.PageRequest.of(0, max));
         revisions.forEach(this::resolveStale);
+        // One lookup for every author's name.
+        Map<String, String> names = new HashMap<>();
+        userRepository.findAllById(revisions.stream().map(CreativeRevision::getAuthorUserId)
+                        .filter(java.util.Objects::nonNull).distinct().toList())
+                .forEach(u -> names.put(u.getId(), u.getName()));
+        revisions.forEach(r -> r.setAuthorName(r.getAuthorUserId() == null ? null : names.get(r.getAuthorUserId())));
         return revisions;
     }
 
@@ -277,15 +378,24 @@ public class CreativeRevisionService {
      * usable, the media does not cover the changed slides) is FAILED with the reason, and the Creative is left
      * untouched. Always returns the revision (200); only a malformed body is a 422.
      */
-    @Transactional
     public CreativeRevision complete(String projectId, String creativeId, String revisionId,
                                      CompleteCreativeRevisionRequest request, RenderCaller caller) {
+        // Not @Transactional: the follow-ups (releasing the run, queueing a video render, carrying the edit to
+        // its Posts) each open their own transaction and must start only after this one has released its
+        // connection. See AfterTransaction.
+        return AfterTransaction.execute(transactionManager,
+                followUps -> completeInTransaction(projectId, creativeId, revisionId, request, caller, followUps));
+    }
+
+    private CreativeRevision completeInTransaction(String projectId, String creativeId, String revisionId,
+                                                   CompleteCreativeRevisionRequest request, RenderCaller caller,
+                                                   AfterTransaction.FollowUps followUps) {
         Creative creative = creativeRepository.findByIdAndProjectIdForUpdate(creativeId, projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Creative not found"));
         CreativeRevision revision = findRevision(creativeId, revisionId);
         authorize(projectId, creativeId, revision, caller, true);
         requirePending(revision);
-        releaseUnstartedRun(revision, caller);
+        releaseUnstartedRun(revision, caller, followUps);
 
         List<SlideshowCheck> checks = request.getChecks() != null ? request.getChecks() : List.of();
         List<SlideshowCheck> errors = checks.stream()
@@ -373,20 +483,21 @@ public class CreativeRevisionService {
         revision.setError(null);
         revision = revisionRepository.save(revision);
 
-        render(revision, creative);
+        render(revision, creative, followUps);
         return revision;
     }
 
     /** The job could not produce the slides. */
-    @Transactional
     public CreativeRevision fail(String projectId, String creativeId, String revisionId,
                                  FailCreativeRevisionRequest request, RenderCaller caller) {
-        findCreative(projectId, creativeId);
-        CreativeRevision revision = findRevision(creativeId, revisionId);
-        authorize(projectId, creativeId, revision, caller, true);
-        requirePending(revision);
-        releaseUnstartedRun(revision, caller);
-        return failed(revision, request.getError(), request.getChecks());
+        return AfterTransaction.execute(transactionManager, followUps -> {
+            findCreative(projectId, creativeId);
+            CreativeRevision revision = findRevision(creativeId, revisionId);
+            authorize(projectId, creativeId, revision, caller, true);
+            requirePending(revision);
+            releaseUnstartedRun(revision, caller, followUps);
+            return failed(revision, request.getError(), request.getChecks());
+        });
     }
 
     private CreativeRevision failed(CreativeRevision revision, String error, List<SlideshowCheck> checks) {
@@ -402,12 +513,12 @@ public class CreativeRevisionService {
      * commits, and {@link CreativeRenderService#completeRender} links it when that render succeeds. A refusal
      * leaves the apply in place and is noted on the revision.
      */
-    private void render(CreativeRevision revision, Creative creative) {
+    private void render(CreativeRevision revision, Creative creative, AfterTransaction.FollowUps followUps) {
         if (!renderService.needsLocalRender(creative)) {
             try {
                 CreativeRender render = renderService.renderCarouselForRevision(creative.getProjectId(), creative,
                         revision.getAuthorUserId());
-                renderLinker.link(revision, render);
+                renderLinker.link(revision, render, followUps);
             } catch (CreativeValidationException | com.conductor.exception.BusinessException e) {
                 note(revision, "The slides were updated, but the carousel could not be rendered: " + e.getMessage());
             }
@@ -417,7 +528,7 @@ public class CreativeRevisionService {
         String projectId = revision.getProjectId();
         String creativeId = revision.getCreativeId();
         String revisionId = revision.getId();
-        Runnable dispatch = () -> {
+        followUps.add(() -> {
             try {
                 newTx.executeWithoutResult(status ->
                         dispatchService.dispatchRenderAfterEdit(projectId, creativeId, ignoreRunId));
@@ -429,8 +540,7 @@ public class CreativeRevisionService {
                     revisionRepository.save(r);
                 }));
             }
-        };
-        afterCommit(dispatch);
+        });
     }
 
     /**
@@ -439,12 +549,12 @@ public class CreativeRevisionService {
      * every Render click for up to two days. Once the answer has committed, cancel that run if nothing has
      * started it; a run that is already going is left to finish (it will find the revision settled).
      */
-    private void releaseUnstartedRun(CreativeRevision revision, RenderCaller caller) {
+    private void releaseUnstartedRun(CreativeRevision revision, RenderCaller caller, AfterTransaction.FollowUps followUps) {
         if (!(caller instanceof RenderCaller.UserCaller) || revision.getWorkflowRunId() == null) {
             return;
         }
         String runId = revision.getWorkflowRunId();
-        afterCommit(() -> {
+        followUps.add(() -> {
             try {
                 newTx.executeWithoutResult(status -> dispatchService.findRun(runId)
                         .filter(run -> WorkflowRunStatus.PENDING.name().equals(run.status())
@@ -454,19 +564,6 @@ public class CreativeRevisionService {
                 log.warn("Could not release the unstarted render run {}", runId, e);
             }
         });
-    }
-
-    private static void afterCommit(Runnable action) {
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    action.run();
-                }
-            });
-        } else {
-            action.run();
-        }
     }
 
     private void note(CreativeRevision revision, String message) {

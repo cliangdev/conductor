@@ -10,6 +10,7 @@ import type { MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { WorkItemScheduleField } from '@/components/workitems/WorkItemScheduleField'
 import { statusMeta } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
+import type { PostContentChange } from './contentChanges'
 import { PostContentSection } from './PostContentSection'
 
 export interface PostDetailBodyProps {
@@ -28,6 +29,11 @@ export interface PostDetailBodyProps {
   onCaptionSaved: (description: string) => void
   onAssetsChanged: () => void | Promise<void>
   onScheduleChanged: (scheduledFor: string | null, scheduleTimezone: string | null, publishOnApproval?: boolean) => void
+  /** The slide-text change to show as "Changed since last review", if there is one. */
+  contentChange?: PostContentChange | null
+  /** The viewer is a reviewer of this Post while it is in review. */
+  reviewerFix?: boolean
+  onTextChanged?: () => void | Promise<void>
 }
 
 export function PostDetailBody({
@@ -46,6 +52,9 @@ export function PostDetailBody({
   onCaptionSaved,
   onAssetsChanged,
   onScheduleChanged,
+  contentChange,
+  reviewerFix,
+  onTextChanged,
 }: PostDetailBodyProps) {
   const meta = statusMeta(workflowView, status)
   const noun = workflowView?.noun ?? 'Post'
@@ -88,6 +97,9 @@ export function PostDetailBody({
         canEdit={canEdit}
         onCaptionSaved={onCaptionSaved}
         onAssetsChanged={onAssetsChanged}
+        contentChange={contentChange}
+        reviewerFix={reviewerFix}
+        onTextChanged={onTextChanged}
       />
     </>
   )

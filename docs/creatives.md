@@ -437,7 +437,8 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   `SlideshowTextFields` in the backend, which lists, applies and diffs them (parity test
   `SlideshowTextFieldsParityTest`).
 - **Editing slide text (backend).** `POST /api/v2/projects/{id}/marketing/creatives/{creativeId}/slide-text-edits`
-  (ADMIN or CREATOR) takes `{version, edits: [{slide, path, text}]}` (1-50 edits, `path` a concrete registry
+  (ADMIN or CREATOR; or, with `postId`, a reviewer of that Post, see [the reviewer fix](#reviewer-fix)) takes
+  `{version, edits: [{slide, path, text}], postId?}` (1-50 edits, `path` a concrete registry
   path such as `texts[0].t`) and answers 202 `{revision, renderRun}`. Nothing on the Creative changes yet: the
   edit is a PENDING `creative_revision` holding the candidate spec (`spec`), the text diff, the Creative
   `version` it was made against (`baseVersion`), `source` `EDITOR` (a signed-in session) or `MCP` (a user API
@@ -498,8 +499,16 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
     SUCCEEDS `completeRender` links the oldest unlinked applied edit of that Creative version. Either way a
     `CreativeRevisionRendered(projectId, creativeId, revisionId, renderId)` Spring event is published once,
     **after the transaction that finished the render has committed**, and never when the render fails or the
-    transaction rolls back. Listen with a plain `@EventListener` (it runs on the committing thread, no transaction
-    bound); T2 has no listener, post propagation is the first.
+    transaction rolls back. Listen with a plain `@EventListener` (it runs on the request thread, no transaction
+    bound and **no pooled connection held**). The listener is `CreativeEditPropagator`, below.
+  - **One connection at a time.** The pool is small in prod, and Spring runs `afterCommit` callbacks while the
+    committed transaction's connection is still bound, so a follow-up that opened its own transaction there held two.
+    `complete`, `fail` and `completeRender` are therefore not `@Transactional` themselves: they run their body in a
+    transaction through `AfterTransaction.execute` and collect the follow-ups (releasing the unstarted run, queueing
+    the video render, publishing the event so the propagator runs), which start only once that transaction has ended
+    and released its connection, each in a short transaction of its own. They run on the request thread, before the
+    response: no `@Async` and no timers, because prod is scale-to-zero and work left for after the response may never
+    be scheduled.
   - **Stale revisions.** A PENDING revision whose run ended without completing it (FAILED, CANCELLED,
     `LOCAL_PICKUP_TIMEOUT`, no longer there, or finished without reporting) can never finish, so it reads as
     FAILED with the run's reason and is stored so in its own transaction. This happens on the revision's `GET`,
@@ -511,6 +520,45 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
     leaves both null to stay one query per kind. The readiness checklist gains a non-blocking `altTextStale`
     item for a CAROUSEL once an applied edit flagged a slide: not ok ("slide 2 alt text still quotes the old
     text") while that slide's alt text still contains the replaced text, ok once it does not.
+- **Editing slide text in the browser.** A CAROUSEL with a stored spec shows **Edit text** under the slide on
+  screen (ADMIN or CREATOR; disabled with a visible reason while an edit renders or the form has unsaved
+  changes). It opens the slide's fields from the registry under plain names (Text 1, Callout, Note item 3,
+  Bubble 2), one labelled textarea each; line breaks are kept. Beside them a live preview shows the slide at
+  9:16 and 4:5 (the ratios the Creative has). The preview is the composer's own page: the slideshow modules
+  of `conductor-tools/src/lib/slideshow/` (`spec`, `style`, `css`, `html` with the in-page measuring script,
+  `text-fields`) have no Node imports, so `conductor-tools/scripts/sync-slideshow-core.mjs` (run by
+  `npm run build`) compiles them to plain ESM and `.d.ts` in `conductor-creative/slideshow/` and copies the
+  bundled fonts to `conductor-creative/slideshow/fonts/`. Both are committed, and
+  `sync-slideshow-core.test.ts` fails when the committed copy differs from a fresh generation and checks the
+  generated builder returns the same HTML as the TypeScript one. The web app imports
+  `@cliangdev/creative-render/slideshow/*.js` and `scripts/copy-slideshow-fonts.mjs` (run by `predev` and
+  `prebuild`) copies the fonts to `public/slideshow-fonts/` (gitignored), the preview's `assetBase`. The
+  preview swaps each `media:<id>` for the media's display URL, resolves the style as the render job does
+  (the spec's own `style`, then the Creative's `slideStyle`), and shows the page's checks by rule once it has
+  measured itself (safe zone, spill, words per line, text size, font, image, contrast; errors first). A
+  **Show safe zones** switch overlays the 220 / 430 / 140 px bands on 9:16. The checks are advisory; the render
+  job's are the ones that count, and an error there refuses the save.
+  **Save** is two steps. **Review and save** lists the changed fields, the Posts that use the Creative with
+  what happens to each (`GET .../affected-posts`: back to review, new review round, updated, not changed), and
+  where the render runs (`GET .../render-availability`: the runtime target, or the self-hosted daemon; with no
+  target the page says to keep the daemon running or to run `conductor creative render-slides <revision id>`).
+  **Save and re-render** POSTs the edits with the Creative's `version`, shows "Re-rendering…" and asks the
+  Creative every few seconds until `pendingRevision` clears. Applied: the page reloads the slides. Failed: the
+  error and the failing checks by slide, ratio and rule, with the edit still in the form. A 409 (stale version,
+  an edit or render already running) and a 422 show the API's own message and leave the edit as it was. If an
+  edit is already rendering when the page opens, the editor opens on that state and the page shows a note.
+  **Text history** (Creative page) lists the revisions newest first: source (web editor, reviewer fix, agent,
+  committed), author, time, status, and rows "Slide 3 · Text 1: old → new" with the changed words marked (a
+  small word-level diff, no dependency). A long revision shows its first three changes. **Alt text**: after an
+  applied edit, a slide whose alt text still quotes the replaced words (the revision's `altTextFlags`, while the
+  readiness item `altTextStale` is not ok) shows "Quotes the old text — update" under its alt input, which
+  clears as the text stops quoting them.
+  On a Post, the edit's effect shows as **Changed since last review** (Content section: the Creative, who,
+  when, the changed words) while the newest change opened the Post's current review round or is a reviewer's fix
+  inside it, and as entries in the Activity tab (`GET .../work-items/{id}/content-changes`). A reviewer of an In
+  Review Post sees **Fix text** beside "Open Creative" for a slideshow Creative with a spec; it opens the same
+  editor with `postId`, whose confirmation says the fix stays in this round and names the other Posts that go
+  back to review.
 - **Spec through preview and commit (CLI).** `compose_slideshow` writes `spec.json` beside the slides (the
   input spec plus `resolvedStyle`). `preview_creative_draft` keeps it with a CAROUSEL draft: pass
   `slideshowSpecPath`, or leave it out and the `spec.json` in the folder of `slidePaths` is used when it is the
@@ -592,6 +640,74 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
     `update_creative_slide_text`'s result and in `get_creative`'s `pendingRevision` / `latestRevision`). It needs
     a browser (Chrome, Edge or Playwright's Chromium) and signed-in access to the project's media; the result is
     identical to the Workflow's.
+- **Edits reach the Posts (`CreativeEditPropagator`).** When the event fires, every Post that holds a frame of
+  any render of the Creative is moved onto the new slides, each in its own transaction (one Post failing is
+  logged and rolls back only itself; a Post that already holds the new render's frames, or already has a change
+  row for the revision, is skipped, so a second event changes nothing). What happens to a Post follows its status
+  on its own Workflow's statechart, never a hardcoded list (`CreativeEditImpact`):
+
+  | Post is | Outcome | What the propagator does |
+  | --- | --- | --- |
+  | Approved or Scheduled (anything past the review gate, not terminal; Failed counts), with no destination yet published | `back-to-review` | `PublishBundleGuard.revertForBundleEdit`: revokes a native hand-off first, back to the review status, a new review round, announced as a status change |
+  | In review | `new-round` | stays in review, `currentReviewRound + 1`: approvals cast so far stop counting |
+  | Before review (Draft, Changes Requested) | `updated` | re-pointed at the new slides, nothing else moves |
+  | Published (terminal), **partly published** (any destination `PUBLISHED`, whatever the Post's status: say Failed after one account went live), or Scheduled on a Workflow with no review gate | `unchanged` | not touched, no record: what is live cannot be taken back, and swapping the media of the rest would make the Post disagree with it |
+
+  *Re-pointing* (`CreativeAttachService.reattach`, package-private) swaps each old Creative asset on the Post for
+  the new render's frame in the same slot (placement, slide index, image or video) in place in every
+  destination's selection, so which destinations carry the Creative, their order, `carouselAs`, caption
+  overrides, alt text and every other option are exactly as they were; destinations that inherit stay inheriting.
+  It goes through `PublishTargetService.replaceSelection` like any edit, so the bundle hash changes, and then
+  deletes the replaced assets (the frames and stored objects belong to the Creative). A Post whose old asset has
+  no counterpart in the new render fails whole (rolled back) rather than being left half moved. It records a
+  `post_content_change` row (V176): revision, source, actor (the revision's author), status and review round
+  before and after, and a copy of the text diff.
+
+  **The freeze exception is internal only.** A Post under review or later refuses media and destination edits,
+  and still does through the public attach endpoint and `replaceSelection`. Only this path passes
+  `FreezeBypass.CREATIVE_EDIT_PROPAGATION`, an enum argument of `AssetService.createAllFromStoredObjects` and
+  `PublishTargetService.replaceSelection` that no controller maps from a request. It waives only the frozen
+  refusal; the revert and the new round are the propagator's own, so a frozen Post never changes silently.
+- **Reviewer fix {#reviewer-fix}.** `slide-text-edits` accepts `postId`. Without it, editors only (as before). With
+  it, the caller may be an editor or a reviewer of that Post (a `work_item_reviewers` row, whatever the project
+  role, even REVIEWER); anyone else is 403, a non-member 404, an unknown Post 404. The Post must use this Creative
+  (a frame of it on the Post) else 422 `slideTextEditPostMismatch` (field `postId`), and be in its Workflow's
+  review status else 409 `slideTextEditPostNotInReview` (body `postId`). The revision gets `source: REVIEWER` when
+  the caller is a reviewer of the Post (an editor who is not one keeps `EDITOR` / `MCP`), with `postId` and the
+  Post's current `reviewRound` recorded. When the revision's render lands, that one Post, if it is still in review
+  in the same round, is **not** bumped: status and round stay, and its change row has the same round before and
+  after. Every other Post using the Creative gets the table's normal treatment, a Post whose round has moved on
+  meanwhile too. Approvals already recorded in that round stay in the table but stop counting by the existing
+  hash rule: a review's `bundle_hash` is the hash of the bundle it was cast against, the gate and the review list
+  compare it to the Post's current hash (caption, targets, selections, uploaded assets with ids and paths), and
+  the re-pointed assets changed it. The reviewer's next approval stamps the new hash in the same round and
+  counts. `PostContentChange.source` is the revision's source for every Post it reaches, so the card on another
+  Post reads "edited by a reviewer", with a new round.
+
+  **Limits of a reviewer fix.** A caller counts as a reviewer of the Post only through a `work_item_reviewers` row
+  (`CreativeEditImpacts.isReviewerOf`, the one test `edit` and `affected-posts` both use). A reviewer who is **not a
+  project editor** (not ADMIN or CREATOR) may fix the text only when no OTHER Post using the Creative would go
+  `back-to-review`: sending an approved or scheduled Post back is an editor's call, not a side effect of a review
+  comment. Otherwise the save answers 409 `slideTextEditNeedsEditor` (body `code` and `ruleId`), message "Post
+  RE-12 and 1 more using this Creative are approved or scheduled. Ask an editor to make this change." An editor
+  who passes `postId` is unaffected. The same text is `blockedReason` on `affected-posts`, so the save dialog can
+  disable Save before anyone tries.
+- **Reads.** Any project member may read all three; each is a fixed number of queries (the Posts using a Creative
+  are one query over `assets` joined to `creative_render_frame`, not a walk of every frame).
+  - `GET /api/v2/projects/{id}/work-items/{workItemId}/content-changes` answers `{changes: [...]}`, newest first,
+    at most 50: `id, creativeId, creativeDisplayId, revisionId, revisionNo, source, actorUserId, actorName,
+    fromStatus, toStatus, reviewRoundBefore, reviewRoundAfter, textDiff, createdAt`.
+  - `GET .../marketing/creatives/{creativeId}/affected-posts[?postId=]` answers `{posts: [{workItemId, displayId,
+    title, status, statusLabel, outcome}]}` for every Post holding a frame of the Creative, ordered by number:
+    `outcome` is `back-to-review`, `new-round`, `updated` or `unchanged` (the table above); with `postId` naming
+    a Post that is in review **and the caller one of its reviewers**, that Post reads `reviewer-fix` instead of
+    `new-round`. The response also carries `blockedReason` (string or null): why this caller, a non-editor
+    reviewer of `postId`, may not save (see the limits of a reviewer fix).
+  - `GET .../marketing/creatives/{creativeId}/render-availability` answers `{runtime, targetName, daemonOnline}`:
+    `target` (with the runtime target's name) when the designated target can render now, else `self-hosted`.
+    Conductor does not track daemon liveness, so `daemonOnline` is always null.
+  - `GET .../revisions` items gain `authorName` (one batched user lookup); it is null on the revision objects
+    inside other responses.
 - **Fonts:** the bundled TikTok Sans (600, 700, 800) under the SIL Open Font License, in
   `conductor-tools/assets/fonts/` with `OFL.txt`. The slide types that imitate a system UI (`notes`,
   `messages`, `week`, a `grid` photo's `badge`, `receipt`, `placard`) used Apple system fonts (SF Pro,

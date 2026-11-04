@@ -39,3 +39,6 @@ next-env.d.ts
 tests/e2e/.auth/
 playwright-report/
 test-results/
+
+# slideshow preview fonts, copied from @cliangdev/creative-render by scripts/copy-slideshow-fonts.mjs
+/public/slideshow-fonts/

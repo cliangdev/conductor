@@ -193,6 +193,16 @@ public class AssetService {
      */
     @Transactional
     public List<Asset> createAllFromStoredObjects(String projectId, String workItemId, List<StoredObjectInput> inputs) {
+        return createAllFromStoredObjects(projectId, workItemId, inputs, FreezeBypass.NONE);
+    }
+
+    /**
+     * As above, with the freeze rule optionally waived for the one internal caller allowed to (see
+     * {@link FreezeBypass}); every other caller uses the overload without it.
+     */
+    @Transactional
+    public List<Asset> createAllFromStoredObjects(String projectId, String workItemId, List<StoredObjectInput> inputs,
+                                                  FreezeBypass bypass) {
         if (inputs.isEmpty()) {
             return List.of();
         }
@@ -200,7 +210,9 @@ public class AssetService {
         for (String type : inputs.stream().map(StoredObjectInput::type).distinct().toList()) {
             validateAssetType(projectId, workItem, type);
         }
-        guardFileAssetMutable(projectId, workItem);
+        if (bypass == FreezeBypass.NONE) {
+            guardFileAssetMutable(projectId, workItem);
+        }
 
         List<Asset> assets = new ArrayList<>();
         for (StoredObjectInput input : inputs) {

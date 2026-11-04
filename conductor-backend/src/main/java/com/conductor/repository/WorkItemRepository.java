@@ -116,4 +116,15 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
      */
     @Query("SELECT i FROM WorkItem i LEFT JOIN FETCH i.project LEFT JOIN FETCH i.assignee WHERE i.id = :workItemId")
     Optional<WorkItem> findByIdWithProjectAndAssignee(@Param("workItemId") String workItemId);
+
+    /**
+     * The Work Items of one project that hold a frame of any render of one Creative, oldest sequence number
+     * first: one query however many frames the Creative has produced or Posts use it. Each Work Item's
+     * project is fetched, for the display id.
+     */
+    @Query("SELECT w FROM WorkItem w JOIN FETCH w.project WHERE w.project.id = :projectId AND w.id IN "
+            + "(SELECT a.workItem.id FROM Asset a WHERE a.creativeFrameId IN "
+            + "(SELECT f.id FROM CreativeRenderFrame f WHERE f.creativeId = :creativeId)) "
+            + "ORDER BY w.sequenceNumber ASC NULLS LAST, w.id ASC")
+    List<WorkItem> findAllUsingCreative(@Param("projectId") String projectId, @Param("creativeId") String creativeId);
 }

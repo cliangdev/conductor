@@ -375,7 +375,7 @@ class CreativeControllerRunTokenTest {
     @Test
     void theEditEndpointIs202AndTagsAnApiKeyCallerAsMcpAndABrowserSessionAsEditor() throws Exception {
         com.conductor.entity.User user = userPrincipal();
-        when(revisionService.edit(eq("proj-1"), eq("cr-1"), eq(3), any(), any(), eq(user)))
+        when(revisionService.edit(eq("proj-1"), eq("cr-1"), eq(3), any(), any(), eq(user), any()))
                 .thenReturn(new CreativeRevisionService.EditResult(revision(),
                         new CreativeRenderDispatchService.RenderRunView("wf-1", "run-1", "PENDING_LOCAL_PICKUP",
                                 "AWAITING_RUNNER", null, null, null)));
@@ -394,10 +394,24 @@ class CreativeControllerRunTokenTest {
                 org.mockito.ArgumentCaptor.forClass(java.util.List.class);
         org.mockito.ArgumentCaptor<String> source = org.mockito.ArgumentCaptor.forClass(String.class);
         verify(revisionService, org.mockito.Mockito.times(2)).edit(eq("proj-1"), eq("cr-1"), eq(3), edits.capture(),
-                source.capture(), eq(user));
+                source.capture(), eq(user), org.mockito.ArgumentMatchers.isNull());
         org.assertj.core.api.Assertions.assertThat(source.getAllValues()).containsExactly("MCP", "EDITOR");
         org.assertj.core.api.Assertions.assertThat(edits.getValue()).containsExactly(
                 new com.conductor.creative.SlideshowTextFields.Edit(2, "texts[0].t", "Hi"));
+    }
+
+    @Test
+    void theEditEndpointPassesThePostIdToTheServiceForAReviewerFix() throws Exception {
+        com.conductor.entity.User user = userPrincipal();
+        SecurityContextHolder.getContext().setAuthentication(new TestingAuthenticationToken(user, null));
+        when(revisionService.edit(eq("proj-1"), eq("cr-1"), eq(3), any(), any(), eq(user), eq("post-9")))
+                .thenReturn(new CreativeRevisionService.EditResult(revision(), null));
+
+        mockMvc.perform(post(BASE + "/slide-text-edits").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"version\":3,\"postId\":\"post-9\",\"edits\":[{\"slide\":2,\"path\":\"texts[0].t\",\"text\":\"Hi\"}]}"))
+                .andExpect(status().isAccepted());
+
+        verify(revisionService).edit(eq("proj-1"), eq("cr-1"), eq(3), any(), eq("EDITOR"), eq(user), eq("post-9"));
     }
 
     @Test
@@ -409,7 +423,7 @@ class CreativeControllerRunTokenTest {
                         .content("{\"version\":3,\"edits\":[{\"slide\":2,\"path\":\"texts[0].t\",\"text\":\"Hi\"}]}"))
                 .andExpect(status().isForbidden());
 
-        verify(revisionService, never()).edit(any(), any(), any(), any(), any(), any());
+        verify(revisionService, never()).edit(any(), any(), any(), any(), any(), any(), any());
     }
 
     private static com.conductor.entity.User userPrincipal() {

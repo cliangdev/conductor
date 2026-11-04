@@ -28,6 +28,9 @@ import { TargetContentEditor } from '@/components/marketing/TargetContentEditor'
 import { PlatformIcon } from '@/components/marketing/destinations/PlatformIcon'
 import type { DestinationRowModel, DestinationsState } from '@/components/marketing/destinations/model'
 import type { WorkflowView } from '@/types/workItem'
+import { ChangedSinceReviewCard } from './ChangedSinceReviewCard'
+import type { PostContentChange } from './contentChanges'
+import { FixTextAction } from './FixTextAction'
 import {
   PLATFORM_NAME,
   activeDestinations,
@@ -57,6 +60,12 @@ export interface PostMediaSectionProps {
   /** Absent while the Post's destinations have not loaded; treated as none. */
   destinations?: DestinationsState
   onAssetsChanged: () => void | Promise<void>
+  /** The slide-text change to show as "Changed since last review", if there is one. */
+  contentChange?: PostContentChange | null
+  /** The viewer is a reviewer of this Post while it is in review: slideshow Creatives offer "Fix text". */
+  reviewerFix?: boolean
+  /** A text edit applied (or a reviewer fix finished): read the Post's media, status and activity again. */
+  onTextChanged?: () => void | Promise<void>
 }
 
 type View = 'destination' | 'all'
@@ -122,6 +131,9 @@ export function PostMediaSection({
   canEdit,
   destinations,
   onAssetsChanged,
+  contentChange,
+  reviewerFix,
+  onTextChanged,
 }: PostMediaSectionProps) {
   const files = useMemo(() => assets.filter((a) => a.kind === 'file'), [assets])
   const rows = useMemo(() => activeDestinations(destinations?.rows ?? []), [destinations])
@@ -387,6 +399,7 @@ export function PostMediaSection({
 
   return (
     <div className="space-y-3" data-testid="post-media">
+      {contentChange && <ChangedSinceReviewCard change={contentChange} projectId={projectId} />}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-2">
         <h3 className="text-xs font-medium text-muted-foreground">Media</h3>
         <div role="radiogroup" aria-label="Media view" className="inline-flex rounded-md border border-border p-0.5">
@@ -451,6 +464,18 @@ export function PostMediaSection({
                   <Link prefetch={false} href={creativeHref(g.creativeId)} className="shrink-0 text-primary hover:underline">
                     Open Creative
                   </Link>
+                  {reviewerFix && (
+                    <>
+                      <span aria-hidden>·</span>
+                      <FixTextAction
+                        projectId={projectId}
+                        token={token}
+                        creativeId={g.creativeId}
+                        postId={workItemId}
+                        onChanged={() => onTextChanged?.()}
+                      />
+                    </>
+                  )}
                 </>
               )}
             </li>

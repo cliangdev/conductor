@@ -11,13 +11,16 @@ import { timeAgo } from '@/lib/format'
 import { Activity } from 'lucide-react'
 import type { Comment } from '@/components/comments/types'
 import type { DetailReview } from '@/components/workitems/detailTypes'
+import { TextChangeRows } from '@/components/marketing/creatives/TextChangeRows'
+import type { PostContentChange } from '@/components/marketing/post-detail/contentChanges'
 
 type ActivityItem =
   | { kind: 'comment'; id: string; authorName: string; content: string; at: string; resolved: boolean }
   | { kind: 'reply'; id: string; authorName: string; content: string; at: string }
   | { kind: 'review'; id: string; name: string; avatarUrl?: string; verdict: DetailReview['verdict']; body?: string; at: string }
+  | { kind: 'content'; id: string; change: PostContentChange; at: string }
 
-function buildTimeline(comments: Comment[], reviews: DetailReview[]): ActivityItem[] {
+function buildTimeline(comments: Comment[], reviews: DetailReview[], contentChanges: PostContentChange[]): ActivityItem[] {
   const items: ActivityItem[] = []
   for (const c of comments) {
     items.push({
@@ -43,6 +46,7 @@ function buildTimeline(comments: Comment[], reviews: DetailReview[]): ActivityIt
       at: r.submittedAt,
     })
   }
+  for (const c of contentChanges) items.push({ kind: 'content', id: c.id, change: c, at: c.createdAt })
   return items.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
 }
 
@@ -58,8 +62,24 @@ function verdictVerb(verdict: DetailReview['verdict']): string {
   }
 }
 
-export function ActivityTab({ comments, reviews }: { comments: Comment[]; reviews: DetailReview[] }) {
-  const items = buildTimeline(comments, reviews)
+/** What a slide-text change did to the Post's review: a new round, a fix inside the round, or neither. */
+function contentChangeNote(c: PostContentChange): string {
+  if (c.source === 'REVIEWER') return `fixed during review round ${c.reviewRoundAfter}`
+  if (c.reviewRoundAfter > c.reviewRoundBefore) return `opened review round ${c.reviewRoundAfter}`
+  return 'updated the Post'
+}
+
+export function ActivityTab({
+  comments,
+  reviews,
+  contentChanges = [],
+}: {
+  comments: Comment[]
+  reviews: DetailReview[]
+  /** Slide-text edits carried onto this Post, newest first (Posts only). */
+  contentChanges?: PostContentChange[]
+}) {
+  const items = buildTimeline(comments, reviews, contentChanges)
 
   if (items.length === 0) {
     return <EmptyState icon={Activity} title="No activity yet" description="Comments and reviews will show up here." />
@@ -74,7 +94,7 @@ export function ActivityTab({ comments, reviews }: { comments: Comment[]; review
           className="py-3 flex items-start gap-2.5"
         >
           <UserAvatar
-            name={item.kind === 'review' ? item.name : item.authorName}
+            name={item.kind === 'review' ? item.name : item.kind === 'content' ? (item.change.actorName ?? 'Someone') : item.authorName}
             avatarUrl={item.kind === 'review' ? item.avatarUrl : undefined}
             size={5}
             className="mt-0.5"
@@ -82,8 +102,13 @@ export function ActivityTab({ comments, reviews }: { comments: Comment[]; review
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 flex-wrap text-sm">
               <span className="font-medium text-foreground">
-                {item.kind === 'review' ? item.name : item.authorName}
+                {item.kind === 'review' ? item.name : item.kind === 'content' ? (item.change.actorName ?? 'Someone') : item.authorName}
               </span>
+              {item.kind === 'content' && (
+                <span className="text-xs text-muted-foreground">
+                  changed the slide text{item.change.creativeDisplayId ? ` on ${item.change.creativeDisplayId}` : ''} · {contentChangeNote(item.change)}
+                </span>
+              )}
               {item.kind === 'review' && (
                 <>
                   <VerdictIcon verdict={item.verdict} />
@@ -96,10 +121,14 @@ export function ActivityTab({ comments, reviews }: { comments: Comment[]; review
               )}
               <span className="text-xs text-foreground-subtle">{timeAgo(item.at)}</span>
             </div>
-            {(item.kind !== 'review' || item.body) && (
-              <p className="mt-0.5 text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">
-                {item.kind === 'review' ? item.body : item.content}
-              </p>
+            {item.kind === 'content' ? (
+              <TextChangeRows changes={item.change.textDiff} className="mt-1" />
+            ) : (
+              (item.kind !== 'review' || item.body) && (
+                <p className="mt-0.5 text-sm text-muted-foreground whitespace-pre-wrap leading-relaxed">
+                  {item.kind === 'review' ? item.body : item.content}
+                </p>
+              )
             )}
           </div>
         </div>

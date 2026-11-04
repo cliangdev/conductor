@@ -78,11 +78,16 @@ class CreativeRevisionServiceIntegrationTest extends AbstractNoneWebIntegrationT
     private User admin;
     private Project project;
     private final List<CreativeRevisionRendered> events = new CopyOnWriteArrayList<>();
+    /** For each event: whether a transaction (so a pooled connection) was bound to the publishing thread. */
+    private final List<Boolean> transactionBoundAtPublish = new CopyOnWriteArrayList<>();
     private final ApplicationListener<ApplicationEvent> listener = e -> {
         // A plain object published as an event arrives wrapped in a PayloadApplicationEvent.
         if (e instanceof org.springframework.context.PayloadApplicationEvent<?> p
                 && p.getPayload() instanceof CreativeRevisionRendered r) {
             events.add(r);
+            transactionBoundAtPublish.add(org.springframework.transaction.support.TransactionSynchronizationManager
+                    .isActualTransactionActive()
+                    || org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive());
         }
     };
 
@@ -421,6 +426,8 @@ class CreativeRevisionServiceIntegrationTest extends AbstractNoneWebIntegrationT
             assertThat(ev.creativeId()).isEqualTo(f.creative.getId());
             assertThat(ev.projectId()).isEqualTo(project.getId());
         });
+        // Listeners open transactions of their own: none of ours may still be holding a connection.
+        assertThat(transactionBoundAtPublish).containsExactly(false);
     }
 
     @Test
@@ -797,6 +804,8 @@ class CreativeRevisionServiceIntegrationTest extends AbstractNoneWebIntegrationT
             assertThat(ev.revisionId()).isEqualTo(applied.getId());
             assertThat(ev.renderId()).isEqualTo(saved.getId());
         });
+        // The video render completes in a request of its own: same rule.
+        assertThat(transactionBoundAtPublish).containsExactly(false);
     }
 
     @Test
@@ -809,10 +818,16 @@ class CreativeRevisionServiceIntegrationTest extends AbstractNoneWebIntegrationT
         // A later render of the same version (a person re-rendering): the edit already has its render.
         CreativeRender later = renderRepository.save(copyRender(renderRepository.findById(applied.getRenderId()).orElseThrow(),
                 applied.getCreativeVersion()));
-        new TransactionTemplate(transactionManager).executeWithoutResult(s -> linker.onRenderSucceeded(later));
+        AfterTransaction.execute(transactionManager, fu -> {
+            linker.onRenderSucceeded(later, fu);
+            return null;
+        });
         // A render of some other version is none of the edit's business either.
         CreativeRender other = renderRepository.save(copyRender(later, applied.getCreativeVersion() + 5));
-        new TransactionTemplate(transactionManager).executeWithoutResult(s -> linker.onRenderSucceeded(other));
+        AfterTransaction.execute(transactionManager, fu -> {
+            linker.onRenderSucceeded(other, fu);
+            return null;
+        });
 
         assertThat(events).isEmpty();
         assertThat(revisionRepository.findById(applied.getId()).orElseThrow().getRenderId()).isEqualTo(applied.getRenderId());
@@ -870,23 +885,24 @@ class CreativeRevisionServiceIntegrationTest extends AbstractNoneWebIntegrationT
         Fixture f = carousel(2);
         CreativeRevision rev = appliedRevision(f);
         CreativeRender render = succeededRender(f, rev.getCreativeVersion());
-        TransactionTemplate tx = new TransactionTemplate(transactionManager);
 
         // Rolled back: nothing is published.
-        tx.executeWithoutResult(status -> {
-            linker.link(revisionRepository.findById(rev.getId()).orElseThrow(), render);
+        assertThatThrownBy(() -> AfterTransaction.execute(transactionManager, followUps -> {
+            linker.link(revisionRepository.findById(rev.getId()).orElseThrow(), render, followUps);
             assertThat(events).isEmpty();
-            status.setRollbackOnly();
-        });
+            throw new IllegalStateException("roll back");
+        })).isInstanceOf(IllegalStateException.class);
         assertThat(events).isEmpty();
         assertThat(revisionRepository.findById(rev.getId()).orElseThrow().getRenderId()).isNull();
 
-        // Committed: published once the commit is done, not before.
-        tx.executeWithoutResult(status -> {
-            linker.link(revisionRepository.findById(rev.getId()).orElseThrow(), render);
+        // Committed: published once the commit is done and its connection released, not before.
+        AfterTransaction.execute(transactionManager, followUps -> {
+            linker.link(revisionRepository.findById(rev.getId()).orElseThrow(), render, followUps);
             assertThat(events).isEmpty();
+            return null;
         });
         assertThat(events).singleElement().satisfies(ev -> assertThat(ev.renderId()).isEqualTo(render.getId()));
+        assertThat(transactionBoundAtPublish).containsExactly(false);
     }
 
     // ── who may call the job-facing endpoints ───────────────────────────────

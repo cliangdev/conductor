@@ -5,6 +5,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
+import jakarta.persistence.Transient;
 import jakarta.persistence.Table;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
@@ -107,6 +108,10 @@ public class CreativeRevision {
     @Column(name = "alt_text_flags", columnDefinition = "jsonb")
     private JsonNode altTextFlags;
 
+    /** The author's display name, filled by a listing's batched lookup; never stored. */
+    @Transient
+    private String authorName;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -164,6 +169,9 @@ public class CreativeRevision {
 
     public String getAuthorUserId() { return authorUserId; }
     public void setAuthorUserId(String authorUserId) { this.authorUserId = authorUserId; }
+
+    public String getAuthorName() { return authorName; }
+    public void setAuthorName(String authorName) { this.authorName = authorName; }
 
     public String getPostId() { return postId; }
     public void setPostId(String postId) { this.postId = postId; }

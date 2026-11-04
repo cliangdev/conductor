@@ -5,15 +5,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.support.TransactionSynchronization;
-import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 
 /**
  * Ties a successful render to the slide-text revision it shows, and announces it: sets the revision's
- * {@code render_id} and publishes {@link CreativeRevisionRendered} once the surrounding transaction commits.
- * Joins the caller's transaction (it has none of its own).
+ * {@code render_id} and announces it with {@link CreativeRevisionRendered}. Joins the caller's transaction (it
+ * has none of its own); the announcement is handed to the caller's {@link AfterTransaction.FollowUps}, which run
+ * only once that transaction has committed <em>and released its connection</em>, so a listener may open
+ * transactions of its own without holding a second pooled connection.
  */
 @Component
 class CreativeRevisionRenderLinker {
@@ -33,29 +33,20 @@ class CreativeRevisionRenderLinker {
      * and no render was linked to that edit yet, link it. Any other render (a person re-rendering, a later
      * version) is none of a revision's business.
      */
-    void onRenderSucceeded(CreativeRender render) {
+    void onRenderSucceeded(CreativeRender render, AfterTransaction.FollowUps followUps) {
         List<CreativeRevision> pending = revisionRepository.findUnrenderedEdits(render.getCreativeId(),
                 render.getCreativeVersion(), PageRequest.of(0, 1));
         if (!pending.isEmpty()) {
-            link(pending.get(0), render);
+            link(pending.get(0), render, followUps);
         }
     }
 
-    void link(CreativeRevision revision, CreativeRender render) {
+    void link(CreativeRevision revision, CreativeRender render, AfterTransaction.FollowUps followUps) {
         revision.setRenderId(render.getId());
         revisionRepository.save(revision);
         CreativeRevisionRendered event = new CreativeRevisionRendered(revision.getProjectId(),
                 revision.getCreativeId(), revision.getId(), render.getId());
-        if (TransactionSynchronizationManager.isSynchronizationActive()) {
-            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                @Override
-                public void afterCommit() {
-                    publish(event);
-                }
-            });
-        } else {
-            publish(event);
-        }
+        followUps.add(() -> publish(event));
     }
 
     private void publish(CreativeRevisionRendered event) {

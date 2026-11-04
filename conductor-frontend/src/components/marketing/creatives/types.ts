@@ -6,6 +6,7 @@
 // near pass-through, not a real transform.
 
 import { apiDelete, apiGet, apiGetPage, apiPatch, apiPost } from '@/lib/api'
+import type { SlideshowSpec } from '@cliangdev/creative-render/slideshow/spec.js'
 import type { RenderCreative } from './renderTypes'
 
 export type CreativeState = 'DRAFT' | 'READY' | 'ARCHIVED'
@@ -90,6 +91,23 @@ export interface CreativeRenderedVideo {
   hasAudio?: boolean | null
 }
 
+export interface CreativePendingRevision {
+  id: string
+  status: 'PENDING'
+  createdAt: string
+  workflowRunId?: string | null
+}
+
+export interface CreativeLatestRevision {
+  id: string
+  revisionNo: number
+  status: 'PENDING' | 'APPLIED' | 'FAILED'
+  source: 'EDITOR' | 'REVIEWER' | 'MCP' | 'IMPORT' | 'COMMIT'
+  error?: string | null
+  checks?: Array<Record<string, unknown>> | null
+  createdAt: string
+}
+
 export interface Creative {
   id: string
   projectId: string
@@ -128,6 +146,14 @@ export interface Creative {
   audio?: CreativeAudio | null
   /** CAROUSEL only. */
   slideshow?: CreativeSlideshow | null
+  /** CAROUSEL only: the style the slides were composed with (the resolved slideshow style), if recorded. */
+  slideStyle?: Record<string, unknown> | null
+  /** CAROUSEL only: the editable spec the slides were composed from (every image field is `media:<id>`). Null when none was stored. */
+  slideshowSpec?: SlideshowSpec | null
+  /** Single-Creative read only: the slide-text edit being rendered right now. */
+  pendingRevision?: CreativePendingRevision | null
+  /** Single-Creative read only: the newest recorded revision (FAILED ones included). */
+  latestRevision?: CreativeLatestRevision | null
   /** CAROUSEL and CLIP: the latest render's video frame, null otherwise. */
   renderedVideo?: CreativeRenderedVideo | null
   placements: string[]
