@@ -100,8 +100,7 @@ export function PostsUsingCreativePanel({
                     <Link
                       prefetch={false}
                       href={`${postsHref}/${p.displayId}`}
-                      aria-label={p.title}
-                      className={`${rowClass} transition-colors hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none`}
+                      className={`${rowClass} transition-colors hover:bg-surface-2 focus-visible:bg-surface-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring`}
                     >
                       {row}
                     </Link>

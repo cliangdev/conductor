@@ -121,9 +121,13 @@ export async function getAffectedPosts(projectId: string, creativeId: string, to
 /** The editor cannot re-render 1x1 slides yet (the server refuses with 422 `slideTextEditUnsupportedRatio`). */
 export const SQUARE_SLIDES_NOTE = "Text editing isn't available for Creatives with 1x1 slides yet."
 
-/** A slideshow committed without its spec: its text is part of the images until the spec is attached. */
-export function noSpecNote(displayId: string): string {
-  return `This slideshow was saved without its spec, so its text can't be edited here. Attach it with \`conductor creative attach-spec ${displayId} <spec.json>\`.`
+/** A slideshow committed without its spec: its text is part of the images until the spec is attached.
+ *  The command is carried apart from the sentence so the UI can set it in a mono `<code>`. */
+export function noSpecNote(displayId: string): { note: string; command: string } {
+  return {
+    note: "This slideshow was saved without its spec, so its text can't be edited here. Attach it with",
+    command: `conductor creative attach-spec ${displayId} <spec.json>`,
+  }
 }
 
 export function hasSquareSlides(slides: Record<string, string[]> | null | undefined): boolean {

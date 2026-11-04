@@ -92,7 +92,26 @@ describe('CreativeEditor — editing slide text', () => {
   it('explains why a composed slideshow saved without its spec has no Edit text', async () => {
     mockGets(creative({ slideshowSpec: null, slideStyle: { textSize: 60 } }))
     open()
-    expect(await screen.findByTestId('edit-slide-text-unavailable')).toHaveTextContent('saved without its spec')
+    const note = await screen.findByTestId('edit-slide-text-unavailable')
+    expect(note).toHaveTextContent('saved without its spec')
+    // The command is set in a <code>, with no Markdown backticks showing.
+    expect(within(note).getByText(/^conductor creative attach-spec .+ <spec\.json>$/).tagName).toBe('CODE')
+    expect(note.textContent).not.toContain('`')
+    expect(screen.queryByTestId('edit-slide-text')).not.toBeInTheDocument()
+  })
+
+  it('tells a spec-less slideshow with 1x1 slides the 1x1 note, not to attach a spec', async () => {
+    mockGets(
+      creative({
+        slideshowSpec: null,
+        slideStyle: { textSize: 60 },
+        slides: { '9x16': ['s1', 's2', 's3'], '4x5': ['t1', 't2', 't3'], '1x1': ['q1', 'q2', 'q3'] },
+      }),
+    )
+    open()
+    const note = await screen.findByTestId('edit-slide-text-unavailable')
+    expect(note).toHaveTextContent("Text editing isn't available for Creatives with 1x1 slides yet.")
+    expect(note).not.toHaveTextContent('attach-spec')
     expect(screen.queryByTestId('edit-slide-text')).not.toBeInTheDocument()
   })
 

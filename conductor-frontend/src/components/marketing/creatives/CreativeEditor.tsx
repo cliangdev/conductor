@@ -5,7 +5,7 @@
 // preview boards are re-rendered locally from the in-memory form, and the copy-rule feedback runs
 // the same brand kit rules the backend's CreativeValidator enforces at save time.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ChevronDownIcon,
@@ -1167,6 +1167,29 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   }
 
   const layoutOptions = Object.keys(registry.layouts)
+  // Slide-text editing on a carousel: the Edit text action, or the note saying why there is none.
+  const squareSlides = hasSquareSlides(creative.slides)
+  const carouselTextEdit: ComponentProps<typeof CarouselSlidesSection>['textEdit'] = !canManage
+    ? undefined
+    : squareSlides && (creative.slideshowSpec || creative.slideStyle)
+      ? // Attaching a spec would not help: 1x1 slides cannot be re-rendered yet.
+        { unavailableNote: SQUARE_SLIDES_NOTE }
+      : creative.slideshowSpec
+        ? {
+            onEdit: setTextEditorSlide,
+            disabledReason: creative.pendingRevision
+              ? 'A text edit is rendering.'
+              : JSON.stringify(form) !== JSON.stringify(toForm(creative))
+                ? 'Save your changes first.'
+                : null,
+          }
+        : creative.slideStyle
+          ? // A compose_slideshow carousel committed without its spec: the text is part of the images.
+            (() => {
+              const { note, command } = noSpecNote(creative.displayId)
+              return { unavailableNote: note, unavailableCommand: command }
+            })()
+          : undefined
   const carouselViolations = [
     ...new Set(
       (saveError?.violations ?? [])
@@ -1906,22 +1929,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               onAddImages={setCarouselPickerKey}
               onChange={(next) => setForm((prev) => (prev ? { ...prev, ...next } : prev))}
               violations={carouselViolations}
-              textEdit={
-                canManage && creative.slideshowSpec
-                  ? {
-                      onEdit: setTextEditorSlide,
-                      unavailableNote: hasSquareSlides(creative.slides) ? SQUARE_SLIDES_NOTE : null,
-                      disabledReason: creative.pendingRevision
-                        ? 'A text edit is rendering.'
-                        : JSON.stringify(form) !== JSON.stringify(toForm(creative))
-                          ? 'Save your changes first.'
-                          : null,
-                    }
-                  : canManage && creative.slideStyle
-                    ? // A compose_slideshow carousel committed without its spec: the text is part of the images.
-                      { onEdit: () => {}, unavailableNote: noSpecNote(creative.displayId), disabledReason: null }
-                    : undefined
-              }
+              textEdit={carouselTextEdit}
               revisionNote={revisionNote}
               staleAltSlides={
                 flaggedAltSlides ? staleAltSlides(flaggedAltSlides.flags, flaggedAltSlides.diff, form.slideAltText) : []
