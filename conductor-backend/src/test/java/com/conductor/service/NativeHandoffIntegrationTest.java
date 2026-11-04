@@ -260,11 +260,19 @@ class NativeHandoffIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
-    void aYouTubeTargetFarInTheFutureIsHandedOffImmediatelyBecauseYouTubeHasNoCeiling() {
-        OffsetDateTime fireTime = OffsetDateTime.now().plusDays(400);
-        PostPublishTarget target = pendingNative("youtube", fireTime);
+    void aYouTubeTargetStaysPendingUntilTheDayBeforeItFiresSoUploadsDoNotSpendTheChannelsDailyCap() {
+        OffsetDateTime now = OffsetDateTime.now();
+        PostPublishTarget target = pendingNative("youtube", now.plusDays(20));
 
         service.handoffForPost(target.getWorkItem());
+        runSweep(now);
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PENDING);
+        verify(actionInvocationService, never())
+                .invoke(any(), anyString(), any(), eq(target.getIdempotencyKey()), any());
+
+        // Nineteen days and an hour later it fires in under a day — inside YouTube's upload window.
+        runSweep(now.plusDays(19).plusHours(1));
 
         assertThat(capturedInput("publish_video", target.getIdempotencyKey()))
                 .containsEntry("publish_at", reload(target).getFireTime().toInstant().toString())
