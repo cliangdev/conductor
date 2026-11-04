@@ -593,7 +593,7 @@ public class CreativeService {
 
     /**
      * Called by attach once a Creative is on a Post: a DRAFT that passes the readiness checklist becomes READY
-     * (saved in the caller's transaction, {@code version} bumped by JPA); one that does not stays DRAFT and the
+     * (updated in the caller's transaction WITHOUT raising {@code version}, so the render just attached stays current); one that does not stays DRAFT and the
      * first blocking item is reported as the reason. Any other state is left as it is. The checklist's own
      * {@code state} item ("still a draft") is ignored: it is what this promotion resolves.
      */
@@ -608,9 +608,15 @@ public class CreativeService {
             return new AttachStateOutcome(creative.getState(),
                     "Stays a draft because " + blocker.message() + ".");
         }
-        creative.setState(Creative.STATE_READY);
-        Creative saved = creativeRepository.save(creative);
-        return new AttachStateOutcome(saved.getState(), null);
+        // A bulk update, not save(): the flip is not a content change, and a JPA save would bump the version,
+        // making the render just attached read as stale. The entity is deliberately left unmodified (setting
+        // the state would dirty it and bump the version at flush); the update clears the persistence context.
+        int changed = creativeRepository.updateStateKeepingVersion(creative.getId(), Creative.STATE_DRAFT,
+                Creative.STATE_READY, java.time.OffsetDateTime.now());
+        // 0 rows: the state moved concurrently, so report what is stored now.
+        String state = changed > 0 ? Creative.STATE_READY
+                : creativeRepository.findById(creative.getId()).map(Creative::getState).orElse(creative.getState());
+        return new AttachStateOutcome(state, null);
     }
 
     /**

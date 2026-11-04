@@ -254,7 +254,10 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         assertThat(result.stateNote()).isNull();
         Creative saved = creativeRepository.findById(creative.getId()).orElseThrow();
         assertThat(saved.getState()).isEqualTo(Creative.STATE_READY);
-        assertThat(saved.getVersion()).isGreaterThan(versionBefore);
+        // Promoting is not a content change: the version holds, so the render just attached is still current.
+        assertThat(saved.getVersion()).isEqualTo(versionBefore);
+        assertThat(renderRepository.findAll()).filteredOn(r -> creative.getId().equals(r.getCreativeId()))
+                .allSatisfy(r -> assertThat(r.getCreativeVersion()).isEqualTo(saved.getVersion()));
     }
 
     @Test
