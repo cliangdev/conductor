@@ -87,7 +87,7 @@ function Harness(props: Partial<UsePublishReadinessArgs> = {}) {
     workItemId: WORK_ITEM,
     token: 't',
     status: 'DRAFT',
-    userRole: 'ADMIN',
+    canEdit: true,
     workflowView: VIEW,
     ...props,
   })
@@ -120,6 +120,15 @@ describe('usePublishReadiness + PublishReadinessAction', () => {
     const button = screen.getByRole('button', { name: 'Submit for review' })
     expect(button).toBeDisabled()
     expect(button).toHaveAttribute('title', expect.stringContaining('no uploaded media file'))
+  })
+
+  it('says the author\'s own approval does not count when the gate requires an independent reviewer', async () => {
+    current = preflight({
+      nextTransition: { to: 'APPROVED', label: 'Approve', requiresReview: true },
+      review: { gated: true, assignedReviewers: 1, satisfied: false, requireIndependentReviewer: true },
+    })
+    renderCard()
+    expect(await screen.findByText(/author's own approval doesn't count/)).toBeInTheDocument()
   })
 
   it('counts a finding once when the server repeats it per file', async () => {
@@ -207,7 +216,7 @@ describe('usePublishReadiness + PublishReadinessAction', () => {
     expect(container.textContent).toBe('')
 
     current = preflight()
-    renderCard({ userRole: 'REVIEWER' })
+    renderCard({ canEdit: false })
     await screen.findByText(/Everything checks out/)
     expect(screen.queryByRole('button', { name: 'Submit for review' })).not.toBeInTheDocument()
   })
@@ -229,7 +238,7 @@ describe('usePublishReadiness + PublishReadinessAction', () => {
 
   it('speaks to the reviewer when asked to: silent while the gate is met, the blocker count otherwise', async () => {
     function ReviewerHarness() {
-      const state = usePublishReadiness({ projectId: PROJECT, workItemId: WORK_ITEM, token: 't', status: 'IN_REVIEW', userRole: 'ADMIN', workflowView: VIEW })
+      const state = usePublishReadiness({ projectId: PROJECT, workItemId: WORK_ITEM, token: 't', status: 'IN_REVIEW', canEdit: true, workflowView: VIEW })
       return <PublishReadinessAction state={state} forReviewer />
     }
     current = preflight({ nextTransition: { to: 'APPROVED', label: 'Approve', requiresReview: true } })

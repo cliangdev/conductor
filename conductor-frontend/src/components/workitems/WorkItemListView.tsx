@@ -8,7 +8,7 @@
 // Redesigned (design-system.md) as a Linear-style grouped row list — see WorkItemRow/WorkItemGroup for
 // row anatomy, useWorkItemListState for filter/sort/selection/keyboard state.
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { CalendarDaysIcon, CheckCircle2, Inbox, LayoutDashboardIcon, LayoutGridIcon, ListIcon, Plus, SearchX } from 'lucide-react'
@@ -60,6 +60,7 @@ import type {
   Member,
 } from '@/components/workitems/listTypes'
 import type { MemberRole } from '@/types'
+import { can, memberRoles } from '@/lib/permissions'
 
 type DisplayMode = 'list' | 'board' | 'calendar' | 'grid'
 
@@ -114,14 +115,15 @@ export function WorkItemListView({
   // Seed members synchronously from the shared two-tier cache (module → localStorage) so that
   // the assignee dropdown and role-gated UI don't flash empty on revisit or cross-component mount.
   const [members, setMembers] = useState<Member[]>(() => getMembersCacheEntry(projectId) ?? [])
-  const [userRole, setUserRole] = useState<MemberRole>(() => {
+  const [roles, setRoles] = useState<MemberRole[]>(() => {
     const cached = getMembersCacheEntry(projectId)
-    return cached?.find((m) => m.userId === user?.id)?.role ?? 'REVIEWER'
+    return memberRoles(cached?.find((m) => m.userId === user?.id))
   })
-  // REVIEWERs can't mutate Work Items — gates the assignee control, bulk selection, and the palette's
-  // Selection group. Computed here (not after the loading/error early returns) since it feeds the
-  // useWorkItemListState hook call below, and hooks can't follow a conditional return.
-  const canEdit = userRole !== 'REVIEWER'
+  // Readers (REVIEWER-only or no role) can't mutate Work Items — gates the assignee control, bulk
+  // selection, and the palette's Selection group. Computed here (not after the loading/error early
+  // returns) since it feeds the useWorkItemListState hook call below, and hooks can't follow a
+  // conditional return.
+  const canEdit = can(roles, 'issue.edit')
   const [creating, setCreating] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -140,6 +142,16 @@ export function WorkItemListView({
     if (readPersistedFlag(modeExplicitKey)) return
     setMode(wfDefault)
   }, [workflowView?.defaultView, modeExplicitKey, searchParams])
+
+  const independentReviewerStatuses = useMemo(
+    () =>
+      new Set(
+        (workflowView?.transitions ?? [])
+          .filter((t) => t.requiresReview && t.requireIndependentReviewer)
+          .map((t) => t.from)
+      ),
+    [workflowView]
+  )
 
   const title = pluralizeNoun(noun)
   const lowerNoun = title.toLowerCase()
@@ -169,7 +181,7 @@ export function WorkItemListView({
       ])
       setMembers(memberData)
       const currentMember = memberData.find((m) => m.userId === user?.id)
-      if (currentMember) setUserRole(currentMember.role)
+      if (currentMember) setRoles(memberRoles(currentMember))
       // Reviewers come embedded in each list row (one batched read server-side), so there is no
       // per-row follow-up call.
       setIssues(issueData.map((issue) => ({ ...issue, reviewers: issue.reviewers ?? [] })))
@@ -505,7 +517,7 @@ export function WorkItemListView({
           noun={noun}
           workflowView={workflowView}
           issues={listState.filteredIssues}
-          userRole={userRole}
+          canEdit={canEdit}
           accessToken={accessToken!}
           view={view}
           onStatusChanged={updateIssueStatus}
@@ -625,7 +637,7 @@ export function WorkItemListView({
                         projectId={projectId}
                         issueId={issue.id}
                         currentStatus={issue.status}
-                        userRole={userRole}
+                        canEdit={canEdit}
                         token={accessToken}
                         workflowSlug={slug}
                         onStatusChanged={(s) => updateIssueStatus(issue.id, s)}
@@ -673,10 +685,10 @@ export function WorkItemListView({
                 slug={slug}
                 detailArea={detailArea}
                 noun={noun}
-                userRole={userRole}
+                canEdit={canEdit}
                 accessToken={accessToken!}
                 members={members}
-                canEdit={canEdit}
+                independentReviewerStatuses={independentReviewerStatuses}
                 selectedIds={listState.selected}
                 onToggleSelect={canSelect ? listState.toggleSelect : undefined}
                 tabStopId={listState.tabStopId}

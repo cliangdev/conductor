@@ -168,4 +168,24 @@ class PublishTaskArmerTest {
         assertThat(armer.armPost(null)).isZero();
         verify(scheduler, never()).scheduleAfterCommit(any());
     }
+
+    @Test
+    void publishedWithoutALink_armsAPermalinkFollowUpAtTheFirstBackoffStep() {
+        PostPublishTarget t = target("t", "tiktok", PublishLane.APP_MANAGED, PostPublishTargetState.PUBLISHED,
+                now.minusMinutes(1));
+
+        armer.armPermalinkFollowUp(t);
+
+        ArgumentCaptor<PublishTask> armed = ArgumentCaptor.forClass(PublishTask.class);
+        verify(scheduler).scheduleAfterCommit(armed.capture());
+        assertThat(armed.getValue().kind()).isEqualTo(PublishTaskKind.PERMALINK);
+        assertThat(armed.getValue().attempt()).isZero();
+        assertThat(armed.getValue().notBefore()).isAfter(now.plus(PublishTaskArmer.PERMALINK_BACKOFF.get(0)).minusSeconds(1));
+    }
+
+    @Test
+    void permalinkBackoff_coversAboutAnHour() {
+        assertThat(PublishTaskArmer.PERMALINK_BACKOFF.stream().mapToLong(Duration::toMinutes).sum())
+                .isBetween(50L, 75L);
+    }
 }

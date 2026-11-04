@@ -1141,7 +1141,7 @@ export const TOOLS = [
         publishOnApproval: { type: 'boolean', description: 'Publish as soon as approved (optional, default false). No fire time is chosen here: entering the scheduled status stamps the earliest time every destination accepts.' },
         timezone: { type: 'string', description: 'IANA zone the schedule is authored in (optional — defaults to this machine\'s)' },
         submit: { type: 'boolean', description: 'Submit for review once ready (default true). false leaves it in Draft.' },
-        reviewers: { type: 'array', items: { type: 'string' }, description: 'Reviewers to assign, by name, email or user id (must hold the REVIEWER or ADMIN role)' },
+        reviewers: { type: 'array', items: { type: 'string' }, description: 'Reviewers to assign, by name, email or user id (must hold the Reviewer role, or be an Admin)' },
         workflow: { type: 'string', description: 'Workflow slug (optional — required only when more than one Workflow publishes)' },
       },
       required: ['text', 'targets'],
@@ -1246,7 +1246,7 @@ export const TOOLS = [
   },
   {
     name: 'set_marketing_benchmark',
-    description: 'Record or replace the industry benchmark for one metric. The value must come from a source you read in this session, never from memory: sourceUrl (the page) and checkedOn (the day you read it) are required. metricRef is CHANNEL.metric (e.g. STORE.conversion_rate) or PRODUCT.<key>. A count or currency total (downloads, spend) is stated per 28 days and prorated to the report window; a rate or ratio is compared as stated. Requires ADMIN or CREATOR. Verify with get_marketing_report (benchmarks).',
+    description: 'Record or replace the industry benchmark for one metric. The value must come from a source you read in this session, never from memory: sourceUrl (the page) and checkedOn (the day you read it) are required. metricRef is CHANNEL.metric (e.g. STORE.conversion_rate) or PRODUCT.<key>. A count or currency total (downloads, spend) is stated per 28 days and prorated to the report window; a rate or ratio is compared as stated. Requires the Editor role (or Admin). Verify with get_marketing_report (benchmarks).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1265,7 +1265,7 @@ export const TOOLS = [
   },
   {
     name: 'delete_marketing_benchmark',
-    description: 'Remove the stored benchmark for a metric (idempotent). Requires ADMIN or CREATOR. Verify with get_marketing_report (benchmarks).',
+    description: 'Remove the stored benchmark for a metric (idempotent). Requires the Editor role (or Admin). Verify with get_marketing_report (benchmarks).',
     inputSchema: {
       type: 'object',
       properties: { metricRef: { type: 'string', description: 'CHANNEL.metric or PRODUCT.<key>' } },
@@ -1274,7 +1274,7 @@ export const TOOLS = [
   },
   {
     name: 'submit_review',
-    description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned REVIEWER or ADMIN. Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step the person does in their own browser (request_tiktok_consent hands them the link), not this tool. Returns the confirmation table.',
+    description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned member holding the Reviewer role (or an Admin). Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step the person does in their own browser (request_tiktok_consent hands them the link), not this tool. Returns the confirmation table.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1715,7 +1715,7 @@ export const TOOLS = [
   },
   {
     name: 'attach_creative_to_post',
-    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. A CAROUSEL goes to Instagram feed (4x5), Facebook feed (1x1, else 4x5) and TikTok (9x16); Reels, Stories and YouTube cannot take its photos. A CAROUSEL with a track also has a slideshow video: per target, carouselAs (photos | video) in publish options picks which is sent (default video for TikTok and YouTube, photos for Instagram and Facebook feed). Uses the latest SUCCEEDED, non-preview render unless renderId is given (a CLIP or CAROUSEL with none is rendered first). Call get_post_status (postId) to verify.",
+    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. A CAROUSEL goes to Instagram feed (4x5), Facebook feed (1x1, else 4x5) and TikTok (9x16); Reels, Stories and YouTube cannot take its photos. A CAROUSEL with a track also has a slideshow video: per target, carouselAs (photos | video) in publish options picks which is sent (default video for TikTok and YouTube, photos for Instagram and Facebook feed). Uses the latest SUCCEEDED, non-preview render unless renderId is given (a CLIP or CAROUSEL with none is rendered first). A DRAFT Creative that passes readiness becomes READY on attach; the result's creativeState is its state afterwards and stateNote, when set, says why it stayed DRAFT. Call get_post_status (postId) to verify.",
     inputSchema: {
       type: 'object',
       properties: {

@@ -71,7 +71,7 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     @Test
     void nonAdminCannotPublish() {
-        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(false);
+        when(security.isEditor(PROJECT_ID, CALLER_ID)).thenReturn(false);
 
         assertThatThrownBy(() -> service.publish(PROJECT_ID, WORKFLOW_ID, CALLER_ID))
                 .isInstanceOf(ForbiddenException.class);
@@ -80,7 +80,7 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     @Test
     void missingWorkflowThrowsNotFound() {
-        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        when(security.isEditor(PROJECT_ID, CALLER_ID)).thenReturn(true);
         when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> service.publish(PROJECT_ID, WORKFLOW_ID, CALLER_ID))
@@ -89,7 +89,7 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     @Test
     void definitionInAnotherProjectThrowsNotFound() throws Exception {
-        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        when(security.isEditor(PROJECT_ID, CALLER_ID)).thenReturn(true);
         WorkflowDefinition row = definitionRow(engineeringDefinition());
         row.getProject().setId("other-project");
         when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(row));
@@ -100,7 +100,7 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     @Test
     void rowWithoutDefinitionIsUnprocessable() {
-        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        when(security.isEditor(PROJECT_ID, CALLER_ID)).thenReturn(true);
         when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(definitionRow(null)));
 
         assertThatThrownBy(() -> service.publish(PROJECT_ID, WORKFLOW_ID, CALLER_ID))
@@ -110,7 +110,7 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     @Test
     void invalidDefinitionIsUnprocessable() throws Exception {
-        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        when(security.isEditor(PROJECT_ID, CALLER_ID)).thenReturn(true);
         JsonNode invalid = mapper.readTree(
                 mapper.writeValueAsString(engineeringDefinition()).replace("conductor:implement", "conductor:ghost"));
         when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(definitionRow(invalid)));
@@ -123,7 +123,7 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     @Test
     void validDraftIsPromotedToPublished() throws Exception {
-        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        when(security.isEditor(PROJECT_ID, CALLER_ID)).thenReturn(true);
         WorkflowDefinition row = definitionRow(engineeringDefinition());
         when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(row));
 
@@ -137,7 +137,7 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     @Test
     void disableWorkflow_published_becomesDisabled() throws Exception {
-        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        when(security.isEditor(PROJECT_ID, CALLER_ID)).thenReturn(true);
         WorkflowDefinition row = definitionRow(engineeringDefinition());
         row.setState("PUBLISHED");
         row.setSidebarEnabled(true);
@@ -153,7 +153,7 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     @Test
     void disableWorkflow_draft_throws() throws Exception {
-        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        when(security.isEditor(PROJECT_ID, CALLER_ID)).thenReturn(true);
         WorkflowDefinition row = definitionRow(engineeringDefinition());
         row.setState("DRAFT");
         when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(row));
@@ -166,7 +166,7 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     @Test
     void disableWorkflow_nonLifecycle_throws() {
-        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        when(security.isEditor(PROJECT_ID, CALLER_ID)).thenReturn(true);
         WorkflowDefinition row = definitionRow(null);
         row.setState("PUBLISHED");
         when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(row));
@@ -179,7 +179,7 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     @Test
     void enableWorkflow_disabled_becomesPublished() throws Exception {
-        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        when(security.isEditor(PROJECT_ID, CALLER_ID)).thenReturn(true);
         WorkflowDefinition row = definitionRow(engineeringDefinition());
         row.setState("DISABLED");
         row.setSidebarEnabled(true);
@@ -195,7 +195,7 @@ class WorkflowDefinitionLifecycleServiceTest {
 
     @Test
     void enableWorkflow_published_throws() throws Exception {
-        when(security.isAdminOrCreator(PROJECT_ID, CALLER_ID)).thenReturn(true);
+        when(security.isEditor(PROJECT_ID, CALLER_ID)).thenReturn(true);
         WorkflowDefinition row = definitionRow(engineeringDefinition());
         row.setState("PUBLISHED");
         when(repository.findById(WORKFLOW_ID)).thenReturn(Optional.of(row));

@@ -282,6 +282,50 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(assetsOn(target)).isEmpty();
     }
 
+    @Test
+    void aLinkArrivingAfterAPublishWithoutOneFillsTheRowsPermalinkAndRecordsTheAsset() {
+        PostPublishTarget target = publishing("tiktok");
+        service.recordSuccess(target.getId(), null, null);
+        assertThat(reload(target).getPermalink()).isNull();
+
+        boolean moved = service.recordSuccess(target.getId(), "7701106819145403662",
+                "https://www.tiktok.com/@rexipe2/photo/7701106819145403662");
+
+        assertThat(moved).isFalse();
+        PostPublishTarget stored = reload(target);
+        assertThat(stored.getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        assertThat(stored.getPlatformPostId()).isEqualTo("7701106819145403662");
+        assertThat(stored.getPermalink()).isEqualTo("https://www.tiktok.com/@rexipe2/photo/7701106819145403662");
+        assertThat(assetsOn(target)).singleElement().satisfies(asset ->
+                assertThat(asset.getRef()).isEqualTo("https://www.tiktok.com/@rexipe2/photo/7701106819145403662"));
+    }
+
+    @Test
+    void aCompleteTikTokPublishWithoutALinkStaysPublishedKeepsThePublishId() {
+        PostPublishTarget target = publishing("tiktok");
+
+        boolean moved = service.recordOutcome(target.getId(), com.conductor.integration.ActionResult.ok(
+                new java.util.LinkedHashMap<>(java.util.Map.of("publish_id", "p_pub_url~9",
+                        "permalink_pending", Boolean.TRUE, "post_kind", "photo"))));
+
+        assertThat(moved).isTrue();
+        PostPublishTarget stored = reload(target);
+        assertThat(stored.getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        assertThat(stored.getPermalink()).isNull();
+        assertThat(com.conductor.service.publish.PermalinkFollowUp.parse(stored.getResumeCheckpoint()))
+                .contains(new com.conductor.service.publish.PermalinkFollowUp("p_pub_url~9", "photo"));
+    }
+
+    @Test
+    void aLaterLinkNeverOverwritesAPermalinkTheRowAlreadyHas() {
+        PostPublishTarget target = publishing("instagram");
+        service.recordSuccess(target.getId(), "media_1", "https://instagram.com/p/first/");
+
+        service.recordSuccess(target.getId(), "media_1", "https://instagram.com/p/second/");
+
+        assertThat(reload(target).getPermalink()).isEqualTo("https://instagram.com/p/first/");
+    }
+
     // --- [auto] Outcome recording is idempotent ---------------------------------------------------
 
     @Test

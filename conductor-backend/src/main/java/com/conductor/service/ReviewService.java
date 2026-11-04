@@ -2,14 +2,12 @@ package com.conductor.service;
 
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.MemberRole;
-import com.conductor.entity.ProjectMember;
 import com.conductor.entity.Review;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkItemReviewerRepository;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.service.view.ReviewWithUser;
@@ -46,10 +44,13 @@ public class ReviewService {
     /** The {@code reviewOutcomes} token a Workflow declares to opt its gated edge into that routing. */
     private static final String REQUEST_CHANGES_OUTCOME = "request_changes";
 
+    /** Shown when an author tries to approve (or be assigned to review) their own item on an independent gate. */
+    public static final String INDEPENDENT_REVIEWER_MESSAGE = "This Workflow needs a reviewer other than the author";
+
     private final LifecycleTriggerDispatcher lifecycleTriggerDispatcher;
     private final ReviewRepository reviewRepository;
     private final WorkItemReviewerRepository workItemReviewerRepository;
-    private final ProjectMemberRepository projectMemberRepository;
+    private final ProjectSecurityService projectSecurityService;
     private final WorkItemRepository workItemRepository;
     private final UserRepository userRepository;
     private final SignalBus signalBus;
@@ -61,7 +62,7 @@ public class ReviewService {
     public ReviewService(
             ReviewRepository reviewRepository,
             WorkItemReviewerRepository workItemReviewerRepository,
-            ProjectMemberRepository projectMemberRepository,
+            ProjectSecurityService projectSecurityService,
             WorkItemRepository workItemRepository,
             UserRepository userRepository,
             SignalBus signalBus,
@@ -73,7 +74,7 @@ public class ReviewService {
         this.lifecycleTriggerDispatcher = lifecycleTriggerDispatcher;
         this.reviewRepository = reviewRepository;
         this.workItemReviewerRepository = workItemReviewerRepository;
-        this.projectMemberRepository = projectMemberRepository;
+        this.projectSecurityService = projectSecurityService;
         this.workItemRepository = workItemRepository;
         this.userRepository = userRepository;
         this.signalBus = signalBus;
@@ -101,11 +102,11 @@ public class ReviewService {
             throw new BusinessException("Invalid verdict. Must be one of: APPROVED, CHANGES_REQUESTED, COMMENTED");
         }
 
-        ProjectMember callerMember = projectMemberRepository.findByProjectIdAndUserId(projectId, currentUser.getId())
+        // One cached read answers both "is a member" and "may review".
+        Set<MemberRole> callerRoles = projectSecurityService.effectiveRoles(projectId, currentUser.getId())
                 .orElseThrow(() -> new ForbiddenException("You must be a project member to perform this action"));
-
-        if (callerMember.getRole() == MemberRole.CREATOR) {
-            throw new ForbiddenException("CREATOR role cannot submit reviews");
+        if (!callerRoles.contains(MemberRole.REVIEWER)) {
+            throw new ForbiddenException("Only members with the Reviewer role (or Admins) can submit reviews");
         }
 
         boolean isAssignedReviewer = workItemReviewerRepository
@@ -120,6 +121,14 @@ public class ReviewService {
         WorkItem workItem = workItemRepository.findById(workItemId)
                 .filter(item -> item.getProject() != null && projectId.equals(item.getProject().getId()))
                 .orElseThrow(() -> new EntityNotFoundException("Work Item not found"));
+
+        // A Workflow can ask for a reviewer other than the author: their approval would not count, so
+        // refuse it outright instead of recording a verdict that silently does nothing.
+        if (APPROVED_VERDICT.equals(verdict) && workItem.getCreatedBy() != null
+                && currentUser.getId().equals(workItem.getCreatedBy().getId())
+                && workItemWorkflowService.requiresIndependentReviewer(projectId, workItem)) {
+            throw new BusinessException(INDEPENDENT_REVIEWER_MESSAGE);
+        }
 
         Review review = reviewRepository.findByWorkItemIdAndReviewerId(workItemId, currentUser.getId())
                 .orElseGet(() -> {
@@ -242,7 +251,7 @@ public class ReviewService {
 
     @Transactional(readOnly = true)
     public List<ReviewWithUser> listReviews(String projectId, String workItemId, User currentUser) {
-        if (!projectMemberRepository.existsByProjectIdAndUserId(projectId, currentUser.getId())) {
+        if (!projectSecurityService.isProjectMember(projectId, currentUser.getId())) {
             throw new EntityNotFoundException("Project not found");
         }
 

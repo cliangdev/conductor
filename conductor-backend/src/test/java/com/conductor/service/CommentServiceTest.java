@@ -691,7 +691,7 @@ class CommentServiceTest {
     @Test
     void deleteCommentByNonAuthorNonAdminThrows403() {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-2")).thenReturn(false);
+        when(projectSecurityService.isEditor("proj-1", "user-2")).thenReturn(false);
 
         assertThatThrownBy(() -> commentService.deleteComment("proj-1", "issue-1", "comment-1", otherUser))
                 .isInstanceOf(ForbiddenException.class);
@@ -700,7 +700,7 @@ class CommentServiceTest {
     @Test
     void deleteCommentByAdminSucceeds() {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
-        when(projectSecurityService.isAdminOrCreator("proj-1", "user-2")).thenReturn(true);
+        when(projectSecurityService.isEditor("proj-1", "user-2")).thenReturn(true);
 
         commentService.deleteComment("proj-1", "issue-1", "comment-1", otherUser);
 

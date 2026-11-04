@@ -70,6 +70,29 @@ describe('AcceptInvitePage', () => {
     expect(await screen.findByText(/you've joined cool project/i)).toBeInTheDocument()
   })
 
+  it('shows the label for the granted roles', async () => {
+    vi.mocked(api.apiPost).mockResolvedValue({
+      projectId: 'proj-1',
+      projectName: 'Cool Project',
+      role: 'CREATOR',
+      roles: ['CREATOR', 'REVIEWER'],
+    })
+    render(<AcceptInvitePage />)
+    expect(await screen.findByText('Editor · Reviewer')).toBeInTheDocument()
+  })
+
+  it('shows Viewer for an empty set, not the legacy role', async () => {
+    vi.mocked(api.apiPost).mockResolvedValue({
+      projectId: 'proj-1',
+      projectName: 'Cool Project',
+      role: 'REVIEWER',
+      roles: [],
+    })
+    render(<AcceptInvitePage />)
+    expect(await screen.findByText('Viewer')).toBeInTheDocument()
+    expect(screen.queryByText('Reviewer')).not.toBeInTheDocument()
+  })
+
   it('redirects to project after delay on success', async () => {
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
 

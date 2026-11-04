@@ -92,6 +92,7 @@ public class LocalPublishTaskScheduler implements PublishTaskScheduler {
             case DISPATCH -> dispatchEnabled;
             case HANDOFF -> handoffEnabled;
             case CONFIRM -> confirmEnabled;
+            case PERMALINK -> dispatchEnabled;
         };
     }
 }

@@ -12,7 +12,6 @@ import com.conductor.entity.User;
 import com.conductor.exception.ForbiddenException;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.WorkItemReviewerRepository;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ReviewRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.signal.SignalBus;
@@ -43,7 +42,7 @@ class ReviewServiceTest {
     private WorkItemReviewerRepository workItemReviewerRepository;
 
     @Mock
-    private ProjectMemberRepository projectMemberRepository;
+    private ProjectSecurityService projectSecurityService;
 
     @Mock
     private WorkItemRepository workItemRepository;
@@ -126,8 +125,7 @@ class ReviewServiceTest {
 
     @Test
     void submitReviewCreatesNewReview() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, reviewerUser.getId())).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(reviewerMember.getRoles())));
         when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(issueReviewer));
         when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
@@ -156,8 +154,7 @@ class ReviewServiceTest {
     /** A verdict on a Post is routed like its approval request: marked as publishing. */
     @Test
     void submitReviewOnAPostMarksTheSignalAsPublishing() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, reviewerUser.getId())).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(reviewerMember.getRoles())));
         when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(issueReviewer));
         when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
@@ -177,8 +174,7 @@ class ReviewServiceTest {
 
     @Test
     void submitReviewStampsItsRollupContextThroughTheSharedHelper() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, reviewerUser.getId())).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(reviewerMember.getRoles())));
         when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(issueReviewer));
         when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
@@ -202,8 +198,7 @@ class ReviewServiceTest {
         existingReview.setVerdict("COMMENTED");
         existingReview.setSubmittedAt(originalTime);
 
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, reviewerUser.getId())).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(reviewerMember.getRoles())));
         when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(issueReviewer));
         when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, reviewerUser.getId()))
@@ -225,8 +220,7 @@ class ReviewServiceTest {
 
     @Test
     void submitReviewNonAssignedReviewerThrowsForbidden() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, reviewerUser.getId())).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(reviewerMember.getRoles())));
         when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.empty());
 
@@ -238,21 +232,19 @@ class ReviewServiceTest {
 
     @Test
     void submitReviewCreatorRoleThrowsForbidden() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, creatorUser.getId()))
-                .thenReturn(Optional.of(creatorMember));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, creatorUser.getId())).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(creatorMember.getRoles())));
 
         assertThatThrownBy(() -> reviewService.submitReview(
                 PROJECT_ID, ISSUE_ID, "APPROVED", null, creatorUser))
                 .isInstanceOf(ForbiddenException.class)
-                .hasMessageContaining("CREATOR role cannot submit reviews");
+                .hasMessageContaining("Only members with the Reviewer role (or Admins) can submit reviews");
     }
 
     // --- review_approved: an approval runs the cascade the Workflow declares, and reports the outcome ---
 
     @Test
     void anApprovedVerdictRunsTheReviewApprovedCascadeAndReportsWhereItGot() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, reviewerUser.getId())).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(reviewerMember.getRoles())));
         when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(issueReviewer));
         when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
@@ -272,8 +264,7 @@ class ReviewServiceTest {
 
     @Test
     void aBlockedCascadeIsAnnouncedAndTheApprovalStillStands() throws Exception {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, reviewerUser.getId())).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(reviewerMember.getRoles())));
         when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(issueReviewer));
         when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
@@ -299,8 +290,7 @@ class ReviewServiceTest {
 
     @Test
     void aChangesRequestedVerdictNeverRunsTheApprovalCascade() {
-        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, reviewerUser.getId()))
-                .thenReturn(Optional.of(reviewerMember));
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, reviewerUser.getId())).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(reviewerMember.getRoles())));
         when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, reviewerUser.getId()))
                 .thenReturn(Optional.of(issueReviewer));
         when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
@@ -321,5 +311,83 @@ class ReviewServiceTest {
 
         assertThat(submission.autoTransition()).isEmpty();
         verify(lifecycleTriggerDispatcher, never()).onReviewApproved(any(), any());
+    }
+
+    @Test
+    void submitReviewAllowsAMemberHoldingCreatorAndReviewer() {
+        creatorMember.setRoles(java.util.Set.of(MemberRole.CREATOR, MemberRole.REVIEWER));
+        WorkItemReviewer assignment = new WorkItemReviewer();
+        assignment.setWorkItemId(ISSUE_ID);
+        assignment.setUserId(creatorUser.getId());
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, creatorUser.getId())).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(creatorMember.getRoles())));
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, creatorUser.getId()))
+                .thenReturn(Optional.of(assignment));
+        when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, creatorUser.getId()))
+                .thenReturn(Optional.empty());
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
+        when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Review review = reviewService.submitReview(PROJECT_ID, ISSUE_ID, "APPROVED", "ok", creatorUser);
+
+        assertThat(review.getVerdict()).isEqualTo("APPROVED");
+    }
+
+    @Test
+    void submitReviewRefusesAViewerWithNoRoles() {
+        creatorMember.setRoles(java.util.Set.of());
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, creatorUser.getId())).thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(creatorMember.getRoles())));
+
+        assertThatThrownBy(() -> reviewService.submitReview(PROJECT_ID, ISSUE_ID, "APPROVED", null, creatorUser))
+                .isInstanceOf(ForbiddenException.class);
+    }
+
+    // --- requireIndependentReviewer: the author cannot approve their own item ---
+
+    private void givenAuthorIsAnAssignedReviewer() {
+        creatorMember.setRoles(java.util.Set.of(MemberRole.CREATOR, MemberRole.REVIEWER));
+        WorkItemReviewer assignment = new WorkItemReviewer();
+        assignment.setWorkItemId(ISSUE_ID);
+        assignment.setUserId(creatorUser.getId());
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, creatorUser.getId()))
+                .thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(creatorMember.getRoles())));
+        when(workItemReviewerRepository.findByWorkItemIdAndUserId(ISSUE_ID, creatorUser.getId()))
+                .thenReturn(Optional.of(assignment));
+        when(workItemRepository.findById(ISSUE_ID)).thenReturn(Optional.of(workItem));
+    }
+
+    @Test
+    void theAuthorsApprovalIsRefusedWhenTheGateNeedsAnIndependentReviewer() {
+        givenAuthorIsAnAssignedReviewer();
+        when(workItemWorkflowService.requiresIndependentReviewer(PROJECT_ID, workItem)).thenReturn(true);
+
+        assertThatThrownBy(() -> reviewService.submitReview(PROJECT_ID, ISSUE_ID, "APPROVED", "mine", creatorUser))
+                .isInstanceOf(com.conductor.exception.BusinessException.class)
+                .hasMessage("This Workflow needs a reviewer other than the author");
+        verify(reviewRepository, never()).save(any(Review.class));
+    }
+
+    @Test
+    void theAuthorMayStillCommentOnAnIndependentGate() {
+        givenAuthorIsAnAssignedReviewer();
+        when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, creatorUser.getId()))
+                .thenReturn(Optional.empty());
+        when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(reviewService.submitReview(PROJECT_ID, ISSUE_ID, "COMMENTED", "note", creatorUser).getVerdict())
+                .isEqualTo("COMMENTED");
+        // Only an approval is checked against the independent-reviewer rule; request-changes never is.
+        verify(workItemWorkflowService, never()).requiresIndependentReviewer(any(), any());
+    }
+
+    @Test
+    void theAuthorMayApproveWhenTheGateDoesNotRequireAnIndependentReviewer() {
+        givenAuthorIsAnAssignedReviewer();
+        when(workItemWorkflowService.requiresIndependentReviewer(PROJECT_ID, workItem)).thenReturn(false);
+        when(reviewRepository.findByWorkItemIdAndReviewerId(ISSUE_ID, creatorUser.getId()))
+                .thenReturn(Optional.empty());
+        when(reviewRepository.save(any(Review.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        assertThat(reviewService.submitReview(PROJECT_ID, ISSUE_ID, "APPROVED", "ok", creatorUser).getVerdict())
+                .isEqualTo("APPROVED");
     }
 }

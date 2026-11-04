@@ -596,6 +596,9 @@ public class PublishTargetService {
         if (bypass == FreezeBypass.NONE || caller != null) {
             verifyMembership(projectId, caller);
         }
+        if (bypass == FreezeBypass.NONE) {
+            projectSecurityService.requireEditor(projectId, caller.getId());
+        }
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
         Map<String, TargetOption> available = new LinkedHashMap<>();

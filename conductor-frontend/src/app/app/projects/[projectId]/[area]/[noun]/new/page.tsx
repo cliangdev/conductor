@@ -7,6 +7,7 @@
 
 import { useParams } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
+import { usePermissions } from '@/contexts/PermissionsContext'
 import { useWorkflowByAreaNoun, useWorkflowView } from '@/lib/workflows'
 import { WorkItemDetailSkeleton } from '@/components/workitems/WorkItemDetailSkeleton'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
@@ -17,12 +18,23 @@ export const dynamic = 'force-dynamic'
 export default function ComposeWorkItemPage() {
   const { projectId, area, noun } = useParams<{ projectId: string; area: string; noun: string }>()
   const { accessToken } = useAuth()
+  const { can, loading: permissionsLoading } = usePermissions()
   const { status, workflow } = useWorkflowByAreaNoun(projectId, area, noun, accessToken)
   const slug = workflow?.slug ?? workflow?.name ?? ''
   const view = useWorkflowView(projectId, slug || undefined, accessToken)
 
-  if (!accessToken || status === 'loading' || (status === 'ready' && !view)) {
+  if (!accessToken || permissionsLoading || status === 'loading' || (status === 'ready' && !view)) {
     return <WorkItemDetailSkeleton />
+  }
+
+  // A read-only member (no Editor or Admin role) cannot create; they can still open and comment on items.
+  if (!can('issue.edit')) {
+    return (
+      <div className="flex h-64 flex-col items-center justify-center gap-1 text-muted-foreground">
+        <span className="font-medium">You can&apos;t create here</span>
+        <span className="text-sm">Creating needs the Editor or Admin role. Ask a workspace admin for access.</span>
+      </div>
+    )
   }
 
   if (status === 'notfound' || !workflow || !view || !workflowDeclaresPublishTargets(view)) {

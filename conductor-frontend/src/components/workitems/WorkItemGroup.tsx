@@ -5,7 +5,6 @@ import { statusHueClasses } from '@/components/ui/status-badge'
 import { cn } from '@/lib/utils'
 import { WorkItemRow } from '@/components/workitems/WorkItemRow'
 import type { IssueAssignee, IssueReviewer, Member, WorkItemGroupData } from '@/components/workitems/listTypes'
-import type { MemberRole } from '@/types'
 
 /** One status group: a sticky `bg-muted` header (dot + label + count) followed by its rows. */
 export function WorkItemGroup({
@@ -14,10 +13,10 @@ export function WorkItemGroup({
   slug,
   detailArea,
   noun,
-  userRole,
+  canEdit,
   accessToken,
   members,
-  canEdit,
+  independentReviewerStatuses,
   selectedIds,
   onToggleSelect,
   tabStopId,
@@ -37,10 +36,10 @@ export function WorkItemGroup({
   slug: string
   detailArea: string
   noun: string
-  userRole: MemberRole
+  canEdit: boolean
   accessToken: string
   members: Member[]
-  canEdit: boolean
+  independentReviewerStatuses?: ReadonlySet<string>
   selectedIds: Set<string>
   onToggleSelect?: (id: string) => void
   /** The row currently holding the roving tab stop (defaults to the first row — see useWorkItemListState). */
@@ -84,10 +83,10 @@ export function WorkItemGroup({
             slug={slug}
             detailArea={detailArea}
             noun={noun}
-            userRole={userRole}
+            canEdit={canEdit}
             accessToken={accessToken}
             members={members}
-            canEdit={canEdit}
+            independentReviewerStatuses={independentReviewerStatuses}
             selected={selectedIds.has(issue.id)}
             focused={tabStopId === issue.id}
             publishing={publishing}

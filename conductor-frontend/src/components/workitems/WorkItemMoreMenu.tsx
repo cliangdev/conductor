@@ -20,13 +20,13 @@ import { toastError } from '@/components/ui/toast'
 import { apiErrorMessage, apiPatch } from '@/lib/api'
 import { statusMeta } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
-import { useAvailableTransitions, useBlockedReason, type UserRole } from '@/components/issues/useAvailableTransitions'
+import { useAvailableTransitions, useBlockedReason } from '@/components/issues/useAvailableTransitions'
 
 export interface WorkItemMoreMenuProps {
   projectId: string
   issueId: string
   currentStatus: string
-  userRole: UserRole
+  canEdit: boolean
   token: string
   workflowView?: WorkflowView
   /** Moves the publish gate would refuse right now, keyed by target status, with the gate's reason. */
@@ -45,7 +45,7 @@ export function WorkItemMoreMenu({
   projectId,
   issueId,
   currentStatus,
-  userRole,
+  canEdit,
   token,
   workflowView,
   blockedMoves,
@@ -56,7 +56,7 @@ export function WorkItemMoreMenu({
   noun = 'item',
 }: WorkItemMoreMenuProps) {
   const [busy, setBusy] = useState(false)
-  const transitions = useAvailableTransitions(projectId, issueId, currentStatus, userRole, token)
+  const transitions = useAvailableTransitions(projectId, issueId, currentStatus, canEdit, token)
   const blockedReason = useBlockedReason(workflowView, blockedMoves)
 
   // A review-gated move is a reviewer's verdict, offered as Approve beside this menu, never here.

@@ -39,7 +39,8 @@ verdicts and AI disclosure (a local file's sidecar provenance counts in the prev
 Approving a draft is also the photo check: `commit_creative_draft({photoChecked: true})` records that the person
 saw no burned-in text, logo or claim in the files that commit uploads (a library photo keeps its own verdict).
 A Creative then leaves DRAFT with `update_creative({state: "READY"})`, which is refused while any other blocking
-readiness item fails.
+readiness item fails. Attaching a DRAFT Creative to a Post does the same promotion itself when the checklist
+(bar its own "still a draft" item) has no blocking failure; see [Attach](#attach--use-in-post).
 
 Photos (`creative_photo`) carry provenance (source, licence, AI disclosure), a checked/blocked verdict and
 per-placement focal points, and go through the same mint → signed PUT → confirm upload shape as a Post's
@@ -232,6 +233,12 @@ selection and pushes it through `PublishTargetService#replaceSelection` — the 
 own edit in the UI goes through — so the approval gate reverts and the bundle hash changes exactly as if a
 human had picked that media by hand. Sequence frames (a carousel's beats) attach in the order they
 rendered, keyed by `sequenceIndex`; they are never re-sorted, because order is content.
+
+**Attach promotes a ready DRAFT.** A Creative on a Post is in use, so a `DRAFT` that passes readiness
+(`CreativeService#promoteOnAttach`, the same checklist as `readiness`) becomes `READY` in the attach's
+transaction. One with a blocking failure stays `DRAFT` and is still attached; `READY` and `ARCHIVED` are left alone.
+The response's `creativeState` is the state afterwards and `stateNote` is null or one sentence naming the first
+blocking issue.
 
 **Alt text reaches Instagram.** Instagram is the only platform here with an `altText` option (sent as
 `alt_text`, single feed images only). When attach gives an Instagram target exactly one still image, and the
@@ -909,7 +916,7 @@ numbers used (or why a decision couldn't be made) and is never recomputed after 
 
 **Confirming a winner** is the one human action in this loop: `POST .../experiments/{id}/confirm-winner`
 appends the winning variant's headline to its family's Brand Kit `approved_lines` (deduplicated) and
-stamps `winnerLineConfirmedAt`/`By`. It requires ADMIN or CREATOR, requires a `DECIDED` experiment with a
+stamps `winnerLineConfirmedAt`/`By`. It requires the Editor role (or Admin), requires a `DECIDED` experiment with a
 winner, and is idempotent — `decide` never calls it, and calling it twice never appends the line twice. No
 experiment ever changes brand copy on its own.
 

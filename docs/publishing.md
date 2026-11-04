@@ -42,7 +42,9 @@ unvalidated and then sit forever, because the native hand-off refused it. Edges 
 while the review was pending, say) the approval still stands, the Post stays put, `blockedReason` names
 the problem, and the Publishing channel gets an `AUTO_TRANSITION_BLOCKED` notification; fix the Post and
 take the edge — nobody has to approve again. Approving over the API works with a **user** API key held by
-a REVIEWER or ADMIN who is assigned to the item; a
+an assigned member holding the Reviewer role, or an Admin; a member can hold Editor and Reviewer together,
+and self-approval counts unless the transition sets `requireIndependentReviewer` (see
+[workflows](workflows.md#review-gate-requireindependentreviewer)). A
 project-scoped key is refused with a 403 rather than a 500.
 
 **Ask before you move.** `GET …/work-items/{id}/publish-preflight` runs the same validators without
@@ -235,7 +237,7 @@ An agent drives the whole pipeline with four tools, in the shape Blotato made fa
 `create_post` (caption, media from paths or URLs, destinations by account name and `format` — feed,
 reel or story — fire time, reviewers — one call) → `get_post_status` (status, every destination's
 outcome and format, the gate's blockers, review and consent state) → `submit_review` (as an assigned
-REVIEWER's or ADMIN's user key; approval schedules the Post). `submit_post`, `list_posts`, `list_assets`,
+user key of an assigned member with the Reviewer role (or an Admin); approval schedules the Post). `submit_post`, `list_posts`, `list_assets`,
 `set_publish_targets`, `upload_asset`, `retry_failed_publish_targets` and `complete_manual_publish`
 cover the rest. `format` defaults to `feed` and is omitted from a response when it is feed, to keep
 the common case's output small. Giving a story target several media and no `assetIds` resolves to the
@@ -531,8 +533,17 @@ to `PublishTaskArmer`, which creates one task per target for its next step:
 | `PENDING`, APP_MANAGED or MANUAL | `DISPATCH` | the fire time |
 | `PENDING`, NATIVE | `HANDOFF` | fire time minus the platform's maximum lead (now, if already inside it) |
 | `HANDED_OFF` | `CONFIRM` | the fire time, then every minute while the platform does not report it live |
+| `PUBLISHED`, no link yet | `PERMALINK` | 2, 5, 10, 15, 15, 15 minutes after publishing (about an hour), then it stops |
 
-Each task is an HTTP request to `POST /internal/v1/publish-targets/{id}/{dispatch|handoff|confirm}`
+A `PERMALINK` task covers a platform that reports a post live before it has a link. TikTok's `status/fetch`
+returns `PUBLISH_COMPLETE` with no post id until moderation finishes, and only for public posts. The target
+stays `PUBLISHED`; the publish id and post kind are kept on the row's `resume_checkpoint`
+(`PermalinkFollowUp`), and each task re-reads the status. When the id appears the link goes through
+`PublishOutcomeService.recordSuccess`, which fills `permalink` on an already-published row and records the
+destination Asset (and so the Post's external link). TikTok photo posts live at `/@handle/photo/{id}`,
+videos at `/@handle/video/{id}`.
+
+Each task is an HTTP request to `POST /internal/v1/publish-targets/{id}/{dispatch|handoff|confirm|permalink}`
 with a target-bound bearer token (`RunTokenService#generatePublishTaskToken`) and the target's fire time
 as a snapshot in the URL. `PublishTaskHandler` receives it and runs **the same conditional claim the
 poller runs** — `PENDING → PUBLISHING` in one `UPDATE … WHERE state = 'PENDING'` — so a duplicate
