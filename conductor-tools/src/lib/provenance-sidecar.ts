@@ -21,15 +21,38 @@ export const sidecarPath = (filePath: string): string => `${filePath}.provenance
 export const PROVENANCE_FIELD_MAX = 200
 
 /**
- * Fits a sidecar's free-text field into the API's limit. Sidecars are written by people and agents and
- * often quote a full retailer URL; an over-long one used to fail the whole upload with a bare "Validation
- * failed". The file on disk keeps the full text.
+ * Fits a free-text provenance field into the API's limit, cutting at a word boundary and ending with an
+ * ellipsis. Sources and licences are written by people and agents and often quote a full retailer URL; an
+ * over-long one used to fail the whole upload with a bare "Validation failed". Applied once, at the upload
+ * boundary (see {@link fitProvenanceForUpload}); sidecars on disk keep the full text.
  */
 export function clipProvenanceField(value: string): string {
   if (value.length <= PROVENANCE_FIELD_MAX) return value
   const room = PROVENANCE_FIELD_MAX - 1
   const cut = value.lastIndexOf(' ', room)
   return `${value.slice(0, cut > room * 0.6 ? cut : room).trimEnd()}…`
+}
+
+/**
+ * Clips `source` and `licence` for upload and returns a warning per field that was shortened, naming the
+ * file, so a cut attribution is never silent. The full text stays in the local sidecar or the caller's input.
+ */
+export function fitProvenanceForUpload<T extends { source?: string; licence?: string }>(
+  fields: T,
+  who: string
+): { fields: T; warnings: string[] } {
+  const warnings: string[] = []
+  const out = { ...fields }
+  for (const key of ['source', 'licence'] as const) {
+    const value = fields[key]
+    if (typeof value === 'string' && value.length > PROVENANCE_FIELD_MAX) {
+      out[key] = clipProvenanceField(value) as T[typeof key]
+      warnings.push(
+        `${who}: ${key} was ${value.length} characters; shortened to ${PROVENANCE_FIELD_MAX} for Conductor. The full text stays in the local sidecar/source.`
+      )
+    }
+  }
+  return { fields: out, warnings }
 }
 
 /**
@@ -56,7 +79,7 @@ export async function readProvenanceSidecar(filePath: string): Promise<SidecarPr
   if (typeof o['source'] !== 'string') throw new Error(`${p}: "source" must be a string.`)
   if (typeof o['licence'] !== 'string') throw new Error(`${p}: "licence" must be a string.`)
   if (typeof o['aiGenerated'] !== 'boolean') throw new Error(`${p}: "aiGenerated" must be a boolean.`)
-  return { source: clipProvenanceField(o['source']), licence: clipProvenanceField(o['licence']), aiGenerated: o['aiGenerated'] }
+  return { source: o['source'], licence: o['licence'], aiGenerated: o['aiGenerated'] }
 }
 
 export async function writeProvenanceSidecar(filePath: string, data: SidecarData): Promise<void> {
