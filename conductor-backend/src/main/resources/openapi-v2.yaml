@@ -4711,6 +4711,51 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/marketing/creatives/{creativeId}/revisions:
+    get:
+      tags:
+        - creatives
+      summary: A Creative's slideshow-spec revisions
+      description: >-
+        The most recent revisions (newest first, at most 50) of a CAROUSEL Creative's slideshow spec. A revision
+        is written when the spec is first set (`IMPORT`) or set at create / replaced (`COMMIT`, with a
+        `textDiff` of the editable text that changed). The spec itself is not repeated here; read it from the
+        Creative. Any project member may read.
+      operationId: listCreativeRevisions
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The revisions, newest first
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRevisionListResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/marketing/creatives/{creativeId}/performance:
     get:
       tags:
@@ -9902,6 +9947,14 @@ components:
           nullable: true
           description: >-
             The slide style a CAROUSEL was built with (so a Brand Kit style can later be made from it); null when none was recorded. CAROUSEL only — 422 on any other kind.
+        slideshowSpec:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: >-
+            The editable slideshow spec (`{id, grain?, style?, slides:[...]}`, the shape `compose_slideshow` takes) a
+            CAROUSEL's slides were composed from; null when none was stored. Every image field is `media:<id>` of an
+            IMAGE in the project's media library.
         slideshow:
           allOf:
             - $ref: "#/components/schemas/CreativeSlideshow"
@@ -10080,6 +10133,21 @@ components:
           description: >-
             The slide style a CAROUSEL was built with (so a Brand Kit style can later be made from it); null when none was recorded. CAROUSEL only — 422 on any other kind. In a draft-spec request (`CreativeDraftSpecRequest`) with a `baseCreativeId`: absent keeps the base Creative's style unless `slides` differ from the base's (a different media id list, or the same ids in a different order, for any ratio) without a `slideStyle`, which clears it; explicit JSON `null` (or `{}`) clears it; a kind other than CAROUSEL never inherits the base style.
           x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonSetter(nulls = com.fasterxml.jackson.annotation.Nulls.AS_EMPTY)"
+        slideshowSpec:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: >-
+            The editable slideshow spec (`{id, grain?, style?, slides:[...]}`, as `compose_slideshow` takes it) the
+            CAROUSEL's slides were composed from. CAROUSEL only — 422 (`slideshowSpecKind`) on any other kind.
+            `id` is 1..80 characters; `slides` has 1..35 objects; editable text is at most 500 characters; every
+            image field (`bg`, `shot`, `photos[].src`, `days[].img`) is `media:<id>` of an IMAGE in this project
+            (`slideshowSpecMedia`); every non-empty list in `slides` has exactly as many entries as the spec has
+            slides (`slideshowSpecSlideCount`); structure problems are `slideshowSpecInvalid`. A `resolvedStyle`
+            key is stripped. In a draft-spec request (`CreativeDraftSpecRequest`) with a `baseCreativeId`: absent
+            keeps the base Creative's spec unless `slides` differ from the base's without a `slideshowSpec`, which
+            clears it; explicit JSON `null` (or `{}`) clears it; a kind other than CAROUSEL never inherits it.
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonSetter(nulls = com.fasterxml.jackson.annotation.Nulls.AS_EMPTY)"
         slideshow:
           allOf:
             - $ref: "#/components/schemas/CreativeSlideshow"
@@ -10213,6 +10281,18 @@ components:
           nullable: true
           description: >-
             The slide style a CAROUSEL was built with (so a Brand Kit style can later be made from it); null when none was recorded. CAROUSEL only — 422 on any other kind. Absent: kept as it is, unless the same request changes `slides` (a different media id list, or the same ids in a different order, for any ratio) without sending a `slideStyle`, which clears it. Present: replaces it. Explicit JSON `null` (or an empty object `{}`) clears it, on any kind. It is also cleared when the kind changes away from CAROUSEL.
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonSetter(nulls = com.fasterxml.jackson.annotation.Nulls.AS_EMPTY)"
+        slideshowSpec:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: >-
+            The editable slideshow spec of a CAROUSEL (see `CreateCreativeRequest.slideshowSpec` for the shape and
+            the 422 rules). Absent: kept, unless the same request changes `slides` (a different media id list, or
+            the same ids in a different order, for any placement) without sending a `slideshowSpec`, which clears
+            it. Present: replaces it, and records a revision when it differs from the stored one. Explicit JSON
+            `null` (or `{}`) clears it, on any kind (no revision). It is also cleared when the kind changes away
+            from CAROUSEL.
           x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonSetter(nulls = com.fasterxml.jackson.annotation.Nulls.AS_EMPTY)"
         slideshow:
           allOf:
@@ -10981,6 +11061,95 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CreativePerformancePlatform"
+
+    CreativeRevisionListResponse:
+      type: object
+      required:
+        - revisions
+      properties:
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativeRevision"
+          description: Newest first, at most 50.
+
+    CreativeRevision:
+      type: object
+      required:
+        - id
+        - revisionNo
+        - creativeVersion
+        - status
+        - source
+        - textDiff
+        - createdAt
+      properties:
+        id:
+          type: string
+        revisionNo:
+          type: integer
+          description: 1.. per Creative.
+        creativeVersion:
+          type: integer
+          description: The Creative's `version` after this revision applied.
+        status:
+          type: string
+          enum: [PENDING, APPLIED, FAILED]
+        source:
+          type: string
+          enum: [EDITOR, REVIEWER, MCP, IMPORT, COMMIT]
+        textDiff:
+          type: array
+          description: The editable text this revision changed (empty for IMPORT).
+          items:
+            $ref: "#/components/schemas/CreativeRevisionTextChange"
+        checks:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: true
+        authorUserId:
+          type: string
+          nullable: true
+        postId:
+          type: string
+          nullable: true
+        reviewRound:
+          type: integer
+          nullable: true
+        renderId:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        appliedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CreativeRevisionTextChange:
+      type: object
+      required:
+        - slide
+        - path
+      properties:
+        slide:
+          type: integer
+          description: 1-based slide number.
+        path:
+          type: string
+          description: A path within the slide, e.g. `texts[0].t` or `rows[1].items[2]`.
+        old:
+          type: string
+          nullable: true
+        new:
+          type: string
+          nullable: true
 
     CreativePerformanceResponse:
       type: object

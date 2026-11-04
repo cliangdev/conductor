@@ -107,6 +107,7 @@ const CREATIVE_TOOLS = [
   'render_creative',
   'preview_creative',
   'preview_creative_draft',
+  'attach_slideshow_spec',
   'attach_creative_to_post',
   'create_experiment',
   'delete_creative',
@@ -114,6 +115,7 @@ const CREATIVE_TOOLS = [
 import { CodexConfirmationRequired } from '../lib/image-generation.js'
 import { generateCreativeImage, type GenerateCreativeImageParams } from './tools/creative-images.js'
 import { composeSlideshowTool, type ComposeSlideshowParams } from './tools/slideshow.js'
+import { attachSlideshowSpec, type AttachSlideshowSpecParams } from './tools/slideshow-spec.js'
 import {
   listProjectDocs,
   readProjectDoc,
@@ -1421,7 +1423,7 @@ export const TOOLS = [
   },
   {
     name: 'get_creative',
-    description: "One Creative in full: its fields (including audio, slideshow and, for a CAROUSEL or CLIP, renderedVideo — the latest video frame), its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
+    description: "One Creative in full: its fields (including audio, slideshow and, for a CAROUSEL or CLIP, renderedVideo — the latest video frame), for a CAROUSEL composed with compose_slideshow, slideshowSpec (the editable spec; summarised when large) and textFields (each editable text as {slide, path, text}, slides from 1), its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1605,7 +1607,7 @@ export const TOOLS = [
   },
   {
     name: 'compose_slideshow',
-    description: "Compose organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Native look by default; brandKitId applies that kit's slideshowStyle and style overrides on top. Slide types: photo, screen, notes, grid, stack, tier, week, receipt, placard, messages. Returns paths, checks, passed, the resolved `style` (spec.json keeps your input style and adds it as `resolvedStyle`) and the first slide as an image. If passed is false, fix and call again. Next: preview_creative_draft({kind: \"CAROUSEL\", slidePaths, slideStyle: style}). Nothing is sent to Conductor.",
+    description: "Compose organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Native look by default; brandKitId applies that kit's slideshowStyle and style overrides on top. Slide types: photo, screen, notes, grid, stack, tier, week, receipt, placard, messages. Returns paths, checks, passed, the resolved `style` (spec.json keeps your input style and adds it as `resolvedStyle`) and the first slide as an image. If passed is false, fix and call again. Next: preview_creative_draft({kind: \"CAROUSEL\", slidePaths, slideStyle: style}); the spec.json beside the slides travels with the Creative at commit, which makes its text editable later. Nothing is sent to Conductor.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1620,7 +1622,7 @@ export const TOOLS = [
   },
   {
     name: 'preview_creative_draft',
-    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. For kind CAROUSEL pass slidePaths instead of a photo: it returns one contact sheet per placement (slides in order), readiness and per-slide aspect violations; with a track (audio.trackId or audioPath) it also renders the slideshow MP4 on this machine and returns its path as slideshowVideoPath. Violations come back as a structured error and nothing is rendered.",
+    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. For kind CAROUSEL pass slidePaths instead of a photo (the spec.json compose_slideshow wrote beside them is kept with the draft, or pass slideshowSpecPath): it returns one contact sheet per placement (slides in order), readiness and per-slide aspect violations; with a track (audio.trackId or audioPath) it also renders the slideshow MP4 on this machine and returns its path as slideshowVideoPath. Violations come back as a structured error and nothing is rendered.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1647,6 +1649,7 @@ export const TOOLS = [
           additionalProperties: { type: 'array', items: { type: 'string' } },
           description: 'CAROUSEL only: slide image files on this machine in order per placement (keys default, 4x5, 9x16, 1x1); an entry may also be an existing media id. Use instead of slides.',
         },
+        slideshowSpecPath: { type: 'string', description: "CAROUSEL only: the slideshow spec these slides were composed from (a compose_slideshow output spec.json or a source spec). Default: the spec.json beside slidePaths. It is stored on the Creative at commit (its images uploaded), so the text can be edited later." },
         baseCreativeId: { type: 'string', description: 'Preview edits on top of this saved Creative: only the fields given here change (optional). commit_creative_draft then updates it.' },
         draftDir: { type: 'string', description: 'Folder to write the draft into (optional — defaults to <project>/.conductor/drafts/<timestamp>-<slug>/)' },
         full: { type: 'boolean', description: 'Render every placement at full size instead of one contact sheet (optional, default false; slower, and the image shown is the first placement)' },
@@ -1655,7 +1658,7 @@ export const TOOLS = [
   },
   {
     name: 'commit_creative_draft',
-    description: "Save a draft the person has APPROVED: uploads its local files, creates the Creative (or updates baseCreativeId's), then renders the real frames (a CAROUSEL's are assembled on the server, plus its slideshow MP4 here when it has a track). Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; the params below cover files without one. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
+    description: "Save a draft the person has APPROVED: uploads its local files (and, for a CAROUSEL, the images of its slideshow spec, stored with the Creative), creates the Creative (or updates baseCreativeId's), then renders the real frames (a CAROUSEL's are assembled on the server, plus its slideshow MP4 here when it has a track). Call only after preview_creative_draft's image was shown and approved — this is the first write to Conductor. A draft can be committed once. A file's <file>.provenance.json sidecar (written by generate_creative_image) supplies its provenance; the params below cover files without one. Returns the Creative id, display id, frames and readiness; call get_creative to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1666,6 +1669,19 @@ export const TOOLS = [
         photoChecked: { type: 'boolean', description: 'true only when the person approved the draft after looking at it — records their check that the uploaded photo(s) carry no burned-in text, logo or claim (readiness item photoChecked).' },
       },
       required: ['draftDir'],
+    },
+  },
+  {
+    name: 'attach_slideshow_spec',
+    description: "Backfill: store a slideshow spec on a CAROUSEL Creative that was committed without one, so its text becomes editable. Re-composes the spec here at each ratio the Creative has, compares every slide with the stored image (lowest tile SSIM) and refuses if any is below 0.95 unless force is true. Uploads the spec's images and saves the spec with the Creative's current version. Returns what was attached and the per-slide similarity summary. Call get_creative after to verify slideshowSpec and textFields.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
+        specPath: { type: 'string', description: 'A slideshow spec .json: a source spec (relative image paths resolve against its folder) or a compose_slideshow output spec.json' },
+        force: { type: 'boolean', description: 'Attach even when slides differ from a fresh render, or when the Creative already has a spec (optional)' },
+      },
+      required: ['creativeId', 'specPath'],
     },
   },
   {
@@ -2711,6 +2727,10 @@ export async function runMcpServer(): Promise<void> {
               config
             )
           )
+        }
+        case 'attach_slideshow_spec': {
+          const result = await attachSlideshowSpec(params as unknown as AttachSlideshowSpecParams, config)
+          return result.ok ? successResponse(result) : errorResponse(result)
         }
         case 'attach_creative_to_post': {
           return successResponse(

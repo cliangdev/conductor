@@ -22,6 +22,17 @@ describe('CAROUSEL tool schemas', () => {
     expect(props('preview_creative_draft')['slidePaths']!.type).toBe('object')
   })
 
+  it('preview_creative_draft takes slideshowSpecPath', () => {
+    expect(props('preview_creative_draft')['slideshowSpecPath']!.type).toBe('string')
+  })
+
+  it('attach_slideshow_spec takes creativeId and specPath (required) and force', () => {
+    const tool = TOOLS.find((t) => t.name === 'attach_slideshow_spec')!
+    expect((tool.inputSchema as { required: string[] }).required).toEqual(['creativeId', 'specPath'])
+    expect(props('attach_slideshow_spec')['force']!.type).toBe('boolean')
+    expect(tool.description).toContain('get_creative')
+  })
+
   it('list_creative_media takes labelPrefix', () => {
     expect(props('list_creative_media')['labelPrefix']!.type).toBe('string')
   })
