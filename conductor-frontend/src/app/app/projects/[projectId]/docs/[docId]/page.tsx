@@ -8,20 +8,14 @@ import { markPageReady } from '@/lib/perf'
 import { getDoc, getDocComments, setDocTaskState } from '@/lib/docs-api'
 import type { DocComment, ProjectDoc } from '@/lib/docs-api'
 import { apiErrorMessage } from '@/lib/api'
-import { fetchMembersCached } from '@/lib/workflows'
+import { useCan } from '@/contexts/PermissionsContext'
 import { DocViewer } from '@/components/docs/DocViewer'
 import { DocHistoryPanel } from '@/components/docs/DocHistoryPanel'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { toastError } from '@/components/ui/toast'
 import { toggleTaskLine } from '@/lib/task-list'
 import { cn } from '@/lib/utils'
-import type { MemberRole } from '@/types'
 import { ChevronLeft, History, Pencil } from 'lucide-react'
-
-interface Member {
-  userId: string
-  role: MemberRole
-}
 
 export const dynamic = 'force-dynamic'
 
@@ -30,7 +24,8 @@ export default function DocDetailPage() {
   const { accessToken, user } = useAuth()
 
   const [doc, setDoc] = useState<ProjectDoc | null>(null)
-  const [userRole, setUserRole] = useState<MemberRole>('REVIEWER')
+  // Read-only until the role resolves: it only decides whether checkboxes are interactive.
+  const canEditDoc = useCan('doc.edit')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
@@ -52,21 +47,6 @@ export default function DocDetailPage() {
       .finally(() => setLoading(false))
   }, [accessToken, projectId, docId])
 
-  // Separate from the doc fetch so a members failure never blocks reading: it only decides whether
-  // checkboxes are interactive, and the default (REVIEWER) is the safe, read-only answer.
-  useEffect(() => {
-    if (!accessToken || !user) return
-
-    fetchMembersCached(projectId, accessToken)
-      .then((m) => {
-        const members = m as Member[]
-        const me = members.find((m) => m.userId === user.id)
-        if (me) setUserRole(me.role)
-      })
-      .catch(() => {})
-  }, [accessToken, user, projectId])
-
-  const canEditDoc = userRole === 'ADMIN' || userRole === 'CREATOR'
 
   const handleToggleTask = useCallback(
     async (lineNumber: number, checked: boolean) => {

@@ -42,6 +42,7 @@ public class WorkItemStepRunService {
     @Transactional
     public WorkItemStepRun createStepRun(String projectId, String workItemId, StepRunInput input, User caller) {
         verifyMembership(projectId, caller.getId());
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
         WorkItemStepRun stepRun = new WorkItemStepRun();

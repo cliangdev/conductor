@@ -42,6 +42,8 @@ class PublishTaskHandlerTest {
     @Mock NativeHandoffService nativeHandoffService;
     @Mock NativePublishConfirmationPoller confirmationPoller;
     @Mock PublishTaskScheduler scheduler;
+    @Mock com.conductor.service.PublishOutcomeService outcomeService;
+    @Mock com.conductor.integration.connector.tiktok.TikTokPermalinkFollowUp tikTokFollowUp;
     PublishPlatformRegistry registry = new PublishPlatformRegistry();
     PublishTaskHandler handler;
     OffsetDateTime now;
@@ -54,7 +56,7 @@ class PublishTaskHandlerTest {
 
     private PublishTaskHandler handler(boolean dispatch, boolean handoff, boolean confirm) {
         return new PublishTaskHandler(targetRepository, registry, postPublishScheduler, nativeHandoffService,
-                confirmationPoller, scheduler, dispatch, handoff, confirm);
+                confirmationPoller, scheduler, outcomeService, tikTokFollowUp, dispatch, handoff, confirm);
     }
 
     private PostPublishTarget row(String platform, PublishLane lane, PostPublishTargetState state, OffsetDateTime fire) {
@@ -292,5 +294,82 @@ class PublishTaskHandlerTest {
         t.setState(PostPublishTargetState.HANDED_OFF);
         t.setFireTime(from.getFireTime());
         return t;
+    }
+
+    // ---- permalink follow-up (published without a link) ----------------------------------------
+
+    private PostPublishTarget publishedWithoutLink() {
+        PostPublishTarget t = row("tiktok", PublishLane.APP_MANAGED, PostPublishTargetState.PUBLISHED, now.minusMinutes(3));
+        t.setResumeCheckpoint(new com.conductor.service.publish.PermalinkFollowUp("p_pub_url~1", "photo").toJson());
+        return t;
+    }
+
+    @Test
+    void permalinkFollowUp_whenTikTokNowHasTheId_recordsTheLinkThroughTheOutcomeService() {
+        PostPublishTarget t = publishedWithoutLink();
+        when(tikTokFollowUp.check(eq(t), any())).thenReturn(Optional.of(
+                new com.conductor.integration.connector.tiktok.TikTokPermalinkFollowUp.Found("77",
+                        "https://www.tiktok.com/@a/photo/77")));
+
+        handler.handle(PublishTask.permalink("t-1", t.getFireTime(), now, 1), now);
+
+        verify(outcomeService).recordSuccess("t-1", "77", "https://www.tiktok.com/@a/photo/77");
+        verifyNoInteractions(scheduler);
+    }
+
+    @Test
+    void permalinkFollowUp_whenTheIdIsStillMissing_reArmsOnTheNextBackoffStep() {
+        PostPublishTarget t = publishedWithoutLink();
+        when(tikTokFollowUp.check(eq(t), any())).thenReturn(Optional.empty());
+
+        handler.handle(PublishTask.permalink("t-1", t.getFireTime(), now, 0), now);
+
+        org.mockito.ArgumentCaptor<PublishTask> next = org.mockito.ArgumentCaptor.forClass(PublishTask.class);
+        verify(scheduler).scheduleAfterCommit(next.capture());
+        assertThat(next.getValue().kind()).isEqualTo(PublishTaskKind.PERMALINK);
+        assertThat(next.getValue().attempt()).isEqualTo(1);
+        assertThat(next.getValue().notBefore()).isEqualTo(now.plus(PublishTaskArmer.PERMALINK_BACKOFF.get(1)));
+        verify(outcomeService, never()).recordSuccess(anyString(), any(), any());
+    }
+
+    @Test
+    void permalinkFollowUp_aFailedCheckCountsAsAMissAndKeepsTheChainAlive() {
+        PostPublishTarget t = publishedWithoutLink();
+        when(tikTokFollowUp.check(eq(t), any())).thenThrow(new IllegalStateException("429"));
+
+        handler.handle(PublishTask.permalink("t-1", t.getFireTime(), now, 0), now);
+
+        verify(scheduler).scheduleAfterCommit(any());
+    }
+
+    @Test
+    void permalinkFollowUp_stopsAtTheAttemptCap() {
+        PostPublishTarget t = publishedWithoutLink();
+        when(tikTokFollowUp.check(eq(t), any())).thenReturn(Optional.empty());
+        int last = PublishTaskArmer.PERMALINK_BACKOFF.size() - 1;
+
+        handler.handle(PublishTask.permalink("t-1", t.getFireTime(), now, last), now);
+
+        verifyNoInteractions(scheduler);
+        verify(outcomeService, never()).recordSuccess(anyString(), any(), any());
+    }
+
+    @Test
+    void permalinkFollowUp_isANoOpOnceTheRowHasALink() {
+        PostPublishTarget t = publishedWithoutLink();
+        t.setPermalink("https://www.tiktok.com/@a/photo/1");
+
+        handler.handle(PublishTask.permalink("t-1", t.getFireTime(), now, 0), now);
+
+        verifyNoInteractions(tikTokFollowUp, scheduler, outcomeService);
+    }
+
+    @Test
+    void permalinkFollowUp_isANoOpWhenTheRowCarriesNoFollowUp() {
+        row("tiktok", PublishLane.APP_MANAGED, PostPublishTargetState.PUBLISHED, now.minusMinutes(3));
+
+        handler.handle(PublishTask.permalink("t-1", now.minusMinutes(3), now, 0), now);
+
+        verifyNoInteractions(tikTokFollowUp, scheduler, outcomeService);
     }
 }

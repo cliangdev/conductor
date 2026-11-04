@@ -15,7 +15,6 @@ import {
   workItemDetailPath,
 } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
-import type { MemberRole } from '@/types'
 
 interface BoardIssueAssignee {
   userId: string
@@ -41,7 +40,7 @@ export function WorkItemBoardView({
   noun,
   workflowView,
   issues,
-  userRole,
+  canEdit,
   accessToken,
   view,
   onStatusChanged,
@@ -53,7 +52,7 @@ export function WorkItemBoardView({
   noun: string
   workflowView: WorkflowView
   issues: BoardIssue[]
-  userRole: MemberRole
+  canEdit: boolean
   accessToken: string
   view: BoardView
   onStatusChanged: (issueId: string, newStatus: string) => void
@@ -156,7 +155,7 @@ export function WorkItemBoardView({
                             projectId={projectId}
                             issueId={issue.id}
                             currentStatus={issue.status}
-                            userRole={userRole}
+                            canEdit={canEdit}
                             token={accessToken}
                             workflowSlug={slug}
                             onStatusChanged={(s) => onStatusChanged(issue.id, s)}

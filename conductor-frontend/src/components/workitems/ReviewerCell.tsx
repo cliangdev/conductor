@@ -4,6 +4,7 @@ import { forwardRef, useState } from 'react'
 import { Check } from 'lucide-react'
 import { EmptyAvatarSlot, UserAvatar } from '@/components/workitems/UserAvatar'
 import { toastError } from '@/components/ui/toast'
+import { can, memberRoles } from '@/lib/permissions'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,11 +49,13 @@ export const ReviewerCell = forwardRef<
     members: Member[]
     token: string
     onChanged: (reviewers: IssueReviewer[]) => void
+    /** Left out of the picker, e.g. the author when the gate needs a reviewer other than them. */
+    excludeUserId?: string | null
   }
->(function ReviewerCell({ issueId, projectId, reviewers, members, token, onChanged }, ref) {
+>(function ReviewerCell({ issueId, projectId, reviewers, members, token, onChanged, excludeUserId }, ref) {
   const [saving, setSaving] = useState<string | null>(null)
 
-  const reviewerMembers = members.filter((m) => m.role === 'REVIEWER' || m.role === 'ADMIN')
+  const reviewerMembers = members.filter((m) => can(memberRoles(m), 'review.submit') && m.userId !== excludeUserId)
   const assignedIds = new Set(reviewers.map((r) => r.userId))
 
   async function toggleReviewer(member: Member) {

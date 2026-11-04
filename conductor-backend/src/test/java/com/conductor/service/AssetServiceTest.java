@@ -204,4 +204,20 @@ class AssetServiceTest {
         service.recordAsset(workItem(), "github_pr", "  ", "Pull Request", "link");
         verify(assetRepository, never()).save(any());
     }
+
+    // --- viewers and reviewers cannot write assets ---
+
+    @Test
+    void aMemberWhoCannotEditCannotAddAnAsset() {
+        org.mockito.Mockito.doThrow(new com.conductor.exception.ForbiddenException("Requires the Editor role (or Admin)"))
+                .when(projectSecurityService).requireEditor(PROJECT_ID, "user-1");
+
+        AssetInput req = new AssetInput("github_pr", "PR #1", "link", "https://x/pr/1", null);
+
+        assertThatThrownBy(() -> service.createAsset(PROJECT_ID, ISSUE_ID, req, caller()))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+        assertThatThrownBy(() -> service.deleteAsset(PROJECT_ID, ISSUE_ID, "asset-1", caller()))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+        verify(assetRepository, never()).save(any());
+    }
 }

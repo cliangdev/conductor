@@ -53,6 +53,7 @@ public class OutcomeMetricService {
     public OutcomeMetricView record(String projectId, String workItemId,
                                     Double value, OffsetDateTime observedAt, String note, User caller) {
         verifyMembership(projectId, caller.getId());
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
         List<Observation> observations = readObservations(workItem);

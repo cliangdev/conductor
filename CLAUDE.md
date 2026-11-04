@@ -114,7 +114,7 @@ Local files at `~/.conductor/{projectId}/issues/**`. Offline queue at `~/.conduc
 
 A **`project` is the single top-level "Workspace"** — "Workspace" is the user-facing name; the table/entity/route stay `project(s)` internally. Membership in `project_members` is the *only* access gate (always check via `ProjectSecurityService`). There is intentionally no org/team layer above projects.
 
-`users` → `project_members` (ADMIN/CREATOR/REVIEWER) → `projects`  
+`users` → `project_members` (roles set: ADMIN/CREATOR/REVIEWER — shown as Admin/Editor/Reviewer; ADMIN implies the others) → `projects`  
 `work_items` → `documents` (GCP-backed, signed URLs); status/type are Workflow-defined strings, not enums  
 `work_item_reviewers` → `reviews` (APPROVED/CHANGES_REQUESTED/COMMENTED)  
 `comments` + `comment_replies` (line-level or selection-based anchors)  

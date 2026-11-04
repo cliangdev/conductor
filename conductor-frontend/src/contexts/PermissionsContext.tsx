@@ -2,13 +2,13 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
-import { can as canFn, type Capability } from '@/lib/permissions'
+import { can as canFn, memberRoles, type Capability } from '@/lib/permissions'
 import { fetchMembersFresh, getMembersCacheEntry, invalidateMembersCache } from '@/lib/workflows'
 import type { MemberRole } from '@/types'
 
 interface PermissionsContextValue {
-  /** The signed-in user's role in the active project, or undefined until resolved / if none. */
-  role: MemberRole | undefined
+  /** The roles the signed-in user holds in the active project; empty until resolved / for a read-only Viewer. */
+  roles: MemberRole[]
   /** True while the role is still being fetched — gate write UI on `!loading` to avoid flashes. */
   loading: boolean
   /** Whether the current role holds a capability. */
@@ -30,9 +30,9 @@ export function PermissionsProvider({ projectId, children }: { projectId: string
 
   // Seed role synchronously from the members cache (localStorage → module cache) so that
   // capability checks don't flash as "no permission" on revisit.
-  const cachedRole = getMembersCacheEntry(projectId)?.find((m) => m.userId === user?.id)?.role
-  const [role, setRole] = useState<MemberRole | undefined>(cachedRole)
-  const [loading, setLoading] = useState(!cachedRole)
+  const cachedMember = getMembersCacheEntry(projectId)?.find((m) => m.userId === user?.id)
+  const [roles, setRoles] = useState<MemberRole[]>(() => memberRoles(cachedMember))
+  const [loading, setLoading] = useState(!cachedMember)
 
   useEffect(() => {
     if (!accessToken || !projectId) {
@@ -46,7 +46,7 @@ export function PermissionsProvider({ projectId, children }: { projectId: string
     // never reach this browser: the stored list has no expiry and nothing else refreshes it.
     fetchMembersFresh(projectId, accessToken)
       .then((members) => {
-        if (!cancelled) setRole(members.find((m) => m.userId === user?.id)?.role)
+        if (!cancelled) setRoles(memberRoles(members.find((m) => m.userId === user?.id)))
       })
       .catch(() => {
         /* non-fatal — treat as no role */
@@ -59,7 +59,7 @@ export function PermissionsProvider({ projectId, children }: { projectId: string
     }
   }, [projectId, accessToken, user?.id, reloadKey])
 
-  const can = useCallback((capability: Capability) => canFn(role, capability), [role])
+  const can = useCallback((capability: Capability) => canFn(roles, capability), [roles])
   // Invalidate the shared cache before re-fetching so the role update is guaranteed fresh.
   const refresh = useCallback(() => {
     invalidateMembersCache(projectId)
@@ -67,7 +67,7 @@ export function PermissionsProvider({ projectId, children }: { projectId: string
   }, [projectId])
 
   return (
-    <PermissionsContext.Provider value={{ role, loading, can, refresh }}>
+    <PermissionsContext.Provider value={{ roles, loading, can, refresh }}>
       {children}
     </PermissionsContext.Provider>
   )
