@@ -116,7 +116,7 @@ public class CreativeEditReadService {
                 .orElseThrow(() -> new EntityNotFoundException("Creative not found"));
         List<CreativeEditImpacts.PostImpact> impacted = impacts.forCreative(projectId, creativeId);
         boolean reviewerOfPost = impacts.isReviewerOf(postId, caller);
-        boolean editor = projectSecurityService.isAdminOrCreator(projectId, caller.getId());
+        boolean editor = projectSecurityService.isEditor(projectId, caller.getId());
         List<AffectedPost> out = new ArrayList<>();
         for (CreativeEditImpacts.PostImpact impact : impacted) {
             WorkItem post = impact.post();

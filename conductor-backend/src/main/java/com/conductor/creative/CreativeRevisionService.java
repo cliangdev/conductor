@@ -195,7 +195,7 @@ public class CreativeRevisionService {
                     .filter(w -> w.getProject() != null && projectId.equals(w.getProject().getId()))
                     .orElseThrow(() -> new EntityNotFoundException("Post not found"));
             reviewerOfPost = impacts.isReviewerOf(postId, caller);
-            editor = projectSecurityService.isAdminOrCreator(projectId, caller.getId());
+            editor = projectSecurityService.isEditor(projectId, caller.getId());
             if (!reviewerOfPost && !editor) {
                 throw new ForbiddenException("Only ADMIN or CREATOR, or a reviewer of this Post, can edit its slide text");
             }
