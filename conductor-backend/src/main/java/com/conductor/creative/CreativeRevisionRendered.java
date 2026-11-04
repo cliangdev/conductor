@@ -6,7 +6,8 @@ package com.conductor.creative;
  * committed Creative, revision and render, and a rollback publishes nothing). For a CAROUSEL without a music
  * track that is the apply itself; with a track it is the video render the apply queued.
  *
- * <p>Listen with a plain {@code @EventListener}: it runs on the committing thread with no transaction bound, so
+ * <p>Listen with a plain {@code @EventListener}: it runs on the request thread once the transaction has ended and
+ * released its connection ({@link AfterTransaction}), so
  * open your own ({@code REQUIRES_NEW} / a {@code TransactionTemplate}) for writes, and keep it quick.
  * T2 has no listener; Post propagation (T3) is the first.
  */

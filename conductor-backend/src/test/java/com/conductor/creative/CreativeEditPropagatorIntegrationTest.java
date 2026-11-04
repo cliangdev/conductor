@@ -499,10 +499,14 @@ class CreativeEditPropagatorIntegrationTest extends AbstractNoneWebIntegrationTe
         forceStatus(approved, "APPROVED");
         forceStatus(scheduled, "SCHEDULED");
         forceStatus(published, "PUBLISHED");
+        // The caller must be one of the Post's reviewers for it to read as a reviewer's fix.
+        assignReviewer(fixing, admin);
 
         Map<String, CreativeEditReadService.AffectedPost> byId = new LinkedHashMap<>();
-        readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), admin)
-                .forEach(p -> byId.put(p.workItemId(), p));
+        CreativeEditReadService.AffectedPosts affected =
+                readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), admin);
+        affected.posts().forEach(p -> byId.put(p.workItemId(), p));
+        assertThat(affected.blockedReason()).isNull();
 
         assertThat(byId).hasSize(6);
         assertThat(byId.get(draft.getId()).outcome()).isEqualTo("updated");
@@ -515,12 +519,154 @@ class CreativeEditPropagatorIntegrationTest extends AbstractNoneWebIntegrationTe
         assertThat(byId.get(inReview.getId()).displayId()).startsWith(project.getKey() + "-");
         assertThat(byId.get(inReview.getId()).title()).isEqualTo("In review");
         // The Post named by postId only counts when it is in review: for the others it reads as usual.
-        assertThat(readService.affectedPosts(project.getId(), creative.getId(), approved.getId(), admin).stream()
+        assertThat(readService.affectedPosts(project.getId(), creative.getId(), approved.getId(), admin).posts().stream()
                 .filter(p -> p.workItemId().equals(approved.getId())).findFirst().orElseThrow().outcome())
                 .isEqualTo("back-to-review");
         // Members only.
         assertThatThrownBy(() -> readService.affectedPosts(project.getId(), creative.getId(), null, newUser("Outsider")))
                 .isInstanceOf(EntityNotFoundException.class);
+    }
+
+    @Test
+    void theReviewerFixIsOnlyPromisedToAReviewerOfThePostAndEditWouldMakeItTheSame() {
+        WorkItem fixing = post("Fixing");
+        forceStatus(fixing, "IN_REVIEW");
+        assignReviewer(fixing, reviewer);
+        List<SlideshowTextFields.Edit> edits = List.of(new SlideshowTextFields.Edit(1, "texts[0].t", "Fixed"));
+
+        // An editor who is not one of its reviewers: an ordinary new round, and edit() records an EDITOR revision.
+        assertThat(outcomeOf(readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), admin), fixing))
+                .isEqualTo("new-round");
+        assertThat(revisionService.edit(project.getId(), creative.getId(), currentVersion(), edits, "EDITOR", admin,
+                fixing.getId()).revision().getSource()).isEqualTo("EDITOR");
+        applyPendingOne();
+        assertThat(reload(fixing).getCurrentReviewRound()).isEqualTo(1);
+
+        // One of its reviewers: reviewer-fix, and edit() records a REVIEWER revision that keeps the round.
+        assertThat(outcomeOf(readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), reviewer), fixing))
+                .isEqualTo("reviewer-fix");
+        assertThat(outcomeOf(readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), otherReviewer), fixing))
+                .isEqualTo("new-round");
+        assertThat(revisionService.edit(project.getId(), creative.getId(), currentVersion(),
+                List.of(new SlideshowTextFields.Edit(1, "texts[0].t", "Fixed again")), "EDITOR", reviewer,
+                fixing.getId()).revision().getSource()).isEqualTo("REVIEWER");
+        // An editor who IS one of its reviewers is a reviewer for this purpose: both sides agree.
+        assignReviewer(fixing, admin);
+        assertThat(outcomeOf(readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), admin), fixing))
+                .isEqualTo("reviewer-fix");
+    }
+
+    @Test
+    void aReviewerWhoIsNotAnEditorCannotSendOtherApprovedOrScheduledPostsBackToReview() {
+        WorkItem fixing = post("Fixing");
+        WorkItem approved = post("Approved");
+        WorkItem scheduled = post("Scheduled");
+        forceStatus(fixing, "IN_REVIEW");
+        forceStatus(approved, "APPROVED");
+        forceStatus(scheduled, "SCHEDULED");
+        assignReviewer(fixing, reviewer);
+        List<SlideshowTextFields.Edit> edits = List.of(new SlideshowTextFields.Edit(1, "texts[0].t", "Fixed"));
+        String approvedId = project.getKey() + "-" + reload(approved).getSequenceNumber();
+        String message = "Post " + approvedId + " and 1 more using this Creative are approved or scheduled."
+                + " Ask an editor to make this change.";
+
+        // The preview says so, and so does the save: the same message from the same computation.
+        CreativeEditReadService.AffectedPosts preview =
+                readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), reviewer);
+        assertThat(preview.blockedReason()).isEqualTo(message);
+        assertThatThrownBy(() -> revisionService.edit(project.getId(), creative.getId(), currentVersion(), edits,
+                "EDITOR", reviewer, fixing.getId()))
+                .isInstanceOfSatisfying(CreativeRenderDispatchException.class, e -> {
+                    assertThat(e.status().value()).isEqualTo(409);
+                    assertThat(e.code()).isEqualTo("slideTextEditNeedsEditor");
+                    assertThat(e.properties()).containsEntry("ruleId", "slideTextEditNeedsEditor");
+                    assertThat(e.getMessage()).isEqualTo(message);
+                });
+        assertThat(revisionRepository.findFirstByCreativeIdAndStatus(creative.getId(), "PENDING")).isEmpty();
+        // Without a Post named there is nothing to block (that is the plain edit, which refuses a reviewer anyway).
+        assertThat(readService.affectedPosts(project.getId(), creative.getId(), null, reviewer).blockedReason()).isNull();
+
+        // An editor passing the Post is unaffected, in the preview and in the save.
+        assertThat(readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), admin).blockedReason())
+                .isNull();
+        CreativeRevision byEditor = revisionService.edit(project.getId(), creative.getId(), currentVersion(), edits,
+                "EDITOR", admin, fixing.getId()).revision();
+        applyPending(byEditor);
+        assertThat(reload(approved).getCurrentStatus()).isEqualTo("IN_REVIEW");
+
+        // Down to one other Post: the singular wording. Both went back to review, so put one back to approved.
+        forceStatus(approved, "APPROVED");
+        forceStatus(scheduled, "DRAFT");
+        assertThat(readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), reviewer).blockedReason())
+                .isEqualTo("Post " + approvedId + " uses this Creative and is approved or scheduled."
+                        + " Ask an editor to make this change.");
+
+        // Nothing else would go back to review: the reviewer may fix the text.
+        forceStatus(approved, "IN_REVIEW");
+        assertThat(readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), reviewer).blockedReason())
+                .isNull();
+        CreativeRevision byReviewer = revisionService.edit(project.getId(), creative.getId(), currentVersion(),
+                List.of(new SlideshowTextFields.Edit(2, "texts[0].t", "Second fixed")), "EDITOR", reviewer,
+                fixing.getId()).revision();
+        assertThat(byReviewer.getSource()).isEqualTo("REVIEWER");
+    }
+
+    @Test
+    void aPartlyPublishedPostIsLeftAloneWhateverItsStatusReads() {
+        WorkItem partly = post("Partly published");
+        WorkItem failedNothingLive = post("Failed, nothing live");
+        WorkItem fixing = post("Fixing");
+        forceStatus(partly, "FAILED");
+        forceStatus(failedNothingLive, "FAILED");
+        forceStatus(fixing, "IN_REVIEW");
+        assignReviewer(fixing, reviewer);
+        PostPublishTarget facebook = targetOf(partly, "facebook");
+        facebook.setState(PostPublishTargetState.PUBLISHED);
+        facebook.setPlatformPostId("page_1_post_1");
+        targetRepository.saveAndFlush(facebook);
+        targetOf(partly, "tiktok").setState(PostPublishTargetState.FAILED);
+        targetRepository.saveAndFlush(targetOf(partly, "tiktok"));
+        String hashBefore = bundleHasher.hash(reload(partly));
+
+        CreativeEditReadService.AffectedPosts preview =
+                readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), reviewer);
+        assertThat(outcomeOf(preview, partly)).isEqualTo("unchanged");
+        assertThat(outcomeOf(preview, failedNothingLive)).isEqualTo("back-to-review");
+        // The partly published Post would not go back to review, so it does not block the reviewer; the other one does.
+        assertThat(preview.blockedReason()).contains(project.getKey() + "-" + reload(failedNothingLive).getSequenceNumber());
+        forceStatus(failedNothingLive, "DRAFT");
+        assertThat(readService.affectedPosts(project.getId(), creative.getId(), fixing.getId(), reviewer).blockedReason())
+                .isNull();
+
+        CreativeRevision revision = editAndApply("First", "Typo fixed");
+
+        assertThat(reload(partly).getCurrentStatus()).isEqualTo("FAILED");
+        assertThat(framesOf(partly)).allSatisfy(f -> assertThat(f.getRenderId()).isEqualTo(render1.getId()));
+        assertThat(bundleHasher.hash(reload(partly))).isEqualTo(hashBefore);
+        assertThat(targetOf(partly, "facebook").getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
+        assertThat(changeRepository.existsByWorkItemIdAndRevisionId(partly.getId(), revision.getId())).isFalse();
+        // The others moved as usual.
+        assertThat(framesOf(fixing)).allSatisfy(f -> assertThat(f.getRenderId()).isEqualTo(revision.getRenderId()));
+    }
+
+    @Test
+    void thePostsUsingACreativeAreFoundByQueryNotByLoadingEveryFrame() {
+        WorkItem one = post("One");
+        WorkItem two = post("Two");
+        emptyPost("No creative");
+        Creative other = slideshow(2);
+        CreativeRender otherRender = renderService.renderCarouselForRevision(project.getId(), other, admin.getId());
+        WorkItem onOther = emptyPost("On the other creative");
+        attachService.attach(project.getId(), other.getId(), otherRender.getId(), onOther.getId(), admin);
+
+        assertThat(workItemRepository.findAllUsingCreative(project.getId(), creative.getId()))
+                .extracting(WorkItem::getId).containsExactly(one.getId(), two.getId());
+        assertThat(workItemRepository.findAllUsingCreative(project.getId(), other.getId()))
+                .extracting(WorkItem::getId).containsExactly(onOther.getId());
+        assertThat(workItemRepository.findAllUsingCreative("another-project", creative.getId())).isEmpty();
+        assertThat(assetRepository.existsByWorkItemIdUsingCreative(one.getId(), creative.getId())).isTrue();
+        assertThat(assetRepository.existsByWorkItemIdUsingCreative(one.getId(), other.getId())).isFalse();
+        assertThat(assetRepository.existsByWorkItemIdUsingCreative(onOther.getId(), creative.getId())).isFalse();
     }
 
     @Test
@@ -616,6 +762,15 @@ class CreativeEditPropagatorIntegrationTest extends AbstractNoneWebIntegrationTe
         request.setSlides(lists);
         request.setSlideshowSpec(spec);
         return creativeService.createCreative(project.getId(), request, admin).creative();
+    }
+
+    private static String outcomeOf(CreativeEditReadService.AffectedPosts affected, WorkItem post) {
+        return affected.posts().stream().filter(p -> p.workItemId().equals(post.getId())).findFirst().orElseThrow().outcome();
+    }
+
+    /** Applies the creative's one PENDING revision, as the render job's answer would. */
+    private CreativeRevision applyPendingOne() {
+        return applyPending(revisionRepository.findFirstByCreativeIdAndStatus(creative.getId(), "PENDING").orElseThrow());
     }
 
     /** A Post on all three destinations, with {@link #render1} attached (every destination then has its own slides). */

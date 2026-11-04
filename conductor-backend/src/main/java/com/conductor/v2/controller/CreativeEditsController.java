@@ -28,11 +28,13 @@ public class CreativeEditsController implements CreativeEditsApi {
     @Override
     public ResponseEntity<CreativeAffectedPostsResponse> listCreativeAffectedPosts(String projectId, String creativeId,
                                                                                    String postId) {
+        CreativeEditReadService.AffectedPosts affected = readService.affectedPosts(projectId, creativeId, postId,
+                currentUser());
         return ResponseEntity.ok(new CreativeAffectedPostsResponse(
-                readService.affectedPosts(projectId, creativeId, postId, currentUser()).stream()
+                affected.posts().stream()
                         .map(p -> new CreativeAffectedPost(p.workItemId(), p.displayId(), p.title(), p.status(),
                                 p.statusLabel(), CreativeAffectedPost.OutcomeEnum.fromValue(p.outcome())))
-                        .toList()));
+                        .toList(), affected.blockedReason()));
     }
 
     @Override

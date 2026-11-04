@@ -123,7 +123,8 @@ internal-only `FreezeBypass` that no request can set (the public attach endpoint
 refuse a frozen Post), and the same transaction sends the Post back the way any bundle edit would. Approved and
 Scheduled Posts are unscheduled (a native hand-off is revoked first) and go back to the review status with a new
 round; an In Review Post stays and opens a new round; a Draft or Changes Requested Post is simply updated; a
-Published Post is never touched. The new assets change the bundle hash, so no earlier approval can stand over the
+Published Post is never touched, and neither is a partly published one (any destination already `PUBLISHED`,
+whatever the Post's status reads, such as Failed after one account went live): what is live cannot be taken back. The new assets change the bundle hash, so no earlier approval can stand over the
 new slides. Each move is recorded in `post_content_change` (text diff, who, status and round before and after) and
 read back on the Post page.
 
@@ -132,7 +133,12 @@ Post back. That edit stays in the same review round: the status and round do not
 that round with `reviewRoundBefore == reviewRoundAfter`. Approvals already given in the round were bound to the old
 bundle hash, so they stop counting (the review list shows them as not current) and the gate ignores them; the
 reviewer's next approval binds the new hash and counts. Other Posts that use the same Creative are not "in this
-reviewer's round": they get the normal treatment above, a new round or back to review.
+reviewer's round": they get the normal treatment above, a new round or back to review. Because of that, a reviewer
+who is not a project editor (ADMIN or CREATOR) may only make the fix when no other Post using the Creative would go
+back to review (Approved or Scheduled): otherwise the save is refused with `slideTextEditNeedsEditor` ("Ask an
+editor to make this change"), and the preview (`affected-posts`) says so in `blockedReason`. An editor is not
+restricted. The fix needs the caller to be one of the Post's reviewers; an editor who is not one makes an ordinary
+edit (a new round).
 
 **Re-timing a Scheduled Post moves it in place.** A Post already in its scheduled status is live on its
 destinations — a native-lane target may already be `HANDED_OFF` to Facebook or YouTube. Changing its

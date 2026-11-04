@@ -11,7 +11,7 @@ import com.conductor.workflow.lifecycle.StatechartTransition;
  * announces before anyone saves.
  */
 enum CreativeEditImpact {
-    /** Past the point of change (published, or scheduled on a Workflow with no review gate): left alone. */
+    /** Past the point of change (published or partly published, or scheduled on a Workflow with no review gate): left alone. */
     UNCHANGED("unchanged"),
     /** Approved or Scheduled: unscheduled if need be, back to the review status, a new review round. */
     BACK_TO_REVIEW("back-to-review"),
@@ -33,11 +33,17 @@ enum CreativeEditImpact {
         return wire;
     }
 
-    static CreativeEditImpact of(Statechart chart, String status) {
+    /**
+     * @param anyTargetPublished whether one of the Post's destinations has already gone out. A partly published
+     *                           Post (say FAILED after one account went live) is past the point of change however
+     *                           its status reads: what is live cannot be taken back, and swapping the media of
+     *                           the rest would make the Post disagree with it.
+     */
+    static CreativeEditImpact of(Statechart chart, String status, boolean anyTargetPublished) {
         if (chart == null || status == null) {
             return UPDATED;
         }
-        if (chart.isTerminal(status)) {
+        if (anyTargetPublished || chart.isTerminal(status)) {
             return UNCHANGED;
         }
         if (AssetUploadPolicy.isApprovedOrLater(chart, status)) {

@@ -30,6 +30,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
@@ -84,6 +85,7 @@ public class CreativeRenderService {
     private final StorageObjectReferences storageReferences;
     private final ObjectMapper objectMapper;
     private final CreativeRevisionRenderLinker revisionRenderLinker;
+    private final PlatformTransactionManager transactionManager;
 
     public CreativeRenderService(CreativeRenderRepository renderRepository,
                                  CreativeRenderFrameRepository frameRepository,
@@ -97,8 +99,10 @@ public class CreativeRenderService {
                                  StorageService storageService,
                                  StorageObjectReferences storageReferences,
                                  ObjectMapper objectMapper,
-                                 CreativeRevisionRenderLinker revisionRenderLinker) {
+                                 CreativeRevisionRenderLinker revisionRenderLinker,
+                                 PlatformTransactionManager transactionManager) {
         this.revisionRenderLinker = revisionRenderLinker;
+        this.transactionManager = transactionManager;
         this.renderRepository = renderRepository;
         this.frameRepository = frameRepository;
         this.creativeRepository = creativeRepository;
@@ -730,9 +734,20 @@ public class CreativeRenderService {
                 + suffix + "-poster.jpg";
     }
 
-    @Transactional
+    /**
+     * Not {@code @Transactional}: finishing the video render of an applied slide-text edit announces it, and the
+     * listeners open transactions of their own, which must not start while this one still holds its connection
+     * (see {@link AfterTransaction}).
+     */
     public RenderView completeRender(String projectId, String creativeId, String renderId,
                                      CompleteCreativeRenderRequest request, RenderCaller caller) {
+        return AfterTransaction.execute(transactionManager,
+                followUps -> completeRenderInTransaction(projectId, creativeId, renderId, request, caller, followUps));
+    }
+
+    private RenderView completeRenderInTransaction(String projectId, String creativeId, String renderId,
+                                                   CompleteCreativeRenderRequest request, RenderCaller caller,
+                                                   AfterTransaction.FollowUps followUps) {
         requireEditor(projectId, creativeId, caller);
         CreativeRender render = findRenderInCreative(projectId, creativeId, renderId);
         if (!render.isRunning()) {
@@ -751,7 +766,7 @@ public class CreativeRenderService {
         render.setFinishedAt(OffsetDateTime.now());
         render = renderRepository.save(render);
         // The video render of an applied slide-text edit: tie it to the revision and announce it.
-        revisionRenderLinker.onRenderSucceeded(render);
+        revisionRenderLinker.onRenderSucceeded(render, followUps);
 
         List<CreativeRenderFrame> frames = frameRepository.findAllByRenderIdOrdered(renderId);
         if (request != null && request.getWarnings() != null) {
@@ -1216,7 +1231,6 @@ public class CreativeRenderService {
                 RenderCaller.of(caller));
     }
 
-    @Transactional
     public RenderView completeRender(String projectId, String creativeId, String renderId,
                                      CompleteCreativeRenderRequest request, User caller) {
         return completeRender(projectId, creativeId, renderId, request, RenderCaller.of(caller));

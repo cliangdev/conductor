@@ -6,8 +6,6 @@ import com.conductor.repository.AssetRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.service.PublishBundleGuard;
 import com.conductor.service.WorkItemService;
-import com.conductor.workflow.lifecycle.Statechart;
-import com.conductor.workflow.lifecycle.WorkflowDefinitionResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.event.EventListener;
@@ -17,11 +15,8 @@ import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -37,7 +32,8 @@ import java.util.Set;
  *   <li>reopens the review as the Post's status calls for ({@link CreativeEditImpact}): Approved or Scheduled
  *       goes through {@link PublishBundleGuard#revertForBundleEdit} (unscheduled, back to the review status, a
  *       new round, announced as a status change like any other revert); In Review gets a new round; a draft is
- *       just updated; a published Post is not touched and gets no record;</li>
+ *       just updated; a published or partly published Post (any destination already live) is not touched and gets
+ *       no record;</li>
  *   <li>writes a {@link PostContentChange}: revision, diff, who, and the status and round before and after.</li>
  * </ol>
  *
@@ -70,7 +66,7 @@ public class CreativeEditPropagator {
     private final AssetRepository assetRepository;
     private final WorkItemRepository workItemRepository;
     private final PostContentChangeRepository changeRepository;
-    private final WorkflowDefinitionResolver resolver;
+    private final CreativeEditImpacts impacts;
     private final PublishBundleGuard publishBundleGuard;
     private final CreativeAttachService attachService;
     private final WorkItemService workItemService;
@@ -84,7 +80,7 @@ public class CreativeEditPropagator {
                                   AssetRepository assetRepository,
                                   WorkItemRepository workItemRepository,
                                   PostContentChangeRepository changeRepository,
-                                  WorkflowDefinitionResolver resolver,
+                                  CreativeEditImpacts impacts,
                                   PublishBundleGuard publishBundleGuard,
                                   CreativeAttachService attachService,
                                   WorkItemService workItemService,
@@ -96,7 +92,7 @@ public class CreativeEditPropagator {
         this.assetRepository = assetRepository;
         this.workItemRepository = workItemRepository;
         this.changeRepository = changeRepository;
-        this.resolver = resolver;
+        this.impacts = impacts;
         this.publishBundleGuard = publishBundleGuard;
         this.attachService = attachService;
         this.workItemService = workItemService;
@@ -134,24 +130,11 @@ public class CreativeEditPropagator {
             return new Result(moved, skipped, failed);
         }
 
-        // Every Post holding a frame of ANY render of this Creative: three batched reads however many Posts.
+        // Every Post holding a frame of ANY render of this Creative: one query however many Posts or frames.
         List<CreativeRenderFrame> frames = frameRepository.findAllByCreativeId(creative.getId());
-        List<String> frameIds = frames.stream().map(CreativeRenderFrame::getId).toList();
-        List<String> postIds = readTx.execute(status -> {
-            Map<String, WorkItem> posts = new LinkedHashMap<>();
-            for (int i = 0; i < frameIds.size(); i += 500) {
-                for (Asset asset : assetRepository.findAllByCreativeFrameIdIn(
-                        frameIds.subList(i, Math.min(frameIds.size(), i + 500)))) {
-                    WorkItem post = asset.getWorkItem();
-                    if (post != null && post.getProject() != null && event.projectId().equals(post.getProject().getId())) {
-                        posts.putIfAbsent(post.getId(), post);
-                    }
-                }
-            }
-            return posts.values().stream()
-                    .sorted(Comparator.comparing(WorkItem::getSequenceNumber, Comparator.nullsLast(Comparator.naturalOrder())))
-                    .map(WorkItem::getId).toList();
-        });
+        List<String> postIds = readTx.execute(status ->
+                workItemRepository.findAllUsingCreative(event.projectId(), creative.getId()).stream()
+                        .map(WorkItem::getId).toList());
         Set<String> alreadyDone = new HashSet<>();
         if (!postIds.isEmpty()) {
             changeRepository.findAllByRevisionIdAndWorkItemIdIn(revision.getId(), postIds)
@@ -196,10 +179,8 @@ public class CreativeEditPropagator {
             return false;
         }
 
-        String slug = post.getWorkflow() != null ? post.getWorkflow() : "ENGINEERING";
-        Statechart chart = resolver.resolveRequired(projectId, slug, post.getWorkflowVersion());
         String fromStatus = post.getCurrentStatus();
-        CreativeEditImpact impact = CreativeEditImpact.of(chart, fromStatus);
+        CreativeEditImpact impact = impacts.forPost(projectId, post).impact();
         if (impact == CreativeEditImpact.UNCHANGED) {
             return false;
         }

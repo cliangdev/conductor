@@ -4820,7 +4820,10 @@ paths:
         `latestRevision`.
         Refused with 404 (unknown Creative / non-member), 422 `slideshowSpecMissing` (no stored spec),
         409 (`version` is stale; a PENDING revision exists, `SLIDE_EDIT_ACTIVE`; a render run is active,
-        `RENDER_RUN_ACTIVE`; or the render workflow is disabled / its name taken), 422 `slideTextEditInvalid`
+        `RENDER_RUN_ACTIVE`; the render workflow is disabled / its name taken; the Post named by `postId` is not in
+        review, `slideTextEditPostNotInReview`; or a reviewer who is not an editor would send other approved or
+        scheduled Posts back to review, `slideTextEditNeedsEditor`: body `code` and `ruleId` carry it, `message`
+        names the Post), 422 `slideTextEditInvalid`
         (field `edits[i]`: not an editable path, missing, not text, too long, no such slide) or 422
         `slideTextEditNoop` (the edits change nothing) or 422 `slideTextEditUnsupportedRatio` (field `slides`: the
         Creative has a non-empty 1x1 list, or a list that is neither 9:16 nor 4:5; the message says to re-compose
@@ -4872,7 +4875,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
-          description: Stale `version`, or a revision / render run is already active (body `code` says which).
+          description: >-
+            Stale `version`, a revision / render run is already active, the Post is not in review, or a reviewer
+            must hand this to an editor (body `code` says which; `slideTextEditNeedsEditor` also sets `ruleId`).
           content:
             application/json:
               schema:
@@ -4897,7 +4902,11 @@ paths:
         review status with a new round), `new-round` (in review: stays there, a new round, standing approvals stop
         counting), `updated` (before review: just re-pointed at the new slides), `unchanged` (published, or past
         the point of change: left alone). With `?postId=` naming one of them that is in review, that Post reads
-        `reviewer-fix` instead of `new-round` (it keeps its round). Any project member may read.
+        `reviewer-fix` instead of `new-round` (it keeps its round) when the caller is one of that Post's reviewers.
+        A Post with any destination already published is `unchanged` however its status reads. `blockedReason` is set
+        when the caller, acting as a reviewer of `postId` without being an editor (ADMIN / CREATOR), may not save
+        because another Post using the Creative is approved or scheduled and would go back to review (saving
+        answers 409 `slideTextEditNeedsEditor` with the same message); null otherwise. Any project member may read.
       operationId: listCreativeAffectedPosts
       security:
         - bearerAuth: []
@@ -11514,7 +11523,10 @@ components:
             `slideTextEditPostMismatch`) and be in its review status (409 `slideTextEditPostNotInReview`). A reviewer
             of the Post makes the revision `source: REVIEWER`, recorded with the Post and its current review round;
             once applied, that Post stays in the same round (its standing approvals go stale because the media
-            changed) while every other Post using the Creative goes back to review as usual.
+            changed) while every other Post using the Creative goes back to review as usual. A reviewer who is not
+            an editor (ADMIN / CREATOR) may only do this when no OTHER Post using the Creative is approved or
+            scheduled (409 `slideTextEditNeedsEditor`, `ruleId` set; ask an editor). A Post with any destination
+            already published is left alone.
 
     SlideTextEdit:
       type: object
@@ -11543,12 +11555,18 @@ components:
 
     CreativeAffectedPostsResponse:
       type: object
-      required: [posts]
+      required: [posts, blockedReason]
       properties:
         posts:
           type: array
           items:
             $ref: "#/components/schemas/CreativeAffectedPost"
+        blockedReason:
+          type: string
+          nullable: true
+          description: >-
+            Why this caller may not save the edit (a reviewer of `postId`, not an editor, while other Posts using the
+            Creative are approved or scheduled), or null. The message `slideTextEditNeedsEditor` answers with.
 
     CreativeAffectedPost:
       type: object

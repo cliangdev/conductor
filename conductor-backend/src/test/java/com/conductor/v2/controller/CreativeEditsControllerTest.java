@@ -47,9 +47,11 @@ class CreativeEditsControllerTest {
 
     @Test
     void affectedPostsAreListedWithTheirOutcomeAndAcceptAPostIdFilter() throws Exception {
-        when(readService.affectedPosts(eq("p"), eq("c"), eq("post-2"), eq(user))).thenReturn(List.of(
+        when(readService.affectedPosts(eq("p"), eq("c"), eq("post-2"), eq(user))).thenReturn(
+                new CreativeEditReadService.AffectedPosts(List.of(
                 new CreativeEditReadService.AffectedPost("post-1", "RE-101", "One", "APPROVED", "Approved", "back-to-review"),
-                new CreativeEditReadService.AffectedPost("post-2", "RE-102", "Two", "IN_REVIEW", "In Review", "reviewer-fix")));
+                new CreativeEditReadService.AffectedPost("post-2", "RE-102", "Two", "IN_REVIEW", "In Review", "reviewer-fix")),
+                "Post RE-101 uses this Creative and is approved or scheduled. Ask an editor to make this change."));
 
         mockMvc.perform(get("/projects/p/marketing/creatives/c/affected-posts").param("postId", "post-2"))
                 .andExpect(status().isOk())
@@ -58,7 +60,9 @@ class CreativeEditsControllerTest {
                 .andExpect(jsonPath("$.posts[0].displayId").value("RE-101"))
                 .andExpect(jsonPath("$.posts[0].statusLabel").value("Approved"))
                 .andExpect(jsonPath("$.posts[0].outcome").value("back-to-review"))
-                .andExpect(jsonPath("$.posts[1].outcome").value("reviewer-fix"));
+                .andExpect(jsonPath("$.posts[1].outcome").value("reviewer-fix"))
+                .andExpect(jsonPath("$.blockedReason").value(
+                        "Post RE-101 uses this Creative and is approved or scheduled. Ask an editor to make this change."));
     }
 
     @Test

@@ -492,8 +492,16 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
     SUCCEEDS `completeRender` links the oldest unlinked applied edit of that Creative version. Either way a
     `CreativeRevisionRendered(projectId, creativeId, revisionId, renderId)` Spring event is published once,
     **after the transaction that finished the render has committed**, and never when the render fails or the
-    transaction rolls back. Listen with a plain `@EventListener` (it runs on the committing thread, no transaction
-    bound). The listener is `CreativeEditPropagator`, below.
+    transaction rolls back. Listen with a plain `@EventListener` (it runs on the request thread, no transaction
+    bound and **no pooled connection held**). The listener is `CreativeEditPropagator`, below.
+  - **One connection at a time.** The pool is small in prod, and Spring runs `afterCommit` callbacks while the
+    committed transaction's connection is still bound, so a follow-up that opened its own transaction there held two.
+    `complete`, `fail` and `completeRender` are therefore not `@Transactional` themselves: they run their body in a
+    transaction through `AfterTransaction.execute` and collect the follow-ups (releasing the unstarted run, queueing
+    the video render, publishing the event so the propagator runs), which start only once that transaction has ended
+    and released its connection, each in a short transaction of its own. They run on the request thread, before the
+    response: no `@Async` and no timers, because prod is scale-to-zero and work left for after the response may never
+    be scheduled.
   - **Stale revisions.** A PENDING revision whose run ended without completing it (FAILED, CANCELLED,
     `LOCAL_PICKUP_TIMEOUT`, no longer there, or finished without reporting) can never finish, so it reads as
     FAILED with the run's reason and is stored so in its own transaction. This happens on the revision's `GET`,
@@ -633,10 +641,10 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
 
   | Post is | Outcome | What the propagator does |
   | --- | --- | --- |
-  | Approved or Scheduled (anything past the review gate, not terminal; Failed counts) | `back-to-review` | `PublishBundleGuard.revertForBundleEdit`: revokes a native hand-off first, back to the review status, a new review round, announced as a status change |
+  | Approved or Scheduled (anything past the review gate, not terminal; Failed counts), with no destination yet published | `back-to-review` | `PublishBundleGuard.revertForBundleEdit`: revokes a native hand-off first, back to the review status, a new review round, announced as a status change |
   | In review | `new-round` | stays in review, `currentReviewRound + 1`: approvals cast so far stop counting |
   | Before review (Draft, Changes Requested) | `updated` | re-pointed at the new slides, nothing else moves |
-  | Published (terminal), or Scheduled on a Workflow with no review gate | `unchanged` | not touched, no record |
+  | Published (terminal), **partly published** (any destination `PUBLISHED`, whatever the Post's status: say Failed after one account went live), or Scheduled on a Workflow with no review gate | `unchanged` | not touched, no record: what is live cannot be taken back, and swapping the media of the rest would make the Post disagree with it |
 
   *Re-pointing* (`CreativeAttachService.reattach`, package-private) swaps each old Creative asset on the Post for
   the new render's frame in the same slot (placement, slide index, image or video) in place in every
@@ -668,14 +676,26 @@ ads. The composer lives in `conductor-tools/src/lib/slideshow/`; the MCP tool is
   the re-pointed assets changed it. The reviewer's next approval stamps the new hash in the same round and
   counts. `PostContentChange.source` is the revision's source for every Post it reaches, so the card on another
   Post reads "edited by a reviewer", with a new round.
-- **Reads.** Any project member may read all three; each is a fixed number of queries.
+
+  **Limits of a reviewer fix.** A caller counts as a reviewer of the Post only through a `work_item_reviewers` row
+  (`CreativeEditImpacts.isReviewerOf`, the one test `edit` and `affected-posts` both use). A reviewer who is **not a
+  project editor** (not ADMIN or CREATOR) may fix the text only when no OTHER Post using the Creative would go
+  `back-to-review`: sending an approved or scheduled Post back is an editor's call, not a side effect of a review
+  comment. Otherwise the save answers 409 `slideTextEditNeedsEditor` (body `code` and `ruleId`), message "Post
+  RE-12 and 1 more using this Creative are approved or scheduled. Ask an editor to make this change." An editor
+  who passes `postId` is unaffected. The same text is `blockedReason` on `affected-posts`, so the save dialog can
+  disable Save before anyone tries.
+- **Reads.** Any project member may read all three; each is a fixed number of queries (the Posts using a Creative
+  are one query over `assets` joined to `creative_render_frame`, not a walk of every frame).
   - `GET /api/v2/projects/{id}/work-items/{workItemId}/content-changes` answers `{changes: [...]}`, newest first,
     at most 50: `id, creativeId, creativeDisplayId, revisionId, revisionNo, source, actorUserId, actorName,
     fromStatus, toStatus, reviewRoundBefore, reviewRoundAfter, textDiff, createdAt`.
   - `GET .../marketing/creatives/{creativeId}/affected-posts[?postId=]` answers `{posts: [{workItemId, displayId,
     title, status, statusLabel, outcome}]}` for every Post holding a frame of the Creative, ordered by number:
     `outcome` is `back-to-review`, `new-round`, `updated` or `unchanged` (the table above); with `postId` naming
-    a Post that is in review, that Post reads `reviewer-fix` instead of `new-round`.
+    a Post that is in review **and the caller one of its reviewers**, that Post reads `reviewer-fix` instead of
+    `new-round`. The response also carries `blockedReason` (string or null): why this caller, a non-editor
+    reviewer of `postId`, may not save (see the limits of a reviewer fix).
   - `GET .../marketing/creatives/{creativeId}/render-availability` answers `{runtime, targetName, daemonOnline}`:
     `target` (with the runtime target's name) when the designated target can render now, else `self-hosted`.
     Conductor does not track daemon liveness, so `daemonOnline` is always null.
