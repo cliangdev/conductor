@@ -32,6 +32,14 @@ describe('ReadinessCard header', () => {
     expect(props.onMarkReady).toHaveBeenCalledTimes(1)
   })
 
+  it('shows an archived Creative as archived, with no Mark ready', () => {
+    setup([item('caption', true, true, 'caption is set')], { state: 'ARCHIVED' })
+    expect(screen.getByTestId('readiness-title')).toHaveTextContent('Archived')
+    expect(screen.getByTestId('readiness-title')).not.toHaveTextContent('Ready')
+    expect(screen.getByTestId('readiness-subtitle')).toHaveTextContent('This Creative is archived.')
+    expect(screen.queryByRole('button', { name: 'Mark ready' })).not.toBeInTheDocument()
+  })
+
   it('counts what blocks, disables Mark ready, and ignores the state item', () => {
     setup([
       item('caption', false, true, 'caption is missing'),
@@ -39,7 +47,7 @@ describe('ReadinessCard header', () => {
       item('state', false, true, 'Creative is still a draft'),
     ])
     expect(screen.getByTestId('readiness-title')).toHaveTextContent('2 things to fix before this can go on a Post')
-    expect(screen.getByTestId('readiness-subtitle')).toHaveTextContent('Fix them here; the Creative is marked ready once nothing blocks.')
+    expect(screen.getByTestId('readiness-subtitle')).toHaveTextContent('Fix these, then mark it ready or attach it to a Post.')
     expect(screen.getByTestId('readiness-disc')).toHaveTextContent('2')
     expect(screen.getByRole('button', { name: 'Mark ready' })).toBeDisabled()
   })

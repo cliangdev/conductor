@@ -20,9 +20,9 @@ vi.mock('@/lib/api', () => ({
   apiErrorMessage: (_err: unknown, fallback: string) => fallback,
 }))
 
-const { mockCan } = vi.hoisted(() => ({ mockCan: vi.fn((_cap?: string) => true) }))
+const { mockCan, mockToast } = vi.hoisted(() => ({ mockCan: vi.fn((_cap?: string) => true), mockToast: vi.fn() }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
-vi.mock('@/components/ui/toast', () => ({ useToast: () => ({ showToast: vi.fn() }) }))
+vi.mock('@/components/ui/toast', () => ({ useToast: () => ({ showToast: mockToast }) }))
 vi.mock('@/contexts/PermissionsContext', () => ({
   useCan: (cap: string) => mockCan(cap),
   usePermissions: () => ({ role: 'ADMIN', loading: false, can: mockCan, refresh: vi.fn() }),
@@ -105,22 +105,41 @@ describe('CreativeEditor — Readiness card', () => {
     expect(document.getElementById('creative-caption')).toHaveFocus()
   })
 
-  it("I've checked them marks each unchecked image checked, then refreshes readiness", async () => {
-    const images = ['s1', 's2', 's3', 't1', 't2', 't3'].map((id) => ({ ...media(id), checked: id !== 't3' }))
-    mockGets(
-      creative({ slideshowSpec: null }),
-      { ready: false, items: [item('photoChecked', false, true, '1 of 6 slide images have not been checked for burned-in text')] },
-      images,
-    )
+  it("I've checked them marks exactly the server's mediaIds, then refreshes photos and readiness", async () => {
+    mockGets(creative({ slideshowSpec: null }), {
+      ready: false,
+      items: [
+        { ...item('photoChecked', false, true, '2 of 6 photos the slides were made from have not been checked for burned-in text'), mediaIds: ['t3', 'x9'] },
+      ],
+    })
     ;(apiPatch as Mock).mockResolvedValue({})
     open()
-    await screen.findByText('Look over 1 photo for text in the image')
+    await screen.findByText('Look over 2 photos for text in the image')
     const before = readinessCalls()
     await userEvent.click(screen.getByRole('button', { name: "I've checked them" }))
-    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(1))
-    expect((apiPatch as Mock).mock.calls[0][0]).toContain('/photos/t3')
+    await waitFor(() => expect(apiPatch).toHaveBeenCalledTimes(2))
+    const patched = (apiPatch as Mock).mock.calls.map(([path]) => String(path))
+    expect(patched.some((p) => p.endsWith('/photos/t3'))).toBe(true)
+    expect(patched.some((p) => p.endsWith('/photos/x9'))).toBe(true)
     expect((apiPatch as Mock).mock.calls[0][1]).toEqual({ checked: true })
     await waitFor(() => expect(readinessCalls()).toBeGreaterThan(before))
+  })
+
+  it("I've checked them still refreshes, and names how many failed, when one PATCH fails", async () => {
+    mockGets(creative({ slideshowSpec: null }), {
+      ready: false,
+      items: [{ ...item('photoChecked', false, true, '2 of 6 slide images have not been checked for burned-in text'), mediaIds: ['t2', 't3'] }],
+    })
+    ;(apiPatch as Mock).mockImplementation((path: string) =>
+      path.endsWith('/photos/t2') ? Promise.reject(new Error('boom')) : Promise.resolve({}),
+    )
+    open()
+    await screen.findByText('Look over 2 photos for text in the image')
+    const before = readinessCalls()
+    await userEvent.click(screen.getByRole('button', { name: "I've checked them" }))
+    await waitFor(() => expect(readinessCalls()).toBeGreaterThan(before))
+    expect(apiPatch).toHaveBeenCalledTimes(2)
+    expect(mockToast).toHaveBeenCalledWith('Could not mark 1 of 2 images checked. Try again.', 'error')
   })
 
   it('shows no Mark ready or fix buttons to someone who cannot manage Creatives', async () => {

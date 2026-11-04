@@ -34,6 +34,7 @@ export function ReadinessCard({ readiness, state, canManage, onMarkReady, markin
   const warnings = items.filter((i) => !i.ok && !i.blocking)
   const passed = items.filter((i) => i.ok)
   const isReady = state === 'READY'
+  const isArchived = state === 'ARCHIVED'
 
   return (
     <Card className="divide-y divide-border" data-testid="readiness-card" aria-label="Readiness" role="region">
@@ -43,7 +44,11 @@ export function ReadinessCard({ readiness, state, canManage, onMarkReady, markin
           data-testid="readiness-disc"
           className={cn(
             'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[13px] font-semibold',
-            toFix.length === 0 ? 'bg-status-approved/15 text-status-approved' : 'bg-destructive/15 text-destructive',
+            toFix.length > 0
+              ? 'bg-destructive/15 text-destructive'
+              : isArchived
+                ? 'bg-muted text-muted-foreground'
+                : 'bg-status-approved/15 text-status-approved',
           )}
         >
           {toFix.length === 0 ? <CheckIcon className="h-4 w-4" aria-hidden /> : toFix.length}
@@ -52,19 +57,23 @@ export function ReadinessCard({ readiness, state, canManage, onMarkReady, markin
           <h3 className="text-[13px] font-semibold text-foreground" data-testid="readiness-title">
             {toFix.length > 0
               ? `${toFix.length} ${toFix.length === 1 ? 'thing' : 'things'} to fix before this can go on a Post`
-              : isReady
-                ? 'Ready'
-                : 'Ready for a Post'}
+              : isArchived
+                ? 'Archived'
+                : isReady
+                  ? 'Ready'
+                  : 'Ready for a Post'}
           </h3>
           <p className="text-[13px] text-muted-foreground" data-testid="readiness-subtitle">
             {toFix.length > 0
-              ? 'Fix them here; the Creative is marked ready once nothing blocks.'
-              : isReady
-                ? 'Nothing blocks this Creative.'
-                : 'Nothing blocks this Creative. Mark it ready, or attach it to a Post and it becomes ready on its own.'}
+              ? 'Fix these, then mark it ready or attach it to a Post.'
+              : isArchived
+                ? 'This Creative is archived.'
+                : isReady
+                  ? 'Nothing blocks this Creative.'
+                  : 'Nothing blocks this Creative. Mark it ready, or attach it to a Post and it becomes ready on its own.'}
           </p>
         </div>
-        {canManage && !isReady && (
+        {canManage && !isReady && !isArchived && (
           <Button size="sm" disabled={toFix.length > 0 || markingReady} onClick={() => void onMarkReady()}>
             Mark ready
           </Button>

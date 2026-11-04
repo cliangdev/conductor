@@ -1144,24 +1144,27 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     focusAndScroll(firstEmpty ?? document.getElementById('creative-alt-text'))
   }
 
-  // "I've checked them": the person has looked at the images, so record that on each unchecked one.
+  // "I've checked them": the person has looked at the images, so record that on exactly the media the
+  // server's photoChecked item still counts as unchecked (its mediaIds). One failed PATCH never skips
+  // the refresh: the photos and the readiness are always re-read, and the failures are named.
   async function handleMarkImagesChecked() {
-    if (!creative) return
-    const ids = new Set<string>()
-    if (creative.photoId) ids.add(creative.photoId)
-    for (const list of Object.values(creative.slides ?? {})) for (const id of list) ids.add(id)
-    for (const beat of creative.sequence ?? []) if (beat.photoId) ids.add(beat.photoId)
+    const ids = readiness?.items.find((i) => i.key === 'photoChecked')?.mediaIds ?? []
+    if (ids.length === 0) {
+      refreshReadiness()
+      return
+    }
     setMarkingChecked(true)
     try {
-      const resolved = await Promise.all(
-        Array.from(ids).map((id) => photoById.get(id) ?? getCreativePhoto(projectId, id, token).catch(() => null)),
-      )
-      const unchecked = resolved.filter((m): m is CreativePhoto => !!m && m.mediaKind !== 'VIDEO' && m.mediaKind !== 'AUDIO' && !m.checked)
-      await Promise.all(unchecked.map((m) => patchCreativePhoto(projectId, m.id, { checked: true }, token)))
+      const results = await Promise.allSettled(ids.map((id) => patchCreativePhoto(projectId, id, { checked: true }, token)))
+      const failed = results.filter((r) => r.status === 'rejected').length
       listCreativePhotos(projectId, token, true).then(setPhotos).catch(() => undefined)
       refreshReadiness()
-    } catch (err) {
-      showToast(apiErrorMessage(err, 'Could not mark the images checked'), 'error')
+      if (failed > 0) {
+        showToast(
+          `Could not mark ${failed} of ${ids.length} ${ids.length === 1 ? 'image' : 'images'} checked. Try again.`,
+          'error',
+        )
+      }
     } finally {
       setMarkingChecked(false)
     }
