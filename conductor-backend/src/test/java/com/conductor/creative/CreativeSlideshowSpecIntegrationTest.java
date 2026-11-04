@@ -89,6 +89,62 @@ class CreativeSlideshowSpecIntegrationTest extends AbstractNoneWebIntegrationTes
     }
 
     @Test
+    void aSlideshowSpecPassesTheBurnedInTextCheckWhenItsInputPhotosAreChecked() {
+        List<String> inputs = images(2);
+        List<String> slides = images(2);
+        for (String id : slides) {
+            CreativePhoto composedSlide = photoRepository.findById(id).orElseThrow();
+            composedSlide.setChecked(false);
+            photoRepository.save(composedSlide);
+        }
+        CreateCreativeRequest request = carousel(Map.of("default", slides));
+        request.setSlideshowSpec(specFor(inputs, "Hook one", "Hook two"));
+        Creative composed = creativeService.createCreative(project.getId(), request, admin).creative();
+
+        CreativeService.ReadinessItem passed = photoChecked(composed);
+        assertThat(passed.ok()).isTrue();
+        assertThat(passed.blocking()).isTrue();
+        assertThat(passed.message()).isEqualTo("every photo the slides were made from has been checked");
+        assertThat(passed.mediaIds()).isEmpty();
+    }
+
+    @Test
+    void aSlideshowSpecBlocksPhotoCheckedOnItsUncheckedInputPhotosAndNamesThem() {
+        List<String> inputs = images(2);
+        CreativePhoto unchecked = photoRepository.findById(inputs.get(1)).orElseThrow();
+        unchecked.setChecked(false);
+        photoRepository.save(unchecked);
+        Creative composed = createCarousel(inputs, specFor(inputs, "Hook one", "Hook two"));
+
+        CreativeService.ReadinessItem blocked = photoChecked(composed);
+        assertThat(blocked.ok()).isFalse();
+        assertThat(blocked.blocking()).isTrue();
+        assertThat(blocked.message()).isEqualTo("1 of 2 photos the slides were made from have not been checked for burned-in text");
+        assertThat(blocked.mediaIds()).containsExactly(inputs.get(1));
+    }
+
+    @Test
+    void aSlideStyleWithoutASpecDoesNotBypassPhotoChecked() {
+        List<String> slides = images(2);
+        CreativePhoto unchecked = photoRepository.findById(slides.get(0)).orElseThrow();
+        unchecked.setChecked(false);
+        photoRepository.save(unchecked);
+        CreateCreativeRequest request = carousel(Map.of("default", slides));
+        request.setSlideStyle(new com.conductor.generated.v2.model.SlideshowStyle().fontFamily("Poppins"));
+        Creative styled = creativeService.createCreative(project.getId(), request, admin).creative();
+
+        CreativeService.ReadinessItem item = photoChecked(styled);
+        assertThat(item.ok()).isFalse();
+        assertThat(item.message()).isEqualTo("1 of 2 slide images have not been checked for burned-in text");
+        assertThat(item.mediaIds()).containsExactly(slides.get(0));
+    }
+
+    private CreativeService.ReadinessItem photoChecked(Creative creative) {
+        return creativeService.readiness(project.getId(), creative.getId(), admin)
+                .items().stream().filter(i -> i.key().equals("photoChecked")).findFirst().orElseThrow();
+    }
+
+    @Test
     void aCreativeWithoutASpecHasNoRevisions() {
         Creative created = creativeService.createCreative(project.getId(),
                 carousel(Map.of("default", images(2))), admin).creative();
