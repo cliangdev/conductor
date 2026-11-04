@@ -82,6 +82,7 @@ public class CreativeService {
     private final CreativeRenderRepository renderRepository;
     private final AssetRepository assetRepository;
     private final CreativeRevisionRepository revisionRepository;
+    private final CreativeRevisionService revisionService;
 
     public CreativeService(CreativeRepository creativeRepository,
                            CreativePhotoRepository photoRepository,
@@ -100,7 +101,9 @@ public class CreativeService {
                            CreativeRenderFrameRepository frameRepository,
                            CreativeRenderRepository renderRepository,
                            AssetRepository assetRepository,
-                           CreativeRevisionRepository revisionRepository) {
+                           CreativeRevisionRepository revisionRepository,
+                           CreativeRevisionService revisionService) {
+        this.revisionService = revisionService;
         this.creativeRepository = creativeRepository;
         this.photoRepository = photoRepository;
         this.brandKitRepository = brandKitRepository;
@@ -132,18 +135,26 @@ public class CreativeService {
     public record CreativeView(Creative creative, String photoUrl,
                                CreativeRenderService.RenderView latestRenderSummary,
                                CreativeRenderService.RenderView latestRenderFull,
-                               String activeExperimentId, Integer postCount) {
+                               String activeExperimentId, Integer postCount,
+                               CreativeRevision pendingRevision, CreativeRevision latestRevision) {
         public CreativeView(Creative creative, String photoUrl) {
-            this(creative, photoUrl, null, null, null, null);
+            this(creative, photoUrl, null, null, null, null, null, null);
         }
 
         public CreativeView(Creative creative, String photoUrl, CreativeRenderService.RenderView latestRenderSummary,
                             CreativeRenderService.RenderView latestRenderFull, String activeExperimentId) {
-            this(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, null);
+            this(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, null, null, null);
         }
 
         CreativeView withPostCount(Integer count) {
-            return new CreativeView(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, count);
+            return new CreativeView(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId, count,
+                    pendingRevision, latestRevision);
+        }
+
+        /** The slide-text revisions a single-Creative read reports (the list read leaves them out). */
+        CreativeView withRevisions(CreativeRevision pending, CreativeRevision latest) {
+            return new CreativeView(creative, photoUrl, latestRenderSummary, latestRenderFull, activeExperimentId,
+                    postCount, pending, latest);
         }
     }
 
@@ -229,7 +240,9 @@ public class CreativeService {
         CreativeView view = toView(projectId, creative, loadPhotos(List.of(creative)));
         // Only the single-Creative read pays for the full render + its frames (contract item 6).
         CreativeRenderService.RenderView full = renderService.latestSucceededRender(creative.getId()).orElse(null);
-        return new CreativeView(view.creative(), view.photoUrl(), view.latestRenderSummary(), full, view.activeExperimentId());
+        CreativeRevisionService.RevisionHeads heads = revisionService.heads(creative.getId());
+        return new CreativeView(view.creative(), view.photoUrl(), view.latestRenderSummary(), full,
+                view.activeExperimentId()).withRevisions(heads.pending(), heads.latest());
     }
 
     @Transactional
@@ -623,7 +636,28 @@ public class CreativeService {
         media.preload(referencedMediaIds(creative.getPhotoId(), toSequenceBeats(creative.getSequence()),
                 toClipMediaMap(creative.getClipMedia()), toSlidesMap(creative.getSlides()),
                 toMotion(creative.getMotion()), toAudio(creative.getAudio())));
-        return computeReadiness(creative, media);
+        Readiness readiness = computeReadiness(creative, media);
+        if (Creative.KIND_CAROUSEL.equals(creative.getKind())) {
+            addAltTextStaleItem(creative, readiness);
+        }
+        return readiness;
+    }
+
+    /**
+     * Non-blocking: after a slide-text edit, a slide whose alt text still quotes the text that was replaced.
+     * Appears only once an applied edit flagged a slide; it clears when the alt text no longer quotes it.
+     */
+    private void addAltTextStaleItem(Creative creative, Readiness readiness) {
+        CreativeRevisionService.StaleAltText stale = revisionService.staleAltText(creative);
+        if (stale == null) {
+            return;
+        }
+        boolean ok = stale.stale().isEmpty();
+        String slides = stale.stale().stream().map(String::valueOf).collect(Collectors.joining(", "));
+        readiness.items().add(new ReadinessItem("altTextStale", ok, false, ok
+                ? "alt text no longer quotes the replaced slide text"
+                : (stale.stale().size() == 1 ? "slide " + slides + " alt text still quotes the old text"
+                        : "slides " + slides + " alt text still quotes the old text")));
     }
 
     /** A Creative's state after an attach, and (null unless it stayed DRAFT) why. */
@@ -1686,12 +1720,8 @@ public class CreativeService {
     }
 
     /** The newest {@value #MAX_REVISIONS} slideshow-spec revisions of a Creative, newest first. */
-    @Transactional(readOnly = true)
     public List<CreativeRevision> listRevisions(String projectId, String creativeId, User caller) {
-        requireMember(projectId, caller);
-        Creative creative = findCreative(projectId, creativeId);
-        return revisionRepository.findAllByCreativeIdOrderByRevisionNoDesc(creative.getId(),
-                org.springframework.data.domain.PageRequest.of(0, MAX_REVISIONS));
+        return revisionService.listSettled(projectId, creativeId, caller, MAX_REVISIONS);
     }
 
     static final int MAX_REVISIONS = 50;

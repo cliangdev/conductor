@@ -73,7 +73,10 @@ export const SPEC_INLINE_LIMIT = 8000
  * What get_creative shows for a stored spec: the spec itself while it is small, otherwise a one-line summary, plus a
  * compact list of its editable text fields. Never both in full, so a long slideshow does not spend the context twice.
  */
-export function slideshowSpecView(spec: unknown): { slideshowSpec: unknown; textFields: TextField[] } | undefined {
+export function slideshowSpecView(
+  spec: unknown,
+  slides?: Record<string, unknown> | null
+): { slideshowSpec: unknown; textFields: TextField[]; textEditable?: false; textEditNote?: string } | undefined {
   if (typeof spec !== 'object' || spec === null || Array.isArray(spec)) return undefined
   const textFields = listTextFields(spec)
   const size = JSON.stringify(spec).length
@@ -82,5 +85,15 @@ export function slideshowSpecView(spec: unknown): { slideshowSpec: unknown; text
     size <= SPEC_INLINE_LIMIT
       ? spec
       : { id: s.id, slides: Array.isArray(s.slides) ? s.slides.length : 0, omitted: `The spec is ${size} characters, so it is not repeated here; textFields lists every editable text (slide numbers start at 1, path is the field in that slide).` }
-  return { slideshowSpec, textFields }
+  return { slideshowSpec, textFields, ...(hasOneByOneList(slides) ? { textEditable: false as const, textEditNote: TEXT_EDIT_UNSUPPORTED_1X1 } : {}) }
+}
+
+/** The backend's refusal (422 slideTextEditUnsupportedRatio) for a Creative with 1x1 slides; the same words. */
+export const TEXT_EDIT_UNSUPPORTED_1X1 =
+  "Text editing isn't available for Creatives with 1x1 slides yet. Re-compose it locally with compose_slideshow."
+
+/** Whether the Creative's `slides` map has a non-empty 1x1 list (a `default` list of square images is only caught by the backend). */
+function hasOneByOneList(slides: Record<string, unknown> | null | undefined): boolean {
+  const list = slides?.['1x1']
+  return Array.isArray(list) && list.length > 0
 }

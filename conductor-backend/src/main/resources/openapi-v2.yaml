@@ -4756,6 +4756,294 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/marketing/creatives/{creativeId}/slide-text-edits:
+    post:
+      tags:
+        - creatives
+      summary: Edit the text on a slideshow's slides and re-render them
+      description: >-
+        Replaces editable text (see `GET .../revisions` and the text-field registry) on a CAROUSEL Creative that
+        has a `slideshowSpec`. Records a PENDING revision holding the candidate spec and dispatches the
+        `conductor-creative-render` workflow, whose job (`conductor creative render-slides`) re-composes only the
+        changed slides at 9x16 and 4x5 and posts them back to `.../revisions/{revisionId}/complete`; the
+        Creative's `slides` change only then. Requires ADMIN or CREATOR. Returns 202 with the revision and its
+        run; follow it through `GET .../revisions/{revisionId}` or the Creative's `pendingRevision` /
+        `latestRevision`.
+        Refused with 404 (unknown Creative / non-member), 422 `slideshowSpecMissing` (no stored spec),
+        409 (`version` is stale; a PENDING revision exists, `SLIDE_EDIT_ACTIVE`; a render run is active,
+        `RENDER_RUN_ACTIVE`; or the render workflow is disabled / its name taken), 422 `slideTextEditInvalid`
+        (field `edits[i]`: not an editable path, missing, not text, too long, no such slide) or 422
+        `slideTextEditNoop` (the edits change nothing) or 422 `slideTextEditUnsupportedRatio` (field `slides`: the
+        Creative has a non-empty 1x1 list, or a list that is neither 9:16 nor 4:5; the message says to re-compose
+        it locally with `compose_slideshow`).
+      operationId: createCreativeSlideTextEdit
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCreativeSlideTextEditRequest"
+      responses:
+        "202":
+          description: The revision was recorded and the render run queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeSlideTextEditResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Stale `version`, or a revision / render run is already active (body `code` says which).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            `slideshowSpecMissing`, `slideTextEditInvalid`, `slideTextEditNoop` or `slideTextEditUnsupportedRatio`
+            (body carries `violations`), or the Creative fails the render validation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeValidationProblem"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/revisions/{revisionId}:
+    get:
+      tags:
+        - creatives
+      summary: One slideshow-spec revision, with what the render job needs
+      description: >-
+        The revision plus its candidate `spec`, `baseVersion`, `changedSlides`, `renderLists`, `altTextFlags` and the
+        Creative's current `slides` map and `slideStyle`, so the render job needs one call. Any project member may read; a
+        workflow run token only for the revision's own run. A PENDING revision whose run ended without
+        completing reads (and is stored) as FAILED.
+      operationId: getCreativeRevision
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: revisionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRevisionDetail"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A run token for another run or Creative
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Revision or Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/revisions/{revisionId}/complete:
+    post:
+      tags:
+        - creatives
+      summary: Report the re-rendered slides of a PENDING revision
+      description: >-
+        Called by the render job with the media it uploaded. `slideMedia` is keyed by ratio (`9x16`, `4x5`) then
+        1-based slide number (as a string) and must cover exactly the revision's changed slides for every ratio
+        the revision's `renderLists` have (anything else FAILS the revision, 200, with the reason in `error`). Any check with severity `error` FAILS the revision (checks
+        stored, nothing else changes, still 200). Otherwise, in one transaction: the version guard (the
+        Creative must still be at the revision's `baseVersion`, else FAILED), the new media is marked checked,
+        the changed slide entries are replaced in every affected list, `slideshowSpec` is set to the revision's
+        spec, `version` is bumped, alt-text flags and the snapshots are stored and the revision is APPLIED; then
+        the Creative is re-rendered (instantly without a track, as a queued render run with one). Every
+        validation runs before anything is written: a FAILED revision leaves the Creative and the uploaded media
+        untouched. A Creative that has gained a 1x1 (or other unsupported) list since the edit was accepted FAILS
+        the revision too. Auth: the revision's own run token, or a project
+        ADMIN / CREATOR.
+      operationId: completeCreativeRevision
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: revisionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteCreativeRevisionRequest"
+      responses:
+        "200":
+          description: The revision, now APPLIED or FAILED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRevision"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A run token for another run or Creative, or a caller who is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Revision or Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The revision is no longer PENDING
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            `slideMediaInvalid`: the body is malformed (a ratio other than `9x16` / `4x5`, a slide that is not a
+            positive number, an empty media id). The revision stays PENDING. Media that does not cover the changed
+            slides, or is not an uploaded image of the project, is not a 422: it FAILS the revision (200).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeValidationProblem"
+
+  /projects/{projectId}/marketing/creatives/{creativeId}/revisions/{revisionId}/fail:
+    post:
+      tags:
+        - creatives
+      summary: Mark a PENDING revision FAILED
+      description: >-
+        Called by the render job when it cannot produce the slides. Stores `error` and any `checks`; the
+        Creative is unchanged. Same auth as `complete`.
+      operationId: failCreativeRevision
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: creativeId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: revisionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FailCreativeRevisionRequest"
+      responses:
+        "200":
+          description: The revision, now FAILED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreativeRevision"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A run token for another run or Creative, or a caller who is not ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Revision or Creative not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The revision is no longer PENDING
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/marketing/creatives/{creativeId}/performance:
     get:
       tags:
@@ -9955,6 +10243,16 @@ components:
             The editable slideshow spec (`{id, grain?, style?, slides:[...]}`, the shape `compose_slideshow` takes) a
             CAROUSEL's slides were composed from; null when none was stored. Every image field is `media:<id>` of an
             IMAGE in the project's media library.
+        pendingRevision:
+          allOf:
+            - $ref: "#/components/schemas/CreativePendingRevision"
+          nullable: true
+          description: The slide-text edit being rendered right now, if any. Populated on the single-Creative read only.
+        latestRevision:
+          allOf:
+            - $ref: "#/components/schemas/CreativeLatestRevision"
+          nullable: true
+          description: The newest recorded revision of the slideshow spec (FAILED ones included, with `error` / `checks`). Populated on the single-Creative read only.
         slideshow:
           allOf:
             - $ref: "#/components/schemas/CreativeSlideshow"
@@ -11062,6 +11360,197 @@ components:
           items:
             $ref: "#/components/schemas/CreativePerformancePlatform"
 
+    CreateCreativeSlideTextEditRequest:
+      type: object
+      required: [version, edits]
+      properties:
+        version:
+          type: integer
+          description: The Creative's `version` the edit was made against (409 when stale).
+        edits:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            $ref: "#/components/schemas/SlideTextEdit"
+
+    SlideTextEdit:
+      type: object
+      required: [slide, path, text]
+      properties:
+        slide:
+          type: integer
+          description: 1-based slide number.
+        path:
+          type: string
+          description: A concrete editable path within the slide, e.g. `texts[0].t`.
+        text:
+          type: string
+          description: The new text (at most 500 characters; may contain newlines).
+
+    CreativeSlideTextEditResponse:
+      type: object
+      required: [revision]
+      properties:
+        revision:
+          $ref: "#/components/schemas/CreativeRevision"
+        renderRun:
+          allOf:
+            - $ref: "#/components/schemas/CreativeRenderRun"
+          nullable: true
+
+    SlideshowCheck:
+      type: object
+      required: [slide, ratio, rule, severity, message]
+      properties:
+        slide:
+          type: integer
+          description: 1-based slide number (the real slide, not its position in the changed set).
+        ratio:
+          type: string
+          enum: ["9x16", "4x5"]
+        rule:
+          type: string
+        severity:
+          type: string
+          enum: [error, warning]
+        message:
+          type: string
+
+    CompleteCreativeRevisionRequest:
+      type: object
+      required: [slideMedia]
+      properties:
+        slideMedia:
+          type: object
+          description: 'Ratio ("9x16" / "4x5") -> 1-based slide number (string) -> the uploaded media id.'
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/SlideshowCheck"
+
+    FailCreativeRevisionRequest:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/SlideshowCheck"
+
+    CreativeRevisionDetail:
+      type: object
+      description: >-
+        A `CreativeRevision` (its fields at the top level) plus what the render job needs to do its work.
+      allOf:
+        - $ref: "#/components/schemas/CreativeRevision"
+        - $ref: "#/components/schemas/CreativeRevisionDetailExtras"
+
+    CreativeRevisionDetailExtras:
+      type: object
+      required: [spec, changedSlides, renderLists]
+      properties:
+        spec:
+          type: object
+          additionalProperties: true
+          description: The candidate slideshow spec (image fields `media:<id>`).
+        changedSlides:
+          type: array
+          items:
+            type: integer
+          description: The distinct 1-based slides whose text changed, ascending.
+        renderLists:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreativeRevisionRenderList"
+          description: >-
+            The Creative's stored slide lists the job re-renders, each with the ratio it is made at. The backend
+            decides this (a `default` list is classified by the shape of its images, within 2%); the job must not
+            infer it. `slideMedia` on `.../complete` is keyed by the distinct ratios here and each ratio's media
+            replaces the changed slides of every list with that ratio. Empty when the Creative cannot be
+            text-edited (see `slideTextEditUnsupportedRatio`).
+        altTextFlags:
+          type: array
+          nullable: true
+          items:
+            type: integer
+          description: 1-based slides whose alt text quoted replaced text; null until applied.
+        slides:
+          type: object
+          nullable: true
+          description: The Creative's current `slides` map (ratio / `default` -> media ids).
+          additionalProperties:
+            type: array
+            items:
+              type: string
+        slideStyle:
+          allOf:
+            - $ref: "#/components/schemas/SlideshowStyle"
+          nullable: true
+          description: The Creative's current slide style, if any.
+
+    CreativeRevisionRenderList:
+      type: object
+      required: [list, ratio]
+      properties:
+        list:
+          type: string
+          enum: ["9x16", "4x5", default]
+          description: The key of the list in the Creative's `slides` map.
+        ratio:
+          type: string
+          enum: ["9x16", "4x5"]
+          description: The ratio its slides are re-rendered at.
+
+    CreativePendingRevision:
+      type: object
+      required: [id, status, createdAt]
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [PENDING]
+        createdAt:
+          type: string
+          format: date-time
+        workflowRunId:
+          type: string
+          nullable: true
+
+    CreativeLatestRevision:
+      type: object
+      required: [id, revisionNo, status, source, createdAt]
+      properties:
+        id:
+          type: string
+        revisionNo:
+          type: integer
+        status:
+          type: string
+          enum: [PENDING, APPLIED, FAILED]
+        source:
+          type: string
+          enum: [EDITOR, REVIEWER, MCP, IMPORT, COMMIT]
+        error:
+          type: string
+          nullable: true
+        checks:
+          type: array
+          nullable: true
+          items:
+            type: object
+            additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+
     CreativeRevisionListResponse:
       type: object
       required:
@@ -11124,6 +11613,14 @@ components:
         error:
           type: string
           nullable: true
+        baseVersion:
+          type: integer
+          nullable: true
+          description: For an edit, the Creative `version` it was made against.
+        workflowRunId:
+          type: string
+          nullable: true
+          description: For an edit, the render workflow run that is (or was) producing the slides.
         createdAt:
           type: string
           format: date-time

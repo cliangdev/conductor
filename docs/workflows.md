@@ -1663,8 +1663,23 @@ jobs:
           conductor_mcp: true
         env:
           CREATIVE_ID: ${{ event.creativeId }}
-        run: conductor creative render "$CREATIVE_ID" --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID"
+          REVISION_ID: ${{ event.revisionId }}   # empty unless this run re-composes edited slide text
+        run: >-                    # folded into one line
+          if [ -n "$REVISION_ID" ];
+          then conductor creative render-slides "$REVISION_ID" --creative "$CREATIVE_ID" --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID";
+          else conductor creative render "$CREATIVE_ID" --renderer workflow --workflow-run-id "$CONDUCTOR_WORKFLOW_RUN_ID";
+          fi
 ```
+
+**The same two jobs also re-compose edited slide text.** `POST .../creatives/{creativeId}/slide-text-edits`
+records a PENDING revision and fires this workflow with `type: "creative.slideshow-text"` and the revision's id
+in `event.revisionId`; the step then runs `conductor creative render-slides` for it, which re-renders only the
+changed slides and reports them to `POST .../revisions/{revisionId}/complete` (or `/fail`) with the same
+run-scoped key. A missing `event.*` field resolves to the empty string (see `WorkflowInterpolator`), which is
+what keeps `$REVISION_ID` empty for an ordinary render. The seeded workflow is refreshed in place by the next
+dispatch when its YAML differs from the classpath copy, so existing workspaces pick the new script up without a
+migration. A music-track CAROUSEL then gets a second, ordinary render run for the video once the slides are
+applied. See [Editing slide text](creatives.md#organic-slideshows).
 
 How the pieces fit:
 
