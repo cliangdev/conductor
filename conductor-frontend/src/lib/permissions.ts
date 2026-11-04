@@ -20,6 +20,7 @@ export type Capability =
   | 'doc.edit' // create/rename/delete/edit docs
   | 'issue.edit' // change issue status / edit issues
   | 'issue.assignReviewers' // assign or unassign reviewers on an issue
+  | 'review.submit' // approve / request changes / comment on a Work Item as a reviewer
   | 'creative.manage' // create/edit/delete brand kits, Creative photos, and Creatives
   | 'marketing.target.manage' // set/clear a marketing overview metric target
 
@@ -46,19 +47,50 @@ const ADMIN_ONLY_CAPABILITIES: Capability[] = [
 ]
 
 const ROLE_CAPABILITIES: Record<MemberRole, Capability[]> = {
-  ADMIN: [...ADMIN_ONLY_CAPABILITIES, ...CREATOR_CAPABILITIES],
+  // ADMIN implies every other role, so it holds the union of all of them.
+  ADMIN: [...ADMIN_ONLY_CAPABILITIES, ...CREATOR_CAPABILITIES, 'review.submit'],
   CREATOR: CREATOR_CAPABILITIES,
-  REVIEWER: [], // read-only: every resource is viewable; REVIEWER holds no mutating capability
+  REVIEWER: ['review.submit'], // can review; every resource is viewable but nothing is mutable
 }
 
-/** True if the given role holds the capability. Unknown/undefined role → false. */
-export function can(role: MemberRole | null | undefined, capability: Capability): boolean {
-  if (!role) return false
-  return ROLE_CAPABILITIES[role].includes(capability)
+/** UI names for the stored roles. The enum values never change; CREATOR is shown as "Editor". */
+export const ROLE_LABELS: Record<MemberRole, string> = {
+  ADMIN: 'Admin',
+  CREATOR: 'Editor',
+  REVIEWER: 'Reviewer',
 }
 
-/** All capabilities held by a role — useful for future per-section nav gating. */
-export function capabilitiesFor(role: MemberRole | null | undefined): Capability[] {
-  if (!role) return []
-  return ROLE_CAPABILITIES[role]
+/** Display order for a set of roles: Admin first, then Editor, then Reviewer. */
+export const ROLE_ORDER: MemberRole[] = ['ADMIN', 'CREATOR', 'REVIEWER']
+
+/** UI name for a stored role string; an unknown string passes through unchanged. */
+export function roleName(role: string): string {
+  return (ROLE_LABELS as Record<string, string>)[role] ?? role
+}
+
+/** The roles in display order (unknown strings last). */
+export function sortRoles<T extends string>(roles: readonly T[]): T[] {
+  const rank = (r: string) => {
+    const i = (ROLE_ORDER as string[]).indexOf(r)
+    return i === -1 ? ROLE_ORDER.length : i
+  }
+  return [...roles].sort((a, b) => rank(a) - rank(b))
+}
+
+/** The roles a member/invite/project summary holds. Falls back to the legacy single `role` from an older server. */
+export function memberRoles(m: { roles?: MemberRole[] | null; role?: MemberRole | null } | null | undefined): MemberRole[] {
+  if (!m) return []
+  return m.roles ?? (m.role ? [m.role] : [])
+}
+
+/** True if the held roles grant the capability (union over every role held). Empty/undefined → false. */
+export function can(roles: readonly MemberRole[] | null | undefined, capability: Capability): boolean {
+  if (!roles) return false
+  return roles.some((r) => ROLE_CAPABILITIES[r]?.includes(capability))
+}
+
+/** All capabilities granted by a set of roles — useful for future per-section nav gating. */
+export function capabilitiesFor(roles: readonly MemberRole[] | null | undefined): Capability[] {
+  if (!roles) return []
+  return Array.from(new Set(roles.flatMap((r) => ROLE_CAPABILITIES[r] ?? [])))
 }

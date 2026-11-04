@@ -17,7 +17,7 @@ import type { DocFolder, ProjectDocSummary } from '@/lib/docs-api'
 interface DocTreeProps {
   projectId: string
   token: string
-  userRole: string
+  canEdit: boolean
   selectedDocId?: string
   onDocSelect: (docId: string) => void
   onRefresh?: () => void
@@ -39,7 +39,7 @@ interface FolderNodeProps {
   allFolders: DocFolder[]
   projectId: string
   token: string
-  userRole: string
+  canEdit: boolean
   selectedDocId?: string
   onDocSelect: (docId: string) => void
   onOpenDialog: (state: DialogState) => void
@@ -52,7 +52,7 @@ function FolderNode({
   allFolders,
   projectId,
   token,
-  userRole,
+  canEdit,
   selectedDocId,
   onDocSelect,
   onOpenDialog,
@@ -66,7 +66,6 @@ function FolderNode({
   const [dropdownOpen, setDropdownOpen] = useState(false)
 
   const childFolders = allFolders.filter((f) => f.parentId === folder.id)
-  const canEdit = userRole === 'ADMIN' || userRole === 'CREATOR'
 
   async function handleToggle() {
     if (!expanded && childDocs.length === 0) {
@@ -167,7 +166,7 @@ function FolderNode({
               allFolders={allFolders}
               projectId={projectId}
               token={token}
-              userRole={userRole}
+              canEdit={canEdit}
               selectedDocId={selectedDocId}
               onDocSelect={onDocSelect}
               onOpenDialog={onOpenDialog}
@@ -181,7 +180,7 @@ function FolderNode({
               doc={doc}
               projectId={projectId}
               token={token}
-              userRole={userRole}
+              canEdit={canEdit}
               isSelected={doc.id === selectedDocId}
               onDocSelect={onDocSelect}
               onOpenDialog={onOpenDialog}
@@ -199,7 +198,7 @@ interface DocLeafProps {
   doc: ProjectDocSummary
   projectId: string
   token: string
-  userRole: string
+  canEdit: boolean
   isSelected: boolean
   onDocSelect: (docId: string) => void
   onOpenDialog: (state: DialogState) => void
@@ -211,7 +210,7 @@ function DocLeaf({
   doc,
   projectId,
   token,
-  userRole,
+  canEdit,
   isSelected,
   onDocSelect,
   onOpenDialog,
@@ -220,7 +219,6 @@ function DocLeaf({
 }: DocLeafProps) {
   const [hovered, setHovered] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
-  const canEdit = userRole === 'ADMIN' || userRole === 'CREATOR'
 
   return (
     <div
@@ -280,7 +278,7 @@ function DocLeaf({
 export function DocTree({
   projectId,
   token,
-  userRole,
+  canEdit,
   selectedDocId,
   onDocSelect,
   onRefresh,
@@ -292,7 +290,6 @@ export function DocTree({
   const [rootDropdownOpen, setRootDropdownOpen] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<DeleteRequest | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const canEdit = userRole === 'ADMIN' || userRole === 'CREATOR'
 
   const fetchTree = useCallback(async () => {
     if (!token) return
@@ -388,7 +385,7 @@ export function DocTree({
             allFolders={allFolders}
             projectId={projectId}
             token={token}
-            userRole={userRole}
+            canEdit={canEdit}
             selectedDocId={selectedDocId}
             onDocSelect={onDocSelect}
             onOpenDialog={setDialog}
@@ -402,7 +399,7 @@ export function DocTree({
             doc={doc}
             projectId={projectId}
             token={token}
-            userRole={userRole}
+            canEdit={canEdit}
             isSelected={doc.id === selectedDocId}
             onDocSelect={onDocSelect}
             onOpenDialog={setDialog}

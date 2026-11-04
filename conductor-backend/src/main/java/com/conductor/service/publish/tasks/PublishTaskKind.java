@@ -7,7 +7,12 @@ public enum PublishTaskKind {
     /** Hand a NATIVE target to the platform's own scheduler, once its hand-off window is open. */
     HANDOFF,
     /** Ask the platform whether a handed-off NATIVE target is live, once its fire time has passed. */
-    CONFIRM;
+    CONFIRM,
+    /**
+     * Ask the platform again for the link of a target that published without one (TikTok fills in a post's
+     * id only after moderation, and only for public posts). Bounded; see {@link PublishTaskHandler}.
+     */
+    PERMALINK;
 
     /** The path segment under {@code /internal/v1/publish-targets/{id}/} that carries this kind. */
     public String pathSegment() {

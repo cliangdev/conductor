@@ -40,7 +40,6 @@ import { ResizableSplit } from '@/components/ui/ResizableSplit'
 import { updateDoc } from '@/lib/docs-api'
 import type { ProjectDoc } from '@/lib/docs-api'
 import { apiErrorMessage } from '@/lib/api'
-import type { MemberRole } from '@/types'
 
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
 
@@ -48,7 +47,7 @@ export interface DocEditorProps {
   doc: ProjectDoc
   projectId: string
   token: string
-  userRole: MemberRole
+  canEdit: boolean
   onSaved: (updatedDoc: ProjectDoc) => void
   onCancel: () => void
 }
@@ -140,7 +139,7 @@ export function DocEditor({
   doc,
   projectId,
   token,
-  userRole,
+  canEdit,
   onSaved,
   onCancel,
 }: DocEditorProps) {
@@ -326,10 +325,10 @@ export function DocEditor({
   }
 
   useEffect(() => {
-    if (userRole === 'REVIEWER') onCancel()
-  }, [userRole, onCancel])
+    if (!canEdit) onCancel()
+  }, [canEdit, onCancel])
 
-  if (userRole === 'REVIEWER') return null
+  if (!canEdit) return null
 
   const isDirty = value !== (doc.content ?? '')
 

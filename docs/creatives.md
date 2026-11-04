@@ -602,7 +602,7 @@ numbers used (or why a decision couldn't be made) and is never recomputed after 
 
 **Confirming a winner** is the one human action in this loop: `POST .../experiments/{id}/confirm-winner`
 appends the winning variant's headline to its family's Brand Kit `approved_lines` (deduplicated) and
-stamps `winnerLineConfirmedAt`/`By`. It requires ADMIN or CREATOR, requires a `DECIDED` experiment with a
+stamps `winnerLineConfirmedAt`/`By`. It requires the Editor role (or Admin), requires a `DECIDED` experiment with a
 winner, and is idempotent — `decide` never calls it, and calling it twice never appends the line twice. No
 experiment ever changes brand copy on its own.
 

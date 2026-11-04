@@ -36,6 +36,8 @@ export interface StatechartTransition {
   requiresReview?: boolean
   reviewOutcomes?: ReviewOutcome[]
   reviewerRole?: ReviewerRole
+  /** When set, an approval from the item's own author does not satisfy the review. */
+  requireIndependentReviewer?: boolean
   trigger?: TransitionTrigger
   steps?: StatechartStep[]
 }
@@ -81,6 +83,7 @@ export const DEFAULT_VIEW_OPTIONS: { value: DefaultView; label: string }[] = [
 ]
 
 export const REVIEWER_ROLE_OPTIONS: ReviewerRole[] = ['ADMIN', 'CREATOR', 'REVIEWER']
+
 
 export const REVIEW_OUTCOME_OPTIONS: { value: ReviewOutcome; label: string }[] = [
   { value: 'approve', label: 'Approve' },
@@ -167,6 +170,7 @@ export function definitionFromWorkflowView(view: WorkflowView): StatechartDefini
         ? (t.reviewOutcomes ?? ['approve', 'request_changes'])
         : undefined,
       reviewerRole: (t.reviewerRole as ReviewerRole) ?? undefined,
+      requireIndependentReviewer: t.requireIndependentReviewer || undefined,
       trigger: t.trigger === 'pr_merged' ? 'pr_merged' : undefined,
     })),
   }

@@ -27,6 +27,7 @@ public class InviteController implements InvitesApi {
         InviteResponse response = inviteService.createInvite(
                 projectId,
                 createInviteRequest.getEmail(),
+                createInviteRequest.getRoles(),
                 createInviteRequest.getRole(),
                 caller);
         return ResponseEntity.status(201).body(response);

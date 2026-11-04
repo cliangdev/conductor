@@ -712,6 +712,49 @@ class TikTokPublishActionTest {
     }
 
     @Test
+    void photoPost_permalinkLivesUnderPhotoNotVideo() {
+        givenPhotos("photo-a");
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(eq(ACCESS_TOKEN), eq(PUBLISH_ID)))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7701106819145403662", null, null));
+
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.output()).containsEntry("permalink",
+                "https://www.tiktok.com/@acmestudio/photo/7701106819145403662");
+        assertThat(result.output()).doesNotContainKey("permalink_pending");
+    }
+
+    @Test
+    void photoPost_completeWithoutAPostId_publishesAndAsksForAFollowUpWithThePublishId() {
+        givenPhotos("photo-a");
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(eq(ACCESS_TOKEN), eq(PUBLISH_ID)))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", null, null, null));
+
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output())
+                .doesNotContainKey("permalink")
+                .containsEntry("publish_id", PUBLISH_ID)
+                .containsEntry("permalink_pending", Boolean.TRUE)
+                .containsEntry("post_kind", "photo");
+    }
+
+    @Test
+    void photoPost_sentToInbox_doesNotAskForAFollowUp() {
+        givenPhotos("photo-a");
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(eq(ACCESS_TOKEN), eq(PUBLISH_ID)))
+                .thenReturn(new PublishStatus("SEND_TO_USER_INBOX", null, null, null));
+
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.output()).doesNotContainKey("permalink_pending").containsEntry("awaiting_human", true);
+    }
+
+    @Test
     void publicMediaUrl_isTheStorageLinkItselfWithoutAHost() {
         assertThat(TikTokPublishAction.publicMediaUrl("https://signed/x", null)).isEqualTo("https://signed/x");
         assertThat(TikTokPublishAction.publicMediaUrl("https://signed/x", "  ")).isEqualTo("https://signed/x");

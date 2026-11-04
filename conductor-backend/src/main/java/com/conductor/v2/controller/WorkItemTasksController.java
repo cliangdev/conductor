@@ -44,6 +44,7 @@ public class WorkItemTasksController implements WorkItemTasksApi {
                                                                           Map<String, Object> requestBody) {
         User caller = currentUser();
         verifyMembership(projectId, caller.getId());
+        projectSecurityService.requireEditor(projectId, caller.getId());
         JsonNode tasksNode = objectMapper.valueToTree(requestBody);
         workItemService.saveWorkItemTasks(projectId, workItemId, tasksNode);
         SaveWorkItemTasks200Response response = new SaveWorkItemTasks200Response().message("saved");

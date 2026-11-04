@@ -3,7 +3,6 @@ package com.conductor.service;
 import com.conductor.notification.ChannelGroup;
 import com.conductor.entity.Asset;
 import com.conductor.entity.WorkItem;
-import com.conductor.entity.MemberRole;
 import com.conductor.entity.Project;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
@@ -18,7 +17,6 @@ import com.conductor.service.publish.PublishFinding;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.service.publish.tasks.PublishTaskArmer;
 import com.conductor.service.publish.PublishingWorkflow;
-import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.signal.Signal;
@@ -64,7 +62,6 @@ public class WorkItemService {
     private final AssetRepository assetRepository;
     private final ProjectRepository projectRepository;
     private final ProjectSecurityService projectSecurityService;
-    private final ProjectMemberRepository projectMemberRepository;
     private final SignalBus signalBus;
     private final CommentRepository commentRepository;
     private final UserRepository userRepository;
@@ -81,7 +78,6 @@ public class WorkItemService {
             WorkItemRepository workItemRepository,
             ProjectRepository projectRepository,
             ProjectSecurityService projectSecurityService,
-            ProjectMemberRepository projectMemberRepository,
             SignalBus signalBus,
             CommentRepository commentRepository,
             UserRepository userRepository,
@@ -100,7 +96,6 @@ public class WorkItemService {
         this.workItemRepository = workItemRepository;
         this.projectRepository = projectRepository;
         this.projectSecurityService = projectSecurityService;
-        this.projectMemberRepository = projectMemberRepository;
         this.signalBus = signalBus;
         this.commentRepository = commentRepository;
         this.userRepository = userRepository;
@@ -177,6 +172,7 @@ public class WorkItemService {
                                    LocalDate dueOn, ProjectActor actor) {
         if (!actor.isMachine()) {
             verifyMembership(projectId, actor.user().getId());
+            projectSecurityService.requireEditor(projectId, actor.user().getId());
         }
 
         Project project = projectRepository.findById(projectId)
@@ -267,6 +263,7 @@ public class WorkItemService {
                                   String scheduleTimezone, Collection<String> tags, Boolean publishOnApproval,
                                   Map<String, Object> fields, String dueOn, User caller) {
         verifyMembership(projectId, caller.getId());
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
 
         String validatedTimezone = validateTimezone(scheduleTimezone);
@@ -366,7 +363,6 @@ public class WorkItemService {
         // carries whatever status it last saw, and rejecting it with a 400 only makes clients queue and
         // replay it — which is how a stale DRAFT came to unschedule a Post.
         if (status != null && !status.equals(previousStatus)) {
-            verifyCallerCanChangeStatus(projectId, caller.getId());
             workItemWorkflowService.validateTransition(projectId, workItem, status);
             String scheduledStatus = scheduledStatusFor(projectId, workItem);
             // Leaving the scheduled status revokes any native-lane handoff FIRST, inside this transaction:
@@ -988,15 +984,6 @@ public class WorkItemService {
         }
     }
 
-    private void verifyCallerCanChangeStatus(String projectId, String callerId) {
-        projectMemberRepository.findByProjectIdAndUserId(projectId, callerId)
-                .ifPresent(member -> {
-                    if (member.getRole() == MemberRole.REVIEWER) {
-                        throw new ForbiddenException("REVIEWER role cannot change Work Item status");
-                    }
-                });
-    }
-
     /** Deletes a Work Item; refuses one that is live on a platform (use the overload with {@code confirmLive}). */
     @Transactional
     public void deleteWorkItem(String projectId, String workItemId, User caller) {
@@ -1011,6 +998,7 @@ public class WorkItemService {
     @Transactional
     public void deleteWorkItem(String projectId, String workItemId, User caller, boolean confirmLive) {
         verifyMembership(projectId, caller.getId());
+        projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         if (!confirmLive && publishTargetService.hasPublishedTarget(workItem.getId())) {
             throw new ConflictException("This post is live on a platform. Deleting it only removes it from "
