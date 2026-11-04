@@ -82,8 +82,11 @@ const keyOf = (slide: number, path: string) => `${slide}|${path}`
 
 function describeSaveError(err: unknown): string {
   const e = err as Partial<ApiError>
+  // 422 slideTextEditUnsupportedRatio, slideTextEditInvalid, ...: the server's own sentences.
   if (e.violations?.length) return e.violations.map((v) => v.message).join(' ')
   if (e.status === 409) {
+    // slideTextEditNeedsEditor: the message names the Posts and says to ask an editor.
+    if (e.code === 'slideTextEditNeedsEditor') return apiErrorMessage(err, 'Ask an editor to make this change.')
     if (e.code === 'SLIDE_EDIT_ACTIVE') return 'Another text edit is still rendering. Wait for it to finish, then try again.'
     if (e.code === 'RENDER_RUN_ACTIVE') return 'This Creative is rendering. Try again when that finishes.'
     return apiErrorMessage(err, 'This Creative changed since you opened the editor. Close it and open it again.')
@@ -116,6 +119,7 @@ export function SlideTextEditor({
   const [busy, setBusy] = useState(false)
   const [availability, setAvailability] = useState<RenderAvailability | null>(null)
   const [affected, setAffected] = useState<AffectedPost[] | null>(null)
+  const [blockedReason, setBlockedReason] = useState<string | null>(null)
   const [failure, setFailure] = useState<{ message: string; checks: SlideshowCheck[] } | null>(null)
   const [revisionId, setRevisionId] = useState<string | null>(creative.pendingRevision?.id ?? null)
   const [fetchedMedia, setFetchedMedia] = useState<Map<string, CreativePhoto>>(new Map())
@@ -170,11 +174,12 @@ export function SlideTextEditor({
     setBusy(true)
     setError(null)
     try {
-      const [posts, avail] = await Promise.all([
+      const [affectedPosts, avail] = await Promise.all([
         getAffectedPosts(projectId, creative.id, token, postId),
         getRenderAvailability(projectId, creative.id, token).catch(() => null),
       ])
-      setAffected(posts)
+      setAffected(affectedPosts.posts)
+      setBlockedReason(affectedPosts.blockedReason)
       setAvailability(avail)
       setStep('confirm')
     } catch (err) {
@@ -427,6 +432,11 @@ export function SlideTextEditor({
                   )}
                 </section>
 
+                {blockedReason && (
+                  <Alert variant="destructive" data-testid="save-blocked">
+                    <p>{blockedReason}</p>
+                  </Alert>
+                )}
                 {availability && (
                   <Alert variant={availabilityLine(availability).warn ? 'warning' : 'info'} data-testid="render-availability">
                     <p>{availabilityLine(availability).text}</p>
@@ -500,7 +510,7 @@ export function SlideTextEditor({
                   <Button variant="outline" onClick={() => setStep('edit')} disabled={busy}>
                     Back
                   </Button>
-                  <Button onClick={() => void save()} disabled={busy}>
+                  <Button onClick={() => void save()} disabled={busy || !!blockedReason}>
                     {busy ? 'Saving…' : 'Save and re-render'}
                   </Button>
                 </>

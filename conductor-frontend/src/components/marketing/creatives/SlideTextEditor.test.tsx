@@ -26,11 +26,12 @@ const AFFECTED = [
 type Routes = {
   creative?: () => unknown
   affected?: unknown[]
+  blockedReason?: string | null
   availability?: unknown
 }
 function routes(r: Routes = {}) {
   get.mockImplementation(async (path: string) => {
-    if (path.includes('/affected-posts')) return { posts: r.affected ?? AFFECTED }
+    if (path.includes('/affected-posts')) return { posts: r.affected ?? AFFECTED, blockedReason: r.blockedReason ?? null }
     if (path.includes('/render-availability')) return r.availability ?? { runtime: 'target', targetName: 'byo-test', daemonOnline: null }
     if (path.endsWith('/creatives/cr-1')) return r.creative ? r.creative() : creative()
     throw new Error(`unexpected GET ${path}`)
@@ -257,6 +258,29 @@ describe('SlideTextEditor save flow', () => {
     expect(await screen.findByText('The Creative changed (version 5).')).toBeInTheDocument()
   })
 
+  it('shows the unsupported-ratio 422 with the server’s message', async () => {
+    post.mockRejectedValue(
+      Object.assign(new Error('x'), {
+        status: 422,
+        violations: [{ field: 'slides', ruleId: 'slideTextEditUnsupportedRatio', message: 'Text editing isn’t available for Creatives with 1x1 slides yet.' }],
+      }),
+    )
+    setup()
+    await editAndReview()
+    await userEvent.click(screen.getByRole('button', { name: 'Save and re-render' }))
+    expect(await screen.findByText('Text editing isn’t available for Creatives with 1x1 slides yet.')).toBeInTheDocument()
+  })
+
+  it('shows the needs-an-editor 409 with the server’s message', async () => {
+    const message = 'Post RE-12 and 1 more using this Creative are approved or scheduled. Ask an editor to make this change.'
+    post.mockRejectedValue(Object.assign(new Error('x'), { status: 409, code: 'slideTextEditNeedsEditor', detail: message }))
+    setup()
+    await editAndReview()
+    await userEvent.click(screen.getByRole('button', { name: 'Save and re-render' }))
+    expect(await screen.findByText(message)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review and save' })).toBeInTheDocument()
+  })
+
   it('shows a 422’s violations', async () => {
     post.mockRejectedValue(
       Object.assign(new Error('x'), { status: 422, violations: [{ field: 'edits[0]', ruleId: 'slideTextEditInvalid', message: 'edits[0]: not an editable text field' }] }),
@@ -275,6 +299,27 @@ describe('SlideTextEditor save flow', () => {
 })
 
 describe('SlideTextEditor reviewer fix', () => {
+  it('disables Save and shows why when the server says an editor must make this change', async () => {
+    const reason = 'Post RE-101 uses this Creative and is approved or scheduled. Ask an editor to make this change.'
+    routes({ blockedReason: reason })
+    setup({ postId: 'w2' })
+    await userEvent.type(screen.getByLabelText('Text 2'), '!')
+    await userEvent.click(screen.getByRole('button', { name: 'Review and save' }))
+    const confirm = await screen.findByTestId('slide-text-confirm')
+    expect(within(confirm).getByTestId('save-blocked')).toHaveTextContent(reason)
+    expect(screen.getByRole('button', { name: 'Save and re-render' })).toBeDisabled()
+    expect(post).not.toHaveBeenCalled()
+  })
+
+  it('leaves Save enabled and shows no block when the server reports none', async () => {
+    setup({ postId: 'w2' })
+    await userEvent.type(screen.getByLabelText('Text 2'), '!')
+    await userEvent.click(screen.getByRole('button', { name: 'Review and save' }))
+    await screen.findByTestId('slide-text-confirm')
+    expect(screen.queryByTestId('save-blocked')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Save and re-render' })).toBeEnabled()
+  })
+
   it('sends the Post id, keeps the fix in the round, and names the other Posts that go back', async () => {
     routes({
       affected: [

@@ -102,10 +102,27 @@ export function getCreativeRevision(projectId: string, creativeId: string, revis
   return apiGet<CreativeRevisionDetail>(`${base(projectId, creativeId)}/revisions/${revisionId}`, token)
 }
 
-export async function getAffectedPosts(projectId: string, creativeId: string, token: string, postId?: string): Promise<AffectedPost[]> {
+export interface AffectedPosts {
+  posts: AffectedPost[]
+  /** Why this caller may not save (a reviewer of the Post who is not an editor, while other Posts using the
+   *  Creative are approved or scheduled); null when they may. The save answers 409 with the same message. */
+  blockedReason: string | null
+}
+
+export async function getAffectedPosts(projectId: string, creativeId: string, token: string, postId?: string): Promise<AffectedPosts> {
   const q = postId ? `?postId=${encodeURIComponent(postId)}` : ''
-  const res = await apiGet<{ posts: AffectedPost[] }>(`${base(projectId, creativeId)}/affected-posts${q}`, token)
-  return res.posts ?? []
+  const res = await apiGet<{ posts?: AffectedPost[]; blockedReason?: string | null }>(
+    `${base(projectId, creativeId)}/affected-posts${q}`,
+    token,
+  )
+  return { posts: res.posts ?? [], blockedReason: res.blockedReason ?? null }
+}
+
+/** The editor cannot re-render 1x1 slides yet (the server refuses with 422 `slideTextEditUnsupportedRatio`). */
+export const SQUARE_SLIDES_NOTE = "Text editing isn't available for Creatives with 1x1 slides yet."
+
+export function hasSquareSlides(slides: Record<string, string[]> | null | undefined): boolean {
+  return (slides?.['1x1'] ?? []).length > 0
 }
 
 export function getRenderAvailability(projectId: string, creativeId: string, token: string): Promise<RenderAvailability> {

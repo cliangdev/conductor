@@ -33,7 +33,12 @@ export interface CarouselSlidesSectionProps {
    * Present when this Creative has an editable slideshow spec: the "Edit text" action for the slide on
    * screen (0-based index). `disabledReason` is shown beside the disabled button.
    */
-  textEdit?: { onEdit: (slideIndex: number) => void; disabledReason?: string | null }
+  textEdit?: {
+    onEdit: (slideIndex: number) => void
+    disabledReason?: string | null
+    /** Text editing cannot be offered at all (1x1 slides): the note replaces the button. */
+    unavailableNote?: string | null
+  }
   /** A line about the slide-text revision in flight or the last one that failed. */
   revisionNote?: ReactNode
   /** 1-based slides whose alt text still quotes text a slide-text edit replaced. */
@@ -184,7 +189,12 @@ export function CarouselSlidesSection({
               <ChevronRightIcon className="h-4 w-4" aria-hidden />
             </Button>
           </div>
-          {textEdit && (
+          {textEdit?.unavailableNote && (
+            <p className="text-center text-xs text-muted-foreground" data-testid="edit-slide-text-unavailable">
+              {textEdit.unavailableNote}
+            </p>
+          )}
+          {textEdit && !textEdit.unavailableNote && (
             <div className="flex flex-wrap items-center justify-center gap-2">
               <Button
                 variant="outline"

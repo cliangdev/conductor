@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { SlideTextEditor } from '@/components/marketing/creatives/SlideTextEditor'
+import { hasSquareSlides, SQUARE_SLIDES_NOTE } from '@/components/marketing/creatives/slideText'
 import { getCreative, type Creative } from '@/components/marketing/creatives/types'
 
 export function FixTextAction({
@@ -37,6 +38,14 @@ export function FixTextAction({
   }, [load])
 
   if (!creative || creative.kind !== 'CAROUSEL' || !creative.slideshowSpec) return null
+  // The server refuses 1x1 slides (422 slideTextEditUnsupportedRatio): say so instead of offering a dead end.
+  if (hasSquareSlides(creative.slides)) {
+    return (
+      <span className="text-xs text-muted-foreground" data-testid="fix-text-unavailable">
+        {SQUARE_SLIDES_NOTE}
+      </span>
+    )
+  }
 
   return (
     <>

@@ -89,6 +89,22 @@ describe('CreativeEditor — editing slide text', () => {
     expect(screen.queryByTestId('creative-revisions')).not.toBeInTheDocument()
   })
 
+  it('offers no Edit text for a Creative with 1x1 slides, and says why', async () => {
+    mockGets(creative({ slides: { '9x16': ['s1', 's2', 's3'], '4x5': ['t1', 't2', 't3'], '1x1': ['q1', 'q2', 'q3'] } }))
+    open()
+    expect(await screen.findByTestId('edit-slide-text-unavailable')).toHaveTextContent(
+      "Text editing isn't available for Creatives with 1x1 slides yet.",
+    )
+    expect(screen.queryByTestId('edit-slide-text')).not.toBeInTheDocument()
+  })
+
+  it('still offers Edit text when the 1x1 list is empty', async () => {
+    mockGets(creative({ slides: { '9x16': ['s1', 's2', 's3'], '4x5': ['t1', 't2', 't3'], '1x1': [] } }))
+    open()
+    expect(await screen.findByTestId('edit-slide-text')).toBeInTheDocument()
+    expect(screen.queryByTestId('edit-slide-text-unavailable')).not.toBeInTheDocument()
+  })
+
   it('has no Edit text for someone who cannot manage Creatives', async () => {
     mockCan.mockReturnValue(false)
     mockGets(creative())

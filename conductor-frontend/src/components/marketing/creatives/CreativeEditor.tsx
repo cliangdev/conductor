@@ -61,7 +61,14 @@ import { RendersPanel } from '@/components/marketing/creatives/RendersPanel'
 import { CreativeRevisionsPanel } from '@/components/marketing/creatives/CreativeRevisionsPanel'
 import { SlideChecksList } from '@/components/marketing/creatives/SlideChecksList'
 import { SlideTextEditor } from '@/components/marketing/creatives/SlideTextEditor'
-import { asChecks, getCreativeRevision, staleAltSlides, type TextChange } from '@/components/marketing/creatives/slideText'
+import {
+  asChecks,
+  getCreativeRevision,
+  hasSquareSlides,
+  SQUARE_SLIDES_NOTE,
+  staleAltSlides,
+  type TextChange,
+} from '@/components/marketing/creatives/slideText'
 import { UseInPostDialog } from '@/components/marketing/creatives/UseInPostDialog'
 import {
   createCreativeVariant,
@@ -1902,6 +1909,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                 canManage && creative.slideshowSpec
                   ? {
                       onEdit: setTextEditorSlide,
+                      unavailableNote: hasSquareSlides(creative.slides) ? SQUARE_SLIDES_NOTE : null,
                       disabledReason: creative.pendingRevision
                         ? 'A text edit is rendering.'
                         : JSON.stringify(form) !== JSON.stringify(toForm(creative))
