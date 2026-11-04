@@ -777,8 +777,11 @@ public class CreativeService {
             }
         }
         long unchecked = facts.values().stream().filter(f -> f == null || !f.isChecked()).count();
-        items.add(new ReadinessItem("photoChecked", unchecked == 0, true,
-                unchecked == 0 ? "every slide has been checked"
+        // A slideshow's text is composed into the image on purpose, so there is no stray burned-in text to look for.
+        boolean composed = isComposedSlideshow(creative);
+        items.add(new ReadinessItem("photoChecked", composed || unchecked == 0, true,
+                composed ? "slide text was made by the slideshow composer"
+                        : unchecked == 0 ? "every slide has been checked"
                         : unchecked + " of " + facts.size() + " slide images have not been checked for burned-in text"));
         long unprovenanced = facts.values().stream()
                 .filter(f -> f == null || !notBlank(f.getSource()) || !notBlank(f.getLicence())).count();
@@ -789,6 +792,16 @@ public class CreativeService {
         items.add(new ReadinessItem("aiDisclosure", !aiGenerated, false,
                 aiGenerated ? "a slide is AI-generated: turn on the platform's AI-generated label when publishing"
                         : "not AI-generated"));
+    }
+
+    /** A CAROUSEL made by {@code compose_slideshow}: only that path sets a slide style or a slideshow spec. */
+    private static boolean isComposedSlideshow(Creative creative) {
+        return Creative.KIND_CAROUSEL.equals(creative.getKind())
+                && (hasContent(creative.getSlideStyle()) || hasContent(creative.getSlideshowSpec()));
+    }
+
+    private static boolean hasContent(JsonNode node) {
+        return node != null && !node.isNull() && !node.isMissingNode();
     }
 
     private void addPhotoReadinessItems(MediaResolver media, Creative creative, List<ReadinessItem> items) {

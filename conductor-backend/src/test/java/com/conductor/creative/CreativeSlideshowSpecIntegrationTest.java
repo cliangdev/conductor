@@ -89,6 +89,17 @@ class CreativeSlideshowSpecIntegrationTest extends AbstractNoneWebIntegrationTes
     }
 
     @Test
+    void aSlideshowSpecPassesTheBurnedInTextCheck() {
+        List<String> ids = images(2);
+        Creative composed = createCarousel(ids, specFor(ids, "Hook one", "Hook two"));
+        CreativeService.ReadinessItem passed = creativeService.readiness(project.getId(), composed.getId(), admin)
+                .items().stream().filter(i -> i.key().equals("photoChecked")).findFirst().orElseThrow();
+        assertThat(passed.ok()).isTrue();
+        assertThat(passed.blocking()).isTrue();
+        assertThat(passed.message()).isEqualTo("slide text was made by the slideshow composer");
+    }
+
+    @Test
     void aCreativeWithoutASpecHasNoRevisions() {
         Creative created = creativeService.createCreative(project.getId(),
                 carousel(Map.of("default", images(2))), admin).creative();

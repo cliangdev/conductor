@@ -923,6 +923,20 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void aSlideshowStyledCarouselPassesPhotoCheckedWithoutCheckingEachSlide() {
+        CreateCreativeRequest request = carouselRequest(Map.of("default", imageIds(2, 1080, 1920, false)));
+        request.setSlideStyle(new SlideshowStyle().fontFamily("Poppins"));
+        Creative styled = creativeService.createCreative(project.getId(), request, admin).creative();
+        CreativeService.ReadinessItem item = item(creativeService.readiness(project.getId(), styled.getId(), admin), "photoChecked");
+        assertThat(item.ok()).isTrue();
+        assertThat(item.message()).isEqualTo("slide text was made by the slideshow composer");
+
+        Creative plain = creativeService.createCreative(project.getId(),
+                carouselRequest(Map.of("default", imageIds(2, 1080, 1920, false))), admin).creative();
+        assertThat(item(creativeService.readiness(project.getId(), plain.getId(), admin), "photoChecked").ok()).isFalse();
+    }
+
+    @Test
     void anExplicitNullOrEmptySlideStyleClearsItAndAbsentLeavesIt() throws Exception {
         CreateCreativeRequest request = carouselRequest(Map.of("default", imageIds(2, 1080, 1920, true)));
         request.setSlideStyle(new SlideshowStyle().fontFamily("Poppins"));
