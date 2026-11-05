@@ -437,8 +437,9 @@ needs `generate_creative_video`. Team mode is opt-in per run (`references/team-r
    takes, offer one `tier: "standard"` take with its cost; never run it automatically. If that
    still fails, stop and say what looks generated.
 6. **Trim to the beat.** Hooks run about 2 to 4 s; a 4 s clip trimmed to about 3.4 s made a good hook.
-7. **Use it** as a MOTION background (`motion.background.source: "clip"` with `clipPath`) or the
-   opening of a CLIP. Sound with `audio.source`: `clip` keeps the generated sound, `track` replaces it
+7. **Use it** as a MOTION background (`motion.background.source: "clip"` with `clipPath`, and
+   `motion.background.motion: "none"`: the clip already moves, and the default zoom would upscale it
+   and add a fake camera move) or the opening of a CLIP. Sound with `audio.source`: `clip` keeps the generated sound, `track` replaces it
    with a library track, `none` mutes it; on a CLIP, `mix` also puts it under a library track (MOTION
    has no `mix`).
 
