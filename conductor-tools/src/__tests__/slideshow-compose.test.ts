@@ -139,8 +139,8 @@ describe.skipIf(!hasBrowser)('composeSlideshow (real browser)', () => {
       expect(first.aiGenerated).toBe(true)
       expect(first.licence).toBe('Generated, house use; Own work')
       expect(first.source.startsWith("Composed with Conductor's slideshow composer from: gen A; ")).toBe(true)
-      expect(first.source).toHaveLength(200)
-      expect(first.source.endsWith('…')).toBe(true)
+      // Sidecars keep the full text; the 200-character clip happens at upload.
+      expect(first.source).toContain('x'.repeat(300))
       expect(read(res.slidePaths['4x5']![1]!).aiGenerated).toBe(false)
       expect(res.provenance).toEqual({ recorded: 2, needed: [], aiGenerated: true })
     }, 60000)

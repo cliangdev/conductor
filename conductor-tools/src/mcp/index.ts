@@ -1655,8 +1655,8 @@ export const TOOLS = [
         filePath: { type: 'string', description: 'A file on this machine (use this, url, files or folder)' },
         url: { type: 'string', description: 'A public http(s) URL (use this, filePath, files or folder)' },
         label: { type: 'string', description: 'Human label, max 200 chars (optional — defaults to the filename, without its extension)' },
-        source: { type: 'string', description: 'Provenance note, max 200 chars, e.g. a URL or "Generated with <model> on <date>" (optional; with files/folder it applies to every file without its own)' },
-        licence: { type: 'string', description: 'Max 200 chars, e.g. "Own work", "Unsplash Licence", "Generated, house use" (optional; shared across a batch like source)' },
+        source: { type: 'string', description: 'Provenance note, e.g. a URL or "Generated with <model> on <date>" (optional; with files/folder it applies to every file without its own). Over 200 chars is shortened to 200 on upload, with a warning' },
+        licence: { type: 'string', description: 'e.g. "Own work", "Unsplash Licence", "Generated, house use" (optional; shared across a batch like source). Over 200 chars is shortened to 200 on upload, with a warning' },
         aiGenerated: { type: 'boolean', description: 'Whether the file is AI-generated (optional, informational only; shared across a batch like source)' },
         files: {
           type: 'array',

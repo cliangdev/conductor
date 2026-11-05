@@ -266,6 +266,8 @@ export interface CreativeReadinessItem {
   ok: boolean
   blocking: boolean
   message: string
+  /** Only on `photoChecked`: the library media ids the check still counts as unchecked. */
+  mediaIds?: string[]
 }
 
 export interface CreativeReadiness {

@@ -48,7 +48,10 @@ vi.mock('node:fs/promises', () => ({
 vi.mock('../lib/creative-render.js', () => ({ renderCreative: vi.fn(), renderViaApi: vi.fn() }))
 vi.mock('../lib/media-probe.js', () => ({ probeMedia: vi.fn(), extractPoster: vi.fn() }))
 vi.mock('../lib/poster-sheet.js', () => ({ composePosterSheet: vi.fn() }))
-vi.mock('../lib/provenance-sidecar.js', () => ({ readProvenanceSidecar: vi.fn() }))
+vi.mock('../lib/provenance-sidecar.js', async (importActual) => ({
+  ...(await importActual<typeof import('../lib/provenance-sidecar.js')>()),
+  readProvenanceSidecar: vi.fn(),
+}))
 
 import { readFile, readdir, mkdtemp, writeFile, rm } from 'node:fs/promises'
 import { apiGet, apiPost, apiPatch, putBytes, ApiError } from '../mcp/api.js'
@@ -885,6 +888,29 @@ describe('upload_creative_media (photo)', () => {
       )
     })
 
+    it('reads a sidecar in full and clips its over-long licence at upload, with a warning', async () => {
+      mintResponses()
+      const longLicence = 'Licensed for editorial use only, see terms at https://example.com/terms '.repeat(5)
+      mocked(readProvenanceSidecar).mockResolvedValue({ source: 'S', licence: longLicence, aiGenerated: false })
+      const result = await uploadCreativeMedia({ filePath: '/tmp/gen.png' }, config)
+      const body = mocked(apiPost).mock.calls[0]![1] as { licence: string }
+      expect(body.licence.length).toBeLessThanOrEqual(200)
+      expect(longLicence.startsWith(body.licence.slice(0, -1))).toBe(true)
+      expect(result.warnings).toHaveLength(1)
+      expect(result.warnings[0]).toMatch(/^gen: licence was \d+ characters; shortened to 200 for Conductor/)
+    })
+
+    it('clips an over-long source passed directly (no sidecar), with a warning', async () => {
+      mintResponses()
+      mocked(readProvenanceSidecar).mockResolvedValue(null)
+      const long = 'https://shop.example.com/product/'.concat('a'.repeat(250))
+      const result = await uploadCreativeMedia({ filePath: '/tmp/direct.png', source: long, licence: 'Own work' }, config)
+      const body = mocked(apiPost).mock.calls[0]![1] as { source: string; licence: string }
+      expect(body.source.length).toBe(200)
+      expect(body.licence).toBe('Own work')
+      expect(result.warnings).toEqual([expect.stringMatching(/^direct: source was 283 characters; shortened to 200/)])
+    })
+
     it('uploads with no provenance when there is no sidecar', async () => {
       mintResponses()
       mocked(readProvenanceSidecar).mockResolvedValue(null)
@@ -1610,6 +1636,24 @@ describe('upload_creative_media batch', () => {
     const bodyFor = (label: string) => mocked(apiPost).mock.calls.find((c) => (c[1] as Record<string, unknown>)?.['label'] === label)![1]
     expect(bodyFor('a')).toMatchObject({ source: 'gen', licence: 'house', aiGenerated: true })
     expect(bodyFor('b')).toMatchObject({ source: 'mine', licence: 'Own work' })
+  })
+
+  it('clips batch-shared and per-file provenance at upload and warns per file', async () => {
+    stubUploads()
+    const long = 'L'.repeat(260)
+    const result = await uploadCreativeMediaBatch(
+      { files: [{ filePath: '/x/a.png' }, { filePath: '/x/b.png', source: long }], licence: long },
+      config
+    )
+    const bodyFor = (label: string) => mocked(apiPost).mock.calls.find((c) => (c[1] as Record<string, unknown>)?.['label'] === label)![1] as { source?: string; licence?: string }
+    expect(bodyFor('a').licence).toHaveLength(200)
+    expect(bodyFor('b').source).toHaveLength(200)
+    expect(bodyFor('b').licence).toHaveLength(200)
+    expect(result.failed).toBe(0)
+    expect(result.warnings).toEqual([])
+    expect(result.results[0]!.warnings).toEqual([expect.stringMatching(/^a: licence was 260 characters; shortened to 200/)])
+    expect(result.results[1]!.warnings).toHaveLength(2)
+    expect(result.results[1]!.warnings!.join(' ')).toMatch(/b: source was 260/)
   })
 
   it('warns, without truncating, when a label is over 200 characters', async () => {
