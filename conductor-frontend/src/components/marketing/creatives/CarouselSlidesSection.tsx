@@ -31,13 +31,16 @@ export interface CarouselSlidesSectionProps {
   violations?: string[]
   /**
    * Present when this Creative has an editable slideshow spec: the "Edit text" action for the slide on
-   * screen (0-based index). `disabledReason` is shown beside the disabled button.
+   * screen (0-based index). `disabledReason` is shown beside the disabled button. Omit `onEdit` to show
+   * only the `unavailableNote` (no button).
    */
   textEdit?: {
-    onEdit: (slideIndex: number) => void
+    onEdit?: (slideIndex: number) => void
     disabledReason?: string | null
-    /** Text editing cannot be offered at all (1x1 slides): the note replaces the button. */
+    /** Text editing cannot be offered at all (1x1 slides, no spec): the note replaces the button. */
     unavailableNote?: string | null
+    /** A CLI command the note points at, set in mono after the note's text. */
+    unavailableCommand?: string | null
   }
   /** A line about the slide-text revision in flight or the last one that failed. */
   revisionNote?: ReactNode
@@ -116,7 +119,7 @@ export function CarouselSlidesSection({
   }
 
   return (
-    <Card className="space-y-4 p-4" data-testid="carousel-slides-section">
+    <Card id="creative-slides" tabIndex={-1} className="space-y-4 p-4 focus:outline-none" data-testid="carousel-slides-section">
       <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Finished images</h3>
 
       <Tabs
@@ -192,15 +195,21 @@ export function CarouselSlidesSection({
           {textEdit?.unavailableNote && (
             <p className="text-center text-xs text-muted-foreground" data-testid="edit-slide-text-unavailable">
               {textEdit.unavailableNote}
+              {textEdit.unavailableCommand && (
+                <>
+                  {' '}
+                  <code className="font-mono text-foreground">{textEdit.unavailableCommand}</code>.
+                </>
+              )}
             </p>
           )}
-          {textEdit && !textEdit.unavailableNote && (
+          {textEdit?.onEdit && !textEdit.unavailableNote && (
             <div className="flex flex-wrap items-center justify-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
                 disabled={!!textEdit.disabledReason}
-                onClick={() => textEdit.onEdit(index)}
+                onClick={() => textEdit.onEdit?.(index)}
                 data-testid="edit-slide-text"
               >
                 <PencilIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />

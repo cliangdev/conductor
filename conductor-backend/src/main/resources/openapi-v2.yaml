@@ -12672,6 +12672,14 @@ components:
           type: boolean
         message:
           type: string
+        mediaIds:
+          type: array
+          description: >-
+            Only on `photoChecked`: the library media ids this check still counts as unchecked (the photo of a
+            STILL or MOTION Creative, the slides of a CAROUSEL, or the photos a slideshow spec names). Marking
+            exactly these checked makes the item pass. Absent or empty on every other item.
+          items:
+            type: string
 
     CreativeReadinessResponse:
       type: object

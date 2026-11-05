@@ -546,6 +546,32 @@ public class PublishTargetService {
                 .toList();
     }
 
+    /**
+     * {@link #views} for the targets of many Posts at once, from the Posts' assets and selection rows the
+     * caller has already loaded: no query here. Each target is resolved against its own Post. Keyed by
+     * target id.
+     */
+    public Map<String, TargetView> viewsAcross(List<WorkItem> posts, Map<String, List<PostPublishTarget>> targetsByPost,
+                                               List<Asset> assets, List<PostPublishTargetAsset> selectionRows) {
+        List<PostPublishTarget> targets = posts.stream()
+                .flatMap(post -> targetsByPost.getOrDefault(post.getId(), List.of()).stream())
+                .toList();
+        Map<String, PublishTargetMediaResolver.EffectiveMedia> media =
+                mediaResolver.effectiveMediaForTargets(targets, assets, selectionRows);
+        Map<String, TargetView> views = new LinkedHashMap<>();
+        for (WorkItem post : posts) {
+            for (PostPublishTarget target : targetsByPost.getOrDefault(post.getId(), List.of())) {
+                PublishTargetMediaResolver.EffectiveMedia effective = media.getOrDefault(
+                        target.getId(), PublishTargetMediaResolver.EffectiveMedia.NONE);
+                views.put(target.getId(), new TargetView(target,
+                        target.isCustomMedia() ? effective.assetIds() : null,
+                        effective.assetIds(),
+                        mediaResolver.effectiveCaption(target, post)));
+            }
+        }
+        return views;
+    }
+
     /** The Post's targets as {@link TargetView}s — what every read path returns. */
     @Transactional(readOnly = true)
     public List<TargetView> listSelectedTargetViews(String projectId, String workItemId, User caller) {

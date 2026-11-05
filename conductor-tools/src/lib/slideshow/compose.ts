@@ -86,8 +86,6 @@ export function resolveSpecImages(spec: SlideshowSpec, specDir: string): Slidesh
 }
 
 
-const MAX_FIELD = 200
-const clip = (text: string): string => (text.length > MAX_FIELD ? `${text.slice(0, MAX_FIELD - 1)}…` : text)
 const unique = (items: string[]): string[] => [...new Set(items)]
 
 function slideImages(sl: SlideshowSpec['slides'][number]): string[] {
@@ -121,8 +119,8 @@ async function slideProvenance(images: string[]): Promise<{ sidecar: SidecarProv
   if (missing.length > 0) return { sidecar: null, missing, anyAi }
   return {
     sidecar: {
-      source: clip(`Composed with Conductor's slideshow composer from: ${unique(known.map((k) => k.source)).join('; ')}`),
-      licence: clip(unique(known.map((k) => k.licence)).join('; ')),
+      source: `Composed with Conductor's slideshow composer from: ${unique(known.map((k) => k.source)).join('; ')}`,
+      licence: unique(known.map((k) => k.licence)).join('; '),
       aiGenerated: anyAi,
     },
     missing,

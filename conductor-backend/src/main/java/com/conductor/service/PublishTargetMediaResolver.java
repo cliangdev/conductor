@@ -128,12 +128,25 @@ public class PublishTargetMediaResolver {
             return Map.of();
         }
         List<String> workItemIds = targets.stream().map(t -> t.getWorkItem().getId()).distinct().toList();
+        return effectiveMediaForTargets(targets, assetRepository.findAllByWorkItemIdIn(workItemIds), null);
+    }
+
+    /**
+     * As {@link #effectiveMediaForTargets(Collection)}, over the Posts' assets and the targets' selection rows
+     * the caller has already loaded ({@code selectionRows} null to read them here). No asset query.
+     */
+    public Map<String, EffectiveMedia> effectiveMediaForTargets(Collection<PostPublishTarget> targets,
+                                                                List<Asset> assets,
+                                                                List<PostPublishTargetAsset> selectionRows) {
+        if (targets == null || targets.isEmpty()) {
+            return Map.of();
+        }
         Map<String, List<Asset>> sharedByWorkItem = new LinkedHashMap<>();
-        assetRepository.findAllByWorkItemIdIn(workItemIds).stream()
+        assets.stream()
                 .filter(AssetService::isUploadedFile)
                 .sorted(AssetService.PUBLISH_ORDER)
                 .forEach(a -> sharedByWorkItem.computeIfAbsent(a.getWorkItem().getId(), k -> new ArrayList<>()).add(a));
-        return resolve(targets, sharedByWorkItem, null, t -> t.getWorkItem().getId());
+        return resolve(targets, sharedByWorkItem, selectionRows, t -> t.getWorkItem().getId());
     }
 
     private Map<String, EffectiveMedia> resolve(Collection<PostPublishTarget> targets,
@@ -147,6 +160,8 @@ public class PublishTargetMediaResolver {
                 .filter(PostPublishTarget::isCustomMedia)
                 .map(PostPublishTarget::getId)
                 .toList();
+        Map<String, String> workItemIdByTarget = new java.util.HashMap<>();
+        targets.forEach(target -> workItemIdByTarget.put(target.getId(), workItemIdOf.apply(target)));
         Map<String, List<Asset>> selectionsByTarget = new LinkedHashMap<>();
         if (!customTargetIds.isEmpty()) {
             List<PostPublishTargetAsset> rows = loadedRows != null
@@ -155,8 +170,10 @@ public class PublishTargetMediaResolver {
                 Asset asset = byId.get(row.getAssetId());
                 // An id with no matching Asset means the row references something that is no longer a
                 // publishable file on this Post. Dropping it is the same outcome as the cascade that
-                // removes the row, and leaves the target explicit-and-empty for the gate to refuse.
-                if (asset != null) {
+                // removes the row, and leaves the target explicit-and-empty for the gate to refuse. With
+                // many Posts resolved together, an asset of a different Post counts as no match.
+                if (asset != null && (asset.getWorkItem() == null
+                        || asset.getWorkItem().getId().equals(workItemIdByTarget.get(row.getTargetId())))) {
                     selectionsByTarget.computeIfAbsent(row.getTargetId(), key -> new ArrayList<>()).add(asset);
                 }
             }
