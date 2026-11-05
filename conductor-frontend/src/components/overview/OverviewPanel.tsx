@@ -179,7 +179,7 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
 
   return (
     <div className="space-y-6">
-      <Section title="Active PRDs" icon={TargetIcon} rows={data?.activeItems ?? null} loading={loading} error={error} emptyCopy="No active PRDs.">
+      <Section title="Plans" icon={TargetIcon} rows={data?.activeItems ?? null} loading={loading} error={error} emptyCopy="No plans yet.">
         {(items) => items.map((a) => <ActivePrdRow key={a.item.id} active={a} href={hrefOf(a.item)} milestoneTargetOn={targetOnByMilestone[a.item.milestoneId ?? '']} />)}
       </Section>
 

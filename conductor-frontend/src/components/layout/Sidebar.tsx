@@ -8,11 +8,9 @@ import {
   FileTextIcon,
   FilmIcon,
   FolderIcon,
-  HomeIcon,
   LayoutDashboardIcon,
   LayoutTemplateIcon,
   LogOutIcon,
-  MapIcon,
   PanelLeftCloseIcon,
   PanelLeftIcon,
   PlusIcon,
@@ -104,16 +102,14 @@ function NavItem({
   icon,
   children,
   onNavigate,
-  exact = false,
 }: {
   href: string
   icon?: React.ReactNode
   children: React.ReactNode
   onNavigate?: () => void
-  exact?: boolean
 }) {
   const pathname = usePathname()
-  const isActive = exact ? pathname === href : pathname.startsWith(href)
+  const isActive = pathname.startsWith(href)
   return (
     <Link
       href={href}
@@ -355,15 +351,6 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <div className="flex-1 overflow-y-auto py-1">
         {currentWorkspace && (
           <div className="px-2 py-1">
-            {/* exact: every project route starts with the Overview href */}
-            <div className="space-y-0.5 mb-4">
-              <NavItem href={`/app/projects/${currentWorkspace.id}`} icon={<HomeIcon className="h-4 w-4" />} onNavigate={onNavigate} exact>
-                Overview
-              </NavItem>
-              <NavItem href={`/app/projects/${currentWorkspace.id}/roadmap`} icon={<MapIcon className="h-4 w-4" />} onNavigate={onNavigate}>
-                Roadmap
-              </NavItem>
-            </div>
             {workNav.length > 0 ? (
               groupByArea(workNav).map(([area, entries]) => (
                 <div key={area}>

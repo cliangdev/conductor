@@ -6,7 +6,7 @@ const viewsState = vi.hoisted(() => ({ settled: true }))
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'proj-1' }),
-  usePathname: () => '/app/projects/proj-1/roadmap',
+  usePathname: () => '/app/projects/proj-1/engineering/issues',
 }))
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ accessToken: 'token' }) }))
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -20,21 +20,20 @@ vi.mock('@/lib/workflows', async (importOriginal) => {
     useWorkflowViewsSettled: () => ({
       settled: viewsState.settled,
       views: {
-      PRDS: {
-        slug: 'PRDS', noun: 'PRD', area: 'ENGINEERING', defaultView: 'active', version: 1, types: ['PRD'], transitions: [],
-        statuses: [
-          { id: 'DRAFT', label: 'Draft', category: 'open' },
-          { id: 'IN_PROGRESS', label: 'In Progress', category: 'in_progress' },
-          { id: 'DONE', label: 'Done', category: 'terminal', terminal: true },
-        ],
-      },
+        PRDS: {
+          slug: 'PRDS', noun: 'PRD', area: 'ENGINEERING', defaultView: 'active', version: 1, types: ['PRD'], transitions: [],
+          statuses: [
+            { id: 'DRAFT', label: 'Draft', category: 'open' },
+            { id: 'IN_PROGRESS', label: 'In Progress', category: 'in_progress' },
+            { id: 'DONE', label: 'Done', category: 'terminal', terminal: true },
+          ],
+        },
       },
     }),
   }
 })
 
-import RoadmapPage from './page'
-import { RoadmapPanel } from '@/components/roadmap/RoadmapPanel'
+import { RoadmapPanel } from './RoadmapPanel'
 
 const base = { type: 'PRD', workflow: 'PRDS', createdAt: '2026-10-01T00:00:00Z' }
 const noSignals = { blocked: false, blockedBy: [], ready: false, stale: false, needsInput: false }
@@ -63,9 +62,9 @@ beforeEach(() => {
   apiGet.mockImplementation(async () => overview(OPEN_ITEMS))
 })
 
-describe('roadmap page', () => {
+describe('roadmap panel', () => {
   it('shows a skeleton, then buckets PRDs into Now and Later and drops finished ones', async () => {
-    render(<RoadmapPage />)
+    render(<RoadmapPanel projectId="proj-1" />)
     expect(document.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
 
     expect(await screen.findByText('Active one')).toBeInTheDocument()
@@ -80,7 +79,7 @@ describe('roadmap page', () => {
     apiGet.mockImplementation(async () =>
       overview([...OPEN_ITEMS, row({ id: 'c', displayId: 'PRD-3', title: 'Finished one', status: 'DONE' })])
     )
-    render(<RoadmapPage />)
+    render(<RoadmapPanel projectId="proj-1" />)
     expect(await screen.findByText('Active one')).toBeInTheDocument()
 
     expect(screen.queryByText('Finished one')).not.toBeInTheDocument()
@@ -100,7 +99,7 @@ describe('roadmap page', () => {
         [{ id: 'm1', name: 'Launch', state: 'OPEN', targetOn: '2026-12-31' }]
       )
     )
-    render(<RoadmapPage />)
+    render(<RoadmapPanel projectId="proj-1" />)
 
     expect(await screen.findByText('Launch', { selector: 'h3' })).toBeInTheDocument()
     expect(screen.getByLabelText('Milestone timeline')).toBeInTheDocument()
@@ -108,19 +107,19 @@ describe('roadmap page', () => {
 
   it('surfaces a failed load instead of an empty board', async () => {
     apiGet.mockRejectedValue(new Error('boom'))
-    render(<RoadmapPage />)
+    render(<RoadmapPanel projectId="proj-1" />)
     expect(await screen.findByText('Could not load the roadmap')).toBeInTheDocument()
   })
 
   it('holds a skeleton until the Workflow views are in, then excludes finished PRDs', async () => {
     viewsState.settled = false
-    const { rerender } = render(<RoadmapPage />)
+    const { rerender } = render(<RoadmapPanel projectId="proj-1" />)
     await new Promise((r) => setTimeout(r, 20))
     expect(screen.queryByText('Active one')).not.toBeInTheDocument()
     expect(document.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0)
 
     viewsState.settled = true
-    rerender(<RoadmapPage />)
+    rerender(<RoadmapPanel projectId="proj-1" />)
     expect(await screen.findByText('Active one')).toBeInTheDocument()
   })
 
@@ -136,7 +135,7 @@ describe('roadmap page', () => {
 
   it('shows an empty state when there are no open PRDs', async () => {
     apiGet.mockImplementation(async () => overview([]))
-    render(<RoadmapPage />)
+    render(<RoadmapPanel projectId="proj-1" />)
     expect(await screen.findByText('No open PRDs')).toBeInTheDocument()
   })
 })

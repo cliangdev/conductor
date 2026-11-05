@@ -47,6 +47,8 @@ import { workflowDeclaresPublishTargets } from '@/components/marketing/destinati
 import { PendingConsentNotice } from '@/components/marketing/consent/PendingConsentNotice'
 import { WorkItemGridView } from '@/components/workitems/WorkItemGridView'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
+import { OverviewPanel } from '@/components/overview/OverviewPanel'
+import { RoadmapPanel } from '@/components/roadmap/RoadmapPanel'
 import { ListToolbar } from '@/components/workitems/ListToolbar'
 import { BulkActionBar } from '@/components/workitems/BulkActionBar'
 import { PostBulkActions } from '@/components/workitems/PostBulkActions'
@@ -61,6 +63,9 @@ import type {
 } from '@/components/workitems/listTypes'
 import type { MemberRole } from '@/types'
 import { can, memberRoles } from '@/lib/permissions'
+
+/** Non-list tabs on a PRD Workflow, selected through the same `?view=` param. */
+type PanelView = 'plans' | 'roadmap'
 
 type DisplayMode = 'list' | 'board' | 'calendar' | 'grid'
 
@@ -93,6 +98,7 @@ export function WorkItemListView({
   const mediaFilter = searchParams.get('mediaId')
   const viewParam = searchParams.get('view')
   const view: ListView = viewParam === 'done' || viewParam === 'all' ? viewParam : 'active'
+  const requestedPanel: PanelView | null = viewParam === 'plans' || viewParam === 'roadmap' ? viewParam : null
 
   // Display mode: list (default), board, or calendar. Priority: URL param > explicit localStorage >
   // workflow defaultView.
@@ -143,6 +149,11 @@ export function WorkItemListView({
     setMode(wfDefault)
   }, [workflowView?.defaultView, modeExplicitKey, searchParams])
 
+  // Plans / Roadmap are views over the PRDs of a Workflow; without a PRD type the param is ignored.
+  // Optimistic while the Workflow view is unknown, so a deep link does not flash the list first.
+  const hasPrdType = workflowView ? (workflowView.types ?? []).includes('PRD') : requestedPanel !== null
+  const panel: PanelView | null = hasPrdType ? requestedPanel : null
+
   const independentReviewerStatuses = useMemo(
     () =>
       new Set(
@@ -156,8 +167,8 @@ export function WorkItemListView({
   const title = pluralizeNoun(noun)
   const lowerNoun = title.toLowerCase()
 
-  function setView(next: ListView) {
-    if (next === view) return
+  function setView(next: ListView | PanelView) {
+    if (next === (requestedPanel ?? view)) return
     const sp = new URLSearchParams(searchParams.toString())
     if (next === 'active') sp.delete('view')
     else sp.set('view', next)
@@ -340,7 +351,8 @@ export function WorkItemListView({
     )
   }
 
-  if (loading) {
+  // A panel does not depend on the list fetch, so it renders without waiting for it.
+  if (loading && !panel) {
     return (
       <PageContainer>
         <PageHeader title={title} />
@@ -349,7 +361,7 @@ export function WorkItemListView({
     )
   }
 
-  if (error) {
+  if (error && !panel) {
     return (
       <PageContainer>
         <PageHeader title={title} />
@@ -362,6 +374,7 @@ export function WorkItemListView({
     { value: 'active', label: 'Active', count: counts.active },
     { value: 'done', label: 'Done', count: counts.done },
     { value: 'all', label: 'All', count: counts.all },
+    ...(hasPrdType ? [{ value: 'plans', label: 'Plans' }, { value: 'roadmap', label: 'Roadmap' }] : []),
   ]
 
   // Breadcrumb trail: area (non-link) › this Workflow's pluralized noun (current page). The area is
@@ -416,14 +429,14 @@ export function WorkItemListView({
       <div className="flex items-center border-b border-border mb-4 -mx-1 px-1">
         <Tabs
           items={tabItems}
-          value={view}
-          onValueChange={(v) => setView(v as ListView)}
+          value={panel ?? view}
+          onValueChange={(v) => setView(v as ListView | PanelView)}
           ariaLabel={`${title} view`}
           className="flex-1 min-w-0 border-b-0"
         />
 
         {/* List/Board/Calendar toggle pushed to the right */}
-        <div className="ml-auto flex items-center gap-0.5 pb-px shrink-0">
+        {!panel && <div className="ml-auto flex items-center gap-0.5 pb-px shrink-0">
           <button
             type="button"
             title="List view"
@@ -466,9 +479,13 @@ export function WorkItemListView({
               <LayoutGridIcon className="h-4 w-4" />
             </button>
           )}
-        </div>
+        </div>}
       </div>
 
+      {panel === 'plans' && <OverviewPanel projectId={projectId} />}
+      {panel === 'roadmap' && <RoadmapPanel projectId={projectId} />}
+
+      {!panel && (<>
       {bulkResult && (
         <Alert variant={bulkResult.failed > 0 ? 'destructive' : 'info'} className="mb-3">
           <span data-testid="bulk-result">
@@ -741,6 +758,7 @@ export function WorkItemListView({
         </BulkActionBar>
         </>
       )}
+      </>)}
     </PageContainer>
   )
 }
