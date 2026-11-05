@@ -78,10 +78,20 @@ photographic, no text, logos or screens in the picture, and no depiction of the 
 reference image is supplied. It is `aiGenerated: true`. Run `references/realism-check.md` on every one. Collages, charts and text-in-image stay out.
 Ask for a mid-tone scene: under `bleed`, a dark or night scene can render almost black. For a dark scene, use `card`.
 
+## Generated video
+
+When a video route is configured (`conductor doctor` reports it) and the person asked for animation,
+motion or a video hook, a clip made by `generate_creative_video` from a still is renderable: as a MOTION
+background (`clipPath`) or the opening of a CLIP, 4 to 8 s (Omni 3 to 10), 9:16 or 16:9. It can carry
+its own sound, including a short spoken line (about 8 words per 4 s). It is `aiGenerated: true`, costs
+money and is never chosen unprompted. Flow and checks: `references/direct.md`, "Video from a still".
+
 ## What it cannot do (so the idea needs filming or a rethink)
 
-- Footage of people, places, cooking or the product in use. Screen recordings of an app.
-- Voiceover or spoken dialogue: Creatives carry music or a clip's sound, not speech.
+- Real footage of people, places, cooking or the product in use. A generated clip (below) can stand in
+  only when a video route is configured and the person asked for motion.
+- Real product screens: they come from screen recordings, never from generation.
+- Long voiceover narration. A clip's own short spoken line (below) is supported; narration is not.
 - Charts, illustrations, or text inside a generated image. In a STILL each card is one photo plus
   text; grids, stacks and collages exist only as slideshow slides (above).
 - Anything that relies on a product claim the brief can't confirm. That's a copy problem, not a

@@ -29,6 +29,10 @@ Each exists because of a known failure mode (sources are in `references/rubric.m
   question (`references/slideshow-formats.md`, "Style"). A resumed run reuses the `brandKitId` and
   `slideshowStyle` stored in `run.json`; the brand kit and the style source are separate answers.
 - **A run never creates a Post.** It ends at a committed Creative (or a shoot script).
+- **Video is opt-in per run.** Generated video (`generate_creative_video`) is used only when the request
+  asks for motion. The strategist may then tag an idea `RENDER (video)`; otherwise never. The art director
+  follows `references/direct.md`, "Video from a still", and the estimated cost is shown at the S6 gate
+  with `confirmCost` only after the person approves.
 - **Organic posts default to a slideshow.** A `RENDER` idea for an organic post (not an ad) is a
   native-looking slideshow built by `compose_slideshow` and posted as a CAROUSEL; see
   `references/slideshow-formats.md`. STILL and MOTION stay for ideas that really are one still, an

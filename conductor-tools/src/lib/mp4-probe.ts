@@ -15,9 +15,13 @@ export interface VideoProbe {
   width: number | null
   height: number | null
   durationSeconds: number | null
+  /** Frames per second of the picture track (samples / duration from `stts`); null when unreadable. */
+  fps: number | null
+  /** True when the file has a sound track (`hdlr` 'soun'); false when it has none. */
+  hasAudio: boolean
 }
 
-const EMPTY: VideoProbe = { width: null, height: null, durationSeconds: null }
+const EMPTY: VideoProbe = { width: null, height: null, durationSeconds: null, fps: null, hasAudio: false }
 
 /** How much of a `moov` box this is willing to read into memory. Real ones are kilobytes to a few MB. */
 const MAX_MOOV_BYTES = 64 * 1024 * 1024
@@ -93,18 +97,73 @@ function parseMoov(moov: Buffer): VideoProbe {
   let durationSeconds: number | null = null
   let width: number | null = null
   let height: number | null = null
+  let fps: number | null = null
+  let hasAudio = false
   for (const box of boxes(moov, 0, moov.length)) {
     if (box.type === 'mvhd' && durationSeconds === null) {
       durationSeconds = parseMvhd(moov.subarray(box.bodyStart, box.end))
-    } else if (box.type === 'trak' && width === null) {
-      const dims = parseTrak(moov.subarray(box.bodyStart, box.end))
-      if (dims) {
-        width = dims.width
-        height = dims.height
+    } else if (box.type === 'trak') {
+      const trak = moov.subarray(box.bodyStart, box.end)
+      if (trakHandler(trak) === 'soun') hasAudio = true
+      if (width === null) {
+        const dims = parseTrak(trak)
+        if (dims) {
+          width = dims.width
+          height = dims.height
+          fps = parseFps(trak)
+        }
       }
     }
   }
-  return { width, height, durationSeconds }
+  return { width, height, durationSeconds, fps, hasAudio }
+}
+
+/** The track's media handler type ('vide', 'soun', ...), or null. */
+function trakHandler(trak: Buffer): string | null {
+  for (const box of boxes(trak, 0, trak.length)) {
+    if (box.type !== 'mdia') continue
+    for (const inner of boxes(trak, box.bodyStart, box.end)) {
+      if (inner.type === 'hdlr' && inner.end - inner.bodyStart >= 12) return trak.toString('latin1', inner.bodyStart + 8, inner.bodyStart + 12)
+    }
+  }
+  return null
+}
+
+/** Frame rate from `mdhd` (timescale) and `stts` (sample count and deltas) of a picture track. */
+function parseFps(trak: Buffer): number | null {
+  try {
+    let timescale = 0
+    let samples = 0
+    let ticks = 0
+    for (const mdia of boxes(trak, 0, trak.length)) {
+      if (mdia.type !== 'mdia') continue
+      for (const m of boxes(trak, mdia.bodyStart, mdia.end)) {
+        if (m.type === 'mdhd') {
+          const v = trak.readUInt8(m.bodyStart)
+          timescale = trak.readUInt32BE(m.bodyStart + (v === 1 ? 20 : 12))
+        } else if (m.type === 'minf') {
+          for (const stbl of boxes(trak, m.bodyStart, m.end)) {
+            if (stbl.type !== 'stbl') continue
+            for (const t of boxes(trak, stbl.bodyStart, stbl.end)) {
+              if (t.type !== 'stts') continue
+              const entries = trak.readUInt32BE(t.bodyStart + 4)
+              for (let i = 0; i < entries; i++) {
+                const at = t.bodyStart + 8 + i * 8
+                if (at + 8 > t.end) break
+                const count = trak.readUInt32BE(at)
+                samples += count
+                ticks += count * trak.readUInt32BE(at + 4)
+              }
+            }
+          }
+        }
+      }
+    }
+    if (timescale <= 0 || samples <= 0 || ticks <= 0) return null
+    return Math.round((samples / (ticks / timescale)) * 100) / 100
+  } catch {
+    return null
+  }
 }
 
 function parseMvhd(body: Buffer): number | null {

@@ -49,7 +49,7 @@ preview, check and commit steps (S6 reads `references/direct.md`).
 
 ## References
 
-- `references/direct.md`: the Direct flow (read the brand, angle, headline, photo, preview, critique, commit), sequences, video, finished images, short videos, music, cleanup.
+- `references/direct.md`: the Direct flow (read the brand, angle, headline, photo, preview, critique, commit), sequences, video, finished images, short videos, video from a generated still (only when motion is asked for), music, cleanup.
 - `references/team-run.md`: the Team flow (run folder, stages S0 to S6, FILM ideas, final message, failure handling).
 - `references/brand-kit-setup.md`: check the Brand Kit and set it up from a website, a brand doc or direct answers; "Make a kit style from slides" (Direct mode) turns slides the person likes into a slideshow style on a new or existing kit.
 - `references/hooks.md`: writing and scoring headline candidates.
@@ -57,7 +57,7 @@ preview, check and commit steps (S6 reads `references/direct.md`).
   hook, card and caption passes (both modes).
 - `references/layout-guide.md`: choosing a layout, resolution and safe zones.
 - `references/design-critique.md`: the six-criterion score applied to every draft before it is shown.
-- `references/realism-check.md`: the check every generated or library photo passes.
+- `references/realism-check.md`: the check every generated or library photo passes, and the video and audio tells for generated clips.
 - `references/slideshow-formats.md`: native slideshow spec, style (native default, kit style, one-off style), archetypes and text rules for organic posts.
 - `references/rubric.md`: the judging rubric the creative director uses (Team).
 - `references/capabilities.md`: what Conductor can render, and what needs filming (Team).

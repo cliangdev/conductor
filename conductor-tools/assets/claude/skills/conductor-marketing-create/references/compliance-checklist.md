@@ -42,6 +42,11 @@ disclose paid, gifted, employee and affiliate relationships; in video, disclose 
 each media file's provenance (`aiGenerated` in `context/media.json`) and the script's visuals.
 
 - A photo from `generate_creative_image` is `aiGenerated: true`, so this is a **Yes**: the AI label / `isAigc` applies.
+- A clip from `generate_creative_video` is also `aiGenerated: true` (its `.provenance.json` sidecar), so
+  this is a **Yes**: set TikTok `isAigc` and YouTube `containsSyntheticMedia`; Instagram and Facebook
+  "AI info" is a manual step. Veo and Omni output carries Google's SynthID watermark.
+- A generated voice must not imitate a real person, and no clip may use a real person's likeness.
+  Spoken lines go through the claims check (section 4) like any other copy.
 - **Yes**: set TikTok `isAigc: true` on a video post. Conductor does not send `isAigc` on a TikTok
   photo post, so for a photo post note "turn on TikTok's AI label by hand" as a manual step. Set
   YouTube `containsSyntheticMedia: true`. Meta has no option: note that Instagram's and Facebook's
