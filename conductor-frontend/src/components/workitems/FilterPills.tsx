@@ -11,7 +11,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import type { ActiveFilter } from '@/components/workitems/listTypes'
+import { PRIORITIES, priorityLabel } from '@/lib/delivery'
+import { SIGNAL_FILTERS, type ActiveFilter } from '@/components/workitems/listTypes'
+
+const KIND_LABELS: Record<ActiveFilter['kind'], string> = {
+  type: 'Type',
+  status: 'Status',
+  tag: 'Tag',
+  priority: 'Priority',
+  milestone: 'Milestone',
+  signal: 'Signal',
+}
 
 /**
  * Replaces the two native Type/Status <select>s with a "Filter" menu (add a Type or Status value) and
@@ -22,6 +32,7 @@ export function FilterPills({
   typeOptions,
   statusOptions,
   tagOptions = [],
+  milestoneOptions = [],
   activeFilters,
   onAdd,
   onRemove,
@@ -30,6 +41,8 @@ export function FilterPills({
   statusOptions: { id: string; label: string }[]
   /** Every tag in use on the items in view — there is no registry, tags are just what people typed. */
   tagOptions?: string[]
+  /** Milestones the items in view belong to (id + name); none, none offered. */
+  milestoneOptions?: { id: string; name: string }[]
   activeFilters: ActiveFilter[]
   onAdd: (filter: ActiveFilter) => void
   onRemove: (kind: ActiveFilter['kind'], value: string) => void
@@ -40,6 +53,10 @@ export function FilterPills({
   const availableStatuses = statusOptions.filter((s) => !activeStatusValues.has(s.id))
   const activeTagValues = new Set(activeFilters.filter((f) => f.kind === 'tag').map((f) => f.value))
   const availableTags = tagOptions.filter((t) => !activeTagValues.has(t))
+  const activeValues = (kind: ActiveFilter['kind']) => new Set(activeFilters.filter((f) => f.kind === kind).map((f) => f.value))
+  const availablePriorities = PRIORITIES.filter((p) => !activeValues('priority').has(p))
+  const availableMilestones = milestoneOptions.filter((m) => !activeValues('milestone').has(m.id))
+  const availableSignals = SIGNAL_FILTERS.filter((sig) => !activeValues('signal').has(sig.value))
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -95,13 +112,62 @@ export function FilterPills({
               )}
             </>
           )}
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-xs text-muted-foreground font-medium">Priority</DropdownMenuLabel>
+          {availablePriorities.length === 0 ? (
+            <DropdownMenuItem disabled>No more priorities</DropdownMenuItem>
+          ) : (
+            availablePriorities.map((p) => (
+              <DropdownMenuItem
+                key={p}
+                className="cursor-pointer"
+                onClick={() => onAdd({ kind: 'priority', value: p, label: priorityLabel(p) })}
+              >
+                {priorityLabel(p)}
+              </DropdownMenuItem>
+            ))
+          )}
+          {milestoneOptions.length > 0 && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-xs text-muted-foreground font-medium">Milestone</DropdownMenuLabel>
+              {availableMilestones.length === 0 ? (
+                <DropdownMenuItem disabled>No more milestones</DropdownMenuItem>
+              ) : (
+                availableMilestones.map((m) => (
+                  <DropdownMenuItem
+                    key={m.id}
+                    className="cursor-pointer"
+                    onClick={() => onAdd({ kind: 'milestone', value: m.id, label: m.name })}
+                  >
+                    {m.name}
+                  </DropdownMenuItem>
+                ))
+              )}
+            </>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="text-xs text-muted-foreground font-medium">Signal</DropdownMenuLabel>
+          {availableSignals.length === 0 ? (
+            <DropdownMenuItem disabled>No more signals</DropdownMenuItem>
+          ) : (
+            availableSignals.map((sig) => (
+              <DropdownMenuItem
+                key={sig.value}
+                className="cursor-pointer"
+                onClick={() => onAdd({ kind: 'signal', value: sig.value, label: sig.label })}
+              >
+                {sig.label}
+              </DropdownMenuItem>
+            ))
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
       {activeFilters.map((f) => (
         <Badge key={`${f.kind}-${f.value}`} variant="outline" className="gap-1 font-normal">
           <span className="text-muted-foreground">
-            {f.kind === 'type' ? 'Type' : f.kind === 'tag' ? 'Tag' : 'Status'}:
+            {KIND_LABELS[f.kind]}:
           </span>
           {f.label}
           <button

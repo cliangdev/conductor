@@ -2,6 +2,7 @@
 // useWorkItemListState hook all import from here instead of each redeclaring the same fields).
 
 import type { MemberRole } from '@/types'
+import type { WorkItemDeliveryFields } from '@/types/workItem'
 import type { Verdict } from '@/components/reviews/verdict'
 
 export interface IssueAssignee {
@@ -47,7 +48,7 @@ export interface WorkItemCreativeRef {
   name?: string | null
 }
 
-export interface Issue {
+export interface Issue extends WorkItemDeliveryFields {
   id: string
   title: string
   type: string
@@ -67,6 +68,8 @@ export interface Issue {
   externalLinks?: WorkItemExternalLink[]
   /** Freeform labels, stored lower-cased. Empty until something is tagged. */
   tags?: string[]
+  /** Calendar date (yyyy-MM-dd) this item is due, or null. */
+  dueOn?: string | null
   /** List response only: signed URL of the first image attached, or null. */
   thumbnailUrl?: string | null
   /** List response only: each destination with its state. */
@@ -95,13 +98,19 @@ export interface Member {
 
 export type ListView = 'active' | 'done' | 'all'
 
-export type SortKey = 'updated' | 'created' | 'title'
+export type SortKey = 'updated' | 'created' | 'title' | 'priority' | 'dueOn'
 
 export const SORT_OPTIONS: { key: SortKey; label: string }[] = [
   { key: 'updated', label: 'Updated' },
   { key: 'created', label: 'Created' },
   { key: 'title', label: 'Title' },
+  { key: 'priority', label: 'Priority' },
+  { key: 'dueOn', label: 'Due date' },
 ]
+
+export function isSortKey(v: string): v is SortKey {
+  return SORT_OPTIONS.some((o) => o.key === v)
+}
 
 export interface WorkItemGroupData {
   statusId: string
@@ -110,9 +119,19 @@ export interface WorkItemGroupData {
   items: IssueWithReviewers[]
 }
 
-/** One removable filter pill (type or status), rendered by FilterPills. */
+/** The derived signals a filter pill can ask for (docs/prd-tracking.md). */
+export type SignalFilter = 'blocked' | 'ready' | 'needsInput' | 'stale'
+
+export const SIGNAL_FILTERS: { value: SignalFilter; label: string }[] = [
+  { value: 'blocked', label: 'Blocked' },
+  { value: 'ready', label: 'Ready' },
+  { value: 'needsInput', label: 'Needs input' },
+  { value: 'stale', label: 'Stale' },
+]
+
+/** One removable filter pill (type, status, tag, priority, milestone or signal), rendered by FilterPills. */
 export interface ActiveFilter {
-  kind: 'type' | 'status' | 'tag'
+  kind: 'type' | 'status' | 'tag' | 'priority' | 'milestone' | 'signal'
   value: string
   label: string
 }

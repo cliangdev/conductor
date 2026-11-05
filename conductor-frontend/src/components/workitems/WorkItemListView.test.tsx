@@ -37,6 +37,12 @@ interface MockIssue {
   scheduleTimezone?: string | null
   tags?: string[]
   externalLinks?: { url: string; type: string }[]
+  priority?: 'P0' | 'P1' | 'P2' | 'P3' | null
+  dueOn?: string | null
+  milestoneId?: string | null
+  milestoneName?: string | null
+  childCount?: number
+  signals?: { blocked: boolean; blockedBy: []; ready: boolean; stale: boolean; needsInput: boolean }
 }
 
 let issues: MockIssue[] = []
@@ -921,5 +927,92 @@ describe('publishing workflow rows and grid', () => {
     VIEW = BASE_VIEW
     await renderList()
     expect(screen.queryByTitle('Grid view')).toBeNull()
+  })
+})
+
+describe('delivery tracking', () => {
+  const SIGNALS = { blocked: false, blockedBy: [] as [], ready: false, stale: false, needsInput: false }
+
+  function withDelivery() {
+    issues = baseIssues().map((i) => {
+      if (i.id === 'i1') return { ...i, priority: 'P2' as const, dueOn: '2026-02-01', milestoneId: 'm1', milestoneName: 'Beta', childCount: 3, signals: { ...SIGNALS, blocked: true } }
+      if (i.id === 'i2') return { ...i, priority: 'P0' as const, milestoneId: 'm2', milestoneName: 'GA', signals: { ...SIGNALS, needsInput: true } }
+      if (i.id === 'i3') return { ...i, dueOn: '2026-01-10', signals: { ...SIGNALS, ready: true } }
+      return i
+    })
+  }
+
+  /** Display ids of the rows, top to bottom. */
+  function rowOrder() {
+    return [...rowList().querySelectorAll('[id^="wi-row-"] .font-mono')].map((el) => el.textContent)
+  }
+
+  it('lists top-level items only, with no sub-items toggle', async () => {
+    await renderList()
+    expect(listUrls[0]).not.toContain('parentId')
+    expect(screen.queryByRole('switch', { name: 'Show sub-items' })).not.toBeInTheDocument()
+  })
+
+  it('ignores a leftover sub-items preference from the removed toggle', async () => {
+    localStorage.setItem('wv_subitems_proj-1_ENGINEERING', 'on')
+    await renderList()
+    expect(listUrls[0]).not.toContain('parentId')
+  })
+
+  it('shows a sub-items chip, a priority chip and blocked / needs input badges on rows', async () => {
+    withDelivery()
+    await renderList()
+    const first = within(rowFor('i1'))
+    expect(first.getByText('3 sub-items')).toBeInTheDocument()
+    expect(first.getByText('P2')).toBeInTheDocument()
+    expect(first.getByText('Blocked')).toBeInTheDocument()
+    expect(within(rowFor('i2')).getByText('Needs input')).toBeInTheDocument()
+    expect(within(rowFor('i3')).queryByText('Blocked')).toBeNull()
+  })
+
+  it('sorts by priority, most urgent first and unprioritised last', async () => {
+    withDelivery()
+    await renderList()
+    fireEvent.change(screen.getByLabelText('Sort:'), { target: { value: 'priority' } })
+    // Draft group: P0 (COND-2) before P2 (COND-1).
+    expect(rowOrder().slice(0, 2)).toEqual(['COND-2', 'COND-1'])
+  })
+
+  it('sorts by due date, soonest first and undated last', async () => {
+    withDelivery()
+    issues = issues.map((i) => (i.id === 'i2' ? { ...i, status: 'IN_PROGRESS', dueOn: '2026-03-01' } : i))
+    await renderList()
+    fireEvent.change(screen.getByLabelText('Sort:'), { target: { value: 'dueOn' } })
+    // In Progress group: COND-3 (Jan 10) before COND-2 (Mar 1).
+    const order = rowOrder()
+    expect(order.indexOf('COND-3')).toBeLessThan(order.indexOf('COND-2'))
+  })
+
+  async function pickFilter(option: string) {
+    fireEvent.pointerDown(screen.getByRole('button', { name: /Filter/ }), { button: 0, ctrlKey: false })
+    const item = await screen.findByRole('menuitem', { name: option })
+    fireEvent.click(item)
+  }
+
+  it('filters by priority', async () => {
+    withDelivery()
+    await renderList()
+    await pickFilter('P0 · Urgent')
+    expect(screen.getByLabelText('Remove priority filter: P0 · Urgent')).toBeInTheDocument()
+    expect(rowOrder()).toEqual(['COND-2'])
+  })
+
+  it('filters by milestone', async () => {
+    withDelivery()
+    await renderList()
+    await pickFilter('Beta')
+    expect(rowOrder()).toEqual(['COND-1'])
+  })
+
+  it('filters by signal', async () => {
+    withDelivery()
+    await renderList()
+    await pickFilter('Needs input')
+    expect(rowOrder()).toEqual(['COND-2'])
   })
 })

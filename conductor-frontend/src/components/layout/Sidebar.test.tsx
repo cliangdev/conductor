@@ -316,10 +316,10 @@ describe('Sidebar', () => {
 
   // ── COND-290 acceptance: compact rail + no admin-only entries for a REVIEWER ──────────
 
-  it('shows 8 or fewer top-level sidebar rows with no sidebar-enabled Work nav', () => {
+  it('shows 9 or fewer top-level sidebar rows with no sidebar-enabled Work nav', () => {
     render(<Sidebar />)
-    // Docs, Knowledge, Memory (Workspace) + Workflows, Agents, Integrations (Automation) + Settings door.
-    expect(screen.getAllByRole('link').length).toBeLessThanOrEqual(8)
+    // Overview, Roadmap + Docs, Knowledge, Memory (Workspace) + Workflows, Agents, Integrations (Automation) + Settings door.
+    expect(screen.getAllByRole('link').length).toBeLessThanOrEqual(9)
   })
 
   it('keeps the Settings door visible for a REVIEWER (General/Members/API Keys/Notifications/CLI stay reachable)', () => {

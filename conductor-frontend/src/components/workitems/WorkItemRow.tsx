@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { ExternalLinkCell } from '@/components/workitems/ExternalLinkCell'
 import { CommentCount } from '@/components/ui/comment-count'
+import { PriorityChip, SignalBadges } from '@/components/workitems/plan/chips'
 import { StatusDropdown } from '@/components/issues/StatusDropdown'
 import { AssigneeCell } from '@/components/workitems/AssigneeCell'
 import { ReviewerCell } from '@/components/workitems/ReviewerCell'
@@ -164,6 +165,20 @@ export function WorkItemRow({
           {issue.type}
         </Badge>
       )}
+
+      {/* Delivery tracking: what the item is nested under, how urgent, and what is holding it up. The
+          derived signals are server-computed; nothing here is typed by a person. */}
+      {(issue.childCount ?? 0) > 0 && (
+        <span className="hidden shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground md:inline">
+          {issue.childCount} sub-item{issue.childCount === 1 ? '' : 's'}
+        </span>
+      )}
+      <span className="hidden shrink-0 sm:inline-flex">
+        <PriorityChip priority={issue.priority} compact />
+      </span>
+      <span className="hidden shrink-0 items-center gap-1 md:inline-flex">
+        <SignalBadges signals={issue.signals} showStale={false} />
+      </span>
 
       {/* Tags read at a glance next to the type, which is the other thing that says what this is. */}
       {(issue.tags?.length ?? 0) > 0 && (

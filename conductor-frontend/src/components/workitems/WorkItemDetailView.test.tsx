@@ -229,7 +229,9 @@ vi.mock('@/lib/api', () => ({
   apiGet: (url: string) => {
     getUrls.push(url)
     if (holdSecondary && /\/(documents|comments|reviews|assets|members)(\?|$)/.test(url)) return NEVER
+    if (url.endsWith('/work-items/wi-broken')) return Promise.reject(new Error('parent down'))
     if (/\/work-items\/[^/]+$/.test(url) && !url.includes('?')) return Promise.resolve(ISSUE)
+    if (url.endsWith('/tree')) return Promise.resolve({ id: 'wi-1', displayId: 'COND-42', title: 'My PRD', type: 'PRD', status: 'IN_REVIEW', childCount: 0, criteriaTotal: 0, criteriaMet: 0, children: [] })
     if (url.endsWith('/content-changes')) return Promise.resolve({ changes: CONTENT_CHANGES })
     if (url.endsWith('/marketing/creatives/cr-1')) return SLIDESHOW_CREATIVE ? Promise.resolve(SLIDESHOW_CREATIVE) : Promise.reject(new Error('no creative'))
     if (url.includes('/documents')) return Promise.resolve(DOCS)
@@ -1325,9 +1327,59 @@ describe('reading a document', () => {
     expect(screen.getByRole('tab', { name: /^design\.md/ })).toHaveFocus()
     expect(await screen.findByText('design content here')).toBeInTheDocument()
 
+    // A PRD has a Plan tab between its documents and Activity.
+    await userEvent.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'Plan' })).toHaveFocus()
+    expect(await screen.findByText(/No plan yet/)).toBeInTheDocument()
+
     await userEvent.keyboard('{ArrowRight}')
     expect(screen.getByRole('tab', { name: /^Activity/ })).toHaveFocus()
     expect(screen.getByRole('tab', { name: /^Activity/ })).toHaveAttribute('aria-selected', 'true')
+  })
+
+  it('offers the Plan tab to a PRD or an item with children, and to nothing else', async () => {
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    expect(screen.getByRole('tab', { name: 'Plan' })).toBeInTheDocument()
+  })
+
+  it('offers no Plan tab on a plain item', async () => {
+    ISSUE = { ...ISSUE, type: 'TASK', childCount: 0 }
+    await renderView()
+    await screen.findByText('line one', { exact: false })
+    expect(screen.queryByRole('tab', { name: 'Plan' })).not.toBeInTheDocument()
+  })
+
+  it('shows the parent id in the breadcrumb of a child', async () => {
+    ISSUE = { ...ISSUE, type: 'TASK', parentWorkItemId: 'wi-parent' }
+    await renderView()
+    expect(await screen.findByRole('link', { name: '↳ COND-42' })).toHaveAttribute('href', expect.stringContaining('/issues/wi-parent'))
+  })
+
+  it('drops the parent crumb and shows an inline error when the parent cannot be loaded', async () => {
+    ISSUE = { ...ISSUE, type: 'TASK', parentWorkItemId: 'wi-broken' }
+    await renderView()
+    expect(await screen.findByText('Could not load the parent.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Loading parent')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /↳/ })).not.toBeInTheDocument()
+  })
+
+  it('fetches the parent once for the crumb and the Parent section together', async () => {
+    ISSUE = { ...ISSUE, type: 'TASK', parentWorkItemId: 'wi-parent' }
+    await renderView()
+    await screen.findByRole('link', { name: '↳ COND-42' })
+    expect(getUrls.filter((u) => u.endsWith('/work-items/wi-parent'))).toHaveLength(1)
+  })
+
+  it('links the Workflow crumb normally, and drops it for a child whose Workflow is hidden', async () => {
+    ISSUE = { ...ISSUE, type: 'TASK', parentWorkItemId: 'wi-parent' }
+    const { unmount } = await renderView()
+    expect(await screen.findByRole('link', { name: /^prds?$/i })).toBeInTheDocument()
+    unmount()
+
+    render(<WorkItemDetailView projectId="proj-1" workItemId="wi-1" slug="ENGINEERING" hiddenWorkflow />)
+    expect(await screen.findByRole('link', { name: '↳ COND-42' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^prds?$/i })).not.toBeInTheDocument()
   })
 
   it('labels the full view document panel by its tab', async () => {

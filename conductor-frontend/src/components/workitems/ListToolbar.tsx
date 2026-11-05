@@ -15,6 +15,7 @@ export function ListToolbar({
   typeOptions,
   statusOptions,
   tagOptions,
+  milestoneOptions,
   activeFilters,
   onAddFilter,
   onRemoveFilter,
@@ -27,6 +28,7 @@ export function ListToolbar({
   typeOptions: string[];
   statusOptions: { id: string; label: string }[];
   tagOptions?: string[];
+  milestoneOptions?: { id: string; name: string }[];
   activeFilters: ActiveFilter[];
   onAddFilter: (filter: ActiveFilter) => void;
   onRemoveFilter: (kind: ActiveFilter["kind"], value: string) => void;
@@ -61,6 +63,7 @@ export function ListToolbar({
           typeOptions={typeOptions}
           statusOptions={statusOptions}
           tagOptions={tagOptions}
+          milestoneOptions={milestoneOptions}
           activeFilters={activeFilters}
           onAdd={onAddFilter}
           onRemove={onRemoveFilter}
@@ -75,7 +78,7 @@ export function ListToolbar({
             id="wi-sort"
             value={sortKey}
             onChange={(e) => onSortChange(e.target.value as SortKey)}
-            className="h-8 w-28 text-xs"
+            className="h-8 w-32 text-xs"
           >
             {SORT_OPTIONS.map((o) => (
               <option key={o.key} value={o.key}>

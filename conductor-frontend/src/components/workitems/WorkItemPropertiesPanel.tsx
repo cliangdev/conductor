@@ -5,7 +5,10 @@ import { WorkItemTagsField } from '@/components/workitems/WorkItemTagsField'
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, ExternalLink, Plus, XIcon } from 'lucide-react'
 import { StatusDropdown, type ReviewVerdictOption } from '@/components/issues/StatusDropdown'
-import { TaskProgressPanel } from '@/components/issues/TaskProgressPanel'
+import { PanelSection } from '@/components/workitems/PanelSection'
+import { ChildProgressPanel } from '@/components/workitems/plan/ChildProgressPanel'
+import { DeliverySections, type DeliveryPatchResult } from '@/components/workitems/plan/DeliverySections'
+import type { WorkItemRefState } from '@/components/workitems/plan/useWorkItemRef'
 import { AssigneeCell } from '@/components/workitems/AssigneeCell'
 import { EmptyAvatarSlot, UserAvatar } from '@/components/workitems/UserAvatar'
 import { VerdictIcon } from '@/components/reviews/verdict'
@@ -16,30 +19,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { IssueAssignee, Member } from '@/components/workitems/listTypes'
-import type { WorkItemAsset } from '@/types/workItem'
+import type { WorkItemAsset, WorkItemDeliveryFields } from '@/types/workItem'
 import type { DetailReview, DetailReviewer } from '@/components/workitems/detailTypes'
-
-function PanelSection({
-  label,
-  action,
-  children,
-}: {
-  label: string
-  action?: React.ReactNode
-  children: React.ReactNode
-}) {
-  return (
-    <div className="px-4 py-3 border-b border-border last:border-b-0">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-[11.5px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {label}
-        </span>
-        {action}
-      </div>
-      {children}
-    </div>
-  )
-}
 
 function ReviewerRow({
   reviewer,
@@ -123,6 +104,9 @@ export function WorkItemPropertiesPanel({
   onDelete,
   noun = 'item',
   showSchedule = true,
+  delivery,
+  deliveryParent,
+  onDeliveryChanged,
 }: {
   projectId: string
   issueId: string
@@ -172,6 +156,12 @@ export function WorkItemPropertiesPanel({
   noun?: string
   /** False when the page shows the schedule elsewhere (a Post carries it in its Destinations panel). */
   showSchedule?: boolean
+  /** Priority, milestone, appetite, parent and progress as the page holds them. Omit to hide those sections. */
+  delivery?: WorkItemDeliveryFields
+  /** The delivery parent, resolved once by the page. */
+  deliveryParent?: WorkItemRefState
+  /** The delivery fields a save changed, for the page to merge into its copy of the item. */
+  onDeliveryChanged?: (patch: DeliveryPatchResult) => void
 }) {
   // Counted from `reviews`, not from `reviewers`. The reviewers endpoint returns assignment only —
   // userId, email, name — and carries no verdict, so filtering it on reviewVerdict matched nothing and
@@ -268,6 +258,18 @@ export function WorkItemPropertiesPanel({
         )}
       </PanelSection>
 
+      {delivery && (
+        <DeliverySections
+          projectId={projectId}
+          issueId={issueId}
+          token={token}
+          canEdit={canEdit}
+          delivery={delivery}
+          parent={deliveryParent}
+          onChanged={(patch) => onDeliveryChanged?.(patch)}
+        />
+      )}
+
       {reviewActive && (
         <PanelSection
           label="Reviewers"
@@ -349,7 +351,12 @@ export function WorkItemPropertiesPanel({
         </PanelSection>
       )}
 
-      <TaskProgressPanel issueId={issueId} projectId={projectId} />
+      <ChildProgressPanel
+        projectId={projectId}
+        issueId={issueId}
+        childCount={delivery?.childCount}
+        progress={delivery?.progress}
+      />
 
       {onDelete && canEdit && (
         <PanelSection label="Remove">

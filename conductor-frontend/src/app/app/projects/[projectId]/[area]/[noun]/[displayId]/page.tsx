@@ -60,11 +60,16 @@ export default function WorkItemAreaNounDetailPage() {
     }
   }, [projectId, displayId, accessToken])
 
-  if (state === 'loading' || workflowStatus === 'loading') {
+  // A child Work Item (a task under a PRD) is reached from its parent's Plan tab, and its Workflow (TASK)
+  // is hidden from the sidebar, so the area/noun segments cannot resolve it; the item names its own.
+  const childSlug = item?.parentWorkItemId ? item.workflow : undefined
+  const slug = workflow?.slug ?? workflow?.name ?? childSlug
+
+  if (state === 'loading' || (workflowStatus === 'loading' && !childSlug)) {
     return <WorkItemDetailSkeleton />
   }
 
-  if (state === 'notfound' || !item || workflowStatus === 'notfound' || !workflow) {
+  if (state === 'notfound' || !item || !slug) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-1 text-muted-foreground">
         <span className="font-medium">Work Item not found</span>
@@ -78,7 +83,8 @@ export default function WorkItemAreaNounDetailPage() {
       projectId={projectId}
       workItemId={item.id}
       initialItem={item}
-      slug={workflow.slug ?? workflow.name}
+      slug={slug}
+      hiddenWorkflow={!workflow}
     />
   )
 }
