@@ -45,7 +45,6 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 
@@ -386,9 +385,12 @@ public class PublishConsentService {
     /** The Post's TikTok targets that publish through the API — the ones a creator has to consent for. */
     private List<PostPublishTarget> consentTargets(String workItemId) {
         return targetRepository.findAllByWorkItemId(workItemId).stream()
-                .filter(target -> target.getLane() != PublishLane.MANUAL)
-                .filter(target -> PLATFORM_TIKTOK.equals(normalized(target.getPlatform())))
+                .filter(PublishConsentService::isConsentTarget)
                 .toList();
+    }
+
+    private static boolean isConsentTarget(PostPublishTarget target) {
+        return target.getLane() != PublishLane.MANUAL && PLATFORM_TIKTOK.equals(normalized(target.getPlatform()));
     }
 
     private Map<String, TikTokCreatorInfoService.Creator> creatorsFor(List<PostPublishTarget> targets) {
@@ -552,12 +554,8 @@ public class PublishConsentService {
         if (workItem == null || workItem.getId() == null || !requiresConsent(targets)) {
             return Verdict.NOT_REQUIRED;
         }
-        Optional<PublishConsent> consent = consentRepository.findByWorkItemId(workItem.getId());
-        if (consent.isEmpty()) {
-            return Verdict.NEVER_GIVEN;
-        }
-        return consentSubjectHash(workItem, targets).equals(consent.get().getConsentHash())
-                ? Verdict.VALID : Verdict.SUPERSEDED;
+        return verdictOf(true, consentRepository.findByWorkItemId(workItem.getId()).orElse(null),
+                () -> consentSubjectHash(workItem, targets));
     }
 
     /**
@@ -578,21 +576,31 @@ public class PublishConsentService {
     /** As {@link #verdict(WorkItem, List)}, over what the request has already loaded. */
     @Transactional(readOnly = true)
     public Verdict verdict(WorkItem workItem, PublishCheckContext ctx) {
-        if (workItem == null || workItem.getId() == null || !requiresConsent(ctx.targets())) {
+        if (workItem == null || workItem.getId() == null) {
             return Verdict.NOT_REQUIRED;
         }
-        Optional<PublishConsent> consent = ctx.consent();
-        if (consent.isEmpty()) {
-            return Verdict.NEVER_GIVEN;
-        }
-        return consentSubjectHash(workItem, ctx).equals(consent.get().getConsentHash())
-                ? Verdict.VALID : Verdict.SUPERSEDED;
+        return verdictOf(requiresConsent(ctx.targets()), ctx.consent().orElse(null),
+                () -> consentSubjectHash(workItem, ctx));
     }
 
     private boolean requiresConsent(List<PostPublishTarget> allTargets) {
-        return allTargets.stream()
-                .filter(target -> target.getLane() != PublishLane.MANUAL)
-                .anyMatch(target -> PLATFORM_TIKTOK.equals(normalized(target.getPlatform())));
+        return allTargets.stream().anyMatch(PublishConsentService::isConsentTarget);
+    }
+
+    /**
+     * The one verdict rule every path shares: no API-lane TikTok target needs nothing, no consent row is
+     * never given, otherwise the stored hash must match the subject as it is now. The subject hash is only
+     * computed when it decides the answer.
+     */
+    private static Verdict verdictOf(boolean required, PublishConsent consent,
+                                     java.util.function.Supplier<String> subjectHash) {
+        if (!required) {
+            return Verdict.NOT_REQUIRED;
+        }
+        if (consent == null) {
+            return Verdict.NEVER_GIVEN;
+        }
+        return subjectHash.get().equals(consent.getConsentHash()) ? Verdict.VALID : Verdict.SUPERSEDED;
     }
 
     private ConsentState state(WorkItem workItem) {
@@ -613,26 +621,12 @@ public class PublishConsentService {
     /** The state for a Post whose subject hash the caller has already computed from {@code ctx}. */
     private ConsentState state(WorkItem workItem, PublishCheckContext ctx, String subjectHash) {
         PublishConsent consent = ctx.consent().orElse(null);
-        if (!requiresConsent(ctx.targets())) {
-            return ConsentState.of(Verdict.NOT_REQUIRED, consent);
-        }
-        if (consent == null) {
-            return ConsentState.of(Verdict.NEVER_GIVEN, null);
-        }
-        return ConsentState.of(subjectHash.equals(consent.getConsentHash()) ? Verdict.VALID : Verdict.SUPERSEDED,
-                consent);
+        return ConsentState.of(verdictOf(requiresConsent(ctx.targets()), consent, () -> subjectHash), consent);
     }
 
     private ConsentState state(WorkItem workItem, PublishConsent consent) {
-        if (!requiresConsent(workItem.getId())) {
-            return ConsentState.of(Verdict.NOT_REQUIRED, consent);
-        }
-        if (consent == null) {
-            return ConsentState.of(Verdict.NEVER_GIVEN, null);
-        }
-        Verdict verdict = consentSubjectHash(workItem).equals(consent.getConsentHash())
-                ? Verdict.VALID : Verdict.SUPERSEDED;
-        return ConsentState.of(verdict, consent);
+        return ConsentState.of(verdictOf(requiresConsent(workItem.getId()), consent,
+                () -> consentSubjectHash(workItem)), consent);
     }
 
     // ── the subject ───────────────────────────────────────────────────────────────────────────────
@@ -674,33 +668,69 @@ public class PublishConsentService {
      */
     @Transactional(readOnly = true)
     public Set<String> validWorkItemIds(java.util.Collection<String> workItemIds) {
+        Set<String> valid = new java.util.HashSet<>();
+        snapshots(workItemIds).forEach((id, snapshot) -> {
+            if (snapshot.state().valid()) {
+                valid.add(id);
+            }
+        });
+        return valid;
+    }
+
+    /** One Post's consent as the consent page and a consent request show it. */
+    public record Snapshot(List<PostPublishTarget> consentTargets, ConsentState state, String etag) {}
+
+    /**
+     * {@link Snapshot}s for many Posts, plus the rows they were computed from so a caller that also shows
+     * the Posts' media need not read them again.
+     */
+    public record Batch(Map<String, Snapshot> snapshots, List<Asset> assets, List<PostPublishTargetAsset> selectionRows) {}
+
+    /** As {@link #load}, when only the snapshots are wanted. */
+    @Transactional(readOnly = true)
+    public Map<String, Snapshot> snapshots(java.util.Collection<String> workItemIds) {
+        return load(workItemIds).snapshots();
+    }
+
+    /**
+     * {@link #consentTargetsOf}, {@link #currentState} and {@link #consentEtag} for many Posts in a fixed
+     * number of queries (targets, consents with who gave them, per-target media, assets) however many Posts
+     * there are. Keyed by Work Item id; every id asked for is present.
+     */
+    @Transactional(readOnly = true)
+    public Batch load(java.util.Collection<String> workItemIds) {
         if (workItemIds == null || workItemIds.isEmpty()) {
-            return Set.of();
+            return new Batch(Map.of(), List.of(), List.of());
         }
-        Map<String, List<PostPublishTarget>> targetsByPost = new LinkedHashMap<>();
         List<PostPublishTarget> all = targetRepository.findAllByWorkItemIdIn(workItemIds);
+        Map<String, List<PostPublishTarget>> targetsByPost = new java.util.HashMap<>();
         for (PostPublishTarget target : all) {
             targetsByPost.computeIfAbsent(target.getWorkItem().getId(), key -> new ArrayList<>()).add(target);
         }
-        Map<String, String> hashes = new java.util.HashMap<>();
-        for (Object[] row : consentRepository.findHashesByWorkItemIdIn(workItemIds)) {
-            hashes.put((String) row[0], (String) row[1]);
+        Map<String, PublishConsent> consents = new java.util.HashMap<>();
+        for (PublishConsent consent : consentRepository.findAllByWorkItemIdIn(workItemIds)) {
+            consents.put(consent.getWorkItem().getId(), consent);
         }
-        Map<String, List<String>> selections = selectionsByTarget(all);
+        List<PostPublishTargetAsset> selectionRows = selectionRows(all);
+        Map<String, List<String>> selections = selectionsOf(selectionRows);
+        List<Asset> assets = assetRepository.findAllByWorkItemIdIn(workItemIds);
         Map<String, List<Asset>> assetsByPost = new java.util.HashMap<>();
-        for (Asset asset : assetRepository.findAllByWorkItemIdIn(workItemIds)) {
+        for (Asset asset : assets) {
             assetsByPost.computeIfAbsent(asset.getWorkItem().getId(), key -> new ArrayList<>()).add(asset);
         }
-        Set<String> valid = new java.util.HashSet<>();
+        Map<String, Snapshot> snapshots = new LinkedHashMap<>();
         for (String id : workItemIds) {
             List<PostPublishTarget> targets = targetsByPost.getOrDefault(id, List.of());
-            String stored = hashes.get(id);
-            if (stored != null && requiresConsent(targets)
-                    && subjectHash(targets(targets, selections), assetTuples(assetsByPost.getOrDefault(id, List.of()))).equals(stored)) {
-                valid.add(id);
-            }
+            PublishConsent consent = consents.get(id);
+            String hash = subjectHash(targets(targets, selections),
+                    assetTuples(assetsByPost.getOrDefault(id, List.of())));
+            Verdict verdict = verdictOf(requiresConsent(targets), consent, () -> hash);
+            List<PostPublishTarget> consentTargets = targets.stream()
+                    .filter(PublishConsentService::isConsentTarget)
+                    .toList();
+            snapshots.put(id, new Snapshot(consentTargets, ConsentState.of(verdict, consent), etagOf(hash)));
         }
-        return valid;
+        return new Batch(snapshots, assets, selectionRows);
     }
 
     private List<Map<String, Object>> targets(List<PostPublishTarget> targets,
@@ -715,16 +745,22 @@ public class PublishConsentService {
 
     /** The ordered media selection of every target that chose its own, in one query. */
     private Map<String, List<String>> selectionsByTarget(List<PostPublishTarget> targets) {
+        return selectionsOf(selectionRows(targets));
+    }
+
+    /** The media selection rows of every target that chose its own, in one query (none if no target did). */
+    private List<PostPublishTargetAsset> selectionRows(List<PostPublishTarget> targets) {
         List<String> customIds = targets.stream()
                 .filter(PostPublishTarget::isCustomMedia)
                 .map(PostPublishTarget::getId)
                 .filter(java.util.Objects::nonNull)
                 .toList();
-        if (customIds.isEmpty()) {
-            return new LinkedHashMap<>();
-        }
+        return customIds.isEmpty() ? List.of() : targetAssetRepository.findAllByTargetIdIn(customIds);
+    }
+
+    private static Map<String, List<String>> selectionsOf(List<PostPublishTargetAsset> rows) {
         Map<String, List<String>> byTarget = new LinkedHashMap<>();
-        for (PostPublishTargetAsset row : targetAssetRepository.findAllByTargetIdIn(customIds)) {
+        for (PostPublishTargetAsset row : rows) {
             byTarget.computeIfAbsent(row.getTargetId(), key -> new ArrayList<>()).add(row.getAssetId());
         }
         return byTarget;

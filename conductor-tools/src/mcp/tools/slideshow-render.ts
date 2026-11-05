@@ -81,6 +81,8 @@ export interface SlideUploadParams {
 
 export interface SlideUploadResult {
   media: Record<string, unknown>
+  /** Provenance fields shortened to the API's limit on the way up. */
+  warnings?: string[]
 }
 
 /** Slides are stored as JPEG at this quality: Instagram feed images and TikTok photo posts refuse PNG. */
@@ -124,14 +126,16 @@ export async function uploadRevisionSlide(revisionBase: string, params: SlideUpl
   if (!info || info.contentType !== 'image/jpeg') {
     throw new Error(`The composed slide ${params.filePath} is ${info?.contentType ?? 'not an image'}, not image/jpeg; slides are stored as JPEG.`)
   }
+  const warnings: string[] = []
   const media = await mintPutConfirmImage(
     bytes,
     info,
     { label: params.label, source: params.source, licence: params.licence, aiGenerated: params.aiGenerated },
     { mint: `${revisionBase}/media`, confirm: (id) => `${revisionBase}/media/${id}/confirm` },
-    config
+    config,
+    warnings
   )
-  return { media }
+  return { media, warnings }
 }
 
 function summarise(checks: SlideshowCheck[]): string {
@@ -238,6 +242,7 @@ export async function renderSlides(params: RenderSlidesParams, config: Config, o
           },
           config
         )
+        for (const w of result.warnings ?? []) log(w)
         const id = result.media['id'] as string | undefined
         if (!id) throw new Error(`Uploading slide ${slide} (${ratio}) returned no media id.`)
         slideMedia[ratio][String(slide)] = id

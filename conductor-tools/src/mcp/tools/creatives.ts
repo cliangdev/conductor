@@ -10,7 +10,7 @@ import { probeMedia, extractPoster, type MediaProbeResult } from '../../lib/medi
 import { composePosterSheet } from '../../lib/poster-sheet.js'
 import { slideshowSpecView } from '../../lib/slideshow/spec-transport.js'
 import { compactRevisionState } from '../../lib/slideshow/revision-view.js'
-import { readProvenanceSidecar } from '../../lib/provenance-sidecar.js'
+import { PROVENANCE_FIELD_MAX, fitProvenanceForUpload, readProvenanceSidecar } from '../../lib/provenance-sidecar.js'
 import { renderCreative as runLocalRender, renderViaApi } from '../../lib/creative-render.js'
 import { needsLocalRender } from '../../lib/creative-local-render.js'
 
@@ -617,8 +617,12 @@ export async function mintPutConfirmImage(
   info: ImageInfo,
   fields: { label: string; source?: string; licence?: string; aiGenerated?: boolean },
   paths: ImageUploadPaths,
-  config: Config
+  config: Config,
+  warnings: string[] = []
 ): Promise<Record<string, unknown>> {
+  const fit = fitProvenanceForUpload(fields, fields.label)
+  warnings.push(...fit.warnings)
+  fields = fit.fields
   const mint = await apiPost<{ id: string; uploadUrl: string | null }>(
     paths.mint,
     {
@@ -680,7 +684,8 @@ export async function uploadCreativeMedia(params: UploadCreativeMediaParams, con
       imageInfo,
       { label, source: params.source, licence: params.licence, aiGenerated: params.aiGenerated },
       { mint: `${V2_PROJECT(config)}/marketing/photos`, confirm: (id) => `${V2_PROJECT(config)}/marketing/photos/${id}/confirm` },
-      config
+      config,
+      warnings
     )
     return { media: trimMedia(confirmed), warnings }
   }
@@ -711,6 +716,10 @@ export async function uploadCreativeMedia(params: UploadCreativeMediaParams, con
     warnings.push(`This video is ${Math.round(probe.durationSeconds)}s long — longer than most platforms take.`)
   }
 
+  // The API refuses a source/licence over 200 characters, so clip once here, with a warning.
+  const fit = fitProvenanceForUpload({ source: params.source, licence: params.licence }, label)
+  warnings.push(...fit.warnings)
+
   try {
     const mint = await apiPost<{ id: string; uploadUrl: string | null }>(
       `${V2_PROJECT(config)}/marketing/photos`,
@@ -723,8 +732,8 @@ export async function uploadCreativeMedia(params: UploadCreativeMediaParams, con
         height: probe.height ?? null,
         durationSeconds: probe.durationSeconds ?? null,
         hasAudio: probe.kind === 'VIDEO' ? !!probe.hasAudio : undefined,
-        source: params.source ?? null,
-        licence: params.licence ?? null,
+        source: fit.fields.source ?? null,
+        licence: fit.fields.licence ?? null,
         aiGenerated: !!params.aiGenerated,
       },
       config
@@ -760,7 +769,6 @@ export const uploadCreativePhoto = uploadCreativeMedia
 
 export const MAX_BATCH_FILES = 100
 const BATCH_CONCURRENCY = 3
-const SERVER_TEXT_LIMIT = 200
 const DEFAULT_FOLDER_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.m4v', '.webm']
 
 export interface BatchFileSpec {
@@ -871,9 +879,10 @@ export async function uploadCreativeMediaBatch(
 
   const results: BatchUploadEntry[] = new Array(specs.length)
   const warnings: string[] = []
-  const tooLong = (field: string, value: string | undefined, who: string): void => {
-    if (value && value.length > SERVER_TEXT_LIMIT) {
-      warnings.push(`${who}: ${field} is ${value.length} characters — the server accepts at most ${SERVER_TEXT_LIMIT} and will reject this upload.`)
+  // Source and licence are clipped (with a warning) when each file uploads; a label is not, so say it will fail.
+  const labelTooLong = (value: string | undefined, who: string): void => {
+    if (value && value.length > PROVENANCE_FIELD_MAX) {
+      warnings.push(`${who}: label is ${value.length} characters — the server accepts at most ${PROVENANCE_FIELD_MAX} and will reject this upload.`)
     }
   }
 
@@ -893,9 +902,7 @@ export async function uploadCreativeMediaBatch(
         const sidecar = spec.filePath ? await readProvenanceSidecar(spec.filePath) : null
         provenance = sidecar ?? { source: params.source, licence: params.licence, aiGenerated: params.aiGenerated }
       }
-      tooLong('label', label, file)
-      tooLong('source', provenance.source, file)
-      tooLong('licence', provenance.licence, file)
+      labelTooLong(label, file)
       const { media, warnings: fileWarnings } = await uploadCreativeMedia(
         { filePath: spec.filePath, url: spec.url, label, ...provenance },
         config

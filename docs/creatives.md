@@ -394,7 +394,9 @@ also renders the slideshow video and returns its path (`slideshowVideoPath`).
 into `slides`, and requests the server render. To turn an existing media set into a Creative, upload
 it in one call (`upload_creative_media` with `folder` or `files`, up to 100, three at a time, one
 result per file) and find it again with `list_creative_media({labelPrefix})`. `label`, `source` and
-`licence` are capped at 200 characters (a longer value is a 400).
+`licence` are capped at 200 characters; a longer `source` or `licence` is shortened to 200 at upload
+(the result carries a warning naming the file and field; the local sidecar keeps the full text), while a
+longer `label` is a 400.
 
 ## Organic slideshows {#organic-slideshows}
 

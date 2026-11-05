@@ -5,7 +5,7 @@
 // preview boards are re-rendered locally from the in-memory form, and the copy-rule feedback runs
 // the same brand kit rules the backend's CreativeValidator enforces at save time.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   ChevronDownIcon,
@@ -51,6 +51,7 @@ import { BrandSetupNotice } from '@/components/marketing/brand/BrandSetupNotice'
 import { brandKitToBrand, listBrandKits, type BrandKit } from '@/components/marketing/brand/types'
 import { CarouselSlidesSection } from '@/components/marketing/creatives/CarouselSlidesSection'
 import { CLIP_PLACEMENT_KEYS, nearestAspectPlacement } from '@/components/marketing/creatives/clipPlacement'
+import { ReadinessCard } from '@/components/marketing/creatives/ReadinessCard'
 import { PostsUsingCreativePanel } from '@/components/marketing/creatives/PostsUsingCreativePanel'
 import { CreativePerformancePanel } from '@/components/marketing/creatives/CreativePerformancePanel'
 import { FullSizeViewer } from '@/components/marketing/creatives/FullSizeViewer'
@@ -66,6 +67,7 @@ import {
   getCreativeRevision,
   hasSquareSlides,
   SQUARE_SLIDES_NOTE,
+  noSpecNote,
   staleAltSlides,
   type TextChange,
 } from '@/components/marketing/creatives/slideText'
@@ -79,6 +81,7 @@ import {
   getCreativeRegistry,
   listCreativePhotos,
   patchCreative,
+  patchCreativePhoto,
   type AudioSource,
   type CreativeSlideshow,
   type Creative,
@@ -751,6 +754,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
   const [saveError, setSaveError] = useState<ApiError | null>(null)
   const [conflict, setConflict] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [markingReady, setMarkingReady] = useState(false)
+  const [markingChecked, setMarkingChecked] = useState(false)
   const [photoPickerOpen, setPhotoPickerOpen] = useState(false)
   // Which sequence beat's photo the shared PhotoPicker modal is targeting; null means the
   // Creative's own main photo. One modal instance is reused for both (see its onSelect below).
@@ -1106,6 +1111,66 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     }
   }
 
+  function refreshReadiness() {
+    getCreativeReadiness(projectId, creativeId, token).then(setReadiness).catch(() => setReadiness(null))
+  }
+
+  // "Mark ready": only the state changes, so unsaved edits in the form stay where they are.
+  async function handleMarkReady() {
+    if (!creative) return
+    setMarkingReady(true)
+    try {
+      const updated = await patchCreative(projectId, creativeId, { version: creative.version, state: 'READY' }, token)
+      setCreative(updated)
+      setForm((prev) => (prev ? { ...prev, state: updated.state } : prev))
+      refreshReadiness()
+      showToast('Creative marked ready')
+    } catch (err) {
+      if ((err as ApiError).status === 409) setConflict(true)
+      else showToast(apiErrorMessage(err, 'Could not mark this Creative ready'), 'error')
+    } finally {
+      setMarkingReady(false)
+    }
+  }
+
+  function focusAndScroll(el: HTMLElement | null) {
+    if (!el) return
+    el.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    el.focus({ preventScroll: true })
+  }
+
+  function focusAltText() {
+    const slideInputs = Array.from(document.querySelectorAll<HTMLInputElement>('[aria-label^="Alt text for slide"]'))
+    const firstEmpty = slideInputs.find((el) => !el.value.trim())
+    focusAndScroll(firstEmpty ?? document.getElementById('creative-alt-text'))
+  }
+
+  // "I've checked them": the person has looked at the images, so record that on exactly the media the
+  // server's photoChecked item still counts as unchecked (its mediaIds). One failed PATCH never skips
+  // the refresh: the photos and the readiness are always re-read, and the failures are named.
+  async function handleMarkImagesChecked() {
+    const ids = readiness?.items.find((i) => i.key === 'photoChecked')?.mediaIds ?? []
+    if (ids.length === 0) {
+      refreshReadiness()
+      return
+    }
+    setMarkingChecked(true)
+    try {
+      const results = await Promise.allSettled(ids.map((id) => patchCreativePhoto(projectId, id, { checked: true }, token)))
+      const failed = results.filter((r) => r.status === 'rejected').length
+      listCreativePhotos(projectId, token, true).then(setPhotos).catch(() => undefined)
+      refreshReadiness()
+      if (failed > 0) {
+        showToast(
+          `Could not mark ${failed} of ${ids.length} ${ids.length === 1 ? 'image' : 'images'} checked. Try again.`,
+          'error',
+        )
+      }
+    } finally {
+      setMarkingChecked(false)
+    }
+  }
+
   async function handleReload() {
     setConflict(false)
     setSaveError(null)
@@ -1165,7 +1230,37 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
     )
   }
 
+  // In-place fixes the Readiness card can offer (the card shows a button only for a key listed here).
+  const readinessActions: Record<string, () => void | Promise<void>> = {
+    altText: focusAltText,
+    caption: () => focusAndScroll(document.getElementById('creative-caption')),
+    slides: () => focusAndScroll(document.getElementById('creative-slides')),
+    photoChecked: handleMarkImagesChecked,
+  }
   const layoutOptions = Object.keys(registry.layouts)
+  // Slide-text editing on a carousel: the Edit text action, or the note saying why there is none.
+  const squareSlides = hasSquareSlides(creative.slides)
+  const carouselTextEdit: ComponentProps<typeof CarouselSlidesSection>['textEdit'] = !canManage
+    ? undefined
+    : squareSlides && (creative.slideshowSpec || creative.slideStyle)
+      ? // Attaching a spec would not help: 1x1 slides cannot be re-rendered yet.
+        { unavailableNote: SQUARE_SLIDES_NOTE }
+      : creative.slideshowSpec
+        ? {
+            onEdit: setTextEditorSlide,
+            disabledReason: creative.pendingRevision
+              ? 'A text edit is rendering.'
+              : JSON.stringify(form) !== JSON.stringify(toForm(creative))
+                ? 'Save your changes first.'
+                : null,
+          }
+        : creative.slideStyle
+          ? // A compose_slideshow carousel committed without its spec: the text is part of the images.
+            (() => {
+              const { note, command } = noSpecNote(creative.displayId)
+              return { unavailableNote: note, unavailableCommand: command }
+            })()
+          : undefined
   const carouselViolations = [
     ...new Set(
       (saveError?.violations ?? [])
@@ -1905,19 +2000,7 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
               onAddImages={setCarouselPickerKey}
               onChange={(next) => setForm((prev) => (prev ? { ...prev, ...next } : prev))}
               violations={carouselViolations}
-              textEdit={
-                canManage && creative.slideshowSpec
-                  ? {
-                      onEdit: setTextEditorSlide,
-                      unavailableNote: hasSquareSlides(creative.slides) ? SQUARE_SLIDES_NOTE : null,
-                      disabledReason: creative.pendingRevision
-                        ? 'A text edit is rendering.'
-                        : JSON.stringify(form) !== JSON.stringify(toForm(creative))
-                          ? 'Save your changes first.'
-                          : null,
-                    }
-                  : undefined
-              }
+              textEdit={carouselTextEdit}
               revisionNote={revisionNote}
               staleAltSlides={
                 flaggedAltSlides ? staleAltSlides(flaggedAltSlides.flags, flaggedAltSlides.diff, form.slideAltText) : []
@@ -2001,19 +2084,15 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
           )}
 
           {readiness && (
-            <Card className="space-y-1.5 p-4">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Readiness</h3>
-              <ul className="space-y-1">
-                {readiness.items.map((item) => (
-                  <li
-                    key={item.key}
-                    className={cn('text-sm', item.ok ? 'text-status-approved' : item.blocking ? 'text-destructive' : 'text-status-progress')}
-                  >
-                    {item.message}
-                  </li>
-                ))}
-              </ul>
-            </Card>
+            <ReadinessCard
+              readiness={readiness}
+              state={creative.state}
+              canManage={canManage}
+              onMarkReady={handleMarkReady}
+              markingReady={markingReady}
+              actions={readinessActions}
+              busyKeys={markingChecked ? ['photoChecked'] : []}
+            />
           )}
 
           {form.kind === 'CAROUSEL' && creative.slideshowSpec && (
