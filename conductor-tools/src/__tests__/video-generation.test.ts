@@ -11,7 +11,7 @@ const omniMock = vi.hoisted(() => vi.fn())
 vi.mock('../lib/gemini-omni.js', async (orig) => ({ ...(await orig<typeof import('../lib/gemini-omni.js')>()), generateOmniClip: omniMock }))
 
 import { generateVideos, pickVideoRoute, videoModel } from '../lib/video-generation.js'
-import { VideoSafetyFiltered } from '../lib/video-common.js'
+import { VideoError, VideoSafetyFiltered } from '../lib/video-common.js'
 import { record, spentToday } from '../lib/video-spend.js'
 
 let tmp: string
@@ -143,6 +143,22 @@ describe('running', () => {
     expect(spentToday(spend)).toBe(0)
     vertexMock.mockRejectedValueOnce(new VideoSafetyFiltered('x'))
     await expect(generateVideos({ prompt: 'a', confirmCost: true }, { spend })).rejects.toMatchObject({ code: 'VIDEO_SAFETY_FILTERED' })
+    expect(spentToday(spend)).toBe(0.6)
+  })
+
+  it('keeps a finished Omni clip when the next one fails', async () => {
+    readConfigMock.mockReturnValue({ geminiApiKey: 'k' })
+    omniMock.mockResolvedValueOnce({ video: Buffer.from('o'), warnings: [] }).mockRejectedValueOnce(new Error('network'))
+    const res = await generateVideos({ prompt: 'a', count: 2, durationSeconds: 5, resolution: '720p', confirmCost: true }, { spend })
+    expect(res.videos).toHaveLength(1)
+    expect(res.warnings.join(' ')).toContain('Clip 2 of 2 failed')
+    expect(spentToday(spend)).toBe(0.5)
+  })
+
+  it('records spend on a timeout, since the job may still be billed', async () => {
+    readConfigMock.mockReturnValue({ vertexProject: 'p' })
+    vertexMock.mockRejectedValueOnce(new VideoError('VIDEO_TIMEOUT', 'slow'))
+    await expect(generateVideos({ prompt: 'a', confirmCost: true }, { spend })).rejects.toMatchObject({ code: 'VIDEO_TIMEOUT' })
     expect(spentToday(spend)).toBe(0.6)
   })
 

@@ -20,6 +20,7 @@ import {
   VideoCostCapExceeded,
   VideoCostConfirmationRequired,
   VideoDailyCapExceeded,
+  VideoError,
   VideoRouteNotConfigured,
   VideoSafetyFiltered,
   estimateCost,
@@ -128,15 +129,23 @@ export async function generateVideos(params: VideoParams, options: GenerateVideo
     } else {
       for (let i = 0; i < request.count; i++) {
         if (request.count > 1) options.onProgress?.(`Clip ${i + 1} of ${request.count}`)
-        const out = await generateOmniClip(request, clean(frames), { apiKey: choice.apiKey!, model, onProgress: options.onProgress }, options.omni)
-        videos.push(out.video)
-        warnings.push(...out.warnings)
-        record(est.perClipUsd, options.spend)
+        try {
+          const out = await generateOmniClip(request, clean(frames), { apiKey: choice.apiKey!, model, onProgress: options.onProgress }, options.omni)
+          videos.push(out.video)
+          warnings.push(...out.warnings)
+          record(est.perClipUsd, options.spend)
+        } catch (err) {
+          // Keep the clips already made (and billed) rather than throwing them away.
+          if (videos.length === 0) throw err
+          if (err instanceof VideoSafetyFiltered || (err instanceof VideoError && err.code === 'VIDEO_TIMEOUT')) record(est.perClipUsd, options.spend)
+          warnings.push(`Clip ${i + 1} of ${request.count} failed (${(err as Error).message}); returning the ${videos.length} that finished.`)
+          break
+        }
       }
     }
   } catch (err) {
-    // Google bills a safety-filtered request.
-    if (err instanceof VideoSafetyFiltered) record(choice.route === 'vertex' ? est.estimateUsd : est.perClipUsd, options.spend)
+    // Google bills a safety-filtered request, and a timed-out job may still finish and be billed.
+    if (err instanceof VideoSafetyFiltered || (err instanceof VideoError && err.code === 'VIDEO_TIMEOUT')) record(choice.route === 'vertex' ? est.estimateUsd : est.perClipUsd, options.spend)
     throw err
   }
 

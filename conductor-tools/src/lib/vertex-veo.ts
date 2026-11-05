@@ -33,9 +33,9 @@ export function resetVertexTokenCache(): void {
   cached = null
 }
 
-function runGcloud(): Promise<string> {
+function runGcloud(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('gcloud', ['auth', 'print-access-token'], { timeout: 20_000 }, (err, stdout) => {
+    execFile('gcloud', args, { timeout: 20_000 }, (err, stdout) => {
       if (err) reject(err)
       else resolve(String(stdout).trim())
     })
@@ -48,7 +48,8 @@ export async function getVertexToken(now: () => number = Date.now): Promise<stri
   if (cached && cached.expires > now()) return cached.token
   let token = ''
   try {
-    token = await runGcloud()
+    // The user login first; application-default credentials (ADC) as the fallback.
+    token = await runGcloud(['auth', 'print-access-token']).catch(() => runGcloud(['auth', 'application-default', 'print-access-token']))
   } catch {
     throw new VideoError('VIDEO_AUTH', `Could not get a Google Cloud access token. Install the gcloud CLI and run ${SETUP_VERTEX}, or set CONDUCTOR_VERTEX_ACCESS_TOKEN.`)
   }

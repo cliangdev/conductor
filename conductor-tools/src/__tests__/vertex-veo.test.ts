@@ -157,6 +157,13 @@ describe('getVertexToken', () => {
     expect(execFileMock).toHaveBeenCalledTimes(2)
   })
 
+  it('falls back to application-default credentials', async () => {
+    execFileMock.mockImplementation((_c: string, args: string[], _o: unknown, cb: (e: Error | null, out?: string) => void) =>
+      args.includes('application-default') ? cb(null, 'adc-token\n') : cb(new Error('not logged in')))
+    expect(await getVertexToken()).toBe('adc-token')
+    expect(execFileMock.mock.calls[1]![1]).toEqual(['auth', 'application-default', 'print-access-token'])
+  })
+
   it('explains how to log in when gcloud fails', async () => {
     execFileMock.mockImplementation((_c: string, _a: string[], _o: unknown, cb: (e: Error | null, out?: string) => void) => cb(new Error('ENOENT')))
     await expect(getVertexToken()).rejects.toMatchObject({ code: 'VIDEO_AUTH', message: expect.stringContaining('gcloud auth login') })
