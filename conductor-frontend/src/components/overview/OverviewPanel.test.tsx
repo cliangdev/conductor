@@ -60,4 +60,15 @@ describe('overview panel', () => {
 
     expect(await screen.findByText(/misses the milestone by 2 days/)).toBeInTheDocument()
   })
+
+  it('titles the PRD section Plans and says so when there are none', async () => {
+    const { unmount } = render(<OverviewPanel projectId="proj-1" />)
+    expect(await screen.findByText('Plans')).toBeInTheDocument()
+    expect(screen.queryByText('Active PRDs')).not.toBeInTheDocument()
+    unmount()
+
+    apiGet.mockResolvedValue({ activeItems: [], milestones: [], attention: { blocked: [], stale: [], needsInput: [] } })
+    render(<OverviewPanel projectId="proj-1" />)
+    expect(await screen.findByText('No plans yet.')).toBeInTheDocument()
+  })
 })
