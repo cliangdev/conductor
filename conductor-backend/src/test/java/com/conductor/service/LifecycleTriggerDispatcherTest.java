@@ -239,6 +239,35 @@ class LifecycleTriggerDispatcherTest {
     }
 
     @Test
+    void aRevertedCyclicHopRestoresTheCycleStampsToo() {
+        // Each hop stamps like the real applySystemTransition: A->B starts the item, B->A (the cyclic hop)
+        // completes it. Reverting the status must not leave that completed_at behind.
+        java.time.OffsetDateTime started = java.time.OffsetDateTime.parse("2026-01-01T00:00:00Z");
+        Deque<String> queue = new ArrayDeque<>(java.util.List.of("B", "A"));
+        when(workItemWorkflowService.applySystemTransition(eq(PROJECT_ID), eq(workItem),
+                eq(WorkItemWorkflowService.TRIGGER_STATUS_CHANGED))).thenAnswer(inv -> {
+                    if (queue.isEmpty()) {
+                        return Optional.empty();
+                    }
+                    String next = queue.poll();
+                    workItem.setCurrentStatus(next);
+                    if ("B".equals(next)) {
+                        workItem.setStartedAt(started);
+                    } else {
+                        workItem.setCompletedAt(java.time.OffsetDateTime.now());
+                        workItem.setStartedAt(null);
+                    }
+                    return Optional.of(transitionTo(next));
+                });
+
+        dispatcher.onConductorEvent(statusChangedEvent());
+
+        assertThat(workItem.getCurrentStatus()).isEqualTo("B");
+        assertThat(workItem.getStartedAt()).isEqualTo(started);
+        assertThat(workItem.getCompletedAt()).isNull();
+    }
+
+    @Test
     void reentrancyGuardMakesNestedEventANoop() {
         advanceThrough("B");
         // Simulate the real dispatch fan-out: publishing the per-hop event re-enters the dispatcher.

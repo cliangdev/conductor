@@ -23,6 +23,7 @@ export type Capability =
   | 'review.submit' // approve / request changes / comment on a Work Item as a reviewer
   | 'creative.manage' // create/edit/delete brand kits, Creative photos, and Creatives
   | 'marketing.target.manage' // set/clear a marketing overview metric target
+  | 'milestone.manage' // create/edit/close/delete milestones (backend: ADMIN/CREATOR)
 
 // Capabilities held by CREATOR (the "write" role). ADMIN holds these plus the admin-only set.
 const CREATOR_CAPABILITIES: Capability[] = [
@@ -35,6 +36,7 @@ const CREATOR_CAPABILITIES: Capability[] = [
   'issue.assignReviewers',
   'creative.manage',
   'marketing.target.manage',
+  'milestone.manage',
 ]
 
 const ADMIN_ONLY_CAPABILITIES: Capability[] = [

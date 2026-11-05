@@ -69,4 +69,12 @@ describe('area/noun Work Item detail route', () => {
     render(<WorkItemAreaNounDetailPage />)
     expect(await screen.findByText(/work item not found/i)).toBeInTheDocument()
   })
+
+  it('opens a child item under its own Workflow when the sidebar cannot resolve the segments', async () => {
+    resolution = { status: 'notfound' }
+    apiGetBehavior = () =>
+      Promise.resolve({ id: 'uuid-2', workflow: 'TASK', displayId: 'COND-23', parentWorkItemId: 'uuid-1' })
+    render(<WorkItemAreaNounDetailPage />)
+    expect(await screen.findByTestId('detail-view')).toHaveTextContent('detail:uuid-2:TASK')
+  })
 })

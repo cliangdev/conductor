@@ -61,6 +61,18 @@ class WorkItemPatchBodyTest {
     @MockitoBean
     private WorkItemListEnricher listEnricher;
     @MockitoBean
+    private com.conductor.service.WorkItemHierarchyService hierarchyService;
+    @MockitoBean
+    private com.conductor.service.WorkItemSignalService signalService;
+    @MockitoBean
+    private com.conductor.service.WorkItemDependencyService dependencyService;
+    @MockitoBean
+    private com.conductor.service.WorkItemCriteriaService criteriaService;
+    @MockitoBean
+    private com.conductor.service.WorkItemHealthService healthService;
+    @MockitoBean
+    private com.conductor.service.ThroughputForecastService forecastService;
+    @MockitoBean
     private JwtService jwtService;
     @MockitoBean
     private UserRepository userRepository;
@@ -93,10 +105,11 @@ class WorkItemPatchBodyTest {
         item.setCreatedAt(OffsetDateTime.now());
         item.setUpdatedAt(OffsetDateTime.now());
         when(workItemService.patchWorkItem(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(),
-                any(), any(), any())).thenReturn(item);
+                any(), any(), any(), any(), any(), any(), any())).thenReturn(item);
     }
 
-    private record Sent(Collection<String> tags, Map<String, Object> fields, String dueOn, String title) {}
+    private record Sent(Collection<String> tags, Map<String, Object> fields, String dueOn, String title,
+                        String parentWorkItemId, String priority, String milestoneId, String appetite) {}
 
     @SuppressWarnings("unchecked")
     private Sent send(String json) throws Exception {
@@ -107,9 +120,49 @@ class WorkItemPatchBodyTest {
         ArgumentCaptor<Map<String, Object>> fields = ArgumentCaptor.forClass(Map.class);
         ArgumentCaptor<String> dueOn = ArgumentCaptor.forClass(String.class);
         ArgumentCaptor<String> title = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> parent = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> priority = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> milestone = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> appetite = ArgumentCaptor.forClass(String.class);
         verify(workItemService).patchWorkItem(eq("proj-1"), eq("wi-1"), title.capture(), any(), any(), any(),
-                any(), any(), tags.capture(), any(), fields.capture(), dueOn.capture(), any(User.class));
-        return new Sent(tags.getValue(), fields.getValue(), dueOn.getValue(), title.getValue());
+                any(), any(), tags.capture(), any(), fields.capture(), dueOn.capture(), parent.capture(),
+                priority.capture(), milestone.capture(), appetite.capture(), any(User.class));
+        return new Sent(tags.getValue(), fields.getValue(), dueOn.getValue(), title.getValue(),
+                parent.getValue(), priority.getValue(), milestone.getValue(), appetite.getValue());
+    }
+
+    @Test
+    void deliveryFieldsOmittedAreNullSoNothingIsChanged() throws Exception {
+        Sent sent = send("{\"title\":\"New\"}");
+        assertThat(sent.parentWorkItemId()).isNull();
+        assertThat(sent.priority()).isNull();
+        assertThat(sent.milestoneId()).isNull();
+        assertThat(sent.appetite()).isNull();
+    }
+
+    @Test
+    void deliveryFieldsSentEmptyArriveEmptyToClear() throws Exception {
+        Sent sent = send("{\"parentWorkItemId\":\"\",\"priority\":\"\",\"milestoneId\":\"\",\"appetite\":\"\"}");
+        assertThat(sent.parentWorkItemId()).isEmpty();
+        assertThat(sent.priority()).isEmpty();
+        assertThat(sent.milestoneId()).isEmpty();
+        assertThat(sent.appetite()).isEmpty();
+    }
+
+    @Test
+    void deliveryFieldsAreMappedThrough() throws Exception {
+        Sent sent = send("{\"parentWorkItemId\":\"p-1\",\"priority\":\"P1\",\"milestoneId\":\"m-1\",\"appetite\":\"2w\"}");
+        assertThat(sent.parentWorkItemId()).isEqualTo("p-1");
+        assertThat(sent.priority()).isEqualTo("P1");
+        assertThat(sent.milestoneId()).isEqualTo("m-1");
+        assertThat(sent.appetite()).isEqualTo("2w");
+    }
+
+    @Test
+    void unknownPriorityIsRejectedWith400() throws Exception {
+        mockMvc.perform(patch(URL).header("Authorization", "Bearer valid-token")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"priority\":\"P9\"}"))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

@@ -1,6 +1,6 @@
 ---
 name: conductor:implement
-description: Take a Conductor PRD issue to a green PR — advances it to IN_PROGRESS through the correct status transitions, writes tasks.json breakdown, sets up a git branch, spawns parallel coding subagents, creates a PR, marks it CODE_REVIEW, and monitors CI (two checks max).
+description: Take a Conductor PRD issue to a green PR — advances it to IN_PROGRESS through the correct status transitions, works the plan created by /conductor:breakdown (verifying each task's criteria), sets up a git branch, spawns parallel coding subagents, creates a PR, marks it CODE_REVIEW, and monitors CI (two checks max).
 allowed-tools: mcp__conductor__*, AskUserQuestion, Agent, Read, Write, Glob, Grep, Bash, ScheduleWakeup, TaskCreate, TaskUpdate
 ---
 
@@ -88,133 +88,21 @@ Use AskUserQuestion with options: **Continue anyway** / **Abort**.
 
 ---
 
-## Step 3 — Task Breakdown
+## Step 3 — Plan source
 
-Check if `{absolutePath}tasks.json` already exists (where `absolutePath` was returned by `get_work_item` in Step 2; the Read/Write/Edit tools require absolute paths).
+Call `get_work_item_tree({issueId})`.
 
-**If it exists**: use AskUserQuestion:
-```json
-{
-  "questions": [{
-    "question": "tasks.json already exists for this issue. What would you like to do?",
-    "header": "Resume or Regenerate",
-    "options": [
-      {"label": "Resume", "description": "Skip completed tasks, continue from the first PENDING task"},
-      {"label": "Regenerate", "description": "Delete existing breakdown and recreate from scratch"}
-    ],
-    "multiSelect": false
-  }]
-}
-```
-- **Resume**: read the file, note which tasks are COMPLETED, skip to Step 4.
-- **Regenerate**: delete the existing file (Bash `rm`), continue with breakdown below.
+**If the PRD has children** (the plan lives in Conductor, created by `/conductor:breakdown`): the work queue is the ready queue —
+`list_work_items({rootId: issueId, ready: true, sort: "priority", parentId: "any"})` — re-queried after each batch in Step 5. Done tasks are skipped automatically; resuming needs no choice. If `{absolutePath}tasks.json` exists (schema_version 3), read it for each task's `files_owned`, `contract`, `test_plan` and `covers_acs`, matched by `workItemId`. Skip to Step 4.
 
-**If it does not exist** (or after regenerate): analyze the PRD and produce the breakdown.
+**If the PRD has no children**: print
 
-### Breakdown Analysis
+> No plan yet — run /conductor:breakdown first
 
-Analyze the PRD features and group them into epics:
-- Each P0 feature → 1–2 epics
-- Shared infrastructure (auth, schema, config) → separate epic
-- Consider technical ordering: schema → service → API → UI
+then fall through to the legacy flow, which still works for a `tasks.json` that already exists at `{absolutePath}tasks.json` (where `absolutePath` was returned by `get_work_item` in Step 2; the Read/Write/Edit tools require absolute paths):
 
-For each epic, identify 3–7 tasks:
-- Start with data/schema tasks
-- Then business logic / service layer
-- Then API/interface layer
-- Finally wiring / integration
-
-For each task, define 1–3 acceptance criteria with type `auto` (verifiable by test) or `manual` (requires human check).
-
-### Confidence-Based Autonomy
-
-| Confidence | Behavior |
-|------------|----------|
-| **High (>80%)** | Show proposed structure inline, proceed immediately |
-| **Medium/Low** | Show proposed structure, use AskUserQuestion to confirm before writing |
-
-**High confidence indicators**: clear P0 feature list, obvious epic groupings, standard stack patterns, no conflicts.
-
-**Low confidence indicators**: vague requirements, multiple valid structures, unfamiliar domain.
-
-When confident, announce and proceed:
-```
-## Task Breakdown
-
-Creating 4 epics in dependency order:
-- E1: Database Schema (foundation)
-- E2: Service Layer (depends on E1)
-- E3: REST API (depends on E2)
-- E4: Frontend (depends on E3)
-
-Writing tasks.json...
-```
-
-When uncertain, ask for confirmation before writing.
-
-### Writing tasks.json
-
-Write the file directly using the Write tool to `{absolutePath}tasks.json` (the absolute issue dir from `get_work_item` in Step 2) with this schema:
-
-```json
-{
-  "issue_id": "{issueId}",
-  "issue_title": "{issue title from PRD}",
-  "created_at": "{ISO timestamp}",
-  "schema_version": 2,
-  "status": "PENDING",
-  "epics": [
-    {
-      "id": "E1",
-      "title": "Epic Title",
-      "goal": "One-sentence goal",
-      "depends_on": [],
-      "status": "PENDING",
-      "tasks": [
-        {
-          "id": "T1.1",
-          "title": "Task title",
-          "description": "What to implement and how",
-          "priority": "HIGH",
-          "complexity": "small",
-          "depends_on": [],
-          "status": "PENDING",
-          "files_owned": ["conductor-backend/src/main/resources/db/migration/V42__add_reviews.sql"],
-          "covers_acs": ["AC-P0-1.1"],
-          "contract": {
-            "input": "A Flyway migration script applied against the existing schema",
-            "output": "A `reviews` table with columns id, issue_id, reviewer_id, decision, created_at and the matching FK indexes",
-            "invariant": "Migration is idempotent under Flyway's checksum (no retroactive edits once shipped); existing tables untouched"
-          },
-          "test_plan": [
-            "Apply migration on a fresh test DB and assert `reviews` table exists with expected columns",
-            "Re-running `mvn flyway:migrate` is a no-op (validate checksum stable)"
-          ],
-          "criteria": [
-            {
-              "text": "Specific verifiable outcome",
-              "type": "auto",
-              "met": false
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-```
-
-Valid values: `status` — `PENDING | IN_PROGRESS | COMPLETED | BLOCKED`; `priority` — `HIGH | MEDIUM | LOW`; `complexity` — `small | medium | large`; `type` — `auto | manual`.
-
-**v2 required fields** (top-level `schema_version: 2`): every task must additionally carry
-- `files_owned` — string array of repo-relative paths the task is authorized to edit (≥1 entry)
-- `covers_acs` — string array of AC IDs from the PRD in the form `AC-P{0|1}-{n}.{m}` (≥1 entry; each ID must reference a real AC in the PRD)
-- `contract` — object with non-empty string fields `input`, `output`, `invariant` describing the task boundary
-- `test_plan` — string array of short test descriptions (NOT pseudocode; ≥1 entry)
-
-The existing task fields (`id`, `title`, `description`, `priority`, `complexity`, `depends_on`, `status`, `criteria`) are preserved unchanged in v2; the criteria entry shape (`text` / `type` / `met`) is also unchanged.
-
-**v1 fallback**: tasks files without a top-level `schema_version` (i.e. legacy v1) load and run unchanged; the orchestrator skips file-conflict detection for them (see Step 5) and does not require the four new fields.
+- **It exists**: read it (schema_version 1 or 2 run as before) and skip COMPLETED tasks, continuing from the first PENDING one.
+- **It does not exist**: stop and tell the user to run `/conductor:breakdown {displayId}`. Breakdown analysis, confidence rules and the `tasks.json` schema live in `.claude/commands/conductor/breakdown.md`; this command no longer generates a plan.
 
 ---
 
@@ -247,11 +135,11 @@ Before any implementation begins, set up the feature branch.
 
 ## Step 5 — Implementation Orchestration
 
-Read `tasks.json` from `{absolutePath}tasks.json` (or use the in-memory breakdown from Step 3).
-
 ### Work Queue
 
-Build an ordered list of tasks:
+**Tree plan (children exist):** take the ready queue from Step 3. Each row is a task; use `get_work_item({issueId: task})` for its description and criteria (`criterionId`, `text`, `kind`, `externalRef`). Tasks with unfinished blockers are not in the queue; they appear after their blockers reach DONE, so re-query `list_work_items({rootId, ready: true, sort: "priority", parentId: "any"})` after each batch until the queue is empty. Epics (tasks that have children) are completed by the system once their children finish; do not dispatch them.
+
+**Legacy tasks.json plan:** read `{absolutePath}tasks.json` and build an ordered list:
 1. Sort epics by dependency order (topological sort on `depends_on`)
 2. Within each epic, sort tasks by dependency order, then by priority (HIGH → MEDIUM → LOW)
 3. Mark tasks with unresolved dependencies as BLOCKED
@@ -278,9 +166,19 @@ Before dispatching a batch, compute the union of `files_owned` across tasks in t
 
 When splitting, place the conflicting tasks in different sub-batches such that each sub-batch's `files_owned` union has no duplicates; sub-batches then run one after another (the second sub-batch waits for the first to complete).
 
+For tree plans, take `files_owned` from the tasks.json mirror (matched by `workItemId`); a task with no entry there is assumed to conflict with nothing.
+
 For v1 tasks (no top-level `schema_version`, or no `files_owned` on tasks), behavior falls back to the existing heuristic-based grouping — the file-conflict check is skipped and v1 batches are formed from the complexity table above without change.
 
 ### Subagent Dispatch
+
+**Per task, before dispatch (tree plans):**
+
+```
+transition_work_item({issueId: <task>, toStatus: "IN_PROGRESS"})      // TODO → IN_PROGRESS
+report_agent_activity({issueId: <task>, sessionKey: <stable key, e.g. "implement-{displayId}-{task displayId}">,
+                       mode: "DELEGATE", activity: "WORKING"})
+```
 
 For each batch, spawn `conductor-coder` subagents in parallel using the Agent tool, all calls in one message, each with `subagent_type: "conductor-coder"`. The agent (`.claude/agents/conductor-coder.md`) is self-contained and handles stack detection internally. Pass each agent this prompt:
 
@@ -296,6 +194,8 @@ For each batch, spawn `conductor-coder` subagents in parallel using the Agent to
 ## Context
 - Epic: {epic.id} - {epic.title}
 - Issue: {issue_id} - {issue_title}
+- workItemId: {task work item id, tree plans only}
+- sessionKey: {the key used above, tree plans only}
 - Full PRD: {prdPath} (prd.html or prd.md, whichever exists; read if more context needed)
 
 ## Workflow
@@ -303,12 +203,23 @@ For each batch, spawn `conductor-coder` subagents in parallel using the Agent to
 2. Implement until all tests pass
 3. Document [manual] criteria verification steps
 4. Commit: "{task.id}: {brief description}" with acceptance criteria in body
-5. Report: COMPLETED or BLOCKED (with reason)
+5. If you hit a decision you cannot make from the task and the PRD, report NEEDS_INPUT on workItemId and stop BLOCKED
+6. Report: COMPLETED or BLOCKED (with reason)
 ```
+
+**After each coder reports (tree plans):**
+
+1. If COMPLETED, spawn `conductor-verifier` (`subagent_type: "conductor-verifier"`) with `workItemId`, `sessionKey`, the task's criteria (`criterionId`, `text`, `kind`, `externalRef`) and its `test_plan`. It records evidence with `mark_criterion_met` and ends with `report_agent_activity(DONE|ERRORED)`.
+2. Re-read the criteria (`get_work_item_tree({issueId: task})`). Only when **every `auto` criterion is met**, call `transition_work_item({issueId: task, toStatus: "DONE"})` (`IN_PROGRESS → DONE`). Otherwise leave the task IN_PROGRESS and list it under Known gaps with the unmet criteria.
+3. If the coder reported BLOCKED, it has already reported `NEEDS_INPUT` when a decision was missing; otherwise call `report_agent_activity({issueId: task, sessionKey, activity: "ERRORED", note: <blocker>})`. Leave the task IN_PROGRESS and list it under Known gaps.
+
+Check every `transition_work_item` response for a `warning` field and surface it as in Step 2b.
 
 ### After Each Batch
 
-Update `tasks.json` using the Edit tool:
+Tree plans: update the status of each dispatched task in the tasks.json mirror when it exists (`COMPLETED` or `BLOCKED`, `met` on passing criteria), then re-query the ready queue for the next batch.
+
+Legacy plans: update `tasks.json` using the Edit tool:
 - Set `status: COMPLETED` or `status: BLOCKED` on each task
 - Set `met: true` on criteria that passed
 - Update epic `status` based on its tasks' statuses
@@ -377,7 +288,15 @@ After the PR is created successfully:
    })
    ```
 
-3. **Advance to CODE_REVIEW** (definition-driven — confirm `CODE_REVIEW` is in the available transitions first):
+3. **Draft the health update** (tree plans): one paragraph on where delivery stands, for the owner to confirm in the web app:
+
+   ```
+   draft_health_update({issueId, health: "ON_TRACK" | "AT_RISK", note: "<what is done, what is not, and why>"})
+   ```
+
+   `ON_TRACK` when every task reached DONE; `AT_RISK` when any task is a Known gap.
+
+4. **Advance to CODE_REVIEW** (definition-driven — confirm `CODE_REVIEW` is in the available transitions first):
 
    ```
    get_available_transitions({issueId})           // expect CODE_REVIEW among the options from IN_PROGRESS

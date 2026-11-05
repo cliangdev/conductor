@@ -33,6 +33,8 @@ Ask adaptive follow-up questions (one at a time via AskUserQuestion) until you h
 
 Do NOT proceed to research until the problem, users, and core solution are clear.
 
+Then ask one more AskUserQuestion, "How much time is this worth?" (header "Appetite"), with options **1 week** / **2 weeks** / **1 month** / **Other**. The answer is the PRD's appetite: a time box that scope is cut to fit, not an estimate. Remember it as `appetite` (for example `2 weeks`) for Phase 4, and shape the P0 scope to fit it.
+
 If the scope seems large (>3 distinct epics), use AskUserQuestion to ask:
 > "This sounds like a large initiative. Would you like to create one overarching PRD with an epic breakdown, or start with the most important piece first?"
 
@@ -333,6 +335,7 @@ Call MCP tools in this exact sequence:
 
 2. **Create the Work Item**: `create_work_item({workflow, type: "PRD", title, description})`
    - Receive: `{issueId, displayId, localPath}`
+   - Then record the appetite from Discovery: `update_work_item({issueId, appetite})`
 
 3. **Scaffold document**: `scaffold_document({issueId, filename: "prd.html"})` (or `"prd.md"` when writing markdown). The filename extension sets the content type.
    - Receive: `{localPath: ".conductor/issues/{issueId}/prd.html", absolutePath: "/abs/path/to/.conductor/issues/{issueId}/prd.html"}`
@@ -341,7 +344,7 @@ Call MCP tools in this exact sequence:
 
 5. **Move to IN_REVIEW** (definition-driven): call `get_available_transitions({issueId})` to confirm `IN_REVIEW` is an available next status from the Workflow's initial status, then `transition_work_item({issueId, toStatus: "IN_REVIEW"})`, signalling the PRD is ready for team review.
 
-6. **Confirm**: "PRD saved — **{displayId}** is now IN_REVIEW."
+6. **Confirm**: "PRD saved — **{displayId}** is now IN_REVIEW. When it is approved, run `/conductor:breakdown {displayId}` to turn it into tasks."
 
 Then offer supporting documents via AskUserQuestion:
 > "Would you like to add any supporting documents?"

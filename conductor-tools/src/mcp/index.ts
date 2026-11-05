@@ -12,6 +12,18 @@ import {
   listWorkItems,
   getWorkItem,
 } from './tools/issues.js'
+import {
+  getWorkItemTree,
+  addDependency,
+  removeDependency,
+  setCriteria,
+  markCriterionMet,
+  listMilestones,
+  setMilestone,
+  reportAgentActivity,
+  getForecast,
+  draftHealthUpdate,
+} from './tools/delivery.js'
 import { deleteDocument, scaffoldDocument, writeDocument } from './tools/documents.js'
 import { listWorkItemComments } from './tools/comments.js'
 import {
@@ -268,19 +280,25 @@ export const TOOLS = [
   // --- Canonical Work Item tools (v2 /work-items surface) ---
   {
     name: 'create_work_item',
-    description: 'Create a new Work Item in the project (targets the v2 work-items API). Discover-then-create: call list_workflows({kind:"LIFECYCLE"}) first, pick the Workflow whose vocabulary fits (its area + allowed types), then pass that Workflow slug explicitly — do not assume ENGINEERING.',
+    description: 'Create a Work Item, or a child task when parentWorkItemId is set (targets the v2 work-items API). Discover-then-create: call list_workflows({kind:"LIFECYCLE"}) and pass the matching Workflow slug explicitly — do not assume ENGINEERING. Returns issueId and displayId (localPath only for top-level items); verify with get_work_item.',
     inputSchema: {
       type: 'object',
       properties: {
-        workflow: { type: 'string', description: 'Lifecycle Workflow slug that governs this Work Item (required). Discover with list_workflows({kind:"LIFECYCLE"}).' },
+        workflow: { type: 'string', description: 'Lifecycle Workflow slug that governs this Work Item. Required unless parentWorkItemId is set (children default to the TASK workflow). Discover with list_workflows({kind:"LIFECYCLE"}).' },
         type: { type: 'string', description: 'Work Item type, validated against the chosen Workflow\'s allowed types (e.g. PRD, FEATURE_REQUEST, BUG_REPORT)' },
         title: { type: 'string', description: 'Work Item title' },
         description: { type: 'string', description: 'Work Item description (optional). On a publishing Workflow this is the caption — the text that goes out to the platform — not a note about the item.' },
         tags: { type: 'array', items: { type: 'string' }, description: 'Freeform labels for grouping work across type, status and Workflow. Stored lower-cased and de-duplicated, so "Autumn" and "autumn" are one tag. Sent whole: omit to leave existing tags alone, send [] to clear them.' },
         fields: { type: 'object', description: 'Typed field values, keyed by the field keys the Workflow declares (list_workflows shows them with types and required statuses). Unknown keys and wrong types are rejected.' },
         dueOn: { type: 'string', description: 'Due date, YYYY-MM-DD (the Workflow\'s dueLabel names it, e.g. "Review on").' },
+        parentWorkItemId: { type: 'string', description: 'Parent Work Item ID: makes this a child task (workflow then optional; no local folder is created, so localPath is absent).' },
+        priority: { type: 'string', enum: ['P0', 'P1', 'P2', 'P3'], description: 'Priority, P0 highest (optional).' },
+        milestoneId: { type: 'string', description: 'Milestone ID from list_milestones / set_milestone (optional; children inherit the parent\'s).' },
+        appetite: { type: 'string', description: 'Time budget, e.g. "2 weeks", "10d", "1 month" (optional).' },
+        criteria: { type: 'array', items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['auto', 'manual'] }, externalRef: { type: 'string' } }, required: ['text'] }, description: 'Acceptance criteria. kind defaults to manual; externalRef is your own stable key (e.g. AC-1.1) for mark_criterion_met.' },
+        blockedBy: { type: 'array', items: { type: 'string' }, description: 'Work Item IDs that must finish before this one (optional).' },
       },
-      required: ['workflow', 'type', 'title'],
+      required: ['type', 'title'],
     },
   },
   {
@@ -298,6 +316,11 @@ export const TOOLS = [
         tags: { type: 'array', items: { type: 'string' }, description: 'Freeform labels for grouping work across type, status and Workflow. Stored lower-cased and de-duplicated, so "Autumn" and "autumn" are one tag. Sent whole: omit to leave existing tags alone, send [] to clear them.' },
         fields: { type: 'object', description: 'Typed field values to set, merged key by key: a key set to null clears it, a key left out is unchanged. Keys come from the Workflow (list_workflows). Set the fields a status requires here first, then move status with transition_work_item; clearing a required field of the current status is refused.' },
         dueOn: { type: ['string', 'null'], description: 'Due date, YYYY-MM-DD; null clears it. Omit to leave unchanged.' },
+        assigneeId: { type: 'string', description: 'User ID to assign (optional).' },
+        parentWorkItemId: { type: ['string', 'null'], description: 'Re-parent under this Work Item; null detaches it (optional).' },
+        priority: { type: ['string', 'null'], enum: ['P0', 'P1', 'P2', 'P3', null], description: 'Priority, P0 highest; null clears it (optional).' },
+        milestoneId: { type: ['string', 'null'], description: 'Milestone ID; null clears it (optional).' },
+        appetite: { type: ['string', 'null'], description: 'Time budget, e.g. "2 weeks" or "10d"; null clears it (optional).' },
       },
       required: ['issueId'],
     },
@@ -316,7 +339,7 @@ export const TOOLS = [
   },
   {
     name: 'list_work_items',
-    description: 'List Work Items in the project. Canonical tool (targets the v2 work-items API). Set dueBefore to find overdue items.',
+    description: 'List Work Items as compact rows {id, displayId, title, type, status, priority, childCount, blocked, ready, assignee?}; top-level items only unless parentId/rootId is set. Call get_work_item for full detail or get_work_item_tree for a subtree.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -325,6 +348,15 @@ export const TOOLS = [
         workflow: { type: 'string', description: 'Filter by bound Workflow slug (optional, e.g. ENGINEERING)' },
         tag: { type: 'string', description: 'Filter to Work Items carrying this tag (optional). Matched case-insensitively.' },
         dueBefore: { type: 'string', description: 'YYYY-MM-DD (optional). Only open Work Items due before this date, soonest first. Pass today\'s date for overdue reviews.' },
+        parentId: { type: 'string', description: '"none" (default: top-level only), "any" (children too), or a Work Item ID (its direct children).' },
+        rootId: { type: 'string', description: 'Work Item ID: return its whole subtree.' },
+        milestoneId: { type: 'string', description: 'Filter by milestone ID (optional).' },
+        priority: { type: 'string', enum: ['P0', 'P1', 'P2', 'P3'], description: 'Filter by priority (optional).' },
+        assigneeId: { type: 'string', description: 'Filter by assignee user ID (optional).' },
+        ready: { type: 'boolean', description: 'true: only items with no open blockers that are ready to start.' },
+        blocked: { type: 'boolean', description: 'true: only items blocked by an unfinished Work Item.' },
+        stale: { type: 'boolean', description: 'true: only items with no recent activity.' },
+        sort: { type: 'string', enum: ['updated', 'created', 'priority', 'dueOn', 'sequence'], description: 'Sort order (optional).' },
       },
     },
   },
@@ -337,6 +369,130 @@ export const TOOLS = [
         issueId: { type: 'string', description: 'Work Item ID' },
       },
       required: ['issueId'],
+    },
+  },
+  {
+    name: 'get_work_item_tree',
+    description: 'Get a Work Item and its descendants as a nested tree with status, priority, assignee, signals and criteria/progress counts; null fields are omitted. Read-back for create_work_item, add_dependency and set_criteria.',
+    inputSchema: {
+      type: 'object',
+      properties: { issueId: { type: 'string', description: 'Root Work Item ID' } },
+      required: ['issueId'],
+    },
+  },
+  {
+    name: 'add_dependency',
+    description: 'Record that one Work Item blocks another, or was discovered while working on another. Returns {dependencyId}; a cycle or the cap is refused with 409. Verify with get_work_item_tree.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'The Work Item the relation is recorded on (the blocker, for BLOCKS)' },
+        kind: { type: 'string', enum: ['BLOCKS', 'DISCOVERED_FROM'], description: 'BLOCKS: issueId must finish before relatedIssueId. DISCOVERED_FROM: issueId was found while working on relatedIssueId.' },
+        relatedIssueId: { type: 'string', description: 'The other Work Item' },
+      },
+      required: ['issueId', 'kind', 'relatedIssueId'],
+    },
+  },
+  {
+    name: 'remove_dependency',
+    description: 'Remove a dependency by its dependencyId. Returns {removed: true}; verify with get_work_item_tree.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item the dependency is recorded on' },
+        dependencyId: { type: 'string', description: 'ID returned by add_dependency' },
+      },
+      required: ['issueId', 'dependencyId'],
+    },
+  },
+  {
+    name: 'set_criteria',
+    description: 'Replace all acceptance criteria on a Work Item. Returns [{criterionId, externalRef}]; verify with get_work_item_tree.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        criteria: {
+          type: 'array',
+          items: { type: 'object', properties: { text: { type: 'string' }, kind: { type: 'string', enum: ['auto', 'manual'] }, externalRef: { type: 'string' } }, required: ['text'] },
+          description: 'The full list; criteria not included are removed. kind defaults to manual; externalRef is your own stable key (e.g. AC-1.1).',
+        },
+      },
+      required: ['issueId', 'criteria'],
+    },
+  },
+  {
+    name: 'mark_criterion_met',
+    description: 'Mark an acceptance criterion met or unmet, identified by criterionId or externalRef. Returns {criterionId, met, criteriaMet, criteriaTotal}; verify with get_work_item_tree.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        criterionId: { type: 'string', description: 'Criterion ID (from set_criteria)' },
+        externalRef: { type: 'string', description: 'Used to find the criterion when criterionId is not given' },
+        met: { type: 'boolean', description: 'true to mark met, false to reopen' },
+        evidence: { type: 'string', description: 'What shows it is met, e.g. a test name or PR link (optional)' },
+      },
+      required: ['issueId', 'met'],
+    },
+  },
+  {
+    name: 'list_milestones',
+    description: 'List the project\'s milestones as [{id, name, targetOn, state, progress}]. Use an id as milestoneId on create_work_item / update_work_item.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'set_milestone',
+    description: 'Create a milestone, or update the one with the same name. Returns {id, name}; verify with list_milestones.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Milestone name (the upsert key)' },
+        targetOn: { type: 'string', description: 'Target date, YYYY-MM-DD (optional)' },
+        description: { type: 'string', description: 'Description (optional)' },
+        state: { type: 'string', enum: ['OPEN', 'CLOSED'], description: 'Milestone state (optional)' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'report_agent_activity',
+    description: 'Report what an agent session is doing on a Work Item (idempotent per sessionKey; call again to heartbeat or finish). Returns {sessionKey, activity}; shows as agentActivity in get_work_item.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        sessionKey: { type: 'string', description: 'Stable key for this agent session' },
+        activity: { type: 'string', enum: ['WORKING', 'NEEDS_INPUT', 'DONE', 'ERRORED'], description: 'Current state' },
+        mode: { type: 'string', enum: ['DELEGATE', 'ASSIGNEE'], description: 'Default DELEGATE' },
+        note: { type: 'string', description: 'Short status line (optional)' },
+        agentLabel: { type: 'string', description: 'Default "claude-code"' },
+      },
+      required: ['issueId', 'sessionKey', 'activity'],
+    },
+  },
+  {
+    name: 'get_forecast',
+    description: 'Throughput forecast for a Work Item and its subtasks. Returns {state: DONE|NO_PLAN|INSUFFICIENT_DATA|OK, mode, remaining, samples, weeklyThroughputMedian, p50Date, p85Date, appetiteEndsOn, appetiteFit: FITS|TIGHT|EXCEEDS|null, milestoneFit}. NO_PLAN when the item has no sub-items to forecast. INSUFFICIENT_DATA until enough tasks have completed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID (usually a PRD)' },
+      },
+      required: ['issueId'],
+    },
+  },
+  {
+    name: 'draft_health_update',
+    description: 'Draft a health update (ON_TRACK, AT_RISK or OFF_TRACK plus a short note) for a Work Item. Returns {updateId, health, pendingConfirmation: true}. The owner confirms it in the web app; verify with get_work_item, which shows it under health.pendingDraft.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        health: { type: 'string', enum: ['ON_TRACK', 'AT_RISK', 'OFF_TRACK'], description: 'Drafted health' },
+        note: { type: 'string', description: 'One-paragraph status behind the health value' },
+      },
+      required: ['issueId', 'health', 'note'],
     },
   },
   {
@@ -1869,9 +2025,9 @@ export async function runMcpServer(): Promise<void> {
       switch (name) {
         case 'create_work_item': {
           const workflow = params['workflow'] as string | undefined
-          if (!workflow) {
+          if (!workflow && !params['parentWorkItemId']) {
             return errorResponse(
-              'create_work_item requires an explicit `workflow` slug. Call list_workflows({kind:"LIFECYCLE"}) ' +
+              'create_work_item requires an explicit `workflow` slug unless parentWorkItemId is set. Call list_workflows({kind:"LIFECYCLE"}) ' +
                 'and pass the slug of the Workflow that governs this Work Item.'
             )
           }
@@ -1884,6 +2040,12 @@ export async function runMcpServer(): Promise<void> {
               tags: params['tags'] as string[] | undefined,
               fields: params['fields'] as Record<string, unknown> | undefined,
               dueOn: params['dueOn'] as string | undefined,
+              parentWorkItemId: params['parentWorkItemId'] as string | undefined,
+              priority: params['priority'] as string | undefined,
+              milestoneId: params['milestoneId'] as string | undefined,
+              appetite: params['appetite'] as string | undefined,
+              criteria: params['criteria'] as Array<{ text: string; kind?: string; externalRef?: string }> | undefined,
+              blockedBy: params['blockedBy'] as string[] | undefined,
             },
             config
           )
@@ -2172,6 +2334,11 @@ export async function runMcpServer(): Promise<void> {
               tags: params['tags'] as string[] | undefined,
               fields: params['fields'] as Record<string, unknown> | undefined,
               dueOn: params['dueOn'] as string | null | undefined,
+              assigneeId: params['assigneeId'] as string | undefined,
+              parentWorkItemId: params['parentWorkItemId'] as string | null | undefined,
+              priority: params['priority'] as string | null | undefined,
+              milestoneId: params['milestoneId'] as string | null | undefined,
+              appetite: params['appetite'] as string | null | undefined,
             },
             config
           )
@@ -2195,11 +2362,104 @@ export async function runMcpServer(): Promise<void> {
               workflow: params['workflow'] as string | undefined,
               tag: params['tag'] as string | undefined,
               dueBefore: params['dueBefore'] as string | undefined,
+              parentId: params['parentId'] as string | undefined,
+              rootId: params['rootId'] as string | undefined,
+              milestoneId: params['milestoneId'] as string | undefined,
+              priority: params['priority'] as string | undefined,
+              assigneeId: params['assigneeId'] as string | undefined,
+              ready: params['ready'] as boolean | undefined,
+              blocked: params['blocked'] as boolean | undefined,
+              stale: params['stale'] as boolean | undefined,
+              sort: params['sort'] as string | undefined,
             },
             config
           )
           return successResponse(result)
         }
+        case 'get_work_item_tree':
+          return successResponse(await getWorkItemTree({ issueId: params['issueId'] as string }, config))
+        case 'add_dependency':
+          return successResponse(
+            await addDependency(
+              {
+                issueId: params['issueId'] as string,
+                kind: params['kind'] as string,
+                relatedIssueId: params['relatedIssueId'] as string,
+              },
+              config
+            )
+          )
+        case 'remove_dependency':
+          return successResponse(
+            await removeDependency(
+              { issueId: params['issueId'] as string, dependencyId: params['dependencyId'] as string },
+              config
+            )
+          )
+        case 'set_criteria':
+          return successResponse(
+            await setCriteria(
+              {
+                issueId: params['issueId'] as string,
+                criteria: params['criteria'] as Array<{ text: string; kind?: string; externalRef?: string }>,
+              },
+              config
+            )
+          )
+        case 'mark_criterion_met': {
+          const result = await markCriterionMet(
+            {
+              issueId: params['issueId'] as string,
+              criterionId: params['criterionId'] as string | undefined,
+              externalRef: params['externalRef'] as string | undefined,
+              met: params['met'] as boolean,
+              evidence: params['evidence'] as string | undefined,
+            },
+            config
+          )
+          return 'error' in result ? errorResponse(result as { error: string }) : successResponse(result)
+        }
+        case 'list_milestones':
+          return successResponse(await listMilestones({}, config))
+        case 'set_milestone':
+          return successResponse(
+            await setMilestone(
+              {
+                name: params['name'] as string,
+                targetOn: params['targetOn'] as string | undefined,
+                description: params['description'] as string | undefined,
+                state: params['state'] as string | undefined,
+              },
+              config
+            )
+          )
+        case 'report_agent_activity':
+          return successResponse(
+            await reportAgentActivity(
+              {
+                issueId: params['issueId'] as string,
+                sessionKey: params['sessionKey'] as string,
+                activity: params['activity'] as string,
+                mode: params['mode'] as string | undefined,
+                note: params['note'] as string | undefined,
+                agentLabel: params['agentLabel'] as string | undefined,
+              },
+              config
+            )
+          )
+        case 'get_forecast':
+          return successResponse(await getForecast({ issueId: params['issueId'] as string }, config))
+        case 'draft_health_update':
+          return successResponse(
+            await draftHealthUpdate(
+              {
+                issueId: params['issueId'] as string,
+                health: params['health'] as string,
+                note: params['note'] as string,
+              },
+              config
+            )
+          )
         case 'get_work_item': {
           const result = await getWorkItem(
             { issueId: params['issueId'] as string },

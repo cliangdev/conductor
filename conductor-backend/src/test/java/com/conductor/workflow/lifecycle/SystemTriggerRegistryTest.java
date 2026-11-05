@@ -39,6 +39,12 @@ class SystemTriggerRegistryTest {
     void exposesAllTriggers() {
         assertThat(registry.all())
                 .extracting(SystemTriggerRegistry.SystemTrigger::id)
-                .containsExactlyInAnyOrder("pr_merged", "status_changed", "review_approved");
+                .containsExactlyInAnyOrder("pr_merged", "status_changed", "review_approved", "children_done");
+    }
+
+    @Test
+    void childrenDoneIsRegisteredAndBypassesTheReviewGate() {
+        assertThat(registry.isRegistered("children_done")).isTrue();
+        assertThat(registry.bypassesReviewGate("children_done")).isTrue();
     }
 }

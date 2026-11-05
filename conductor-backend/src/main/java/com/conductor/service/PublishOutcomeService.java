@@ -538,6 +538,7 @@ public class PublishOutcomeService {
 
         if (!scheduledStatus.equals(fromStatus)) {
             post.setCurrentStatus(scheduledStatus);
+            CycleTimestamps.stamp(statechart, post, fromStatus, scheduledStatus, now);
             workItemRepository.save(post);
             log.info("Post {} moved {} -> {} while {} retried target(s) are in flight",
                     post.getId(), fromStatus, scheduledStatus, failed.size());
@@ -707,6 +708,7 @@ public class PublishOutcomeService {
 
         String fromStatus = post.getCurrentStatus();
         post.setCurrentStatus(toStatus.get());
+        CycleTimestamps.stamp(statechart, post, fromStatus, toStatus.get(), OffsetDateTime.now());
         workItemRepository.save(post);
         log.info("Post {} rolled up {} -> {}: {} of {} targets published",
                 postId, fromStatus, toStatus.get(),

@@ -8,9 +8,11 @@ import {
   FileTextIcon,
   FilmIcon,
   FolderIcon,
+  HomeIcon,
   LayoutDashboardIcon,
   LayoutTemplateIcon,
   LogOutIcon,
+  MapIcon,
   PanelLeftCloseIcon,
   PanelLeftIcon,
   PlusIcon,
@@ -353,6 +355,15 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
       <div className="flex-1 overflow-y-auto py-1">
         {currentWorkspace && (
           <div className="px-2 py-1">
+            {/* exact: every project route starts with the Overview href */}
+            <div className="space-y-0.5 mb-4">
+              <NavItem href={`/app/projects/${currentWorkspace.id}`} icon={<HomeIcon className="h-4 w-4" />} onNavigate={onNavigate} exact>
+                Overview
+              </NavItem>
+              <NavItem href={`/app/projects/${currentWorkspace.id}/roadmap`} icon={<MapIcon className="h-4 w-4" />} onNavigate={onNavigate}>
+                Roadmap
+              </NavItem>
+            </div>
             {workNav.length > 0 ? (
               groupByArea(workNav).map(([area, entries]) => (
                 <div key={area}>

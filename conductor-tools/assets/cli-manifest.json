@@ -170,6 +170,10 @@
         "description": "Create a PRD for the current project through guided discovery, research, and writing. Writes HTML by default; `import` turns an existing HTML page or claude.ai artifact into a PRD."
       },
       {
+        "name": "conductor:breakdown",
+        "description": "Break a PRD into dependency-ordered child tasks with acceptance criteria, a milestone and an appetite, after a critic review of scope and coverage."
+      },
+      {
         "name": "conductor:implement",
         "description": "Take a PRD issue from BACKLOG to a green PR \u2014 status transitions, branch, parallel coding agents, CI monitoring."
       },
@@ -194,6 +198,14 @@
       {
         "name": "conductor-coder",
         "description": "Implements one task test-first: detects the stack, writes tests for the automated criteria, implements until they pass, and commits with the task reference. Spawned in parallel by conductor:implement."
+      },
+      {
+        "name": "conductor-critic",
+        "description": "Reviews a proposed PRD breakdown for scope against the appetite, acceptance-criteria coverage, ambiguity and missing non-goals. Writes critique.md and returns PROCEED, SPLIT or CLARIFY. Spawned by conductor:breakdown."
+      },
+      {
+        "name": "conductor-verifier",
+        "description": "Runs a task's tests and records evidence on each acceptance criterion (met or unmet). Never edits code. Spawned by conductor:implement after each coder."
       },
       {
         "name": "conductor-marketing-strategist",
@@ -234,10 +246,9 @@
   "mcpTools": [
     {
       "name": "create_work_item",
-      "description": "Create a new Work Item in the project. Discover-then-create: call list_workflows({kind:\"LIFECYCLE\"}) first to pick the governing Workflow slug.",
+      "description": "Create a Work Item, or a child task under parentWorkItemId, with optional priority, milestone, appetite, criteria and blockers. Discover-then-create: call list_workflows({kind:\"LIFECYCLE\"}) first to pick the governing Workflow slug (not needed for children).",
       "category": "issues",
       "requiredParams": [
-        "workflow",
         "type",
         "title"
       ]
@@ -261,7 +272,7 @@
     },
     {
       "name": "list_work_items",
-      "description": "List Work Items in the project, optionally filtered by type, status, or Workflow.",
+      "description": "List Work Items as compact rows, filterable by type, status, Workflow, parent/subtree, milestone, priority, assignee, ready/blocked/stale.",
       "category": "issues"
     },
     {
@@ -270,6 +281,92 @@
       "category": "issues",
       "requiredParams": [
         "issueId"
+      ]
+    },
+    {
+      "name": "get_work_item_tree",
+      "description": "Get a Work Item and its descendants as a nested tree with status, signals and criteria progress.",
+      "category": "issues",
+      "requiredParams": [
+        "issueId"
+      ]
+    },
+    {
+      "name": "add_dependency",
+      "description": "Record that one Work Item blocks another, or was discovered from another.",
+      "category": "issues",
+      "requiredParams": [
+        "issueId",
+        "kind",
+        "relatedIssueId"
+      ]
+    },
+    {
+      "name": "remove_dependency",
+      "description": "Remove a dependency between Work Items by its dependencyId.",
+      "category": "issues",
+      "requiredParams": [
+        "issueId",
+        "dependencyId"
+      ]
+    },
+    {
+      "name": "set_criteria",
+      "description": "Replace all acceptance criteria on a Work Item.",
+      "category": "issues",
+      "requiredParams": [
+        "issueId",
+        "criteria"
+      ]
+    },
+    {
+      "name": "mark_criterion_met",
+      "description": "Mark an acceptance criterion met or unmet by criterionId or externalRef.",
+      "category": "issues",
+      "requiredParams": [
+        "issueId",
+        "met"
+      ]
+    },
+    {
+      "name": "list_milestones",
+      "description": "List the project's milestones with their progress.",
+      "category": "issues"
+    },
+    {
+      "name": "set_milestone",
+      "description": "Create a milestone, or update the one with the same name.",
+      "category": "issues",
+      "requiredParams": [
+        "name"
+      ]
+    },
+    {
+      "name": "report_agent_activity",
+      "description": "Report what an agent session is doing on a Work Item (working, needs input, done, errored).",
+      "category": "issues",
+      "requiredParams": [
+        "issueId",
+        "sessionKey",
+        "activity"
+      ]
+    },
+    {
+      "name": "get_forecast",
+      "description": "Throughput forecast (P50/P85 dates, appetite fit) for a Work Item and its subtasks.",
+      "category": "issues",
+      "requiredParams": [
+        "issueId"
+      ]
+    },
+    {
+      "name": "draft_health_update",
+      "description": "Draft a health update (on track, at risk, off track) for the owner to confirm in the web app.",
+      "category": "issues",
+      "requiredParams": [
+        "issueId",
+        "health",
+        "note"
       ]
     },
     {

@@ -73,6 +73,8 @@ public class WorkItemService {
     private final PublishTargetService publishTargetService;
     private final PublishPlatformRegistry platformRegistry;
     private final PostScheduleValidator postScheduleValidator;
+    private final WorkItemHierarchyService hierarchyService;
+    private final MilestoneService milestoneService;
 
     public WorkItemService(
             WorkItemRepository workItemRepository,
@@ -89,7 +91,11 @@ public class WorkItemService {
             PublishTargetService publishTargetService,
             AssetRepository assetRepository,
             PublishPlatformRegistry platformRegistry,
-            PostScheduleValidator postScheduleValidator) {
+            PostScheduleValidator postScheduleValidator,
+            WorkItemHierarchyService hierarchyService,
+            MilestoneService milestoneService) {
+        this.hierarchyService = hierarchyService;
+        this.milestoneService = milestoneService;
         this.platformRegistry = platformRegistry;
         this.postScheduleValidator = postScheduleValidator;
         this.assetRepository = assetRepository;
@@ -170,6 +176,28 @@ public class WorkItemService {
     public WorkItem createWorkItem(String projectId, String type, String title, String description,
                                    String workflowSlug, Collection<String> tags, Map<String, Object> fields,
                                    LocalDate dueOn, ProjectActor actor) {
+        return createWorkItem(projectId, type, title, description, workflowSlug, tags, fields, dueOn,
+                DeliveryInput.NONE, actor);
+    }
+
+    /**
+     * The delivery attributes a Work Item can be created with. All optional: a null (or blank) member is
+     * simply not set. {@code priority} is the stored 0..3 form; {@code appetite} is the raw text
+     * {@link AppetiteParser} understands.
+     */
+    public record DeliveryInput(String parentWorkItemId, Integer priority, String milestoneId, String appetite) {
+        public static final DeliveryInput NONE = new DeliveryInput(null, null, null, null);
+    }
+
+    /**
+     * As above, plus the delivery attributes. With a {@code parentWorkItemId} the item is a child: the
+     * Workflow defaults to {@code TASK} (and the type to {@code TASK}) when none is named, and the milestone
+     * is inherited from the parent unless one is given.
+     */
+    @Transactional
+    public WorkItem createWorkItem(String projectId, String type, String title, String description,
+                                   String workflowSlug, Collection<String> tags, Map<String, Object> fields,
+                                   LocalDate dueOn, DeliveryInput delivery, ProjectActor actor) {
         if (!actor.isMachine()) {
             verifyMembership(projectId, actor.user().getId());
             projectSecurityService.requireEditor(projectId, actor.user().getId());
@@ -178,10 +206,17 @@ public class WorkItemService {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new EntityNotFoundException("Project not found"));
 
-        // COND-18: bind the Work Item to its Workflow (defaults to the built-in ENGINEERING) and validate
-        // its type + initial status against that Workflow's definition.
-        String workflow = workflowSlug != null && !workflowSlug.isBlank()
-                ? workflowSlug : WorkItemWorkflowService.DEFAULT_WORKFLOW;
+        WorkItem parent = delivery.parentWorkItemId() == null || delivery.parentWorkItemId().isBlank() ? null
+                : hierarchyService.validateParent(projectId, null, delivery.parentWorkItemId());
+
+        // COND-18: bind the Work Item to its Workflow (defaults to the built-in ENGINEERING, or TASK for a
+        // child) and validate its type + initial status against that Workflow's definition.
+        boolean workflowGiven = workflowSlug != null && !workflowSlug.isBlank();
+        String workflow = workflowGiven ? workflowSlug
+                : parent != null ? WorkItemHierarchyService.TASK_WORKFLOW : WorkItemWorkflowService.DEFAULT_WORKFLOW;
+        if ((type == null || type.isBlank()) && parent != null && !workflowGiven) {
+            type = WorkItemHierarchyService.TASK_TYPE;
+        }
         workItemWorkflowService.validateType(projectId, workflow, type);
 
         WorkItem workItem = new WorkItem();
@@ -196,6 +231,7 @@ public class WorkItemService {
         workItem.setCurrentStatus(workItemWorkflowService.initialStatus(projectId, workflow));
         workItem.setTags(normalizeTags(tags));
         workItem.setDueOn(dueOn);
+        applyDeliveryOnCreate(projectId, workItem, parent, delivery);
         if (fields != null && !fields.isEmpty()) {
             Statechart statechart = workItemWorkflowService.statechartFor(projectId, workflow);
             workItem.setFields(WorkItemFields.merge(statechart, null, fields));
@@ -262,6 +298,24 @@ public class WorkItemService {
                                   String status, String assigneeId, OffsetDateTime scheduledFor,
                                   String scheduleTimezone, Collection<String> tags, Boolean publishOnApproval,
                                   Map<String, Object> fields, String dueOn, User caller) {
+        return patchWorkItem(projectId, workItemId, title, description, status, assigneeId, scheduledFor,
+                scheduleTimezone, tags, publishOnApproval, fields, dueOn, null, null, null, null, caller);
+    }
+
+    /**
+     * As above, plus the delivery attributes, which follow the {@code dueOn} convention: null leaves the
+     * value unchanged, a blank string clears it. {@code parentWorkItemId} re-parents (see {@link
+     * WorkItemHierarchyService#setParent}); {@code priority} is {@code P0}..{@code P3}; {@code milestoneId}
+     * must be a milestone of this project; {@code appetite} is text such as {@code 2 weeks}. All are applied
+     * before the status move, and a status move that finishes the last child of a TASK parent completes
+     * that parent too.
+     */
+    @Transactional
+    public WorkItem patchWorkItem(String projectId, String workItemId, String title, String description,
+                                  String status, String assigneeId, OffsetDateTime scheduledFor,
+                                  String scheduleTimezone, Collection<String> tags, Boolean publishOnApproval,
+                                  Map<String, Object> fields, String dueOn, String parentWorkItemId,
+                                  String priority, String milestoneId, String appetite, User caller) {
         verifyMembership(projectId, caller.getId());
         projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
@@ -338,6 +392,18 @@ public class WorkItemService {
         if (dueOn != null) {
             workItem.setDueOn(parseDueOn(dueOn));
         }
+        if (parentWorkItemId != null) {
+            hierarchyService.setParent(projectId, workItem, parentWorkItemId);
+        }
+        if (priority != null) {
+            workItem.setPriority(PriorityScale.parse(priority));
+        }
+        if (milestoneId != null) {
+            workItem.setMilestone(milestoneId.isBlank() ? null : milestoneService.resolve(projectId, milestoneId));
+        }
+        if (appetite != null) {
+            applyAppetite(workItem, appetite);
+        }
 
         if (title != null) {
             workItem.setTitle(title);
@@ -374,6 +440,7 @@ public class WorkItemService {
                 clearDerivedFireTime(workItem);
             }
             workItem.setCurrentStatus(status);
+            stampCycleTimestamps(projectId, workItem, previousStatus, status);
             statusChanged = true;
         }
 
@@ -400,10 +467,57 @@ public class WorkItemService {
 
         if (statusChanged) {
             // PR link (if any) lives in github_pr Assets now, not on the Work Item; surfaced on the merge event.
+            // publishStatusChanged also rolls completion up to the parents.
             publishStatusChanged(projectId, workItem, previousStatus, workItem.getCurrentStatus(), null);
         }
 
         return workItem;
+    }
+
+    /** Sets the delivery attributes of a brand-new item; a child inherits its parent's milestone by default. */
+    private void applyDeliveryOnCreate(String projectId, WorkItem workItem, WorkItem parent, DeliveryInput delivery) {
+        if (parent != null) {
+            workItem.setParentWorkItemId(parent.getId());
+            workItem.setMilestone(parent.getMilestone());
+        }
+        if (delivery.milestoneId() != null && !delivery.milestoneId().isBlank()) {
+            workItem.setMilestone(milestoneService.resolve(projectId, delivery.milestoneId()));
+        }
+        workItem.setPriority(delivery.priority());
+        if (delivery.appetite() != null) {
+            applyAppetite(workItem, delivery.appetite());
+        }
+    }
+
+    private static void applyAppetite(WorkItem workItem, String raw) {
+        AppetiteParser.Appetite parsed = AppetiteParser.parse(raw);
+        workItem.setAppetite(parsed == null ? null : parsed.label());
+        workItem.setAppetiteDays(parsed == null ? null : parsed.days());
+    }
+
+    /**
+     * Stamps {@code started_at} / {@code completed_at} for a status move made here (see {@link
+     * CycleTimestamps}). The other places a status changes are covered where they happen: a system
+     * transition ({@code WorkItemWorkflowService#applySystemTransition}, which also serves the PR-merge
+     * and {@code children_done} paths) stamps there.
+     */
+    private void stampCycleTimestamps(String projectId, WorkItem workItem, String from, String to) {
+        CycleTimestamps.stamp(resolveStatechartOrNull(projectId, workItem), workItem, from, to,
+                OffsetDateTime.now());
+    }
+
+    /**
+     * After a child's status was saved: completes any TASK ancestors whose children are now all finished,
+     * announcing each move like any other status change.
+     */
+    private void rollUpToParents(String projectId, WorkItem workItem) {
+        if (workItem.getParentWorkItemId() == null) {
+            return;
+        }
+        for (WorkItemHierarchyService.ParentTransition moved
+                : hierarchyService.onChildStatusChanged(projectId, workItem)) {
+            announceStatusChanged(projectId, moved.parent(), moved.fromStatus(), moved.toStatus(), null);
+        }
     }
 
     /**
@@ -442,29 +556,91 @@ public class WorkItemService {
     @Transactional(readOnly = true)
     public List<WorkItem> listWorkItemEntities(String projectId, String type, String status, String workflow,
                                                String tag, LocalDate dueBefore, User caller) {
+        return listWorkItemEntities(projectId,
+                ListFilter.withoutHierarchy(type, status, workflow, tag, dueBefore), caller);
+    }
+
+    /**
+     * Every filter {@code GET /work-items} understands. {@code parentId} is {@code none} (also null: top-level
+     * items only), {@code any} (children included) or a Work Item id (that item's direct children);
+     * {@code rootId} narrows to the whole subtree beneath that item and overrides {@code parentId}. {@code
+     * priority} is the stored 0..3 form. {@code sort} is {@code updated|created|priority|dueOn|sequence}, or
+     * null to leave the order alone.
+     */
+    public record ListFilter(String type, String status, String workflow, String tag, LocalDate dueBefore,
+                             String parentId, String rootId, String milestoneId, Integer priority,
+                             String assigneeId, String sort) {
+
+        public static final String PARENT_NONE = "none";
+        public static final String PARENT_ANY = "any";
+
+        /** The pre-hierarchy list: children included, so a caller that predates them sees what it always did. */
+        public static ListFilter withoutHierarchy(String type, String status, String workflow, String tag,
+                                                  LocalDate dueBefore) {
+            return new ListFilter(type, status, workflow, tag, dueBefore, PARENT_ANY, null, null, null, null, null);
+        }
+    }
+
+    /**
+     * Lists a project's Work Items under {@link ListFilter}. {@code dueBefore} keeps only items still open
+     * (terminal is a Workflow's word, so it is judged here per item rather than in SQL) and orders them
+     * soonest first unless a {@code sort} says otherwise.
+     */
+    @Transactional(readOnly = true)
+    public List<WorkItem> listWorkItemEntities(String projectId, ListFilter filter, User caller) {
         verifyReadAccess(projectId, caller.getId());
-        if (dueBefore != null) {
-            Map<String, Statechart> charts = new HashMap<>();
-            return workItemRepository.findByProjectFiltered(projectId, blankToNull(type), blankToNull(status),
-                            blankToNull(workflow), normalizeTag(tag)).stream()
-                    .filter(i -> i.getDueOn() != null && i.getDueOn().isBefore(dueBefore))
-                    .filter(i -> {
-                        Statechart chart = charts.computeIfAbsent(
-                                i.getWorkflow() + "@" + i.getWorkflowVersion(),
-                                k -> resolveStatechartOrNull(projectId, i));
-                        return chart == null || !chart.isTerminal(i.getCurrentStatus());
-                    })
+        String parent = blankToNull(filter.parentId());
+        String rootId = blankToNull(filter.rootId());
+        Set<String> subtree = null;
+        if (rootId != null) {
+            WorkItem root = findWorkItemInProject(projectId, rootId);
+            subtree = new LinkedHashSet<>(workItemRepository.findSubtreeIds(root.getId()));
+            subtree.remove(root.getId());
+            parent = ListFilter.PARENT_ANY;
+        }
+        boolean topLevelOnly = parent == null || ListFilter.PARENT_NONE.equals(parent);
+        String parentFilter = topLevelOnly || ListFilter.PARENT_ANY.equals(parent) ? null : parent;
+
+        // The tag is normalised the same way it is on write, or filtering by a tag someone typed with a
+        // capital would silently match nothing.
+        List<WorkItem> items = workItemRepository.findByProjectFiltered(projectId, blankToNull(filter.type()),
+                blankToNull(filter.status()), blankToNull(filter.workflow()), normalizeTag(filter.tag()),
+                parentFilter, topLevelOnly, blankToNull(filter.milestoneId()), filter.priority(),
+                blankToNull(filter.assigneeId()));
+
+        if (subtree != null) {
+            Set<String> inSubtree = subtree;
+            items = items.stream().filter(i -> inSubtree.contains(i.getId())).toList();
+        }
+        if (filter.dueBefore() != null) {
+            StatechartCache charts = new StatechartCache(workItemWorkflowService, projectId);
+            items = items.stream()
+                    .filter(i -> i.getDueOn() != null && i.getDueOn().isBefore(filter.dueBefore()))
+                    .filter(i -> !charts.isTerminal(i))
                     .sorted(Comparator.comparing(WorkItem::getDueOn))
                     .toList();
         }
-        String typeFilter = (type != null && !type.isBlank()) ? type : null;
-        String statusFilter = (status != null && !status.isBlank()) ? status : null;
-        String workflowFilter = (workflow != null && !workflow.isBlank()) ? workflow : null;
-        // Normalised the same way it is on write, or filtering by a tag someone typed with a capital
-        // would silently match nothing.
-        String tagFilter = normalizeTag(tag);
-        return workItemRepository.findByProjectFiltered(
-                projectId, typeFilter, statusFilter, workflowFilter, tagFilter);
+        return sorted(items, filter.sort());
+    }
+
+    /** Orders by {@code sort}; null or unknown leaves the order as it came. Items missing the key sort last. */
+    private static List<WorkItem> sorted(List<WorkItem> items, String sort) {
+        if (sort == null || sort.isBlank()) {
+            return items;
+        }
+        Comparator<WorkItem> order = switch (sort) {
+            case "updated" -> Comparator.comparing(WorkItem::getUpdatedAt, Comparator.reverseOrder());
+            case "created" -> Comparator.comparing(WorkItem::getCreatedAt, Comparator.reverseOrder());
+            case "priority" -> Comparator.comparing(WorkItem::getPriority,
+                    Comparator.nullsLast(Comparator.<Integer>naturalOrder()));
+            case "dueOn" -> Comparator.comparing(WorkItem::getDueOn,
+                    Comparator.nullsLast(Comparator.<LocalDate>naturalOrder()));
+            case "sequence" -> Comparator.comparing(WorkItem::getSequenceNumber);
+            default -> throw new BusinessException(
+                    "sort must be one of updated, created, priority, dueOn, sequence, got '" + sort + "'");
+        };
+        // Sequence number as the tiebreak keeps the order stable between calls.
+        return items.stream().sorted(order.thenComparing(WorkItem::getSequenceNumber)).toList();
     }
 
     /** A blank {@code dueOn} clears the date; anything else must be an ISO {@code yyyy-MM-dd} date. */
@@ -893,8 +1069,22 @@ public class WorkItemService {
         return platformRegistry.declaresPublishing(statechart);
     }
 
+    /**
+     * Announces a status change and rolls completion up to the item's parents. Every status write in the
+     * product ends here (the patch, a PR merge, a lifecycle cascade, a review verdict, a publish outcome), so
+     * this is the one place the parent roll-up is hooked: a TASK parent whose children are all finished takes
+     * its {@code children_done} edge (see {@link WorkItemHierarchyService#onChildStatusChanged}). Call it after
+     * the new status has been saved.
+     */
     public void publishStatusChanged(String projectId, WorkItem workItem, String fromStatus, String toStatus,
                                      String prUrl) {
+        announceStatusChanged(projectId, workItem, fromStatus, toStatus, prUrl);
+        rollUpToParents(projectId, workItem);
+    }
+
+    /** The announcement alone; the parents moved by a roll-up use this so they do not roll up again. */
+    private void announceStatusChanged(String projectId, WorkItem workItem, String fromStatus, String toStatus,
+                                       String prUrl) {
         Statechart statechart = workItemWorkflowService.resolveFor(projectId, workItem);
         Map<String, Object> meta = new HashMap<>();
         meta.put("workItemId", workItem.getId());
@@ -997,9 +1187,42 @@ public class WorkItemService {
      */
     @Transactional
     public void deleteWorkItem(String projectId, String workItemId, User caller, boolean confirmLive) {
+        deleteWorkItem(projectId, workItemId, caller, confirmLive, false);
+    }
+
+    /**
+     * As above. A Work Item with children is refused (409, naming how many) unless {@code cascade}: then
+     * its whole subtree goes with it, deepest first, each item through the same checks as a lone delete --
+     * so a live Post anywhere beneath still needs {@code confirmLive}. Without the cascade the children
+     * would be silently orphaned to the top level by the {@code ON DELETE SET NULL} foreign key.
+     */
+    @Transactional
+    public void deleteWorkItem(String projectId, String workItemId, User caller, boolean confirmLive,
+                               boolean cascade) {
         verifyMembership(projectId, caller.getId());
         projectSecurityService.requireEditor(projectId, caller.getId());
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
+        List<String> subtree = workItemRepository.findSubtreeIds(workItem.getId());
+        if (subtree.size() > 1) {
+            if (!cascade) {
+                throw new ConflictException("This Work Item has " + (subtree.size() - 1) + " sub-items. "
+                        + "Delete them with it (cascade=true), or move or delete them first.");
+            }
+            // Refuse for a live item anywhere beneath BEFORE revoking or deleting anything, so a refusal
+            // cannot leave some of the subtree already unscheduled on its platform.
+            if (!confirmLive && subtree.stream().skip(1).anyMatch(publishTargetService::hasPublishedTarget)) {
+                throw new ConflictException("A sub-item is live on a platform. Deleting it only removes it from "
+                        + "Conductor and leaves the live post behind; confirm to delete it anyway.");
+            }
+            // Parents come before children in the subtree order, so walk it backwards.
+            for (int i = subtree.size() - 1; i > 0; i--) {
+                workItemRepository.findById(subtree.get(i)).ifPresent(child -> deleteOne(child, confirmLive));
+            }
+        }
+        deleteOne(workItem, confirmLive);
+    }
+
+    private void deleteOne(WorkItem workItem, boolean confirmLive) {
         if (!confirmLive && publishTargetService.hasPublishedTarget(workItem.getId())) {
             throw new ConflictException("This post is live on a platform. Deleting it only removes it from "
                     + "Conductor and leaves the live post behind; confirm to delete it anyway.");

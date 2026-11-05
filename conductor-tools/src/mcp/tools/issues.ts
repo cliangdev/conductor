@@ -57,6 +57,12 @@ async function createWorkItemImpl(
     tags?: string[]
     fields?: Record<string, unknown>
     dueOn?: string
+    parentWorkItemId?: string
+    priority?: string
+    milestoneId?: string
+    appetite?: string
+    criteria?: Array<{ text: string; kind?: string; externalRef?: string }>
+    blockedBy?: string[]
   },
   config: Config,
   endpoint: WorkItemEndpoint
@@ -78,6 +84,12 @@ async function createWorkItemImpl(
     tags: params.tags,
     fields: params.fields,
     dueOn: params.dueOn,
+    parentWorkItemId: params.parentWorkItemId,
+    priority: params.priority,
+    milestoneId: params.milestoneId,
+    appetite: params.appetite,
+    criteria: params.criteria,
+    blockedBy: params.blockedBy,
   }
 
   const collectionPath = endpoint.collection(config.projectId)
@@ -111,26 +123,28 @@ async function createWorkItemImpl(
   // Offline (queued) we can't know it, so fall back to the Engineering initial status.
   const initialStatus = backendResult?.status ?? 'DRAFT'
 
-  const content = buildIssueFrontmatter(
-    issueId,
-    params.type,
-    params.title,
-    initialStatus,
-    params.description
-  )
-  writeIssueFile(config, issueId, content)
-
-  const localPath = `.conductor/issues/${issueId}/`
-  const absolutePath = path.join(resolveLocalPath(config), '.conductor', 'issues', issueId) + path.sep
-
   const result: Record<string, unknown> = {
     issueId,
     displayId: backendResult?.displayId,
     type: params.type,
     title: params.title,
     status: initialStatus,
-    localPath,
-    absolutePath,
+  }
+
+  // A child task never gets a local folder (one folder per task would swamp .conductor/issues), so
+  // localPath/absolutePath are absent for it. Documents can still be attached via write_document.
+  if (!params.parentWorkItemId) {
+    const content = buildIssueFrontmatter(
+      issueId,
+      params.type,
+      params.title,
+      initialStatus,
+      params.description
+    )
+    writeIssueFile(config, issueId, content)
+    result['localPath'] = `.conductor/issues/${issueId}/`
+    result['absolutePath'] =
+      path.join(resolveLocalPath(config), '.conductor', 'issues', issueId) + path.sep
   }
 
   if (warning !== undefined) {
@@ -155,6 +169,11 @@ async function updateWorkItemImpl(
     fields?: Record<string, unknown>
     /** YYYY-MM-DD; null clears the date. */
     dueOn?: string | null
+    assigneeId?: string
+    parentWorkItemId?: string | null
+    priority?: string | null
+    milestoneId?: string | null
+    appetite?: string | null
   },
   config: Config,
   endpoint: WorkItemEndpoint
@@ -173,6 +192,12 @@ async function updateWorkItemImpl(
   if (params.fields !== undefined) body['fields'] = params.fields
   // The wire cannot tell an omitted field from an explicit null, so clearing is an empty string.
   if (params.dueOn !== undefined) body['dueOn'] = params.dueOn === null ? '' : params.dueOn
+  if (params.assigneeId !== undefined) body['assigneeId'] = params.assigneeId
+  // Same convention as dueOn: null (or "") clears, so the wire carries an empty string.
+  if (params.parentWorkItemId !== undefined) body['parentWorkItemId'] = params.parentWorkItemId ?? ''
+  if (params.priority !== undefined) body['priority'] = params.priority ?? ''
+  if (params.milestoneId !== undefined) body['milestoneId'] = params.milestoneId ?? ''
+  if (params.appetite !== undefined) body['appetite'] = params.appetite ?? ''
 
   const itemPath = endpoint.item(config.projectId, params.issueId)
 
@@ -259,21 +284,85 @@ async function setWorkItemStatusImpl(
   return result
 }
 
-async function listWorkItemsImpl(
-  params: { type?: string; status?: string; workflow?: string; tag?: string; dueBefore?: string },
+export interface ListWorkItemsParams {
+  type?: string
+  status?: string
+  workflow?: string
+  tag?: string
+  dueBefore?: string
+  parentId?: string
+  rootId?: string
+  milestoneId?: string
+  priority?: string
+  assigneeId?: string
+  ready?: boolean
+  blocked?: boolean
+  stale?: boolean
+  sort?: string
+}
+
+interface ListedWorkItem {
+  id: string
+  displayId?: string
+  title?: string
+  type?: string
+  status?: string
+  sequenceNumber?: number
+  priority?: string | null
+  childCount?: number
+  signals?: { blocked?: boolean; ready?: boolean }
+  assignee?: { userId?: string; id?: string; name?: string; displayName?: string } | null
+  [key: string]: unknown
+}
+
+/** Query string for list_work_items. Booleans are sent only when true — `false` means "don't filter". */
+export function buildListQuery(params: ListWorkItemsParams): string {
+  const query = new URLSearchParams()
+  const strings: Array<keyof ListWorkItemsParams> = [
+    'type', 'status', 'workflow', 'tag', 'dueBefore', 'parentId', 'rootId', 'milestoneId', 'priority', 'assigneeId', 'sort',
+  ]
+  for (const key of strings) {
+    const value = params[key]
+    if (typeof value === 'string' && value) query.set(key, value)
+  }
+  for (const key of ['ready', 'blocked', 'stale'] as const) {
+    if (params[key] === true) query.set(key, 'true')
+  }
+  return query.toString()
+}
+
+/** Compact row: the few fields an agent needs to pick or reference an item; get_work_item has the rest. */
+export function toCompactRow(item: ListedWorkItem): Record<string, unknown> {
+  const row: Record<string, unknown> = {
+    id: item.id,
+    displayId: item.displayId,
+    title: item.title,
+    type: item.type,
+    status: item.status,
+    // Kept so a bare "42" still resolves an item (conductor:implement step 1 matches on it).
+    sequenceNumber: item.sequenceNumber,
+    priority: item.priority ?? null,
+    childCount: item.childCount ?? 0,
+    blocked: item.signals?.blocked ?? false,
+    ready: item.signals?.ready ?? false,
+  }
+  const a = item.assignee
+  if (a) {
+    const userId = a.userId ?? a.id
+    const name = a.name ?? a.displayName
+    if (userId || name) row['assignee'] = { userId, name }
+  }
+  return row
+}
+
+async function listWorkItemsRawImpl(
+  params: ListWorkItemsParams,
   config: Config,
   endpoint: WorkItemEndpoint
-): Promise<unknown[]> {
-  const query = new URLSearchParams()
-  if (params.type) query.set('type', params.type)
-  if (params.status) query.set('status', params.status)
-  if (params.workflow) query.set('workflow', params.workflow)
-  if (params.tag) query.set('tag', params.tag)
-  if (params.dueBefore) query.set('dueBefore', params.dueBefore)
-
-  const qs = query.toString()
+): Promise<ListedWorkItem[]> {
+  const qs = buildListQuery(params)
   const listPath = `${endpoint.collection(config.projectId)}${qs ? `?${qs}` : ''}`
-  return apiGet<unknown[]>(listPath, config)
+  return apiGet<ListedWorkItem[]>(listPath, config)
 }
 
 async function getWorkItemImpl(
@@ -310,10 +399,17 @@ export async function createWorkItem(
     type: string
     title: string
     description?: string
-    workflow: string
+    /** Required unless parentWorkItemId is set (the backend then defaults to the TASK workflow). */
+    workflow?: string
     tags?: string[]
     fields?: Record<string, unknown>
     dueOn?: string
+    parentWorkItemId?: string
+    priority?: string
+    milestoneId?: string
+    appetite?: string
+    criteria?: Array<{ text: string; kind?: string; externalRef?: string }>
+    blockedBy?: string[]
   },
   config: Config
 ): Promise<Record<string, unknown>> {
@@ -332,6 +428,11 @@ export async function updateWorkItem(
     tags?: string[]
     fields?: Record<string, unknown>
     dueOn?: string | null
+    assigneeId?: string
+    parentWorkItemId?: string | null
+    priority?: string | null
+    milestoneId?: string | null
+    appetite?: string | null
   },
   config: Config
 ): Promise<Record<string, unknown>> {
@@ -345,11 +446,21 @@ export async function setWorkItemStatus(
   return setWorkItemStatusImpl(params, config, V2)
 }
 
+/** The MCP `list_work_items` tool: compact rows only, to protect the caller's context budget. */
 export async function listWorkItems(
-  params: { type?: string; status?: string; workflow?: string; tag?: string; dueBefore?: string },
+  params: ListWorkItemsParams,
   config: Config
-): Promise<unknown[]> {
-  return listWorkItemsImpl(params, config, V2)
+): Promise<Record<string, unknown>[]> {
+  const items = await listWorkItemsRawImpl(params, config, V2)
+  return items.map(toCompactRow)
+}
+
+/** Full, unreduced rows, for in-process callers (e.g. list_posts) that need fields the compact row drops. */
+export async function listWorkItemsRaw(
+  params: ListWorkItemsParams,
+  config: Config
+): Promise<ListedWorkItem[]> {
+  return listWorkItemsRawImpl(params, config, V2)
 }
 
 export async function getWorkItem(

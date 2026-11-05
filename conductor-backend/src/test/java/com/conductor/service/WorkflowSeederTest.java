@@ -274,6 +274,86 @@ class WorkflowSeederTest {
     }
 
     @Test
+    void seedsTaskHeaderHiddenFromTheSidebar() {
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "TASK")).thenReturn(false);
+        when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        seeder.seedTask(project);
+
+        ArgumentCaptor<WorkflowDefinition> headerCaptor = ArgumentCaptor.forClass(WorkflowDefinition.class);
+        verify(workflowRepository).save(headerCaptor.capture());
+        WorkflowDefinition header = headerCaptor.getValue();
+        assertThat(header.getName()).isEqualTo("TASK");
+        assertThat(header.getArea()).isEqualTo("TASK");
+        assertThat(header.getState()).isEqualTo("PUBLISHED");
+        assertThat(header.isSidebarEnabled()).isFalse();
+        assertThat(header.isLifecycle()).isTrue();
+        assertThat(header.getDefinition().get("noun").asText()).isEqualTo("Task");
+        verify(versionRepository).save(any(WorkflowDefinitionVersion.class));
+    }
+
+    @Test
+    void otherBuiltInsStayInTheSidebar() {
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug(any(), any())).thenReturn(false);
+        when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        seeder.seedEngineering(project);
+        seeder.seedMarketing(project);
+        seeder.seedMarketingChanges(project);
+
+        ArgumentCaptor<WorkflowDefinition> headerCaptor = ArgumentCaptor.forClass(WorkflowDefinition.class);
+        verify(workflowRepository, times(3)).save(headerCaptor.capture());
+        assertThat(headerCaptor.getAllValues()).allMatch(WorkflowDefinition::isSidebarEnabled);
+    }
+
+    @Test
+    void isIdempotentWhenTaskAlreadyExists() {
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "TASK")).thenReturn(true);
+
+        seeder.seedTask(project);
+
+        verify(workflowRepository, never()).save(any());
+        verifyNoInteractions(versionRepository);
+    }
+
+    @Test
+    void taskDefinitionPassesLifecycleValidation() throws Exception {
+        WorkflowDefinitionValidator validator = new WorkflowDefinitionValidator(
+                new SkillRegistry(mapper, mock(ProjectSkillRepository.class)),
+                new SystemTriggerRegistry(mapper), new PublishPlatformRegistry());
+
+        WorkflowValidationResult result = validator.validate("proj-1", resource("/schema/examples/task.workflow.json"));
+
+        assertThat(result.getErrors()).isEmpty();
+    }
+
+    @Test
+    void taskStatechartIsTodoInProgressDoneOrCancelledWithAChildrenDoneRollUp() throws Exception {
+        Statechart chart = Statechart.parse(resource("/schema/examples/task.workflow.json"));
+
+        assertThat(chart.slug()).isEqualTo("TASK");
+        assertThat(chart.types()).containsExactly("TASK");
+        assertThat(chart.assetTypes()).containsExactly("github_pr");
+        assertThat(chart.initialStatus().orElseThrow().id()).isEqualTo("TODO");
+        assertThat(chart.status("TODO").orElseThrow().category()).isEqualTo("open");
+        assertThat(chart.status("IN_PROGRESS").orElseThrow().category()).isEqualTo("in_progress");
+        assertThat(chart.isTerminal("DONE")).isTrue();
+        assertThat(chart.isTerminal("CANCELLED")).isTrue();
+        assertThat(chart.transition("TODO", "IN_PROGRESS").orElseThrow().label()).isEqualTo("Start");
+        assertThat(chart.transition("IN_PROGRESS", "DONE").orElseThrow().label()).isEqualTo("Finish");
+        assertThat(chart.transition("IN_PROGRESS", "TODO").orElseThrow().label()).isEqualTo("Stop");
+        assertThat(chart.transition("DONE", "TODO").orElseThrow().label()).isEqualTo("Reopen");
+        assertThat(chart.transition("TODO", "CANCELLED")).isPresent();
+        assertThat(chart.transition("IN_PROGRESS", "CANCELLED")).isPresent();
+        assertThat(chart.transitions()).noneMatch(StatechartTransition::requiresReview);
+        assertThat(chart.triggeredTransitionFrom("TODO", "children_done").orElseThrow().to()).isEqualTo("DONE");
+        assertThat(chart.triggeredTransitionFrom("IN_PROGRESS", "children_done").orElseThrow().to()).isEqualTo("DONE");
+        // Never reopens: nothing leaves a terminal status on the roll-up trigger.
+        assertThat(chart.triggeredTransitionFrom("DONE", "children_done")).isEmpty();
+        assertThat(chart.triggeredTransitionFrom("CANCELLED", "children_done")).isEmpty();
+    }
+
+    @Test
     void marketingChangesRunsPlannedToLiveToReviewedWithAGatedVerdict() throws Exception {
         Statechart chart = Statechart.parse(resource("/schema/examples/marketing-changes.workflow.json"));
 

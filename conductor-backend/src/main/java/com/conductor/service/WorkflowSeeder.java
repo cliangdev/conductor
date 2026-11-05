@@ -16,7 +16,7 @@ import java.io.UncheckedIOException;
 
 /**
  * Seeds the built-in lifecycle Workflows as real DB rows for a project — ENGINEERING (COND-22),
- * MARKETING (COND-23) and MARKETING_CHANGES.
+ * MARKETING (COND-23), MARKETING_CHANGES and TASK (the sidebar-hidden lifecycle of child Work Items).
  *
  * <p>Existing projects are seeded by the {@code V74} Flyway migration; this is the runtime path for
  * <em>new</em> projects, invoked from {@link ProjectService} on workspace creation. Both read the same
@@ -30,16 +30,19 @@ public class WorkflowSeeder {
     static final String ENGINEERING_SLUG = "ENGINEERING";
     static final String MARKETING_SLUG = "MARKETING";
     static final String MARKETING_CHANGES_SLUG = "MARKETING_CHANGES";
+    static final String TASK_SLUG = "TASK";
     private static final String ENGINEERING_RESOURCE = "schema/examples/engineering.workflow.json";
     private static final String MARKETING_RESOURCE = "schema/examples/marketing.workflow.json";
 
     private static final String MARKETING_CHANGES_RESOURCE = "schema/examples/marketing-changes.workflow.json";
+    private static final String TASK_RESOURCE = "schema/examples/task.workflow.json";
 
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowDefinitionVersionRepository versionRepository;
     private final JsonNode engineeringDefinition;
     private final JsonNode marketingDefinition;
     private final JsonNode marketingChangesDefinition;
+    private final JsonNode taskDefinition;
 
     public WorkflowSeeder(WorkflowDefinitionRepository workflowRepository,
                           WorkflowDefinitionVersionRepository versionRepository,
@@ -49,6 +52,7 @@ public class WorkflowSeeder {
         this.engineeringDefinition = loadDefinition(objectMapper, ENGINEERING_RESOURCE);
         this.marketingDefinition = loadDefinition(objectMapper, MARKETING_RESOURCE);
         this.marketingChangesDefinition = loadDefinition(objectMapper, MARKETING_CHANGES_RESOURCE);
+        this.taskDefinition = loadDefinition(objectMapper, TASK_RESOURCE);
     }
 
     /**
@@ -75,7 +79,20 @@ public class WorkflowSeeder {
         seed(project, MARKETING_CHANGES_SLUG, marketingChangesDefinition);
     }
 
+    /**
+     * Inserts the TASK header (the lifecycle of child Work Items) + its v1 published snapshot for the project,
+     * unless one already exists. Hidden from the sidebar: tasks are reached from their parent, not from
+     * navigation. Runs in the caller's transaction.
+     */
+    public void seedTask(Project project) {
+        seed(project, TASK_SLUG, taskDefinition, false);
+    }
+
     private void seed(Project project, String slug, JsonNode definition) {
+        seed(project, slug, definition, true);
+    }
+
+    private void seed(Project project, String slug, JsonNode definition, boolean sidebarEnabled) {
         // Guard on the statechart slug (definition->>'id') — the identity the resolver and sidebar key on —
         // not the human-label `name` (they coincide for the built-ins but diverge for authored workflows).
         if (workflowRepository.existsByProjectIdAndDefinitionSlug(project.getId(), slug)) {
@@ -90,7 +107,7 @@ public class WorkflowSeeder {
         header.setState("PUBLISHED");
         header.setArea(areaOf(definition, slug));
         header.setSchemaVersion(1);
-        header.setSidebarEnabled(true);
+        header.setSidebarEnabled(sidebarEnabled);
         header.setEnabled(true);
         WorkflowDefinition saved = workflowRepository.save(header);
 

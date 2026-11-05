@@ -244,6 +244,7 @@ public class ReviewService {
         // reviewer A's approval from clearing the gate after reviewer B sent the item back.
         workItem.setCurrentReviewRound(workItem.getCurrentReviewRound() + 1);
         workItem.setCurrentStatus(route.get().to());
+        CycleTimestamps.stamp(statechart, workItem, fromStatus, route.get().to(), OffsetDateTime.now());
         workItemRepository.save(workItem);
         workItemService.publishStatusChanged(projectId, workItem, fromStatus, workItem.getCurrentStatus(), null);
         return Optional.empty();

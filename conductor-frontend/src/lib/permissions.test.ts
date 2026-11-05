@@ -11,6 +11,7 @@ const EDIT_CAPABILITIES: Capability[] = [
   'issue.assignReviewers',
   'creative.manage',
   'marketing.target.manage',
+  'milestone.manage',
 ]
 
 const ADMIN_ONLY: Capability[] = [

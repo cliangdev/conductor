@@ -34,6 +34,8 @@ import { WorkItemMoreMenu } from '@/components/workitems/WorkItemMoreMenu'
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu'
 import { TikTokPublishGateProvider } from '@/components/marketing/TikTokConsentStep'
 import { ActivityTab } from '@/components/workitems/ActivityTab'
+import { PlanTab } from '@/components/workitems/plan/PlanTab'
+import { useWorkItemRef } from '@/components/workitems/plan/useWorkItemRef'
 import { toastError, toastSuccess } from '@/components/ui/toast'
 import { FileX2, Minimize2 } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
@@ -201,11 +203,17 @@ export function WorkItemDetailView({
   projectId,
   workItemId,
   slug,
+  hiddenWorkflow = false,
   initialItem,
 }: {
   projectId: string
   workItemId: string
   slug: string
+  /**
+   * The item's Workflow is not in the sidebar list (a child under a PRD), so no list route exists for
+   * it: the breadcrumb drops the Workflow crumb and the parent crumb is the way back.
+   */
+  hiddenWorkflow?: boolean
   /**
    * The Work Item as the route already fetched it (by-display returns the same view as by-id). When it
    * is for this `workItemId`, the item is not fetched a second time; edits still re-read it.
@@ -260,6 +268,8 @@ export function WorkItemDetailView({
   const [commentsLoading, setCommentsLoading] = useState(true)
   const [membersLoading, setMembersLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // A child Work Item names its parent in the breadcrumb.
+  const parent = useWorkItemRef(projectId, issue?.parentWorkItemId, accessToken ?? '')
   useEffect(() => { if (!loading && !error && issue) markPageReady('work-item-detail') }, [loading, error, issue])
 
   // ── Batch review mode (COND-22) ────────────────────────────────────────────
@@ -934,13 +944,15 @@ export function WorkItemDetailView({
 
   // Breadcrumb trail: area (non-link) › pluralized noun (link to the Workflow list) › this Work Item's id.
   const crumbs: Crumb[] = []
-  if (workflowView?.area) crumbs.push({ label: humanizeId(workflowView.area) })
-  if (workflowView?.noun) {
+  if (!hiddenWorkflow && workflowView?.area) crumbs.push({ label: humanizeId(workflowView.area) })
+  if (!hiddenWorkflow && workflowView?.noun) {
     crumbs.push({
       label: pluralizeNoun(workflowView.noun),
       href: workItemListPath(projectId, workflowView.area ?? slug, workflowView.noun),
     })
   }
+  // Dropped only when the parent failed to load; while it loads the crumb just arrives later.
+  if (parent.ref) crumbs.push({ label: `↳ ${parent.ref.displayId}`, href: parent.ref.href })
   crumbs.push({ label: issue.displayId ?? issue.title })
 
   const byline = creatorName
@@ -948,6 +960,11 @@ export function WorkItemDetailView({
     : issue.updatedAt
       ? `Updated ${timeAgo(issue.updatedAt)}`
       : undefined
+
+  // The Plan tab: a PRD's children as a tree or a dependency graph. Offered once there is a plan to show,
+  // and for any PRD so the empty state can point at /conductor:breakdown.
+  const showPlan = (issue.childCount ?? 0) > 0 || issue.type === 'PRD'
+  const onPlan = showPlan && activeTab === 'plan'
 
   // Lives in the document's top-right corner: Full view on the page, Exit full view inside it.
   const fullViewToggle = (
@@ -971,6 +988,8 @@ export function WorkItemDetailView({
     ) : (
       <ActivityTab comments={comments} reviews={reviews} contentChanges={publishing ? contentChanges : []} />
     )
+  } else if (onPlan) {
+    mainContent = <PlanTab projectId={projectId} workItemId={issueId} token={accessToken!} canEdit={canEdit} />
   } else if (documentsLoading) {
     mainContent = (
       <div className="space-y-3" aria-busy="true" aria-label="Loading documents">
@@ -1243,11 +1262,11 @@ export function WorkItemDetailView({
               id={tabButtonId(CONTENT_TAB)}
               role="tab"
               data-tab-id={CONTENT_TAB}
-              aria-selected={activeTab !== 'activity'}
+              aria-selected={activeTab !== 'activity' && !onPlan}
               aria-controls="wi-tabpanel-main"
-              tabIndex={activeTab !== 'activity' ? 0 : -1}
+              tabIndex={activeTab !== 'activity' && !onPlan ? 0 : -1}
               onClick={() => setActiveTab(CONTENT_TAB)}
-              className={cn(TAB_CLASSES, tabStateClasses(activeTab !== 'activity'))}
+              className={cn(TAB_CLASSES, tabStateClasses(activeTab !== 'activity' && !onPlan))}
             >
               {workflowView?.noun ?? 'Content'}
             </button>
@@ -1262,6 +1281,20 @@ export function WorkItemDetailView({
             panelId="wi-tabpanel-main"
           />
           {documentTabs.length > 0 && <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-border" />}
+          {showPlan && (
+            <button
+              id={tabButtonId('plan')}
+              role="tab"
+              data-tab-id="plan"
+              aria-selected={onPlan}
+              aria-controls="wi-tabpanel-main"
+              tabIndex={onPlan ? 0 : -1}
+              onClick={() => setActiveTab('plan')}
+              className={cn(TAB_CLASSES, 'shrink-0', tabStateClasses(onPlan))}
+            >
+              Plan
+            </button>
+          )}
           <button
             id={tabButtonId('activity')}
             role="tab"
@@ -1345,7 +1378,7 @@ export function WorkItemDetailView({
               {/* A Post: where it goes and where each destination is, then what it says and shows.
                   Everything Post-specific lives in PostDetailBody; the engineering column below is
                   untouched by it. */}
-              {activeTab !== 'activity' && publishing && (
+              {activeTab !== 'activity' && !onPlan && publishing && (
                 <PostDetailBody
                   projectId={projectId}
                   workItemId={issueId}
@@ -1389,7 +1422,7 @@ export function WorkItemDetailView({
               {/* The description, and the file assets that live with the copy they ship alongside — offered
                   only where the bound Workflow declares asset types, since the mint validates `type`
                   against exactly that list. */}
-              {activeTab !== 'activity' && !publishing && (
+              {activeTab !== 'activity' && !onPlan && !publishing && (
                 <>
                   <WorkItemDescriptionCard
                     projectId={projectId}
@@ -1499,6 +1532,9 @@ export function WorkItemDetailView({
               noun={workflowView?.noun ?? 'item'}
               onDelete={() => setDeleteOpen(true)}
               showSchedule={!publishing}
+              delivery={issue}
+              deliveryParent={parent}
+              onDeliveryChanged={(patch) => setIssue((prev) => (prev ? { ...prev, ...patch } : prev))}
             />
           </aside>
         </div>

@@ -237,6 +237,10 @@ export function WorkItemListView({
   // Tags are whatever people typed, so the options are exactly the ones in use on the loaded items —
   // there is no registry to read, and offering a tag nothing carries would filter to an empty list.
   const tagOptions = [...new Set(issues.flatMap((i) => i.tags ?? []))].sort()
+  // Milestones are named on the items themselves, so the options are the ones in use here.
+  const milestoneMap = new Map<string, string>()
+  for (const i of issues) if (i.milestoneId) milestoneMap.set(i.milestoneId, i.milestoneName ?? i.milestoneId)
+  const milestoneOptions = [...milestoneMap].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
 
   // Status filter options: the Workflow's statuses whose category belongs to the active tab, labelled
   // via the Workflow view.
@@ -492,6 +496,7 @@ export function WorkItemListView({
         typeOptions={typeOptions}
         statusOptions={statusOptions}
         tagOptions={tagOptions}
+        milestoneOptions={milestoneOptions}
         activeFilters={listState.activeFilters}
         onAddFilter={listState.addFilter}
         onRemoveFilter={listState.removeFilter}
