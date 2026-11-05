@@ -438,8 +438,9 @@ needs `generate_creative_video`. Team mode is opt-in per run (`references/team-r
    still fails, stop and say what looks generated.
 6. **Trim to the beat.** Hooks run about 2 to 4 s; a 4 s clip trimmed to about 3.4 s made a good hook.
 7. **Use it** as a MOTION background (`motion.background.source: "clip"` with `clipPath`) or the
-   opening of a CLIP. Sound with `audio.source`: `clip` keeps the generated sound, `mix` puts it under
-   a library track, `track` replaces it, `none` mutes it.
+   opening of a CLIP. Sound with `audio.source`: `clip` keeps the generated sound, `track` replaces it
+   with a library track, `none` mutes it; on a CLIP, `mix` also puts it under a library track (MOTION
+   has no `mix`).
 
 **Prompt for a person** (the first takes tend to overact, hence the acting line): handheld
 front-facing selfie; the start pose from the still; one clear action (for example "looks up from the
