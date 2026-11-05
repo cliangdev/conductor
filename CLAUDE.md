@@ -116,6 +116,7 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 
 `users` → `project_members` (roles set: ADMIN/CREATOR/REVIEWER — shown as Admin/Editor/Reviewer; ADMIN implies the others) → `projects`  
 `work_items` → `documents` (GCP-backed, signed URLs); status/type are Workflow-defined strings, not enums  
+`work_items.parent_work_item_id` (PRD → `TASK` children, recursive) + `work_item_dependencies` (BLOCKS/DISCOVERED_FROM), `work_item_criteria`, `work_item_agent_sessions`, `milestones`; blocked/ready/stale/progress are derived on read — see [`docs/prd-tracking.md`](docs/prd-tracking.md)  
 `work_item_reviewers` → `reviews` (APPROVED/CHANGES_REQUESTED/COMMENTED)  
 `comments` + `comment_replies` (line-level or selection-based anchors)  
 `project_settings` (Discord webhook URL)  
@@ -183,3 +184,4 @@ See `scripts/gcloud-alias-example.sh` for a persistent shell alias.
 - [`docs/cli-assets.md`](docs/cli-assets.md) — Naming/lifecycle for CLI-distributed Claude assets, plus a domain-agnostic-guidance principle (Conductor spans engineering/marketing/knowledge, not just GitHub). **Read before adding, renaming, or editing any asset under `conductor-tools/assets/claude/`.**
 - [`docs/testing-guidelines.md`](docs/testing-guidelines.md) — Backend test conventions: pick the lightest context, share one Postgres container, protect the context cache. **Read before adding a `@SpringBootTest`/Testcontainers test.**
 - [`docs/performance.md`](docs/performance.md) — Request/page timing: `http_request`/`slow_request` logs, Server-Timing, frontend telemetry, `scripts/perf-report.sh`.
+- [`docs/prd-tracking.md`](docs/prd-tracking.md) — PRD → delivery tracking: TASK children, dependencies, criteria, milestones, appetite, derived signals (blocked/ready/stale/needs-input), the ready queue, `tasks.json` mirror rule.

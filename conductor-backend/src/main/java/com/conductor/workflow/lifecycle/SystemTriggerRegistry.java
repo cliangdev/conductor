@@ -32,8 +32,11 @@ public class SystemTriggerRegistry {
 
     private static final String REGISTRY_RESOURCE = "schema/examples/system-triggers.json";
 
-    /** A shipped system trigger: its id, whether it bypasses the Review gate, and a human description. */
-    public record SystemTrigger(String id, boolean bypassReviewGate, String description) {
+    /**
+     * A shipped system trigger: its id, whether it bypasses the Review gate, whether its un-gated edges are
+     * system-only (never a person's move), and a human description.
+     */
+    public record SystemTrigger(String id, boolean bypassReviewGate, boolean systemOnly, String description) {
     }
 
     private final List<SystemTrigger> triggers;
@@ -61,6 +64,7 @@ public class SystemTriggerRegistry {
                         parsed.add(new SystemTrigger(
                                 id.asText(),
                                 t.hasNonNull("bypassReviewGate") && t.get("bypassReviewGate").asBoolean(),
+                                t.hasNonNull("systemOnly") && t.get("systemOnly").asBoolean(),
                                 t.hasNonNull("description") ? t.get("description").asText() : null));
                     }
                 });
@@ -83,6 +87,18 @@ public class SystemTriggerRegistry {
     public boolean bypassesReviewGate(String triggerId) {
         SystemTrigger t = byId.get(triggerId);
         return t != null && t.bypassReviewGate();
+    }
+
+    /**
+     * Whether an edge declaring {@code triggerId} (and no Review gate) is the system's alone: offered to no
+     * one and refused to a person's status change, though the system can still take it. True for
+     * {@code children_done}, whose edge is a roll-up, not a decision. False for the others, whose edges are
+     * also ordinary moves (MARKETING's APPROVED to SCHEDULED is both a click and a {@code review_approved}
+     * cascade).
+     */
+    public boolean isSystemOnly(String triggerId) {
+        SystemTrigger t = byId.get(triggerId);
+        return t != null && t.systemOnly();
     }
 
     /** All registered system triggers, in declaration order. */

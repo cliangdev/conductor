@@ -504,6 +504,80 @@ class WorkItemWorkflowServiceTest {
         assertThat(response.transitions()).isEmpty();
     }
 
+    // --- system-only edges: TASK's children_done roll-up ---
+
+    private WorkItem taskItemAt(String status) {
+        WorkflowDefinitionVersion task = snapshot("/schema/examples/task.workflow.json");
+        when(versionRepository.findLatestPublished(any(), eq("TASK"))).thenReturn(Optional.of(task));
+        when(versionRepository.findByProjectSlugAndVersion(any(), eq("TASK"), eq(1))).thenReturn(Optional.of(task));
+        WorkItem item = workItemAt(status);
+        item.setWorkflow("TASK");
+        return item;
+    }
+
+    private void callerIsCreator() {
+        when(projectSecurityService.effectiveRoles(PROJECT_ID, "user-1"))
+                .thenReturn(Optional.of(com.conductor.entity.MemberRoles.effective(java.util.Set.of(MemberRole.CREATOR))));
+    }
+
+    @Test
+    void aTaskInTodoOffersOnlyStartAndCancel() {
+        WorkItem todo = taskItemAt("TODO");
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(todo));
+        callerIsCreator();
+
+        assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).transitions())
+                .extracting(AvailableTransitionsView.Transition::toStatus)
+                .containsExactly("IN_PROGRESS", "CANCELLED");
+    }
+
+    @Test
+    void aTaskInProgressStillOffersFinishOnce() {
+        WorkItem running = taskItemAt("IN_PROGRESS");
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(running));
+        callerIsCreator();
+
+        assertThat(service.availableTransitions(PROJECT_ID, "issue-1", caller()).transitions())
+                .extracting(AvailableTransitionsView.Transition::label)
+                .containsExactly("Finish", "Stop", "Cancel");
+    }
+
+    @Test
+    void aPersonCannotMoveATaskStraightFromTodoToDone() {
+        WorkItem item = taskItemAt("TODO");
+
+        assertThatThrownBy(() -> service.validateTransition(PROJECT_ID, item, "DONE"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessage("Invalid status transition from TODO to DONE");
+    }
+
+    @Test
+    void aPersonCanFinishAnInProgressTaskByItsManualEdge() {
+        assertThatCode(() -> service.validateTransition(PROJECT_ID, taskItemAt("IN_PROGRESS"), "DONE"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void theSystemStillTakesTheChildrenDoneEdge() {
+        WorkItem item = taskItemAt("TODO");
+
+        Optional<StatechartTransition> applied = service.applySystemTransition(
+                PROJECT_ID, item, WorkItemWorkflowService.TRIGGER_CHILDREN_DONE);
+
+        assertThat(applied).isPresent();
+        assertThat(item.getCurrentStatus()).isEqualTo("DONE");
+    }
+
+    @Test
+    void aReviewGatedTriggerEdgeIsStillAPersonsMove() {
+        // ENGINEERING's CODE_REVIEW -> DONE has trigger pr_merged AND requiresReview: unchanged.
+        when(reviewRepository.existsApprovedByReviewerRole("issue-1", PROJECT_ID, "APPROVED", "REVIEWER", null))
+                .thenReturn(true);
+
+        assertThatCode(() -> service.validateTransition(PROJECT_ID, workItemAt("CODE_REVIEW"), "DONE"))
+                .doesNotThrowAnyException();
+    }
+
     // --- multi-role sets and requireIndependentReviewer ---
 
     private ProjectMember memberOf(String userId, MemberRole... roles) {

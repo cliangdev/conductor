@@ -18,22 +18,91 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
      * Workflow slug, and tag. A null filter is ignored, so every combination is served by one query
      * (avoids a combinatorial set of derived finders). Workflow filtering backs per-Workflow view pages;
      * tag filtering is what makes a freeform label worth applying rather than decoration.
+     *
+     * <p>The hierarchy filters: {@code parentId} keeps only the direct children of that item, and
+     * {@code topLevelOnly} keeps only items with no parent (pass {@code false} and a null {@code parentId}
+     * to include children too). {@code milestoneId}, {@code priority} (0..3) and {@code assigneeId} narrow
+     * further. Rows come back unordered; the caller sorts.
      */
     @Query("""
             SELECT i FROM WorkItem i
             JOIN FETCH i.project
             LEFT JOIN FETCH i.assignee
+            LEFT JOIN FETCH i.milestone
             WHERE i.project.id = :projectId
               AND (:type IS NULL OR i.type = :type)
               AND (:status IS NULL OR i.currentStatus = :status)
               AND (:workflow IS NULL OR i.workflow = :workflow)
               AND (:tag IS NULL OR :tag MEMBER OF i.tags)
+              AND (:parentId IS NULL OR i.parentWorkItemId = :parentId)
+              AND (:topLevelOnly = false OR i.parentWorkItemId IS NULL)
+              AND (:milestoneId IS NULL OR i.milestone.id = :milestoneId)
+              AND (:priority IS NULL OR i.priority = :priority)
+              AND (:assigneeId IS NULL OR i.assignee.id = :assigneeId)
             """)
     List<WorkItem> findByProjectFiltered(@Param("projectId") String projectId,
                                       @Param("type") String type,
                                       @Param("status") String status,
                                       @Param("workflow") String workflow,
-                                      @Param("tag") String tag);
+                                      @Param("tag") String tag,
+                                      @Param("parentId") String parentId,
+                                      @Param("topLevelOnly") boolean topLevelOnly,
+                                      @Param("milestoneId") String milestoneId,
+                                      @Param("priority") Integer priority,
+                                      @Param("assigneeId") String assigneeId);
+
+    /**
+     * The ids of an item and everything beneath it, the item itself first. A recursive CTE rather than lazy
+     * walks, depth-capped at 10 (the service allows 5; the slack is only a guard against a corrupt cycle
+     * looping forever).
+     */
+    @Query(value = """
+            WITH RECURSIVE subtree(id, depth) AS (
+                SELECT id, 0 FROM work_items WHERE id = :rootId
+                UNION ALL
+                SELECT w.id, s.depth + 1
+                FROM work_items w JOIN subtree s ON w.parent_work_item_id = s.id
+                WHERE s.depth < 10
+            )
+            SELECT id FROM subtree ORDER BY depth, id
+            """, nativeQuery = true)
+    List<String> findSubtreeIds(@Param("rootId") String rootId);
+
+    /**
+     * {@link #findSubtreeIds} for many roots in one walk, as {@code [rootId, id]} rows: every id beneath each
+     * root, the root itself included, parents before children within a root. A root that does not exist yields
+     * no rows. An item under two of the roots appears once for each.
+     */
+    @Query(value = """
+            WITH RECURSIVE subtree(root_id, id, depth) AS (
+                SELECT id, id, 0 FROM work_items WHERE id IN (:rootIds)
+                UNION ALL
+                SELECT s.root_id, w.id, s.depth + 1
+                FROM work_items w JOIN subtree s ON w.parent_work_item_id = s.id
+                WHERE s.depth < 10
+            )
+            SELECT root_id, id FROM subtree ORDER BY root_id, depth, id
+            """, nativeQuery = true)
+    List<Object[]> findSubtreeIdsFor(@Param("rootIds") Collection<String> rootIds);
+
+    /** Direct-child counts for a batch of parents, as {@code [parentId, count]} rows; childless ids are absent. */
+    @Query("SELECT i.parentWorkItemId, COUNT(i) FROM WorkItem i WHERE i.parentWorkItemId IN :ids "
+            + "GROUP BY i.parentWorkItemId")
+    List<Object[]> countChildrenGrouped(@Param("ids") Collection<String> ids);
+
+    /** The direct children of one item. */
+    @Query("SELECT i FROM WorkItem i JOIN FETCH i.project LEFT JOIN FETCH i.assignee "
+            + "WHERE i.parentWorkItemId = :parentId ORDER BY i.sequenceNumber")
+    List<WorkItem> findChildren(@Param("parentId") String parentId);
+
+    /** Items by id with the project, assignee and milestone resolved, for building a tree in one read. */
+    @Query("SELECT i FROM WorkItem i JOIN FETCH i.project LEFT JOIN FETCH i.assignee LEFT JOIN FETCH i.milestone "
+            + "WHERE i.id IN :ids")
+    List<WorkItem> findAllWithAssociationsByIdIn(@Param("ids") Collection<String> ids);
+
+    /** Every item grouped under any of these milestones, for milestone progress. */
+    @Query("SELECT i FROM WorkItem i WHERE i.milestone.id IN :milestoneIds")
+    List<WorkItem> findByMilestoneIds(@Param("milestoneIds") Collection<String> milestoneIds);
 
     /**
      * Same filters as {@link #findByProjectFiltered}, capped at the query level via a native {@code

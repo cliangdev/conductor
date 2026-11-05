@@ -10,11 +10,13 @@ import com.conductor.repository.UserRepository;
 import com.conductor.service.JwtService;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.ReviewerService;
+import com.conductor.service.WorkItemHierarchyService;
 import com.conductor.service.WorkItemService;
 import com.conductor.service.WorkItemWorkflowService;
 import com.conductor.workflow.RunTokenService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -26,6 +28,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
@@ -50,6 +53,10 @@ class WorkItemControllerListTest {
     @MockitoBean private WorkItemWorkflowService workItemWorkflowService;
     @MockitoBean private ReviewerService reviewerService;
     @MockitoBean private WorkItemListEnricher listEnricher;
+    @MockitoBean private WorkItemHierarchyService hierarchyService;
+    @MockitoBean private com.conductor.service.WorkItemSignalService signalService;
+    @MockitoBean private com.conductor.service.WorkItemDependencyService dependencyService;
+    @MockitoBean private com.conductor.service.WorkItemCriteriaService criteriaService;
     @MockitoBean private ProjectMemberRepository projectMemberRepository;
 
     @MockitoBean private JwtService jwtService;
@@ -66,7 +73,7 @@ class WorkItemControllerListTest {
         when(jwtService.validateToken("valid-token")).thenReturn(true);
         when(jwtService.getUserIdFromToken("valid-token")).thenReturn("user-1");
         when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
-        when(workItemService.listWorkItemEntities(any(), any(), any(), any(), any(), any(), any())).thenReturn(List.of());
+        when(workItemService.listWorkItemEntities(any(), any(WorkItemService.ListFilter.class), any())).thenReturn(List.of());
         when(workItemService.unresolvedCommentCounts(anyList())).thenReturn(Map.of());
         when(workItemService.externalLinks(anyList())).thenReturn(Map.of());
         when(reviewerService.reviewersByWorkItem(anyList())).thenReturn(Map.of());
@@ -77,16 +84,14 @@ class WorkItemControllerListTest {
         mockMvc.perform(get(URL).param("dueBefore", "2026-10-20").header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isOk());
 
-        verify(workItemService).listWorkItemEntities(eq("proj-1"), isNull(), isNull(), isNull(), isNull(),
-                eq(LocalDate.of(2026, 10, 20)), any());
+        assertThat(listFilter().dueBefore()).isEqualTo(LocalDate.of(2026, 10, 20));
     }
 
     @Test
     void dueBefore_omitted_isNull() throws Exception {
         mockMvc.perform(get(URL).header("Authorization", "Bearer valid-token")).andExpect(status().isOk());
 
-        verify(workItemService).listWorkItemEntities(eq("proj-1"), isNull(), isNull(), isNull(), isNull(),
-                isNull(), any());
+        assertThat(listFilter().dueBefore()).isNull();
     }
 
     @Test
@@ -94,7 +99,58 @@ class WorkItemControllerListTest {
         mockMvc.perform(get(URL).param("dueBefore", "next tuesday").header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isBadRequest());
 
-        verify(workItemService, never()).listWorkItemEntities(any(), any(), any(), any(), any(), any(), any());
+        verify(workItemService, never()).listWorkItemEntities(any(), any(WorkItemService.ListFilter.class), any());
+    }
+
+    /** The filter the controller handed the service for the one list call this test made. */
+    private WorkItemService.ListFilter listFilter() {
+        ArgumentCaptor<WorkItemService.ListFilter> filter = ArgumentCaptor.forClass(WorkItemService.ListFilter.class);
+        verify(workItemService).listWorkItemEntities(eq("proj-1"), filter.capture(), any());
+        return filter.getValue();
+    }
+
+    @Test
+    void parentId_defaultsToNoneSoOnlyTopLevelItemsAreListed() throws Exception {
+        mockMvc.perform(get(URL).header("Authorization", "Bearer valid-token")).andExpect(status().isOk());
+
+        WorkItemService.ListFilter filter = listFilter();
+        assertThat(filter.parentId()).isEqualTo("none");
+        assertThat(filter.rootId()).isNull();
+        assertThat(filter.sort()).isNull();
+    }
+
+    @Test
+    void hierarchyAndDeliveryFiltersAreBoundAndPriorityIsMappedToItsStoredForm() throws Exception {
+        mockMvc.perform(get(URL).param("parentId", "any").param("rootId", "wi-9").param("milestoneId", "m-1")
+                        .param("priority", "P1").param("assigneeId", "u-2").param("sort", "priority")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk());
+
+        WorkItemService.ListFilter filter = listFilter();
+        assertThat(filter.parentId()).isEqualTo("any");
+        assertThat(filter.rootId()).isEqualTo("wi-9");
+        assertThat(filter.milestoneId()).isEqualTo("m-1");
+        assertThat(filter.priority()).isEqualTo(1);
+        assertThat(filter.assigneeId()).isEqualTo("u-2");
+        assertThat(filter.sort()).isEqualTo("priority");
+    }
+
+    @Test
+    void priority_outsideP0ToP3_returns400AndNeverReachesTheService() throws Exception {
+        mockMvc.perform(get(URL).param("priority", "P9").header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest());
+
+        verify(workItemService, never()).listWorkItemEntities(any(), any(WorkItemService.ListFilter.class), any());
+    }
+
+    @Test
+    void withProgress_isOffByDefault_andAsksForProgressWhenSet() throws Exception {
+        mockMvc.perform(get(URL).header("Authorization", "Bearer valid-token")).andExpect(status().isOk());
+        verify(hierarchyService, never()).progressFor(any(), any());
+
+        mockMvc.perform(get(URL).param("withProgress", "true").header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk());
+        verify(hierarchyService).progressFor(eq("proj-1"), any());
     }
 
     @Test
@@ -121,13 +177,20 @@ class WorkItemControllerListTest {
     void delete_doesNotConfirmLiveByDefault() throws Exception {
         mockMvc.perform(delete(URL + "/wi-1").header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isNoContent());
-        verify(workItemService).deleteWorkItem(eq("proj-1"), eq("wi-1"), any(), eq(false));
+        verify(workItemService).deleteWorkItem(eq("proj-1"), eq("wi-1"), any(), eq(false), eq(false));
     }
 
     @Test
     void delete_passesAnExplicitConfirmLive() throws Exception {
         mockMvc.perform(delete(URL + "/wi-1").param("confirmLive", "true").header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isNoContent());
-        verify(workItemService).deleteWorkItem(eq("proj-1"), eq("wi-1"), any(), eq(true));
+        verify(workItemService).deleteWorkItem(eq("proj-1"), eq("wi-1"), any(), eq(true), eq(false));
+    }
+
+    @Test
+    void delete_passesAnExplicitCascade() throws Exception {
+        mockMvc.perform(delete(URL + "/wi-1").param("cascade", "true").header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNoContent());
+        verify(workItemService).deleteWorkItem(eq("proj-1"), eq("wi-1"), any(), eq(false), eq(true));
     }
 }

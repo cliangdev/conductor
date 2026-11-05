@@ -59,6 +59,12 @@ public class WorkItemWorkflowService {
      */
     public static final String TRIGGER_REVIEW_APPROVED = "review_approved";
 
+    /**
+     * System trigger fired on a parent when its last direct child reaches a terminal status; see
+     * {@code WorkItemHierarchyService#onChildStatusChanged}.
+     */
+    public static final String TRIGGER_CHILDREN_DONE = "children_done";
+
     private final WorkItemRepository workItemRepository;
     private final ProjectSecurityService projectSecurityService;
     private final ProjectMemberRepository projectMemberRepository;
@@ -134,8 +140,10 @@ public class WorkItemWorkflowService {
             throw new BusinessException(
                     "Unknown status '" + newStatus + "' for workflow " + statechart.slug());
         }
-        Optional<StatechartTransition> transition =
-                statechart.transition(workItem.getCurrentStatus(), newStatus);
+        // A system-only edge (TASK's children_done roll-up) is not a person's move, so it does not count here.
+        Optional<StatechartTransition> transition = statechart.transitionsFrom(workItem.getCurrentStatus()).stream()
+                .filter(t -> t.to().equals(newStatus) && !isSystemOnly(t))
+                .findFirst();
         if (transition.isEmpty()) {
             throw new BusinessException(
                     "Invalid status transition from " + workItem.getCurrentStatus() + " to " + newStatus);
@@ -156,6 +164,15 @@ public class WorkItemWorkflowService {
         // apply to, so calling it unconditionally is safe — see PublishingWorkflow.isGateEdge for the
         // definition-driven rule that decides when it applies.
         publishGateEvaluator.enforce(workItem, statechart, newStatus);
+    }
+
+    /**
+     * True for an edge only the system takes: it declares a {@link SystemTriggerRegistry#isSystemOnly system-only}
+     * trigger and no Review gate. {@link #applySystemTransition} still takes it; people neither see it nor can
+     * PATCH through it. An edge with a Review gate (ENGINEERING's {@code pr_merged} Merge) stays a person's move.
+     */
+    private boolean isSystemOnly(StatechartTransition t) {
+        return t.trigger() != null && !t.requiresReview() && systemTriggerRegistry.isSystemOnly(t.trigger());
     }
 
     /**
@@ -184,6 +201,10 @@ public class WorkItemWorkflowService {
                 }
                 // The pipeline's own outcomes are not a person's moves; see PIPELINE_EDGE_REFUSAL.
                 if (PublishingWorkflow.isPipelineOutcomeEdge(statechart, currentStatus, t.to())) {
+                    continue;
+                }
+                // A system-only edge (TASK's children_done roll-up) is the system's to take, not offered.
+                if (isSystemOnly(t)) {
                     continue;
                 }
                 transitions.add(new AvailableTransitionsView.Transition(t.to(), t.label(), t.requiresReview()));
@@ -229,7 +250,9 @@ public class WorkItemWorkflowService {
         // on any edge the gate does not guard, so pr_merged on ENGINEERING is untouched; a refusal throws,
         // leaving the status exactly where it was for the caller to report.
         publishGateEvaluator.enforce(workItem, statechart, t.to());
+        String previousStatus = workItem.getCurrentStatus();
         workItem.setCurrentStatus(t.to());
+        CycleTimestamps.stamp(statechart, workItem, previousStatus, t.to(), java.time.OffsetDateTime.now());
         return transition;
     }
 
@@ -240,8 +263,16 @@ public class WorkItemWorkflowService {
 
     /** Resolve the {@link Statechart} for the workflow a Work Item is bound to, honoring its pinned version. */
     public Statechart resolveFor(String projectId, WorkItem workItem) {
-        String slug = workItem.getWorkflow() != null ? workItem.getWorkflow() : DEFAULT_WORKFLOW;
-        return resolver.resolveRequired(projectId, slug, workItem.getWorkflowVersion());
+        return resolveFor(projectId, workItem.getWorkflow(), workItem.getWorkflowVersion());
+    }
+
+    /**
+     * {@link #resolveFor(String, WorkItem)} for a Work Item known only by its Workflow slug (null reads as the
+     * default Workflow) and pinned version -- e.g. a blocker described by a joined row, never loaded.
+     */
+    public Statechart resolveFor(String projectId, String workflow, Integer workflowVersion) {
+        String slug = workflow != null ? workflow : DEFAULT_WORKFLOW;
+        return resolver.resolveRequired(projectId, slug, workflowVersion);
     }
 
     /**
