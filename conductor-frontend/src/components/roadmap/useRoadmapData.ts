@@ -1,15 +1,14 @@
 'use client'
 
-// Fetching shared by the overview and the roadmap: a list endpoint with loading/error state, and the
+// Fetching shared by the overview and the roadmap: the one delivery-overview call with loading/error state, and the
 // status-category / detail-link lookups that need each item's Workflow view.
 
 import { useCallback, useEffect, useState } from 'react'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiErrorMessage, apiGet } from '@/lib/api'
-import { fetchMilestones } from '@/lib/delivery'
 import { statusMeta, useWorkflowViewsSettled, workItemDetailPath } from '@/lib/workflows'
 import type { Issue } from '@/components/workitems/listTypes'
-import type { Milestone } from '@/types/workItem'
+import type { DeliveryActiveItem, DeliveryOverview } from '@/types/workItem'
 
 export interface Fetched<T> {
   data: T | null
@@ -41,28 +40,59 @@ export function useFetched<T>(path: string | null): Fetched<T> {
   return { data: result.data, loading: false, error: result.error }
 }
 
-export function workItemsPath(projectId: string, query: string): string {
-  return `/api/v2/projects/${projectId}/work-items?${query}`
+/** GET /delivery-overview: active items with health and forecast, milestones, and the attention lists. */
+export function useDeliveryOverview(projectId: string): Fetched<DeliveryOverview> {
+  return useFetched<DeliveryOverview>(`/api/v2/projects/${projectId}/delivery-overview`)
 }
 
-/** The project's milestones; `null` data until loaded. */
-export function useMilestones(projectId: string): Fetched<Milestone[]> {
+/**
+ * A roadmap board item from an overview row: the summary's delivery fields plus the row's progress, signals
+ * and health. The overview only lists open work, so the shape needs no more than the board and strip read.
+ */
+export function overviewRowToIssue(row: DeliveryActiveItem): Issue {
+  const { item } = row
+  const createdAt = item.createdAt ?? ''
+  return {
+    id: item.id,
+    displayId: item.displayId,
+    title: item.title,
+    type: item.type,
+    status: item.status,
+    workflow: item.workflow ?? undefined,
+    createdAt,
+    updatedAt: createdAt,
+    priority: item.priority ?? null,
+    parentWorkItemId: item.parentWorkItemId ?? null,
+    milestoneId: item.milestoneId ?? null,
+    milestoneName: item.milestoneName ?? null,
+    appetite: item.appetite ?? null,
+    appetiteDays: item.appetiteDays ?? null,
+    startedAt: item.startedAt ?? null,
+    progress: row.progress,
+    signals: row.signals,
+    health: row.health ?? null,
+  }
+}
+
+type Views = ReturnType<typeof useWorkflowViewsSettled>['views']
+
+/** The one link rule: an item's detail path from its Workflow's view, null until that view is in. */
+function useHrefOf(projectId: string, views: Views) {
+  return useCallback(
+    (item: { workflow?: string | null; displayId?: string | null }): string | null => {
+      const view = item.workflow ? views[item.workflow] : undefined
+      if (!view || !item.displayId) return null
+      return workItemDetailPath(projectId, view.area ?? 'engineering', view.noun, item.displayId)
+    },
+    [views, projectId]
+  )
+}
+
+/** Detail-page links for items that only carry a Workflow slug (null until that Workflow's view loads). */
+export function useWorkflowHrefs(projectId: string, slugs: string[]) {
   const { accessToken } = useAuth()
-  const [result, setResult] = useState<{ key: string; data: Milestone[] | null; error: string | null } | null>(null)
-
-  useEffect(() => {
-    if (!accessToken) return
-    let cancelled = false
-    fetchMilestones(projectId, accessToken)
-      .then((data) => !cancelled && setResult({ key: projectId, data, error: null }))
-      .catch((err) => !cancelled && setResult({ key: projectId, data: null, error: apiErrorMessage(err, 'Failed to load milestones') }))
-    return () => {
-      cancelled = true
-    }
-  }, [projectId, accessToken])
-
-  if (!result || result.key !== projectId) return LOADING
-  return { data: result.data, loading: false, error: result.error }
+  const { views } = useWorkflowViewsSettled(projectId, slugs, accessToken)
+  return useHrefOf(projectId, views)
 }
 
 /**
@@ -81,13 +111,7 @@ export function useItemWorkflowLookups(projectId: string, items: Issue[] | null)
     (item: Issue) => statusMeta(item.workflow ? views[item.workflow] : undefined, item.status).category,
     [views]
   )
-  const hrefOf = useCallback(
-    (item: Issue): string | null => {
-      const view = item.workflow ? views[item.workflow] : undefined
-      if (!view || !item.displayId) return null
-      return workItemDetailPath(projectId, view.area ?? 'engineering', view.noun, item.displayId)
-    },
-    [views, projectId]
-  )
+  // The same rule as useWorkflowHrefs, over the views already fetched here.
+  const hrefOf = useHrefOf(projectId, views)
   return { categoryOf, hrefOf, ready }
 }

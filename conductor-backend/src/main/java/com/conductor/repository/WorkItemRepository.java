@@ -52,6 +52,24 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
                                       @Param("assigneeId") String assigneeId);
 
     /**
+     * The items delivery tracking can care about: anything inside a tree (has a parent), any item with
+     * sub-items, and any top-level item of {@code prdType}. Plain childless top-level items (Posts, standalone
+     * issues) are left unloaded. Same fetch shape as {@link #findByProjectFiltered}; rows come back unordered.
+     */
+    @Query("""
+            SELECT i FROM WorkItem i
+            JOIN FETCH i.project
+            LEFT JOIN FETCH i.assignee
+            LEFT JOIN FETCH i.milestone
+            WHERE i.project.id = :projectId
+              AND (i.parentWorkItemId IS NOT NULL
+                   OR i.type = :prdType
+                   OR EXISTS (SELECT 1 FROM WorkItem c WHERE c.parentWorkItemId = i.id))
+            """)
+    List<WorkItem> findDeliveryCandidates(@Param("projectId") String projectId,
+                                          @Param("prdType") String prdType);
+
+    /**
      * The ids of an item and everything beneath it, the item itself first. A recursive CTE rather than lazy
      * walks, depth-capped at 10 (the service allows 5; the slack is only a guard against a corrupt cycle
      * looping forever).
@@ -185,6 +203,32 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
      */
     @Query("SELECT i FROM WorkItem i LEFT JOIN FETCH i.project LEFT JOIN FETCH i.assignee WHERE i.id = :workItemId")
     Optional<WorkItem> findByIdWithProjectAndAssignee(@Param("workItemId") String workItemId);
+
+    /**
+     * Completion and start stamps, as {@code [completedAt, startedAt]}, of the finished leaf TASK items among
+     * {@code ids} that completed at or after {@code since}. Cancelled-style statuses are left out: abandoning
+     * work is not throughput.
+     */
+    @Query("""
+            SELECT i.completedAt, i.startedAt FROM WorkItem i
+            WHERE i.id IN :ids AND i.type = 'TASK' AND i.completedAt >= :since
+              AND i.currentStatus NOT IN :cancelled
+              AND NOT EXISTS (SELECT 1 FROM WorkItem c WHERE c.parentWorkItemId = i.id)
+            """)
+    List<Object[]> findLeafCompletionStamps(@Param("ids") Collection<String> ids,
+                                            @Param("since") java.time.OffsetDateTime since,
+                                            @Param("cancelled") Collection<String> cancelled);
+
+    /** {@link #findLeafCompletionStamps} across a whole project. */
+    @Query("""
+            SELECT i.completedAt, i.startedAt FROM WorkItem i
+            WHERE i.project.id = :projectId AND i.type = 'TASK' AND i.completedAt >= :since
+              AND i.currentStatus NOT IN :cancelled
+              AND NOT EXISTS (SELECT 1 FROM WorkItem c WHERE c.parentWorkItemId = i.id)
+            """)
+    List<Object[]> findProjectLeafCompletionStamps(@Param("projectId") String projectId,
+                                                   @Param("since") java.time.OffsetDateTime since,
+                                                   @Param("cancelled") Collection<String> cancelled);
 
     /**
      * The Work Items of one project that hold a frame of any render of one Creative, oldest sequence number

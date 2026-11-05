@@ -181,6 +181,7 @@ export interface WorkItemDeliveryFields {
   progress?: WorkItemProgress | null
   signals?: WorkItemSignals | null
   agentActivity?: WorkItemAgentActivity | null
+  health?: WorkItemHealth | null
 }
 
 /** One node of GET .../work-items/{id}/tree. */
@@ -295,4 +296,94 @@ export interface WorkItemAsset {
   done: boolean
   createdAt: string
   updatedAt: string
+}
+
+// --- Health and forecast (docs/prd-tracking.md) ---------------------------------------------------
+
+export type HealthStatus = 'ON_TRACK' | 'AT_RISK' | 'OFF_TRACK'
+
+export interface WorkItemHealthDraft {
+  updateId: string
+  health: HealthStatus
+  note: string
+  draftedByLabel?: string | null
+  createdAt: string
+}
+
+/** The latest confirmed health update, plus any pending draft awaiting a person. */
+export interface WorkItemHealth {
+  health: HealthStatus | null
+  note?: string | null
+  updatedAt?: string | null
+  stale: boolean
+  atRisk: boolean
+  pendingDraft?: WorkItemHealthDraft | null
+}
+
+/** One row of GET/POST .../health-updates (schema WorkItemHealthUpdateResponse). */
+export interface HealthUpdate {
+  id: string
+  health: HealthStatus
+  note: string
+  draftedByLabel?: string | null
+  confirmed: boolean
+  confirmedByName?: string | null
+  confirmedAt?: string | null
+  createdAt: string
+}
+
+export type ForecastFit = 'FITS' | 'TIGHT' | 'EXCEEDS'
+
+export interface WorkItemForecast {
+  state: 'DONE' | 'NO_PLAN' | 'INSUFFICIENT_DATA' | 'OK'
+  mode?: 'THROUGHPUT' | 'CYCLE_TIME' | null
+  remaining: number
+  samples: number
+  needed?: number | null
+  weeklyThroughputMedian?: number | null
+  /** `YYYY-MM-DD`. */
+  p50Date?: string | null
+  p85Date?: string | null
+  appetiteEndsOn?: string | null
+  appetiteFit?: ForecastFit | null
+  milestoneFit?: ForecastFit | null
+}
+
+export interface DeliveryItemSummary {
+  id: string
+  displayId: string
+  title: string
+  type: string
+  status: string
+  statusLabel?: string | null
+  workflow?: string | null
+  priority?: WorkItemPriority | null
+  parentWorkItemId?: string | null
+  milestoneId?: string | null
+  milestoneName?: string | null
+  appetite?: string | null
+  appetiteDays?: number | null
+  createdAt?: string | null
+  startedAt?: string | null
+  /** How many unfinished blockers hold the item up; set on the blocked attention list, 0 elsewhere. */
+  blockedByCount?: number
+}
+
+export interface DeliveryActiveItem {
+  item: DeliveryItemSummary
+  progress: WorkItemProgress
+  health?: WorkItemHealth | null
+  forecast: WorkItemForecast
+  signals: WorkItemSignals
+}
+
+/** GET .../projects/{id}/delivery-overview. */
+export interface DeliveryOverview {
+  activeItems: DeliveryActiveItem[]
+  milestones: Milestone[]
+  attention: {
+    blocked: DeliveryItemSummary[]
+    stale: DeliveryItemSummary[]
+    needsInput: DeliveryItemSummary[]
+  }
 }

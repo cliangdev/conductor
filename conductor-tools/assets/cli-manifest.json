@@ -170,6 +170,10 @@
         "description": "Create a PRD for the current project through guided discovery, research, and writing. Writes HTML by default; `import` turns an existing HTML page or claude.ai artifact into a PRD."
       },
       {
+        "name": "conductor:breakdown",
+        "description": "Break a PRD into dependency-ordered child tasks with acceptance criteria, a milestone and an appetite, after a critic review of scope and coverage."
+      },
+      {
         "name": "conductor:implement",
         "description": "Take a PRD issue from BACKLOG to a green PR \u2014 status transitions, branch, parallel coding agents, CI monitoring."
       },
@@ -194,6 +198,14 @@
       {
         "name": "conductor-coder",
         "description": "Implements one task test-first: detects the stack, writes tests for the automated criteria, implements until they pass, and commits with the task reference. Spawned in parallel by conductor:implement."
+      },
+      {
+        "name": "conductor-critic",
+        "description": "Reviews a proposed PRD breakdown for scope against the appetite, acceptance-criteria coverage, ambiguity and missing non-goals. Writes critique.md and returns PROCEED, SPLIT or CLARIFY. Spawned by conductor:breakdown."
+      },
+      {
+        "name": "conductor-verifier",
+        "description": "Runs a task's tests and records evidence on each acceptance criterion (met or unmet). Never edits code. Spawned by conductor:implement after each coder."
       },
       {
         "name": "conductor-marketing-strategist",
@@ -337,6 +349,24 @@
         "issueId",
         "sessionKey",
         "activity"
+      ]
+    },
+    {
+      "name": "get_forecast",
+      "description": "Throughput forecast (P50/P85 dates, appetite fit) for a Work Item and its subtasks.",
+      "category": "issues",
+      "requiredParams": [
+        "issueId"
+      ]
+    },
+    {
+      "name": "draft_health_update",
+      "description": "Draft a health update (on track, at risk, off track) for the owner to confirm in the web app.",
+      "category": "issues",
+      "requiredParams": [
+        "issueId",
+        "health",
+        "note"
       ]
     },
     {

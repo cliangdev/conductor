@@ -21,6 +21,8 @@ import {
   listMilestones,
   setMilestone,
   reportAgentActivity,
+  getForecast,
+  draftHealthUpdate,
 } from './tools/delivery.js'
 import { deleteDocument, scaffoldDocument, writeDocument } from './tools/documents.js'
 import { listWorkItemComments } from './tools/comments.js'
@@ -465,6 +467,30 @@ export const TOOLS = [
         agentLabel: { type: 'string', description: 'Default "claude-code"' },
       },
       required: ['issueId', 'sessionKey', 'activity'],
+    },
+  },
+  {
+    name: 'get_forecast',
+    description: 'Throughput forecast for a Work Item and its subtasks. Returns {state: DONE|NO_PLAN|INSUFFICIENT_DATA|OK, mode, remaining, samples, weeklyThroughputMedian, p50Date, p85Date, appetiteEndsOn, appetiteFit: FITS|TIGHT|EXCEEDS|null, milestoneFit}. NO_PLAN when the item has no sub-items to forecast. INSUFFICIENT_DATA until enough tasks have completed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID (usually a PRD)' },
+      },
+      required: ['issueId'],
+    },
+  },
+  {
+    name: 'draft_health_update',
+    description: 'Draft a health update (ON_TRACK, AT_RISK or OFF_TRACK plus a short note) for a Work Item. Returns {updateId, health, pendingConfirmation: true}. The owner confirms it in the web app; verify with get_work_item, which shows it under health.pendingDraft.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        health: { type: 'string', enum: ['ON_TRACK', 'AT_RISK', 'OFF_TRACK'], description: 'Drafted health' },
+        note: { type: 'string', description: 'One-paragraph status behind the health value' },
+      },
+      required: ['issueId', 'health', 'note'],
     },
   },
   {
@@ -2393,6 +2419,19 @@ export async function runMcpServer(): Promise<void> {
                 mode: params['mode'] as string | undefined,
                 note: params['note'] as string | undefined,
                 agentLabel: params['agentLabel'] as string | undefined,
+              },
+              config
+            )
+          )
+        case 'get_forecast':
+          return successResponse(await getForecast({ issueId: params['issueId'] as string }, config))
+        case 'draft_health_update':
+          return successResponse(
+            await draftHealthUpdate(
+              {
+                issueId: params['issueId'] as string,
+                health: params['health'] as string,
+                note: params['note'] as string,
               },
               config
             )

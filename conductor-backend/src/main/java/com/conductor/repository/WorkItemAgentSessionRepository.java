@@ -28,4 +28,10 @@ public interface WorkItemAgentSessionRepository extends JpaRepository<WorkItemAg
             ORDER BY work_item_id, last_heartbeat_at DESC
             """, nativeQuery = true)
     List<WorkItemAgentSession> findLatestOpenByWorkItem(@Param("ids") Collection<String> ids);
+
+    /** Distinct sessions that reported WORKING on any of these items at or after {@code since}. */
+    @Query("SELECT COUNT(DISTINCT s.sessionKey) FROM WorkItemAgentSession s WHERE s.workItemId IN :ids "
+            + "AND s.activity = 'WORKING' AND s.lastHeartbeatAt >= :since")
+    long countDistinctWorkingSince(@Param("ids") Collection<String> ids,
+                                   @Param("since") java.time.OffsetDateTime since);
 }

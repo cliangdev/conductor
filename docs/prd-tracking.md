@@ -91,7 +91,7 @@ subtree. Filters: `milestoneId`, `priority`, `assigneeId`, `ready`, `blocked`, `
 adds the rollup; `sort` is `updated | created | priority | dueOn | sequence`. The MCP `list_work_items` tool
 defaults the same way and returns compact rows, so an agent sees PRDs, not three hundred tasks.
 
-## API and MCP surface (Tranche 1)
+## API and MCP surface
 
 | Need | REST (`/api/v2/projects/{id}`) | MCP |
 |---|---|---|
@@ -103,6 +103,9 @@ defaults the same way and returns compact rows, so an agent sees PRDs, not three
 | Milestones | `GET|POST /milestones`, `PATCH|DELETE /milestones/{id}` | `list_milestones`, `set_milestone` |
 | Agent liveness | `PUT /work-items/{id}/agent-sessions/{sessionKey}` | `report_agent_activity` |
 | Ready queue | `GET /work-items?rootId=…&ready=true&sort=priority` | `list_work_items({rootId, ready: true})` |
+| Forecast | `GET /work-items/{id}/forecast` | `get_forecast` |
+| Health | `GET|POST /work-items/{id}/health-updates` (`{health, note, draft}`), `POST …/health-updates/{updateId}/confirm` | `draft_health_update` (drafts only; a person confirms in the web app) |
+| Overview | `GET /api/v2/projects/{id}/delivery-overview` | none (web only) |
 
 ## `tasks.json` compatibility
 
@@ -112,10 +115,66 @@ into `work_items.work_item_tasks`. That path still works unchanged. Once a PRD h
 `workItemId`); the implement command prefers children when `childCount > 0` and the web app prefers the
 server rollup over the legacy checklist in the same case.
 
-## Later tranches
+## Forecast
 
-- **Tranche 2 (web):** Plan tab (tree + dependency graph) on the PRD page, priority/milestone/appetite in
-  the properties panel, project Overview, Now / Next / Later roadmap with a milestone strip, milestone settings.
-- **Tranche 3 (agents + forecast + health):** `/conductor:breakdown`, the `conductor-critic` and
-  `conductor-verifier` subagents, `GET /work-items/{id}/forecast` (throughput Monte Carlo, P50/P85), health
-  updates and the delivery overview endpoint.
+`GET /work-items/{id}/forecast` answers "when will the open work under this item be done", computed on read
+by `ThroughputForecastService` (nothing stored, no cache; the simulation is about 100k draws).
+
+1. **Remaining** = open leaf items in the subtree (the same rollup as `progress`; cancelled leaves count as
+   done). None left is `state: DONE`; an item with no sub-items is `NO_PLAN`.
+2. **Samples** = leaf `TASK` items in the subtree that completed in the last 90 days, excluding
+   `CANCELLED`/`CLOSED`. Under 8, it widens to the whole project; still under 8 is `INSUFFICIENT_DATA`
+   (`samples`, `needed: 8`).
+3. **Weekly throughput**: full 7-day buckets counted backwards from now (the newest is `[now-7d, now)`), so
+   the current partial week is never a short bucket; the oldest partial window is dropped. The number of
+   buckets is the whole weeks between the first sample and now. With **3 or more full weeks** it forecasts by
+   throughput; with fewer it falls back to cycle time.
+4. **Throughput mode**: a 2 000-run bootstrap draws a week from the series with replacement until the
+   cumulative count covers `remaining` (cap 52 weeks). P50 and P85 of the weeks needed become dates, whole
+   weeks from today. `weeklyThroughputMedian` is the median of the series.
+5. **Cycle-time mode** (P50 only, no `p85Date`): median(`completed_at - started_at`, items with both stamps)
+   x remaining / `w`, where `w` is the number of distinct agent sessions `WORKING` under the item in the
+   last 7 days (minimum 1). No sample with both stamps is `INSUFFICIENT_DATA`.
+
+`appetiteEndsOn` = the item's `started_at` (its `created_at` if it never started) + `appetite_days`.
+`appetiteFit` compares the forecast with it, and `milestoneFit` with the item's milestone `target_on`:
+`FITS` (P85 on or before), `TIGHT` (P50 fits, P85 does not) or `EXCEEDS` (P50 is past it). Cycle-time mode
+has only a P50, so it is `FITS` or `EXCEEDS`. `appetiteFit` needs the item to have started; before that only
+`appetiteEndsOn` is shown.
+
+## Health
+
+A PRD's health is `ON_TRACK`, `AT_RISK` or `OFF_TRACK` plus a note, in `work_item_health_updates`.
+
+- **Draft, then confirm.** An agent calls `draft_health_update` (`POST …/health-updates` with `draft: true`),
+  which records a *pending draft* attributed to the caller. Only a person confirms
+  (`POST …/health-updates/{id}/confirm`, optionally editing `health`/`note`); a person may also record an
+  update directly (`draft: false`). A project key or run token can only draft: confirming or recording a
+  confirmed update gets a 403, the same line as other "a person did this" actions (user JWT or user API key
+  counts as a person).
+- **Current** health is the latest *confirmed* update. A newer unconfirmed one is `pendingDraft`
+  (`{updateId, health, note, draftedByLabel, createdAt}`) and never replaces it.
+- **Expiry.** A draft older than 48 hours is ignored on read (and cannot be confirmed, 409); it is not deleted.
+- **Stale.** The confirmed update is older than 7 days while the item's status category is `in_progress`.
+- **atRisk** (a boolean on the health object): the confirmed health is `AT_RISK` or `OFF_TRACK`, **or** it is
+  stale, **or** the forecast says the work will overrun (`appetiteFit` or `milestoneFit` is `TIGHT` or
+  `EXCEEDS`). The forecast leg is computed on a single Work Item read and in the overview; lists and the tree
+  carry the first two legs only. `health` is null on an item with nothing to say.
+
+The `WorkItemHealth` object on `WorkItemResponse` and tree nodes is
+`{health, note, updatedAt, stale, pendingDraft, atRisk}`.
+
+## Delivery overview
+
+`GET /api/v2/projects/{id}/delivery-overview` is the Overview page in one call: `activeItems` (each
+`{item, progress, health, forecast, signals}`), `milestones` (with progress) and
+`attention: {blocked, stale, needsInput}`. Active items are the non-terminal top-level `PRD`s plus any
+top-level item that has sub-items. The attention lists cover the whole tree (tasks included) but skip
+finished items and plain childless top-level items such as Posts; `needsInput` lists the item that asked, not
+the PRD above it. One forecast is computed per active item.
+
+## Migrations and follow-ups
+
+Schema: V179–V184 (delivery columns, milestones, dependencies, criteria, agent sessions, the `TASK` Workflow
+seed) and V185 (health updates). Not built yet: `NEEDS_INPUT` and health-changed notification signals, and a
+parent filter on the coordinator's agent-facing Work Item list.

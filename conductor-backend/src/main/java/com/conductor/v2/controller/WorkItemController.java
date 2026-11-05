@@ -21,6 +21,8 @@ import com.conductor.service.ProjectActor;
 import com.conductor.service.ReviewerService;
 import com.conductor.service.WorkItemCriteriaService;
 import com.conductor.service.WorkItemDependencyService;
+import com.conductor.service.ThroughputForecastService;
+import com.conductor.service.WorkItemHealthService;
 import com.conductor.service.WorkItemSignalService;
 import com.conductor.entity.WorkItemDependency;
 import com.conductor.service.WorkItemHierarchyService;
@@ -69,6 +71,8 @@ public class WorkItemController implements WorkItemsApi {
     private final WorkItemSignalService signalService;
     private final WorkItemDependencyService dependencyService;
     private final WorkItemCriteriaService criteriaService;
+    private final WorkItemHealthService healthService;
+    private final ThroughputForecastService forecastService;
 
     public WorkItemController(WorkItemService workItemService,
                               WorkItemWorkflowService workItemWorkflowService,
@@ -77,7 +81,11 @@ public class WorkItemController implements WorkItemsApi {
                               WorkItemHierarchyService hierarchyService,
                               WorkItemSignalService signalService,
                               WorkItemDependencyService dependencyService,
-                              WorkItemCriteriaService criteriaService) {
+                              WorkItemCriteriaService criteriaService,
+                              WorkItemHealthService healthService,
+                              ThroughputForecastService forecastService) {
+        this.healthService = healthService;
+        this.forecastService = forecastService;
         this.hierarchyService = hierarchyService;
         this.signalService = signalService;
         this.dependencyService = dependencyService;
@@ -165,6 +173,8 @@ public class WorkItemController implements WorkItemsApi {
         // Derived signals for the whole page in a few batched reads; ready / blocked / stale narrow the list
         // here, in Java, because they are judged in each item's own Workflow (like dueBefore).
         Map<String, WorkItemSignalService.Signals> signals = signalService.signalsFor(projectId, items);
+        // Health for the page in two batched reads; no forecast here, so atRisk is the explicit/stale legs only.
+        Map<String, WorkItemHealthService.Health> health = healthService.current(projectId, items);
         if (ready != null || blocked != null || stale != null) {
             items = items.stream()
                     .filter(i -> ready == null || signals.get(i.getId()) != null
@@ -200,6 +210,7 @@ public class WorkItemController implements WorkItemsApi {
                             links.getOrDefault(item.getId(), List.of())),
                             childCounts.getOrDefault(item.getId(), 0), progress.get(item.getId()))
                             .statusLabel(statusLabel(projectId, item))
+                            .health(DeliveryMappers.health(health.get(item.getId())))
                             .signals(signals.containsKey(item.getId())
                                     ? DeliveryMappers.signals(signals.get(item.getId())) : null)
                             .agentActivity(signals.containsKey(item.getId())
@@ -279,9 +290,15 @@ public class WorkItemController implements WorkItemsApi {
         ProgressRollup.Progress progress = childCount > 0 ? hierarchyService.progress(projectId, item.getId()) : null;
         WorkItemSignalService.Signals signals =
                 signalService.signalsFor(projectId, List.of(item)).get(item.getId());
+        // A single read also folds the forecast into atRisk (P85 past the appetite end or milestone target).
+        Map<String, ThroughputForecastService.Forecast> forecasts = childCount > 0
+                ? Map.of(item.getId(), forecastService.forecast(projectId, item)) : Map.of();
+        WorkItemHealthService.Health health =
+                healthService.current(projectId, List.of(item), forecasts).get(item.getId());
         return withSignals(withChildren(
                 toResponse(item, workItemService.unresolvedCommentCount(item.getId()), linksFor(item)),
-                childCount, progress).statusLabel(statusLabel(projectId, item)), signals);
+                childCount, progress).statusLabel(statusLabel(projectId, item))
+                .health(DeliveryMappers.health(health)), signals);
     }
 
     /** Adds the derived signals and the latest open agent session to a response. */

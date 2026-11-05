@@ -10,12 +10,15 @@ import { resolveProject } from '../mcp/config.js'
 
 const PLUGIN_FILES = [
   'commands/conductor/prd.md',
+  'commands/conductor/breakdown.md',
   'commands/conductor/implement.md',
   'commands/conductor/fix.md',
   'commands/conductor/workflow.md',
   'commands/conductor/marketing.md',
   'agents/conductor-researcher.md',
   'agents/conductor-coder.md',
+  'agents/conductor-critic.md',
+  'agents/conductor-verifier.md',
   'agents/conductor-marketing-art-director.md',
   'agents/conductor-marketing-creative-director.md',
   'agents/conductor-marketing-ideator.md',

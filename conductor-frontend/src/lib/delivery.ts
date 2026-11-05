@@ -3,13 +3,19 @@
 // paths and shapes.
 
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './api'
+import { parseTargetOn } from './roadmap'
 import type {
+  DeliveryOverview,
   DependencyGraph,
   DependencyKind,
+  ForecastFit,
+  HealthStatus,
+  HealthUpdate,
   Milestone,
   MilestoneState,
   WorkItemCriterion,
   WorkItemDependencies,
+  WorkItemForecast,
   WorkItemPriority,
   WorkItemTreeNode,
 } from '@/types/workItem'
@@ -119,6 +125,99 @@ export function patchDelivery<T>(projectId: string, workItemId: string, patch: D
     if (value !== undefined) body[key] = value ?? ''
   }
   return apiPatch<T>(`${items(projectId)}/${workItemId}`, body, token)
+}
+
+export function fetchForecast(projectId: string, workItemId: string, token: string): Promise<WorkItemForecast> {
+  return apiGet<WorkItemForecast>(`${items(projectId)}/${workItemId}/forecast`, token)
+}
+
+export function fetchDeliveryOverview(projectId: string, token: string): Promise<DeliveryOverview> {
+  return apiGet<DeliveryOverview>(`/api/v2/projects/${projectId}/delivery-overview`, token)
+}
+
+/** `draft: false` records a confirmed update (a person only); `true` leaves a pending draft. */
+export function createHealthUpdate(
+  projectId: string,
+  workItemId: string,
+  input: { health: HealthStatus; note: string; draft: boolean },
+  token: string
+): Promise<HealthUpdate> {
+  return apiPost<HealthUpdate>(`${items(projectId)}/${workItemId}/health-updates`, input, token)
+}
+
+/** Confirms a pending draft, optionally editing its health or note first. */
+export function confirmHealthUpdate(
+  projectId: string,
+  workItemId: string,
+  updateId: string,
+  edits: { health?: HealthStatus; note?: string },
+  token: string
+): Promise<HealthUpdate> {
+  return apiPost<HealthUpdate>(`${items(projectId)}/${workItemId}/health-updates/${updateId}/confirm`, edits, token)
+}
+
+/** "Nov 12" for a `YYYY-MM-DD` date, read as a local day so it never slips across time zones. */
+export function formatForecastDate(date: string): string {
+  const ms = parseTargetOn(date)
+  return ms === null ? date : new Date(ms).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+/**
+ * One line for a forecast: "P50 Nov 12 · P85 Nov 20 · fits appetite · fits the milestone". `formatDate`
+ * renders a `YYYY-MM-DD` string (injected so tests and locales stay in the caller's hands).
+ * `milestoneTargetOn` lets a missed milestone say by how many days.
+ */
+export function forecastLine(
+  forecast: WorkItemForecast,
+  formatDate: (date: string) => string,
+  milestoneTargetOn?: string | null
+): string {
+  switch (forecast.state) {
+    case 'DONE':
+      return 'Done'
+    case 'NO_PLAN':
+      return 'No plan yet'
+    case 'INSUFFICIENT_DATA': {
+      const needed = forecast.needed ?? 8
+      const more = Math.max(needed - forecast.samples, 0)
+      return `Needs ${needed} completed tasks (${forecast.samples} so far)${more > 0 ? `, ${more} more` : ''}`
+    }
+    case 'OK': {
+      const parts: string[] = []
+      if (forecast.p50Date) parts.push(`P50 ${formatDate(forecast.p50Date)}`)
+      if (forecast.p85Date) parts.push(`P85 ${formatDate(forecast.p85Date)}`)
+      const appetite = fitText(forecast.appetiteFit, { fits: 'fits appetite', tight: 'tight for the appetite', over: 'exceeds the appetite' }, forecast, forecast.appetiteEndsOn)
+      const milestone = fitText(forecast.milestoneFit, { fits: 'fits the milestone', tight: 'tight for the milestone', over: 'misses the milestone' }, forecast, milestoneTargetOn)
+      // Both explain at-risk, so both show, appetite first.
+      const fit = [appetite, milestone].filter((t): t is string => !!t).join(' · ')
+      if (fit) parts.push(fit)
+      return parts.length > 0 ? parts.join(' · ') : 'No forecast'
+    }
+  }
+}
+
+function fitText(
+  fit: ForecastFit | null | undefined,
+  words: { fits: string; tight: string; over: string },
+  f: WorkItemForecast,
+  targetOn: string | null | undefined
+): string | null {
+  switch (fit) {
+    case 'FITS':
+      return words.fits
+    case 'TIGHT':
+      return words.tight
+    case 'EXCEEDS': {
+      const endMs = parseTargetOn(f.p85Date ?? f.p50Date)
+      const targetMs = parseTargetOn(targetOn)
+      if (endMs === null || targetMs === null) return words.over
+      // Whole calendar days between two local midnights; rounding absorbs a 23 or 25 hour day.
+      const over = Math.round((endMs - targetMs) / 86_400_000)
+      return over > 0 ? `${words.over} by ${over} day${over === 1 ? '' : 's'}` : words.over
+    }
+    default:
+      return null
+  }
 }
 
 /** Replaces the whole list; a criterion sent again keeps its met state (matched by externalRef or text). */

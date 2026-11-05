@@ -81,12 +81,15 @@ function timeOf(value: string | null | undefined): number | null {
 
 /**
  * The time span a PRD's bar covers on the strip. Starts when work began (or the item was created) and
- * ends when it finished, else after its appetite, else at its milestone's target, else today.
+ * ends when it finished, else at the forecast P85 date, else after its appetite, else at its
+ * milestone's target, else today.
  */
 export function milestoneBarSpan(
   item: RoadmapItem,
   milestone: Milestone | null | undefined,
-  today: Date
+  today: Date,
+  /** `YYYY-MM-DD` P85 date from the item's forecast. */
+  forecastP85?: string | null
 ): { startMs: number; endMs: number } {
   const startedMs = timeOf(item.startedAt)
   const startMs = startedMs ?? timeOf(item.createdAt) ?? today.getTime()
@@ -94,6 +97,6 @@ export function milestoneBarSpan(
     startedMs !== null && item.appetiteDays != null && item.appetiteDays > 0
       ? startedMs + item.appetiteDays * DAY_MS
       : null
-  const endMs = timeOf(item.completedAt) ?? appetiteEnd ?? parseTargetOn(milestone?.targetOn) ?? today.getTime()
+  const endMs = timeOf(item.completedAt) ?? parseTargetOn(forecastP85) ?? appetiteEnd ?? parseTargetOn(milestone?.targetOn) ?? today.getTime()
   return { startMs, endMs: Math.max(endMs, startMs) }
 }

@@ -8,6 +8,7 @@ import com.conductor.generated.v2.model.WorkItemPriority;
 import com.conductor.generated.v2.model.WorkItemTreeNode;
 import com.conductor.service.PriorityScale;
 import com.conductor.service.ProgressRollup.CriteriaCount;
+import com.conductor.service.WorkItemHealthService;
 import com.conductor.service.WorkItemSignalService;
 import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.WorkItemHierarchyService;
@@ -34,10 +35,13 @@ public class WorkItemTreeController implements WorkItemTreeApi {
     private final WorkItemHierarchyService hierarchyService;
     private final ProjectSecurityService projectSecurityService;
     private final WorkItemSignalService signalService;
+    private final WorkItemHealthService healthService;
 
     public WorkItemTreeController(WorkItemHierarchyService hierarchyService,
                                   ProjectSecurityService projectSecurityService,
-                                  WorkItemSignalService signalService) {
+                                  WorkItemSignalService signalService,
+                                  WorkItemHealthService healthService) {
+        this.healthService = healthService;
         this.hierarchyService = hierarchyService;
         this.projectSecurityService = projectSecurityService;
         this.signalService = signalService;
@@ -55,7 +59,8 @@ public class WorkItemTreeController implements WorkItemTreeApi {
         Map<String, WorkItemSignalService.Signals> signals = signalService.signalsFor(projectId, all);
         Map<String, CriteriaCount> criteria =
                 hierarchyService.criteriaCounts(all.stream().map(WorkItem::getId).toList());
-        return ResponseEntity.ok(toNode(projectId, root, signals, criteria));
+        Map<String, WorkItemHealthService.Health> health = healthService.current(projectId, all);
+        return ResponseEntity.ok(toNode(projectId, root, signals, criteria, health));
     }
 
     private static void collect(TreeNode node, List<WorkItem> out) {
@@ -65,7 +70,8 @@ public class WorkItemTreeController implements WorkItemTreeApi {
 
     private static WorkItemTreeNode toNode(String projectId, TreeNode node,
                                            Map<String, WorkItemSignalService.Signals> signals,
-                                           Map<String, CriteriaCount> criteria) {
+                                           Map<String, CriteriaCount> criteria,
+                                           Map<String, WorkItemHealthService.Health> health) {
         WorkItem item = node.item();
         WorkItemAssignee assignee = null;
         if (item.getAssignee() != null) {
@@ -80,7 +86,7 @@ public class WorkItemTreeController implements WorkItemTreeApi {
                 item.getCurrentStatus(),
                 node.terminal(),
                 node.children().size(),
-                node.children().stream().map(child -> toNode(projectId, child, signals, criteria)).toList())
+                node.children().stream().map(child -> toNode(projectId, child, signals, criteria, health)).toList())
                 .workflow(item.getWorkflow())
                 .statusLabel(node.statusLabel())
                 .priority(item.getPriority() == null ? null
@@ -88,6 +94,7 @@ public class WorkItemTreeController implements WorkItemTreeApi {
                 .parentWorkItemId(item.getParentWorkItemId())
                 .milestoneId(item.getMilestone() == null ? null : item.getMilestone().getId())
                 .assignee(assignee)
+                .health(DeliveryMappers.health(health.get(item.getId())))
                 .criteriaTotal(criteria.getOrDefault(item.getId(), new CriteriaCount(0, 0)).total())
                 .criteriaMet(criteria.getOrDefault(item.getId(), new CriteriaCount(0, 0)).met())
                 .signals(signals.containsKey(item.getId())

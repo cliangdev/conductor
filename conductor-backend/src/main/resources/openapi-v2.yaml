@@ -24,6 +24,12 @@ tags:
     description: Acceptance criteria on a Work Item
   - name: work-item-agent-sessions
     description: Liveness of agent runs on a Work Item
+  - name: work-item-forecast
+    description: Throughput forecast of when the open work under a Work Item will be done
+  - name: work-item-health
+    description: Health updates on a Work Item, drafted by an agent and confirmed by a person
+  - name: delivery
+    description: Project-wide delivery overview (active PRDs, milestones, what needs attention)
   - name: milestones
     description: Named, optionally dated groupings of Work Items, with their progress
   - name: work-item-reviewers
@@ -1339,6 +1345,230 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/forecast:
+    get:
+      tags:
+        - work-item-forecast
+      summary: When will the open work under this item be done
+      description: >-
+        Computed on read from the weekly throughput of leaf tasks completed in the last 90 days (widened to
+        the whole project when the subtree has fewer than 8): a 2 000-run bootstrap gives P50 and P85 dates.
+        With fewer than 3 weeks of history it falls back to a median cycle-time estimate (P50 only).
+        See docs/prd-tracking.md "Forecast".
+      operationId: getWorkItemForecast
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: The forecast
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkItemForecast"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/health-updates:
+    get:
+      tags:
+        - work-item-health
+      summary: Health updates on a Work Item, newest first
+      operationId: listWorkItemHealthUpdates
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: Confirmed updates and drafts, newest first (at most 50)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkItemHealthUpdateResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - work-item-health
+      summary: Record a health update
+      description: >-
+        `draft=true` records a pending draft attributed to the caller (an agent or a person) that a person
+        confirms later; it is ignored once it is 48 hours old. `draft=false` records a confirmed update
+        directly and needs a person (a user JWT or a user API key, not a project key or run token).
+      operationId: createWorkItemHealthUpdate
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWorkItemHealthUpdateRequest"
+      responses:
+        "201":
+          description: The recorded update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkItemHealthUpdateResponse"
+        "400":
+          description: Unknown health, or a missing or over-long note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: A machine credential tried to record a confirmed update, or the caller is not an editor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/work-items/{workItemId}/health-updates/{updateId}/confirm:
+    post:
+      tags:
+        - work-item-health
+      summary: Confirm a drafted health update
+      description: >-
+        A person confirms a pending draft, optionally editing its health or note first. Machine credentials
+        get 403. An already-confirmed or expired (older than 48 hours) draft is a 409.
+      operationId: confirmWorkItemHealthUpdate
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+        - {name: workItemId, in: path, required: true, schema: {type: string}}
+        - {name: updateId, in: path, required: true, schema: {type: string}}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfirmWorkItemHealthUpdateRequest"
+      responses:
+        "200":
+          description: The confirmed update
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkItemHealthUpdateResponse"
+        "400":
+          description: Unknown health or an empty note
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Machine credential, or not an editor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item or update not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Already confirmed, or the draft expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/delivery-overview:
+    get:
+      tags:
+        - delivery
+      summary: Active PRDs with progress, health and forecast, milestones, and what needs attention
+      description: >-
+        One call for the Overview page. `activeItems` are the top-level PRDs (and any top-level item that has
+        sub-items) not in a terminal status. `attention` lists blocked, stale and needs-input items across
+        the whole tree (tasks included), excluding finished ones and plain childless top-level items.
+      operationId: getDeliveryOverview
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - {name: projectId, in: path, required: true, schema: {type: string}}
+      responses:
+        "200":
+          description: The overview
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryOverviewResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not a member of the project
           content:
             application/json:
               schema:
@@ -7274,6 +7504,8 @@ components:
           $ref: "#/components/schemas/WorkItemSignals"
         agentActivity:
           $ref: "#/components/schemas/WorkItemAgentActivity"
+        health:
+          $ref: "#/components/schemas/WorkItemHealth"
 
     WorkItemBlocker:
       type: object
@@ -7329,6 +7561,252 @@ components:
         updatedAt:
           type: string
           format: date-time
+
+    WorkItemHealthStatus:
+      type: string
+      enum: [ON_TRACK, AT_RISK, OFF_TRACK]
+
+    WorkItemHealthDraft:
+      type: object
+      description: A health update an agent proposed that no person has confirmed yet (and is under 48 hours old).
+      required: [updateId, health, note, createdAt]
+      properties:
+        updateId:
+          type: string
+        health:
+          $ref: "#/components/schemas/WorkItemHealthStatus"
+        note:
+          type: string
+        draftedByLabel:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    WorkItemHealth:
+      type: object
+      description: >-
+        The item's health: the latest *confirmed* update, any newer pending draft, and the derived `atRisk`.
+        Null on the item when it has no confirmed update, no pending draft and is not at risk. `health`,
+        `note` and `updatedAt` are null when only a draft (or only a forecast risk) exists.
+      required: [stale, atRisk]
+      properties:
+        health:
+          $ref: "#/components/schemas/WorkItemHealthStatus"
+        note:
+          type: string
+          nullable: true
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the current (confirmed) update was confirmed.
+        stale:
+          type: boolean
+          description: The confirmed update is older than seven days while the item is in progress.
+        pendingDraft:
+          $ref: "#/components/schemas/WorkItemHealthDraft"
+        atRisk:
+          type: boolean
+          description: >-
+            Confirmed AT_RISK or OFF_TRACK, or stale, or (where a forecast was computed: single reads and the
+            overview) the P85 date is past the appetite end or milestone target.
+
+    WorkItemHealthUpdateResponse:
+      type: object
+      required: [id, health, note, confirmed, createdAt]
+      properties:
+        id:
+          type: string
+        health:
+          $ref: "#/components/schemas/WorkItemHealthStatus"
+        note:
+          type: string
+        draftedByLabel:
+          type: string
+          nullable: true
+        confirmed:
+          type: boolean
+        confirmedByName:
+          type: string
+          nullable: true
+        confirmedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateWorkItemHealthUpdateRequest:
+      type: object
+      required: [health, note, draft]
+      properties:
+        health:
+          $ref: "#/components/schemas/WorkItemHealthStatus"
+        note:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        draft:
+          type: boolean
+          description: True records a pending draft; false records a confirmed update (a person only).
+
+    ConfirmWorkItemHealthUpdateRequest:
+      type: object
+      properties:
+        health:
+          $ref: "#/components/schemas/WorkItemHealthStatus"
+        note:
+          type: string
+          maxLength: 2000
+
+    ForecastFit:
+      type: string
+      enum: [FITS, TIGHT, EXCEEDS]
+      description: P85 fits the date (FITS), only P50 does (TIGHT), or neither (EXCEEDS).
+
+    WorkItemForecast:
+      type: object
+      description: >-
+        When the open leaf tasks under the item will be done. `state` DONE: nothing left. NO_PLAN: the item
+        has no sub-items. INSUFFICIENT_DATA: fewer than `needed` completed tasks to learn from. OK: dates present.
+      required: [state, remaining, samples]
+      properties:
+        state:
+          type: string
+          enum: [DONE, NO_PLAN, INSUFFICIENT_DATA, OK]
+        mode:
+          type: string
+          enum: [THROUGHPUT, CYCLE_TIME]
+          nullable: true
+          description: Only when state is OK. CYCLE_TIME has no p85Date and no weeklyThroughputMedian.
+        remaining:
+          type: integer
+          description: Open leaf tasks left.
+        samples:
+          type: integer
+          description: Completed leaf tasks learned from (last 90 days).
+        needed:
+          type: integer
+          nullable: true
+          description: Samples required, present for INSUFFICIENT_DATA.
+        weeklyThroughputMedian:
+          type: number
+          format: double
+          nullable: true
+        p50Date:
+          type: string
+          format: date
+          nullable: true
+        p85Date:
+          type: string
+          format: date
+          nullable: true
+        appetiteEndsOn:
+          type: string
+          format: date
+          nullable: true
+          description: Start (or creation, if never started) plus the appetite; null without an appetite.
+        appetiteFit:
+          $ref: "#/components/schemas/ForecastFit"
+        milestoneFit:
+          $ref: "#/components/schemas/ForecastFit"
+
+    DeliveryItemSummary:
+      type: object
+      required: [id, displayId, title, type, status]
+      properties:
+        id:
+          type: string
+        displayId:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+        statusLabel:
+          type: string
+        workflow:
+          type: string
+        priority:
+          $ref: "#/components/schemas/WorkItemPriority"
+        parentWorkItemId:
+          type: string
+          nullable: true
+        milestoneId:
+          type: string
+          nullable: true
+        milestoneName:
+          type: string
+          nullable: true
+        appetite:
+          type: string
+          nullable: true
+        appetiteDays:
+          type: integer
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        blockedByCount:
+          type: integer
+          description: How many unfinished blockers hold the item up; set on the blocked attention list, 0 elsewhere.
+
+    DeliveryActiveItem:
+      type: object
+      required: [item, progress, signals, forecast]
+      properties:
+        item:
+          $ref: "#/components/schemas/DeliveryItemSummary"
+        progress:
+          $ref: "#/components/schemas/WorkItemProgress"
+        health:
+          $ref: "#/components/schemas/WorkItemHealth"
+        forecast:
+          $ref: "#/components/schemas/WorkItemForecast"
+        signals:
+          $ref: "#/components/schemas/WorkItemSignals"
+
+    DeliveryAttention:
+      type: object
+      required: [blocked, stale, needsInput]
+      properties:
+        blocked:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryItemSummary"
+        stale:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryItemSummary"
+        needsInput:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryItemSummary"
+
+    DeliveryOverviewResponse:
+      type: object
+      required: [activeItems, milestones, attention]
+      properties:
+        activeItems:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryActiveItem"
+        milestones:
+          type: array
+          items:
+            $ref: "#/components/schemas/MilestoneResponse"
+        attention:
+          $ref: "#/components/schemas/DeliveryAttention"
 
     WorkItemDependencyEntry:
       type: object
@@ -7608,6 +8086,8 @@ components:
           $ref: "#/components/schemas/WorkItemSignals"
         agentActivity:
           $ref: "#/components/schemas/WorkItemAgentActivity"
+        health:
+          $ref: "#/components/schemas/WorkItemHealth"
         children:
           type: array
           items:

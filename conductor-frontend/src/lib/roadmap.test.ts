@@ -78,6 +78,13 @@ describe('milestoneBarSpan', () => {
     expect(byMilestone.endMs).toBe(new Date(2026, 11, 20).getTime())
     expect(milestoneBarSpan(item(), null, today).endMs).toBe(today.getTime())
   })
+  it('ends at the forecast P85 after completedAt and before the appetite', () => {
+    const base = { startedAt: '2026-10-05T00:00:00Z', appetiteDays: 14 }
+    const p85End = new Date(2026, 10, 20).getTime()
+    expect(milestoneBarSpan(item(base), milestones.soon, today, '2026-11-20').endMs).toBe(p85End)
+    expect(milestoneBarSpan(item({ ...base, completedAt: '2026-10-20T00:00:00Z' }), milestones.soon, today, '2026-11-20').endMs).toBe(t('2026-10-20T00:00:00Z'))
+    expect(milestoneBarSpan(item(base), milestones.soon, today, null).endMs).toBe(t('2026-10-19T00:00:00Z'))
+  })
   it('clamps the end so it is never before the start', () => {
     const span = milestoneBarSpan(item({ startedAt: '2026-10-05T00:00:00Z', completedAt: '2026-10-01T00:00:00Z' }), null, today)
     expect(span.endMs).toBe(span.startMs)

@@ -23,6 +23,7 @@ import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { toastError } from '@/components/ui/toast'
 import { PanelSection } from '@/components/workitems/PanelSection'
+import { HealthSection } from '@/components/workitems/plan/HealthSection'
 import { NO_REF, type WorkItemRefState } from '@/components/workitems/plan/useWorkItemRef'
 import type {
   Milestone,
@@ -65,6 +66,15 @@ export function DeliverySections({
         onChanged={onChanged}
       />
       <AppetiteSection projectId={projectId} issueId={issueId} token={token} canEdit={canEdit} appetite={delivery.appetite} onChanged={onChanged} />
+      <HealthSection
+        projectId={projectId}
+        issueId={issueId}
+        token={token}
+        canEdit={canEdit}
+        health={delivery.health}
+        childCount={delivery.childCount}
+        onChanged={onChanged}
+      />
       <ParentSection parent={parent} parentWorkItemId={delivery.parentWorkItemId} childCount={delivery.childCount} />
       <BlockedBySection projectId={projectId} issueId={issueId} token={token} canEdit={canEdit} />
     </>
