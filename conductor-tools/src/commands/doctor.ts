@@ -7,6 +7,10 @@ import { readConfig, CONFIG_PATH } from '../lib/config.js'
 import { getAssetSrcDir, getPluginInstallStatus } from '../lib/plugin-assets.js'
 import { checkCodexCli, type CodexStatus } from '../lib/codex-image.js'
 import { resolveImageSettings, resolveOpenAiKey } from '../lib/image-generation.js'
+import { resolveGeminiKey } from '../lib/gemini-omni.js'
+import { getVertexToken } from '../lib/vertex-veo.js'
+import { pickVideoRoute, videoCaps } from '../lib/video-generation.js'
+import { spentToday } from '../lib/video-spend.js'
 import { printNextSteps } from '../lib/next-steps.js'
 
 export async function checkApiHealth(apiUrl: string): Promise<boolean> {
@@ -61,6 +65,33 @@ async function checkOpenAiRoute(found: { key: string; source: string }): Promise
   } catch {
     return { status: 'warn', message: `${label} — OpenAI unreachable` }
   }
+}
+
+/** Video is optional: not configured is a warning with the setup commands. Never prints a key or token. */
+export async function checkVideoGeneration(): Promise<{ status: 'pass' | 'warn'; message: string }> {
+  const choice = pickVideoRoute()
+  const caps = videoCaps()
+  const spend = `spent today $${spentToday().toFixed(2)} of $${caps.dailyUsd.toFixed(2)} cap`
+  if (!choice) {
+    return {
+      status: 'warn',
+      message: 'Video generation: not configured (optional) — run `conductor config set-vertex-project <id>` and `gcloud auth login` for Veo, or `conductor config set-gemini-api-key <key>` for Gemini Omni',
+    }
+  }
+  if (choice.route === 'vertex') {
+    let token = true
+    try {
+      await getVertexToken()
+    } catch {
+      token = false
+    }
+    const base = `Video generation: Veo on Vertex AI, project ${choice.project}, region ${choice.region}`
+    return token
+      ? { status: 'pass', message: `${base}, access token available; ${spend}` }
+      : { status: 'warn', message: `${base} — no access token: run \`gcloud auth login\` (or set CONDUCTOR_VERTEX_ACCESS_TOKEN); ${spend}` }
+  }
+  const source = resolveGeminiKey()?.source ?? 'config'
+  return { status: 'pass', message: `Video generation: Gemini Omni, key set (from ${source}); ${spend}` }
 }
 
 export function registerDoctor(program: Command): void {
@@ -124,6 +155,9 @@ Examples:
         const images = await checkImageGeneration()
         checks.push({ name: 'image-generation', status: images.status, message: images.message })
 
+        const video = await checkVideoGeneration()
+        checks.push({ name: 'video-generation', status: video.status, message: video.message })
+
         const allPass = checks.every(c => c.status !== 'fail')
         process.stdout.write(JSON.stringify({ checks }, null, 2) + '\n')
         process.exit(allPass ? 0 : 1)
@@ -178,6 +212,14 @@ Examples:
         console.log(`${chalk.green('✓')} ${images.message}`)
       } else {
         console.log(`${chalk.yellow('⚠')} ${images.message}`)
+        warnings++
+      }
+
+      const video = await checkVideoGeneration()
+      if (video.status === 'pass') {
+        console.log(`${chalk.green('✓')} ${video.message}`)
+      } else {
+        console.log(`${chalk.yellow('⚠')} ${video.message}`)
         warnings++
       }
 
