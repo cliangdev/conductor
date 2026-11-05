@@ -102,16 +102,14 @@ function NavItem({
   icon,
   children,
   onNavigate,
-  exact = false,
 }: {
   href: string
   icon?: React.ReactNode
   children: React.ReactNode
   onNavigate?: () => void
-  exact?: boolean
 }) {
   const pathname = usePathname()
-  const isActive = exact ? pathname === href : pathname.startsWith(href)
+  const isActive = pathname.startsWith(href)
   return (
     <Link
       href={href}

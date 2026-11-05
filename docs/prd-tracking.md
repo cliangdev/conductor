@@ -105,7 +105,7 @@ defaults the same way and returns compact rows, so an agent sees PRDs, not three
 | Ready queue | `GET /work-items?rootId=…&ready=true&sort=priority` | `list_work_items({rootId, ready: true})` |
 | Forecast | `GET /work-items/{id}/forecast` | `get_forecast` |
 | Health | `GET|POST /work-items/{id}/health-updates` (`{health, note, draft}`), `POST …/health-updates/{updateId}/confirm` | `draft_health_update` (drafts only; a person confirms in the web app) |
-| Overview | `GET /api/v2/projects/{id}/delivery-overview` | none (web only) |
+| Plans / Roadmap | `GET /api/v2/projects/{id}/delivery-overview` | none (web only) |
 
 ## `tasks.json` compatibility
 
@@ -166,7 +166,7 @@ The `WorkItemHealth` object on `WorkItemResponse` and tree nodes is
 
 ## Delivery overview
 
-`GET /api/v2/projects/{id}/delivery-overview` is the Overview page in one call: `activeItems` (each
+`GET /api/v2/projects/{id}/delivery-overview` feeds the Plans and Roadmap tabs on a PRD Workflow's Issues list (`?view=plans` / `?view=roadmap`) in one call: `activeItems` (each
 `{item, progress, health, forecast, signals}`), `milestones` (with progress) and
 `attention: {blocked, stale, needsInput}`. Active items are the non-terminal top-level `PRD`s plus any
 top-level item that has sub-items. The attention lists cover the whole tree (tasks included) but skip

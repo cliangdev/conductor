@@ -150,7 +150,8 @@ export function WorkItemListView({
   }, [workflowView?.defaultView, modeExplicitKey, searchParams])
 
   // Plans / Roadmap are views over the PRDs of a Workflow; without a PRD type the param is ignored.
-  const hasPrdType = (workflowView?.types ?? []).includes('PRD')
+  // Optimistic while the Workflow view is unknown, so a deep link does not flash the list first.
+  const hasPrdType = workflowView ? (workflowView.types ?? []).includes('PRD') : requestedPanel !== null
   const panel: PanelView | null = hasPrdType ? requestedPanel : null
 
   const independentReviewerStatuses = useMemo(
@@ -167,7 +168,7 @@ export function WorkItemListView({
   const lowerNoun = title.toLowerCase()
 
   function setView(next: ListView | PanelView) {
-    if (next === (panel ?? view)) return
+    if (next === (requestedPanel ?? view)) return
     const sp = new URLSearchParams(searchParams.toString())
     if (next === 'active') sp.delete('view')
     else sp.set('view', next)
@@ -350,7 +351,8 @@ export function WorkItemListView({
     )
   }
 
-  if (loading) {
+  // A panel does not depend on the list fetch, so it renders without waiting for it.
+  if (loading && !panel) {
     return (
       <PageContainer>
         <PageHeader title={title} />
@@ -359,7 +361,7 @@ export function WorkItemListView({
     )
   }
 
-  if (error) {
+  if (error && !panel) {
     return (
       <PageContainer>
         <PageHeader title={title} />

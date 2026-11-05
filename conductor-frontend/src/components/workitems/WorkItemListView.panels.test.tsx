@@ -100,6 +100,23 @@ describe('Plans and Roadmap panels', () => {
     expect(replace).toHaveBeenCalledWith('/app/projects/proj-1/engineering/issues?view=plans')
   })
 
+  it('selects the requested panel before the Workflow view has loaded', async () => {
+    VIEW = null as unknown as WorkflowView
+    searchParamsValue = new URLSearchParams('view=roadmap')
+    renderList()
+    expect(await screen.findByTestId('roadmap-panel-stub')).toBeInTheDocument()
+    expect(screen.queryByTestId('work-item-list')).not.toBeInTheDocument()
+  })
+
+  it('clears a stale panel param when Active is clicked', async () => {
+    VIEW = { ...BASE_VIEW, types: ['POST'] }
+    searchParamsValue = new URLSearchParams('view=plans')
+    renderList()
+    await userEvent.click(await screen.findByRole('tab', { name: /^Done/ }))
+    await userEvent.click(screen.getByRole('tab', { name: /^Active/ }))
+    expect(replace).toHaveBeenLastCalledWith('/app/projects/proj-1/engineering/issues')
+  })
+
   it('falls back to the active list for ?view=plans on a Workflow without a PRD type', async () => {
     VIEW = { ...BASE_VIEW, types: ['POST'] }
     searchParamsValue = new URLSearchParams('view=plans')
