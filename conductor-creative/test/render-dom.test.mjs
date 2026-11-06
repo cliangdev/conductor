@@ -169,7 +169,7 @@ test('renderBoard: light theme adds cc-board--light', () => {
 
 test('renderBoard: safe-zone dataset attributes mirror the placement', () => {
   const b = board({ layout: 'bleed', headline: 'x *y*.' }, '9x16');
-  assert.equal(b.dataset.safeTop, '220');
+  assert.equal(b.dataset.safeTop, '290');
   assert.equal(b.dataset.safeBottom, '430');
   assert.equal(b.dataset.safeRight, '140');
 });

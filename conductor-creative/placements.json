@@ -6,7 +6,7 @@
     "platform": "tiktok",
     "default": true,
     "safe": {
-      "top": 220,
+      "top": 290,
       "bottom": 430,
       "right": 140
     },
@@ -121,7 +121,7 @@
     "platform": "story",
     "default": false,
     "safe": {
-      "top": 250,
+      "top": 290,
       "bottom": 350,
       "right": 170
     },

@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { relativeLuminance, parseRgb, contrastRatio, spillDetect, safeZoneIntrusion } from '../assertions.js';
+import { relativeLuminance, parseRgb, contrastRatio, spillDetect, safeZoneIntrusion, safeZoneTopIntrusion } from '../assertions.js';
 
 /* ── relativeLuminance / contrastRatio ─────────────────────────────────── */
 
@@ -104,4 +104,36 @@ test('safeZoneIntrusion: copy crossing into the reserved zone is reported with i
 test('safeZoneIntrusion: a 1px tolerance absorbs subpixel rounding at the boundary', () => {
   const nodes = [{ name: 'cc-cta', rect: { top: 1400, bottom: 1490.5, right: 900 } }];
   assert.deepEqual(safeZoneIntrusion(board, nodes, { bottom: 430 }), []);
+});
+
+/* ── safeZoneTopIntrusion ──────────────────────────────────────────────── */
+
+test('safeZoneTopIntrusion: no top reserve means nothing can intrude', () => {
+  const nodes = [{ name: 'cc-headline', rect: { top: 10, bottom: 200, right: 900 } }];
+  assert.deepEqual(safeZoneTopIntrusion(board, nodes, { top: 0 }, '4x5'), { errors: [], warnings: [] });
+});
+
+test('safeZoneTopIntrusion: copy starting at or below the zone is clean', () => {
+  const nodes = [{ name: 'cc-headline', rect: { top: 290, bottom: 600, right: 900 } }];
+  assert.deepEqual(safeZoneTopIntrusion(board, nodes, { top: 290 }, '9x16'), { errors: [], warnings: [] });
+});
+
+test('safeZoneTopIntrusion: headline, body and CTA in the zone are errors that name the fix', () => {
+  const nodes = ['cc-headline', 'cc-body', 'cc-cta'].map((name) => ({ name, rect: { top: 240, bottom: 600, right: 900 } }));
+  const { errors, warnings } = safeZoneTopIntrusion(board, nodes, { top: 290 }, '9x16');
+  assert.equal(errors.length, 3);
+  assert.equal(warnings.length, 0);
+  assert.match(errors[0], /cc-headline starts 50px inside the top safe zone of 9x16 .*move it below y=290 at 1080x1920/);
+});
+
+test('safeZoneTopIntrusion: the lockup is only a warning', () => {
+  const nodes = [{ name: 'cc-lockup cc-lockup--chip', rect: { top: 100, bottom: 200, right: 500 } }];
+  const { errors, warnings } = safeZoneTopIntrusion(board, nodes, { top: 290 }, 'story');
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.length, 1);
+});
+
+test('safeZoneTopIntrusion: a 1px tolerance absorbs subpixel rounding', () => {
+  const nodes = [{ name: 'cc-headline', rect: { top: 289.5, bottom: 600, right: 900 } }];
+  assert.deepEqual(safeZoneTopIntrusion(board, nodes, { top: 290 }, '9x16'), { errors: [], warnings: [] });
 });

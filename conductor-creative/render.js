@@ -328,15 +328,18 @@ function applyType(board, size, leading, tracking) {
 }
 
 /* True when nothing in the panel crosses the artboard's edges or intrudes on
- * the placement's bottom safe zone. These are the same tests a headless
+ * the placement's bottom or top safe zone. These are the same tests a headless
  * exporter would run before writing a PNG, so fitting and that safety net
  * cannot disagree. */
 function fits(board) {
   const br = board.getBoundingClientRect();
   const safeBottom = Number(board.dataset.safeBottom) || 0;
+  const safeTop = Number(board.dataset.safeTop) || 0;
   for (const n of board.querySelectorAll('.cc-headline, .cc-body, .cc-cta, .cc-lockup')) {
     const r = n.getBoundingClientRect();
     if (r.top < br.top - 1 || r.right > br.right + 1) return false;
+    // the lockup is only a warning in the top zone, so it never blocks the fit
+    if (safeTop && !n.classList.contains('cc-lockup') && r.top < br.top + safeTop - 1) return false;
     if (r.bottom > br.bottom - safeBottom + 1) return false;
   }
   return true;

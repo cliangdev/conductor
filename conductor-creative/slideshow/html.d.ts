@@ -7,7 +7,7 @@ export declare const FRAME_W = 1080;
 export declare const FRAME_H: Record<SlideRatio, number>;
 /** TikTok / Reels overlay bands (px) on a 9:16 frame. */
 export declare const SAFE: {
-    readonly top: 220;
+    readonly top: 290;
     readonly bottom: 430;
     readonly right: 140;
 };

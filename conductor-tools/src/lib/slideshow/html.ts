@@ -5,7 +5,7 @@ import type { SlideRatio, SlideshowSpec, SlideSpec } from './spec.js'
 export const FRAME_W = 1080
 export const FRAME_H: Record<SlideRatio, number> = { '9x16': 1920, '4x5': 1350 }
 /** TikTok / Reels overlay bands (px) on a 9:16 frame. */
-export const SAFE = { top: 220, bottom: 430, right: 140 } as const
+export const SAFE = { top: 290, bottom: 430, right: 140 } as const
 
 export const esc = (s: unknown): string =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)

@@ -5,7 +5,7 @@ import { fontFamilyNames, isGenericFamily, resolveSlideshowStyle } from './style
 export const FRAME_W = 1080;
 export const FRAME_H = { '9x16': 1920, '4x5': 1350 };
 /** TikTok / Reels overlay bands (px) on a 9:16 frame. */
-export const SAFE = { top: 220, bottom: 430, right: 140 };
+export const SAFE = { top: 290, bottom: 430, right: 140 };
 export const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 /**
  * y values are % of the 9:16 frame; on 4:5 they are mapped into the centre 1350 band.

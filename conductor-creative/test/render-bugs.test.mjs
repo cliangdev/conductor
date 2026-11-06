@@ -459,3 +459,22 @@ test('D: every 4:5 carousel card whose body is dropped warns, with its index, th
   }
   assert.deepEqual(calls.checks.filter((c) => c.severity === 'error'), []);
 });
+
+/* ── D: no built-in layout puts headline, body or CTA in the top safe zone (y < 290) ───────────── */
+
+test('D: every layout clears the 9x16 and story top safe zone, short and long copy alike', async (t) => {
+  if (skip(t)) return;
+  const copies = [
+    { headline: 'Ready *now*' },
+    { headline: 'A much longer headline that wraps over several lines on a tall board *today*', body: 'Supporting copy that runs to a second line so the stack grows taller.', cta: 'Start free' },
+  ];
+  for (const layout of ['stacked', 'bleed', 'card', 'split']) {
+    for (const key of ['9x16', 'story']) {
+      for (const copy of copies) {
+        const checks = await checksAfter({ layout, photoUrl: PHOTOS.portrait, ...copy }, BRAND, '', key);
+        const hits = checks.filter((c) => c.rule === 'safeZone' && c.severity === 'error' && /top safe zone/.test(c.message));
+        assert.deepEqual(hits, [], `${layout} ${key} ${copy.headline.slice(0, 12)}`);
+      }
+    }
+  }
+});

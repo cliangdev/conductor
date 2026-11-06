@@ -19,7 +19,7 @@ export const placements = {
     label: '9:16 TikTok and Reels',
     platform: 'tiktok',
     default: true,
-    safe: { top: 220, bottom: 430, right: 140 },
+    safe: { top: 290, bottom: 430, right: 140 },
     fit: { max: 132, min: 54, lines: 4 },
     badgeHeight: 108,
     scale: {
@@ -110,7 +110,7 @@ export const placements = {
     label: '9:16 Instagram and Facebook Stories',
     platform: 'story',
     default: false,
-    safe: { top: 250, bottom: 350, right: 170 },
+    safe: { top: 290, bottom: 350, right: 170 },
     fit: { max: 132, min: 54, lines: 4 },
     badgeHeight: 108,
     scale: {
