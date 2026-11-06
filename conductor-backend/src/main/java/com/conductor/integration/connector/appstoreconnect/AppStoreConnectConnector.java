@@ -73,11 +73,13 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     static final String TOTAL_DOWNLOADS = "total_downloads";
     static final String DOWNLOADS_OF_RECORD = "downloads_of_record";
     static final String SALES_REPORT_DAYS = "sales_report_days";
+    static final String CAMPAIGN_DOWNLOADS = "campaign_downloads";
     /**
-     * Version 2: {@code total_downloads} exists. The version differing from the one in the feed cursor makes the
+     * Version 2: {@code total_downloads} exists. Version 3: {@code campaign_downloads} (per campaign token, from
+     * the App Downloads Detailed report) exists. The version differing from the one in the feed cursor makes the
      * puller re-walk the backfill window once, so stored history gets it too.
      */
-    static final int CONTRACT_VERSION = 2;
+    static final int CONTRACT_VERSION = 3;
     /** Apple dates its Sales reports in Pacific time; a day is not published before that day has ended there. */
     private static final ZoneId SALES_REPORT_ZONE = ZoneId.of("America/Los_Angeles");
     /** A Sales report day this many days old (Pacific) is published if it ever will be: a 404 then means no sales. */
@@ -336,9 +338,9 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
             throw ChannelMetricsSourceException.degraded("App Store Connect request failed: " + e.getMessage());
         }
 
-        Map<LocalDate, AppStoreAnalyticsClient.DayRows> days;
+        AppStoreAnalyticsClient.Fetched fetched;
         try {
-            days = client.fetchDays(token, appId, from, to);
+            fetched = client.fetch(token, appId, from, to);
         } catch (HttpClientErrorException e) {
             throw map(e, appId, false);
         } catch (AppStoreAnalyticsClient.ReportException e) {
@@ -348,7 +350,9 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
         }
 
         List<ChannelMetricPoint> points = new ArrayList<>();
-        days.forEach((day, rows) -> emit(day, rows, points));
+        fetched.days().forEach((day, rows) -> emit(day, rows, points));
+        fetched.campaignDownloads().forEach((day, tokens) ->
+                tokens.forEach((key, downloads) -> points.add(ChannelMetricPoint.of(CAMPAIGN_DOWNLOADS, key, day, downloads))));
 
         String vendorNumber = vendorNumber(ctx);
         if (vendorNumber != null) {

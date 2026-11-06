@@ -47,6 +47,8 @@ class AppStoreConnectChannelMetricsTest {
             + "App%20Store%20Discovery%20and%20Engagement%20Standard";
     private static final String DOWNLOADS_LOOKUP = API + "/v1/analyticsReportRequests/REQ1/reports?filter%5Bname%5D="
             + "App%20Downloads%20Standard";
+    private static final String DETAILED_LOOKUP = API + "/v1/analyticsReportRequests/REQ1/reports?filter%5Bname%5D="
+            + "App%20Downloads%20Detailed";
     private static final String DISCOVERY_INSTANCES = API
             + "/v1/analyticsReports/R1/instances?filter%5Bgranularity%5D=DAILY&limit=200";
     private static final String DOWNLOADS_INSTANCES = API
@@ -113,6 +115,8 @@ class AppStoreConnectChannelMetricsTest {
         expectJson(REQUESTS, "{\"data\":[{\"id\":\"REQ1\"}]}");
         expectJson(DISCOVERY_LOOKUP, "{\"data\":[{\"id\":\"R1\"}]}");
         expectJson(DOWNLOADS_LOOKUP, "{\"data\":[{\"id\":\"R2\"}]}");
+        // the optional Detailed report (campaign downloads, see AppStoreCampaignDownloadsTest) is not listed here
+        expectJson(DETAILED_LOOKUP, "{\"data\":[]}");
     }
 
     private static byte[] gzip(String text) {
@@ -261,6 +265,7 @@ class AppStoreConnectChannelMetricsTest {
         expectJson(REQUESTS, "{\"data\":[{\"id\":\"REQ1\"}]}");
         expectJson(DISCOVERY_LOOKUP, "{\"data\":[]}");
         expectJson(DOWNLOADS_LOOKUP, "{\"data\":[]}");
+        expectJson(DETAILED_LOOKUP, "{\"data\":[]}");
 
         assertThat(connector.pullDaily(ctx(null), FROM, TO)).isEmpty();
 
@@ -527,7 +532,7 @@ class AppStoreConnectChannelMetricsTest {
     // -- contract version ---------------------------------------------------------------------------------
 
     @Test
-    void thePullReportsContractVersion2SoHistoryIsReWalkedOnce() {
+    void thePullReportsContractVersion3SoHistoryIsReWalkedOnce() {
         expectRequestAndReports();
         expectJson(DISCOVERY_INSTANCES, "{\"data\":[]}");
         expectJson(DOWNLOADS_INSTANCES, "{\"data\":[{\"id\":\"D\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
@@ -537,7 +542,7 @@ class AppStoreConnectChannelMetricsTest {
 
         ChannelMetricsPull pull = connector.pull(ctx(null), FROM, TO);
 
-        assertThat(pull.contractVersion()).isEqualTo(2);
+        assertThat(pull.contractVersion()).isEqualTo(3);
         assertThat(byKey(pull.points())).containsEntry("downloads||2026-10-02", 3.0);
     }
 
