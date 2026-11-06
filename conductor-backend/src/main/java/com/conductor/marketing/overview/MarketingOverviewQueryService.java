@@ -62,7 +62,12 @@ import java.util.TreeMap;
  *
  * <p><b>Aggregation.</b> Several connections feeding one channel are summed. Derived metrics divide the
  * rolled-up components, so click-through rate and position are weighted by impressions rather than an
- * average of daily ratios.
+ * average of daily ratios. A distinct count (web visitors) is the one exception to "windows add up days": its window
+ * value is the stored count for exactly that window length on the window's last day, or null with a note, never a
+ * sum of daily counts ({@link MetricCatalog.Aggregation#WINDOW_UNIQUE}).
+ *
+ * <p><b>Definitions.</b> Every metric view carries its {@link MetricCatalog.Definition} (source, numerator,
+ * denominator, source type, exclusions, time zone), and {@link #definitions} lists them for the workspace.
  *
  * <p><b>Noise.</b> {@link MetricsChangeDetector} judges each metric: the windows before the current one are
  * replayed through it as consecutive periods to build its baseline, then the current window is checked
@@ -86,6 +91,8 @@ public class MarketingOverviewQueryService {
     static final double MISMATCH_THRESHOLD = 0.01;
     /** Reference values a product feed sends are stored as PRODUCT rows under this metric prefix. */
     static final String REFERENCE_PREFIX = "ref_";
+    /** Said on a window-unique metric with no value: the connector stores these distinct counts for three window lengths only. */
+    static final String WINDOW_UNIQUE_NOTE = "Unique visitors are stored for 7, 28 and 90 days";
     /**
      * A channel whose data ends more than this many days before the freshest channel's is lagging: it is marked
      * stale and no longer holds the funnel window back. Well above the normal 2-3 day lag of Search Console or
@@ -133,13 +140,26 @@ public class MarketingOverviewQueryService {
     public record TargetStatus(String status, Double missPct) {}
 
     /** {@code insufficientData}: the feed reported fewer than {@link #MIN_SAMPLE} observations behind the window.
-     *  {@code funnelOrder}: the metric's place among the in-app funnel stages (PRODUCT only), else null. */
+     *  {@code funnelOrder}: the metric's place among the in-app funnel stages (PRODUCT only), else null.
+     *  {@code definition}: where the number comes from and what it counts (every catalog metric has one).
+     *  {@code note}: a plain sentence about why the value reads as it does, set only when the value is null
+     *  because the stored data cannot answer (see {@link Aggregation#WINDOW_UNIQUE}); else null. */
     public record MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous, Double change,
                              Double changePct, boolean noise, int provisionalDays, TargetView target,
                              List<Point> series, LocalDate historyStartsOn, LocalDate asOf,
                              boolean insufficientData, Integer funnelOrder, String aggregation, String status,
                              Double missPct, Long sampleSize, String area, String description, Integer headline,
-                             String basis) {
+                             String basis, MetricCatalog.Definition definition, String note) {
+        public MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous,
+                          Double change, Double changePct, boolean noise, int provisionalDays, TargetView target,
+                          List<Point> series, LocalDate historyStartsOn, LocalDate asOf, boolean insufficientData,
+                          Integer funnelOrder, String aggregation, String status, Double missPct, Long sampleSize,
+                          String area, String description, Integer headline, String basis) {
+            this(metric, label, unit, goodDirection, value, previous, change, changePct, noise, provisionalDays,
+                    target, series, historyStartsOn, asOf, insufficientData, funnelOrder, aggregation, status,
+                    missPct, sampleSize, area, description, headline, basis, null, null);
+        }
+
         public MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous,
                           Double change, Double changePct, boolean noise, int provisionalDays, TargetView target,
                           List<Point> series, LocalDate historyStartsOn, LocalDate asOf, boolean insufficientData,
@@ -273,7 +293,80 @@ public class MarketingOverviewQueryService {
      * are ranked by spend and read up to {@link #REPORT_ALL_KEYWORDS} (the report lists {@link #REPORT_KEYWORDS}); PRODUCT keyword rows are read in full so they
      * can be joined to the ADS ones by keyword id.
      */
-    public record Snapshot(Overview overview, Map<MetricChannel, SnapshotChannel> channels) {}
+    public record Snapshot(Overview overview, Map<MetricChannel, SnapshotChannel> channels,
+                           SettledDailyValues settled) {
+
+        public Snapshot(Overview overview, Map<MetricChannel, SnapshotChannel> channels) {
+            this(overview, channels, SettledDailyValues.NONE);
+        }
+
+        /**
+         * One stored metric's settled value per day, summed across the channel's connections, over the snapshot's
+         * history range (the same days the channel's metrics were read from, up to yesterday). A day with any
+         * provisional row for the metric at that dimension is left out, so every value returned is one the source
+         * will no longer restate. {@code dimensionKey} "" is the day total; a dimension key (for example
+         * {@code source:APP_STORE_SEARCH}) reads that dimension's rows, which a channel only has loaded when its own
+         * metrics read dimension rows (STORE and SOCIAL do; ADS, WEB, SEARCH and PRODUCT hold day totals only). The
+         * metric need not be in the catalog. Empty when the channel is not connected or has no such rows; read from
+         * rows already loaded for the snapshot, so it costs no query.
+         */
+        public Map<LocalDate, Double> dailyValues(MetricChannel channel, String storedMetric, String dimensionKey) {
+            return settled.values(channel, storedMetric, dimensionKey);
+        }
+    }
+
+    /** Settled daily sums by channel, stored metric and dimension key; built once per snapshot from the loaded rows. */
+    public static final class SettledDailyValues {
+        static final SettledDailyValues NONE = new SettledDailyValues(Map.of());
+
+        private final Map<MetricChannel, Map<String, TreeMap<LocalDate, Double>>> byChannel;
+
+        private SettledDailyValues(Map<MetricChannel, Map<String, TreeMap<LocalDate, Double>>> byChannel) {
+            this.byChannel = byChannel;
+        }
+
+        private static String seriesKey(String metric, String dimensionKey) {
+            return metric + '\u0000' + dimensionKey;
+        }
+
+        static SettledDailyValues of(Map<MetricChannel, List<ChannelMetricDaily>> rowsByChannel, LocalDate lastDay) {
+            Map<MetricChannel, Map<String, TreeMap<LocalDate, Double>>> out = new LinkedHashMap<>();
+            rowsByChannel.forEach((channel, rows) -> {
+                Map<String, TreeMap<LocalDate, Double>> sums = new HashMap<>();
+                Map<String, Set<LocalDate>> restating = new HashMap<>();
+                for (ChannelMetricDaily row : rows) {
+                    if (row.getDay().isAfter(lastDay)) {
+                        continue;
+                    }
+                    String key = seriesKey(row.getMetric(), row.getDimensionKey());
+                    if (row.isProvisional()) {
+                        restating.computeIfAbsent(key, k -> new HashSet<>()).add(row.getDay());
+                    } else {
+                        sums.computeIfAbsent(key, k -> new TreeMap<>())
+                                .merge(row.getDay(), row.getValue().doubleValue(), Double::sum);
+                    }
+                }
+                restating.forEach((key, days) -> {
+                    TreeMap<LocalDate, Double> series = sums.get(key);
+                    if (series != null) {
+                        series.keySet().removeAll(days);
+                    }
+                });
+                out.put(channel, sums);
+            });
+            return new SettledDailyValues(out);
+        }
+
+        Map<LocalDate, Double> values(MetricChannel channel, String storedMetric, String dimensionKey) {
+            TreeMap<LocalDate, Double> series = byChannel.getOrDefault(channel, Map.of())
+                    .get(seriesKey(storedMetric, dimensionKey == null ? "" : dimensionKey));
+            return series == null ? Map.of() : java.util.Collections.unmodifiableMap(new TreeMap<>(series));
+        }
+    }
+
+    /** One visible metric of one channel with its definition, as the definitions endpoint lists it. */
+    public record MetricDefinitionView(String metricRef, String channel, String key, String label, Unit unit,
+                                       String aggregation, MetricCatalog.Definition definition) {}
 
     /** Keywords the report lists (top by spend). */
     public static final int REPORT_KEYWORDS = 25;
@@ -294,6 +387,7 @@ public class MarketingOverviewQueryService {
         Map<MetricChannel, ChannelBuild> builds = new LinkedHashMap<>();
         Overview overview = computeOverview(ctx, builds);
         Map<MetricChannel, SnapshotChannel> channels = new LinkedHashMap<>();
+        Map<MetricChannel, List<ChannelMetricDaily>> rows = new LinkedHashMap<>();
         for (ChannelBuild build : builds.values()) {
             MetricChannel id = build.channel.channel();
             List<DimensionTable> tables = List.of();
@@ -301,8 +395,11 @@ public class MarketingOverviewQueryService {
                 tables = dimensions(ctx, build.channel, build, reportTableOptions(id));
             }
             channels.put(id, new SnapshotChannel(build.view(false), build.channel, tables));
+            if (build.data != null) {
+                rows.put(id, build.data.rows());
+            }
         }
-        return new Snapshot(overview, channels);
+        return new Snapshot(overview, channels, SettledDailyValues.of(rows, ctx.yesterday));
     }
 
     private static java.util.function.Function<Dimension, TableOptions> reportTableOptions(MetricChannel channel) {
@@ -383,6 +480,29 @@ public class MarketingOverviewQueryService {
                 ? insightsQueryService.topPosts(projectId, days, TOP_POSTS)
                 : List.of();
         return new ChannelDetail(build.window, build.view(false), dimensions, topPosts);
+    }
+
+    /**
+     * The definition of every visible metric of every channel (hidden building blocks are left out), the in-app
+     * channel as this workspace's connected product backends declared it. Optional metrics are listed whether or not
+     * the workspace has rows for them yet: this is what each number would mean, not what is currently shown.
+     */
+    @Transactional(readOnly = true)
+    public List<MetricDefinitionView> definitions(String projectId) {
+        List<Connection> active = connectionRepository.findByProjectId(projectId).stream()
+                .filter(c -> "ACTIVE".equals(c.getStatus()))
+                .toList();
+        List<MetricDefinitionView> out = new ArrayList<>();
+        for (MetricCatalog.Channel catalogChannel : MetricCatalog.channels()) {
+            MetricCatalog.Channel channel = catalogChannel.channel() == MetricChannel.PRODUCT
+                    ? productSetup(projectId, active).channel() : catalogChannel;
+            for (Metric metric : channel.visibleMetrics()) {
+                out.add(new MetricDefinitionView(channel.channel().name() + "." + metric.key(),
+                        channel.channel().name(), metric.key(), metric.label(), metric.unit(), metric.agg().name(),
+                        metric.definition()));
+            }
+        }
+        return out;
     }
 
     // ---- targets ------------------------------------------------------------------------------------
@@ -472,6 +592,38 @@ public class MarketingOverviewQueryService {
 
     // ---- context ------------------------------------------------------------------------------------
 
+    /** The workspace's product (in-app) connections, the metric definitions they declared and the channel they make. */
+    private record ProductSetup(Map<String, Connection> connections, List<ChannelMetricDefinitionRow> definitions,
+                                MetricCatalog.Channel channel) {}
+
+    /**
+     * Resolves the in-app channel for a workspace from its active connections: the product-metrics connections in
+     * order, the definitions they declared (first connection's wins per key) and each connection's label for the
+     * definition lines.
+     */
+    private ProductSetup productSetup(String projectId, List<Connection> activeConnections) {
+        Map<String, Connection> productConnections = new LinkedHashMap<>();
+        for (Connection c : activeConnections) {
+            if (MetricCatalog.PRODUCT_CONNECTOR_ID.equals(c.getConnectorId())) {
+                productConnections.put(c.getId(), c);
+            }
+        }
+        List<String> connectionOrder = new ArrayList<>(productConnections.keySet());
+        List<ChannelMetricDefinitionRow> definitions = productConnections.isEmpty() ? List.of()
+                : definitionRepository.findByProjectId(projectId).stream()
+                        .filter(d -> productConnections.containsKey(d.getConnectionId()))
+                        .sorted(Comparator.comparing((ChannelMetricDefinitionRow d) ->
+                                connectionOrder.indexOf(d.getConnectionId())))
+                        .toList();
+        Map<String, String> labels = new HashMap<>();
+        productConnections.forEach((id, c) -> {
+            if (c.getDisplayLabel() != null && !c.getDisplayLabel().isBlank()) {
+                labels.put(id, c.getDisplayLabel());
+            }
+        });
+        return new ProductSetup(productConnections, definitions, MetricCatalog.productChannel(definitions, labels));
+    }
+
     /** Everything one request shares across channels. */
     private final class Context {
         final String projectId;
@@ -514,22 +666,11 @@ public class MarketingOverviewQueryService {
             for (ChannelMetricTarget t : targetRepository.findByProjectId(projectId)) {
                 targets.put(t.getChannel() + "/" + t.getMetric(), t);
             }
-            Map<String, Connection> productConnections = new LinkedHashMap<>();
-            for (Connection c : connections) {
-                if (MetricCatalog.PRODUCT_CONNECTOR_ID.equals(c.getConnectorId())) {
-                    productConnections.put(c.getId(), c);
-                    productConnectionIds.add(c.getId());
-                }
-            }
-            List<String> connectionOrder = new ArrayList<>(productConnections.keySet());
-            List<ChannelMetricDefinitionRow> definitions = productConnections.isEmpty() ? List.of()
-                    : definitionRepository.findByProjectId(projectId).stream()
-                            .filter(d -> productConnections.containsKey(d.getConnectionId()))
-                            .sorted(Comparator.comparing((ChannelMetricDefinitionRow d) ->
-                                    connectionOrder.indexOf(d.getConnectionId())))
-                            .toList();
-            this.productChannel = MetricCatalog.productChannel(definitions);
-            for (ChannelMetricDefinitionRow d : definitions) {
+            ProductSetup product = productSetup(projectId, connections);
+            Map<String, Connection> productConnections = product.connections();
+            productConnectionIds.addAll(productConnections.keySet());
+            this.productChannel = product.channel();
+            for (ChannelMetricDefinitionRow d : product.definitions()) {
                 if (d.getTargetValue() != null && !feedTargets.containsKey(d.getMetric())) {
                     Connection c = productConnections.get(d.getConnectionId());
                     String label = c.getDisplayLabel() != null ? c.getDisplayLabel()
@@ -846,35 +987,94 @@ public class MarketingOverviewQueryService {
         private final Map<String, Set<LocalDate>> provisional = new HashMap<>();
         /** Observations behind each day's value, when the feed said (summed across connections). */
         private final Map<String, TreeMap<LocalDate, Long>> samples = new HashMap<>();
+        /** WINDOW_UNIQUE: metric key, then window length in days, then the day the window ends: the stored count. */
+        private final Map<String, Map<Integer, TreeMap<LocalDate, Double>>> windowUniques = new HashMap<>();
+        private final List<ChannelMetricDaily> rows;
 
         ChannelData(MetricCatalog.Channel channel, List<ChannelMetricDaily> rows) {
             this.channel = channel;
+            this.rows = rows;
+            // a row feeds every metric that reads its stored name, not only the one with that key
+            Map<String, List<Metric>> readers = new HashMap<>();
+            for (Metric metric : channel.metrics()) {
+                readers.computeIfAbsent(metric.stored(), k -> new ArrayList<>()).add(metric);
+            }
+            List<Metric> windowUnique = channel.metrics().stream()
+                    .filter(m -> m.agg() == Aggregation.WINDOW_UNIQUE).toList();
             for (ChannelMetricDaily row : rows) {
-                Metric metric = channel.metric(row.getMetric()).orElse(null);
-                if (metric == null) {
-                    continue;
+                for (Metric metric : readers.getOrDefault(row.getMetric(), List.of())) {
+                    if (reads(metric, row)) {
+                        add(metric, row);
+                    }
                 }
-                if (metric.agg() != Aggregation.LEVEL && !metric.fromDimensions()
-                        && !row.getDimensionKey().isEmpty()) {
-                    // a total metric: its per-dimension rows (loaded for the channel's level series) would double count
-                    continue;
-                }
-                if (metric.agg() == Aggregation.LEVEL) {
-                    levels.computeIfAbsent(metric.key(), k -> new HashMap<>())
-                            .computeIfAbsent(row.getConnectionId() + "|" + row.getDimensionKey(), k -> new TreeMap<>())
-                            .put(row.getDay(), row.getValue().doubleValue());
-                } else {
-                    daily.computeIfAbsent(metric.key(), k -> new TreeMap<>())
-                            .merge(row.getDay(), row.getValue().doubleValue(), Double::sum);
-                }
-                if (row.isProvisional()) {
-                    provisional.computeIfAbsent(metric.key(), k -> new HashSet<>()).add(row.getDay());
-                }
-                if (row.getSampleSize() != null) {
-                    samples.computeIfAbsent(metric.key(), k -> new TreeMap<>())
-                            .merge(row.getDay(), row.getSampleSize(), Long::sum);
+                if (row.getDimensionKey().isEmpty()) {
+                    for (Metric metric : windowUnique) {
+                        addWindowUnique(metric, row);
+                    }
                 }
             }
+        }
+
+        List<ChannelMetricDaily> rows() {
+            return rows;
+        }
+
+        /** Whether {@code row} belongs to {@code metric}: its one dimension key, or else the '' total (a level or a per-dimension metric reads them all). */
+        private static boolean reads(Metric metric, ChannelMetricDaily row) {
+            if (metric.dimensionKey() != null) {
+                return metric.dimensionKey().equals(row.getDimensionKey());
+            }
+            // a total metric: its per-dimension rows (loaded for the channel's level series) would double count
+            return metric.agg() == Aggregation.LEVEL || metric.fromDimensions() || row.getDimensionKey().isEmpty();
+        }
+
+        private void add(Metric metric, ChannelMetricDaily row) {
+            if (metric.agg() == Aggregation.LEVEL) {
+                levels.computeIfAbsent(metric.key(), k -> new HashMap<>())
+                        .computeIfAbsent(row.getConnectionId() + "|" + row.getDimensionKey(), k -> new TreeMap<>())
+                        .put(row.getDay(), row.getValue().doubleValue());
+            } else {
+                daily.computeIfAbsent(metric.key(), k -> new TreeMap<>())
+                        .merge(row.getDay(), row.getValue().doubleValue(), Double::sum);
+            }
+            if (row.isProvisional()) {
+                provisional.computeIfAbsent(metric.key(), k -> new HashSet<>()).add(row.getDay());
+            }
+            if (row.getSampleSize() != null) {
+                samples.computeIfAbsent(metric.key(), k -> new TreeMap<>())
+                        .merge(row.getDay(), row.getSampleSize(), Long::sum);
+            }
+        }
+
+        /** Files a stored {@code <key>_unique_<N>d} row under its window length; any other row is ignored. */
+        private void addWindowUnique(Metric metric, ChannelMetricDaily row) {
+            String prefix = metric.key() + "_unique_";
+            String name = row.getMetric();
+            if (!name.startsWith(prefix) || !name.endsWith("d")) {
+                return;
+            }
+            try {
+                int days = Integer.parseInt(name.substring(prefix.length(), name.length() - 1));
+                windowUniques.computeIfAbsent(metric.key(), k -> new HashMap<>())
+                        .computeIfAbsent(days, k -> new TreeMap<>())
+                        .merge(row.getDay(), row.getValue().doubleValue(), Double::sum);
+            } catch (NumberFormatException ignored) {
+                // not a window length: not one of this metric's stored series
+            }
+        }
+
+        /** The stored distinct count for a window of {@code from}..{@code to}, read on its last day; null when there is none. */
+        private Double windowUniqueValue(Metric metric, LocalDate from, LocalDate to) {
+            long days = java.time.temporal.ChronoUnit.DAYS.between(from, to) + 1;
+            TreeMap<LocalDate, Double> series = windowUniques.getOrDefault(metric.key(), Map.of())
+                    .get((int) days);
+            return series == null ? null : series.get(to);
+        }
+
+        /** The first day a stored distinct count exists for a window of {@code days} days, or null. */
+        LocalDate firstWindowUniqueDay(Metric metric, int days) {
+            TreeMap<LocalDate, Double> series = windowUniques.getOrDefault(metric.key(), Map.of()).get(days);
+            return series == null || series.isEmpty() ? null : series.firstKey();
         }
 
         /**
@@ -885,6 +1085,10 @@ public class MarketingOverviewQueryService {
             if (metric.agg() == Aggregation.DERIVED) {
                 Long denominator = sampleSize(component(metric.denominator()), from, to);
                 return denominator != null ? denominator : sampleSize(component(metric.numerator()), from, to);
+            }
+            if (metric.agg() == Aggregation.WINDOW_UNIQUE) {
+                // the daily observations do not describe a distinct count over the whole window
+                return null;
             }
             TreeMap<LocalDate, Long> series = samples.get(metric.key());
             if (series == null) {
@@ -900,7 +1104,7 @@ public class MarketingOverviewQueryService {
 
         boolean hasRows(Metric metric) {
             return switch (metric.agg()) {
-                case SUM -> daily.containsKey(metric.key());
+                case SUM, WINDOW_UNIQUE -> daily.containsKey(metric.key());
                 case LEVEL -> levels.containsKey(metric.key());
                 case DERIVED -> hasRows(component(metric.numerator())) && hasRows(component(metric.denominator()));
             };
@@ -923,12 +1127,13 @@ public class MarketingOverviewQueryService {
                 case LEVEL -> levelAt(metric, to);
                 case DERIVED -> ratio(periodValue(component(metric.numerator()), from, to),
                         periodValue(component(metric.denominator()), from, to));
+                case WINDOW_UNIQUE -> windowUniqueValue(metric, from, to);
             };
         }
 
         Double dayValue(Metric metric, LocalDate day) {
             return switch (metric.agg()) {
-                case SUM -> {
+                case SUM, WINDOW_UNIQUE -> {
                     TreeMap<LocalDate, Double> series = daily.get(metric.key());
                     yield series == null ? null : series.get(day);
                 }
@@ -948,7 +1153,7 @@ public class MarketingOverviewQueryService {
         /** The first day this metric has any row (a derived metric: its numerator's), or null. */
         LocalDate firstDay(Metric metric) {
             return switch (metric.agg()) {
-                case SUM -> daily.containsKey(metric.key()) ? daily.get(metric.key()).firstKey() : null;
+                case SUM, WINDOW_UNIQUE -> daily.containsKey(metric.key()) ? daily.get(metric.key()).firstKey() : null;
                 case LEVEL -> levels.getOrDefault(metric.key(), Map.of()).values().stream()
                         .map(TreeMap::firstKey).min(Comparator.naturalOrder()).orElse(null);
                 case DERIVED -> firstDay(component(metric.numerator()));
@@ -1047,7 +1252,9 @@ public class MarketingOverviewQueryService {
         LocalDate firstDay = data.firstDay(metric);
         // A flow whose history starts inside the previous window has only part of it: the sum of a few days
         // against a full window is no comparison (it reads as +10000%), so treat it as having no previous data.
+        // A window-unique count is stored whole for its window, so a late-starting history does not make it partial.
         boolean partialPrevious = previous != null && metric.agg() != Aggregation.LEVEL
+                && metric.agg() != Aggregation.WINDOW_UNIQUE
                 && firstDay != null && firstDay.isAfter(w.previousFrom());
         if (partialPrevious) {
             previous = null;
@@ -1085,7 +1292,11 @@ public class MarketingOverviewQueryService {
         boolean insufficient = sample != null && sample < MIN_SAMPLE;
         boolean noise = sample != null ? insufficient
                 : value != null && previous != null && withinNormalVariation(ctx, data, metric, value, w);
-        LocalDate historyStartsOn = previous == null ? firstDay : null;
+        LocalDate historyStartsOn = previous == null
+                ? (metric.agg() == Aggregation.WINDOW_UNIQUE ? data.firstWindowUniqueDay(metric, ctx.days) : firstDay)
+                : null;
+        // A window-unique count that cannot be read says why, and is never rebuilt from the daily counts.
+        String note = metric.agg() == Aggregation.WINDOW_UNIQUE && value == null ? WINDOW_UNIQUE_NOTE : null;
         // A rate with no reported sample is judged by how many it was divided over (its denominator's total).
         Long statusSample = sample;
         if (statusSample == null && metric.agg() == Aggregation.DERIVED
@@ -1100,7 +1311,7 @@ public class MarketingOverviewQueryService {
         return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous,
                 change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf, insufficient, metric.funnelOrder(),
                 metric.agg().name(), targetStatus.status(), targetStatus.missPct(), statusSample, metric.area(),
-                metric.description(), metric.headline(), metric.basis());
+                metric.description(), metric.headline(), metric.basis(), metric.definition(), note);
     }
 
     /**
@@ -1286,8 +1497,8 @@ public class MarketingOverviewQueryService {
         Double value = build.data.periodValue(metric, w.from(), w.to());
         Double previous = build.data.periodValue(metric, w.previousFrom(), w.previousTo());
         LocalDate firstDay = build.data.firstDay(metric);
-        if (previous != null && metric.agg() != Aggregation.LEVEL && firstDay != null
-                && firstDay.isAfter(w.previousFrom())) {
+        if (previous != null && metric.agg() != Aggregation.LEVEL && metric.agg() != Aggregation.WINDOW_UNIQUE
+                && firstDay != null && firstDay.isAfter(w.previousFrom())) {
             previous = null; // only partly covered by history: no comparison
         }
         if (value == null && previous == null) {
@@ -1323,8 +1534,17 @@ public class MarketingOverviewQueryService {
         Set<String> connectionIds = new HashSet<>();
         build.connections.forEach(c -> connectionIds.add(c.id()));
         List<DimensionTable> tables = new ArrayList<>();
+        // One read serves every table of the channel: they differ by key prefix and columns, not by the rows' range,
+        // so a channel's cost is one query however many breakdowns it offers.
+        List<String> sources = channel.dimensions().stream().flatMap(d -> d.columns().stream())
+                .map(Column::source).filter(s -> s != null).distinct().toList();
+        Window w = build.window;
+        List<ChannelMetricDaily> rows = sources.isEmpty() ? List.of()
+                : dailyRepository.findByProjectIdAndChannelAndMetricInAndDayBetween(ctx.projectId,
+                        channel.channel().name(), sources, ctx.historyStart.isBefore(w.from()) ? ctx.historyStart : w.from(),
+                        w.to().isBefore(ctx.today) ? ctx.today : w.to());
         for (Dimension dimension : channel.dimensions()) {
-            DimensionTable table = dimensionTable(ctx, channel, dimension, connectionIds, build.window,
+            DimensionTable table = dimensionTable(channel, dimension, rows, connectionIds, build.window,
                     options.apply(dimension));
             // the in-app tables are optional breakdowns: a feed with no sources or campaigns shows none
             if (channel.channel() != MetricChannel.PRODUCT || !table.rows().isEmpty()) {
@@ -1334,12 +1554,11 @@ public class MarketingOverviewQueryService {
         return tables;
     }
 
-    private DimensionTable dimensionTable(Context ctx, MetricCatalog.Channel channel, Dimension dimension,
-                                          Set<String> connectionIds, Window w, TableOptions options) {
-        List<String> sources = dimension.columns().stream().map(Column::source).filter(s -> s != null).distinct().toList();
-        List<ChannelMetricDaily> rows = dailyRepository.findByProjectIdAndChannelAndMetricInAndDayBetween(
-                ctx.projectId, channel.channel().name(), sources, ctx.historyStart.isBefore(w.from()) ? ctx.historyStart : w.from(),
-                w.to().isBefore(ctx.today) ? ctx.today : w.to()).stream()
+    /** One table from the channel's shared dimension rows: this dimension's key prefix and the connections behind the channel. */
+    private DimensionTable dimensionTable(MetricCatalog.Channel channel, Dimension dimension,
+                                          List<ChannelMetricDaily> channelRows, Set<String> connectionIds, Window w,
+                                          TableOptions options) {
+        List<ChannelMetricDaily> rows = channelRows.stream()
                 .filter(r -> !r.getDimensionKey().isEmpty() && connectionIds.contains(r.getConnectionId())
                         && (dimension.keyPrefix() == null || r.getDimensionKey().startsWith(dimension.keyPrefix())))
                 .toList();
@@ -1391,7 +1610,11 @@ public class MarketingOverviewQueryService {
             // ad:{adGroupId}:{adId}:{name}: an ad id is only unique within its ad group, so the row key keeps both
             String[] parts = dimensionKey.split(":", 3);
             String[] adParts = dimensionKey.startsWith("ad:") ? dimensionKey.split(":", 4) : null;
-            if (adParts != null && adParts.length == 4) {
+            if (dimensionKey.startsWith(MetricCatalog.SEARCH_TERM_PREFIX)) {
+                // searchterm:{campaignId}:{term}: the same term can run in several campaigns, so the row key keeps both
+                key = dimensionKey.substring(MetricCatalog.SEARCH_TERM_PREFIX.length());
+                label = parts.length == 3 && !parts[2].isBlank() ? parts[2] : key;
+            } else if (adParts != null && adParts.length == 4) {
                 key = adParts[1] + ":" + adParts[2];
                 label = adParts[3].isBlank() ? key : adParts[3];
             } else if (parts.length == 3) {

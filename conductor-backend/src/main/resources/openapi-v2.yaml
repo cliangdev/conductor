@@ -12,6 +12,8 @@ servers:
 tags:
   - name: marketing-overview
     description: Daily channel metrics, funnel and targets
+  - name: marketing-definitions
+    description: What every marketing metric counts, where it comes from and what it excludes
   - name: marketing-report
     description: The one-call marketing report and the industry benchmarks it compares against
   - name: work-items
@@ -3307,6 +3309,46 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/definitions:
+    get:
+      tags:
+        - marketing-definitions
+      summary: What every marketing metric counts
+      description: >-
+        One definition per visible metric of every channel (WEB, SEARCH, SOCIAL, STORE, ADS and the workspace's
+        PRODUCT metrics): the source report or field, the numerator and denominator in a fixed vocabulary of
+        measures, the traffic source type, what is excluded and the time zone that decides a row's day. Optional
+        metrics are listed whether or not data exists yet. Read-only; any project member.
+      operationId: getMarketingDefinitions
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The definitions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingDefinitionsResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
           content:
             application/json:
               schema:
@@ -9759,6 +9801,15 @@ components:
           type: string
           enum: [EVENT, COHORT]
           description: PRODUCT only - COHORT when each day's value counts the people who first opened that day, followed to now.
+        definition:
+          allOf:
+            - $ref: "#/components/schemas/OverviewMetricDefinition"
+          nullable: true
+          description: Where the number comes from and what it counts. Set on every metric of every channel.
+        note:
+          type: string
+          nullable: true
+          description: Set only when `value` is null because the stored data cannot answer, for example a unique-visitor count asked for a window length that is not stored (7, 28 and 90 days are). The value is never rebuilt from daily counts.
         provisionalDays:
           type: integer
           description: Number of provisional days after the channel's dataCompleteThrough that appear at the end of the series. Values and changes exclude them.
@@ -9780,6 +9831,62 @@ components:
         provisional:
           type: boolean
           description: True for days the source may still restate, including every day after the channel's dataCompleteThrough. Draw them differently; they are not in the totals.
+
+    OverviewMetricDefinition:
+      type: object
+      description: >-
+        What a metric counts. `numerator` and `denominator` are measure names from one closed list
+        (impressions, unique_impressions, page_views, unique_page_views, first_time_downloads, redownloads,
+        total_downloads, downloads_of_record, tap_installs, tap_new_downloads, view_through_installs, taps,
+        spend, visitors, sessions, pageviews, conversion_sessions, conversion_events, clicks, followers, posts,
+        likes, channel_views, website_clicks, rating_count, rating_avg, position), or `product:<key>` for a metric a
+        product backend declared. Two metrics compare only when numerator, denominator and sourceType all match.
+      required: [source, numerator]
+      properties:
+        source: {type: string, description: "One plain line naming the platform report or field the number comes from."}
+        numerator: {type: string, description: "The measure counted (the top of a ratio)."}
+        denominator:
+          type: string
+          nullable: true
+          description: The measure divided by; null for a plain count.
+        sourceType:
+          type: string
+          nullable: true
+          description: ALL, or one App Store traffic source type (APP_STORE_SEARCH, APP_STORE_BROWSE, APP_REFERRER, WEB_REFERRER ...). Null means ALL.
+        exclusions:
+          type: string
+          nullable: true
+          description: One plain line naming what is left out of the number; null when nothing is.
+        timeZone:
+          type: string
+          nullable: true
+          description: The time zone that decides which day a row belongs to; null when the source does not say.
+
+    MarketingDefinitionEntry:
+      type: object
+      required: [metricRef, channel, key, label, unit, aggregation, definition]
+      properties:
+        metricRef: {type: string, description: "CHANNEL.key, the reference a benchmark or target uses (for example ADS.installs)."}
+        channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT."}
+        key: {type: string}
+        label: {type: string}
+        unit:
+          type: string
+          enum: [COUNT, CURRENCY, PERCENT, POSITION, RATING]
+        aggregation:
+          type: string
+          description: "How daily values combine over a window: SUM, LEVEL, DERIVED or WINDOW_UNIQUE."
+        definition:
+          $ref: "#/components/schemas/OverviewMetricDefinition"
+
+    MarketingDefinitionsResponse:
+      type: object
+      required: [definitions]
+      properties:
+        definitions:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingDefinitionEntry"
 
     MarketingBenchmark:
       type: object
