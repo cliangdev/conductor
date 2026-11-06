@@ -1,0 +1,61 @@
+name: Weekly growth review
+
+# Conductor's template for the weekly growth review (WeeklyGrowthWorkflowService installs it, disabled).
+# Every Monday 07:30 UTC one Claude Code step reads the marketing report, the verification ledger and the budget,
+# and proposes at most three changes with propose_marketing_change. A proposal is a PLANNED Work Item on the
+# MARKETING_CHANGES workflow; a person approves it (marks it live) or abandons it. The step can read and propose,
+# nothing more: it cannot change an ad platform, a budget or a bid.
+#
+# The step needs a runtime target for claude-code steps (Settings > AI Providers > Runtime, or a Claude Code
+# subscription credential with the builtin target). `runs-on: cloud-run` uses the workspace's designated one.
+# `workflow_dispatch` adds a Run Now button so an admin can try it once enabled.
+on:
+  schedule:
+    cron: "30 7 * * 1"
+  workflow_dispatch: {}
+
+concurrency: single
+
+jobs:
+  review:
+    runs-on: cloud-run
+    steps:
+      - id: weekly-growth
+        name: Review every channel and propose changes
+        uses: claude-code
+        with:
+          conductor_mcp: true
+          allowed_tools: "mcp__conductor__get_marketing_report,mcp__conductor__get_verification_ledger,mcp__conductor__get_budget_pacing,mcp__conductor__get_marketing_definitions,mcp__conductor__list_work_items,mcp__conductor__propose_marketing_change"
+          max_turns: 40
+          timeout_minutes: 30
+          prompt: |
+            You are this workspace's weekly growth analyst. Work only from Conductor's own data, with the tools you
+            were given. You cannot change anything on an ad platform and you must not try: you only propose, and a
+            person approves every change.
+
+            1. Read every channel. Call get_marketing_report with window 28d, get_verification_ledger with window 28d,
+               get_budget_pacing for the current month and get_marketing_definitions to check what each metric counts.
+               Call list_work_items with workflow MARKETING_CHANGES so you know which changes are already planned,
+               live or due for review, and do not propose one that is already in progress.
+
+            2. Flag only moves beyond noise. The report marks a metric whose move is within its normal range as noise:
+               ignore those. A move is worth a proposal only when it is not flagged as noise, the sample behind it is
+               large enough to mean something, and you can name a plausible cause.
+
+            3. Cite only verified numbers. Use a number as evidence only when get_verification_ledger shows its
+               verdict as something other than UNCHECKED and no mismatch. Never cite a metric that is UNCHECKED or has
+               a MISMATCH. If the number you most want to cite is not verified, leave the proposal out and say so in
+               your summary.
+
+            4. Propose at most 3 changes this week; propose fewer, or none, when nothing clears the bar. Call
+               propose_marketing_change once per proposal, with: a short title; a type (LISTING, ADS, PRICING,
+               PRODUCT, CONTENT or OTHER); a hypothesis that says what to change and what you expect to happen; a
+               review date (reviewOn, YYYY-MM-DD, after today, usually two to four weeks out; today is the day after
+               the last day of the report's window); and exactly two signals on two different metrics, each with its
+               metricRef, the window, the value exactly as the ledger shows it for that window, and a short note.
+
+            5. If propose_marketing_change refuses a proposal, read the reason. Fix what it names (for example use the
+               ledger's figure), but never swap in an unverified metric to get it through, and never exceed 3.
+
+            6. Finish with a short summary: what moved and what was only noise, each proposal you made (title and
+               display id), and what you left out and why (unverified, noise, already in progress).

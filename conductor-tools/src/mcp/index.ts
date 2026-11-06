@@ -83,6 +83,7 @@ import { getBudgetPacing, setMarketingBudget, setStopRule, removeStopRule } from
 import { getMarketingDefinitions } from './tools/marketing-definitions.js'
 import { getMarketingReport, setMarketingBenchmark, deleteMarketingBenchmark } from './tools/marketing-report.js'
 import { getVerificationLedger, recordPlatformRead } from './tools/verification.js'
+import { proposeMarketingChange, installWeeklyGrowthWorkflow, type ProposalSignal } from './tools/proposals.js'
 import {
   getGrowthSignals,
   setMarketingMoment,
@@ -1534,6 +1535,42 @@ export const TOOLS = [
       },
       required: ['channel', 'metric', 'from', 'to', 'value', 'sourceName'],
     },
+  },
+  {
+    name: 'propose_marketing_change',
+    description: 'Propose one marketing change, backed by exactly two signals on two different metrics, as a PLANNED change with a review date. It refuses a signal whose metric get_verification_ledger does not verify (UNCHECKED, a MISMATCH or no row; it names the metric and verdict), a value that is not the ledger\'s figure for that window, and more than 3 a week per workspace (ISO week, UTC). A human approves every change: it stays PLANNED and moving it to LIVE is a human step this tool cannot take. It changes nothing on an ad platform. Requires the Editor role (or Admin). Verify with get_work_item (workItemId) or get_marketing_report (changes).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short name of the change (at most 255 characters)' },
+        type: { type: 'string', description: 'A type of the workspace\'s MARKETING_CHANGES workflow (LISTING, ADS, PRICING, PRODUCT, CONTENT, BASELINE or OTHER by default)' },
+        hypothesis: { type: 'string', description: 'What to change and what you expect it to do' },
+        reviewOn: { type: 'string', description: 'YYYY-MM-DD, the day to review the result; after today' },
+        signals: {
+          type: 'array',
+          minItems: 2,
+          maxItems: 2,
+          description: 'The evidence: two figures on two different metrics, each verified by the ledger for its window',
+          items: {
+            type: 'object',
+            properties: {
+              metricRef: { type: 'string', description: 'CHANNEL.metric as in get_verification_ledger, e.g. ADS.installs' },
+              window: { type: 'string', description: '7d, 28d, 90d or YYYY-MM-DD..YYYY-MM-DD: the window the figure is for' },
+              value: { type: 'number', description: 'The ledger\'s figure for that metric over that window' },
+              note: { type: 'string', description: 'What the figure shows (optional)' },
+            },
+            required: ['metricRef', 'window', 'value'],
+          },
+        },
+        runId: { type: 'string', description: 'The workflow run making the proposal (optional)' },
+      },
+      required: ['title', 'type', 'hypothesis', 'reviewOn', 'signals'],
+    },
+  },
+  {
+    name: 'install_weekly_growth_workflow',
+    description: 'Install the "Weekly growth review" workflow from Conductor\'s template: every Monday 07:30 UTC a Claude Code step reads the report, the verification ledger and the budget, and proposes at most 3 changes with propose_marketing_change. It is created disabled, so nothing runs until a person enables it, and its Claude Code step needs a runtime target. Safe to repeat: an existing workflow with that name is returned unchanged. Requires the Admin role. Verify with get_workflow (workflowId).',
+    inputSchema: { type: 'object', properties: {} },
   },
   {
     name: 'get_growth_signals',
@@ -3094,6 +3131,21 @@ export async function runMcpServer(): Promise<void> {
               note: params['note'] as string | undefined,
             })
           )
+        }
+        case 'propose_marketing_change': {
+          return successResponse(
+            await proposeMarketingChange(config, {
+              title: params['title'] as string,
+              type: params['type'] as string,
+              hypothesis: params['hypothesis'] as string,
+              reviewOn: params['reviewOn'] as string,
+              signals: params['signals'] as ProposalSignal[],
+              runId: params['runId'] as string | undefined,
+            })
+          )
+        }
+        case 'install_weekly_growth_workflow': {
+          return successResponse(await installWeeklyGrowthWorkflow(config))
         }
         case 'get_growth_signals': {
           return successResponse(await getGrowthSignals(config))

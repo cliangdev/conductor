@@ -26,6 +26,8 @@ tags:
     description: Weekly checks of whether AI assistants name the brand for a fixed set of questions
   - name: marketing-changes
     description: Marketing change records (the MARKETING_CHANGES workflow), imported from an outside change log
+  - name: marketing-proposals
+    description: Weekly growth proposals backed by ledger-verified evidence, and the workflow that makes them
   - name: marketing-creators
     description: What a creator (the CREATORS workflow) has produced - its posts, campaign-link downloads and offer-code redemptions
   - name: marketing-links
@@ -4467,6 +4469,139 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: No such Work Item in this project, or it is not on the CREATORS workflow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/proposals:
+    post:
+      tags:
+        - marketing-proposals
+      summary: Propose a marketing change, backed by two verified signals
+      description: >-
+        Creates a PLANNED Work Item on the MARKETING_CHANGES workflow: the title, type and hypothesis, a review date
+        (`dueOn`) and the two signals as evidence bullets. It records a proposal only. Nothing is applied to an ad
+        platform, and a person must approve it (mark it live, or abandon it). Exactly two signals with different
+        `metricRef`s are required. Each signal must cite a metric that the verification ledger has verified for its
+        window (a second source confirmed it and none disagrees): a metric that is UNCHECKED, has a MISMATCH or has no
+        ledger row is refused with 422, naming the metric and its verdict. The stated `value` must match the ledger's
+        figure for that window. At most 3 proposals are accepted per workspace per ISO week (Monday to Sunday, UTC); a
+        fourth is refused with 409. A proposal Work Item that is deleted frees its slot. Requires ADMIN or CREATOR (a
+        project key or run token from a workflow also passes).
+      operationId: proposeMarketingChange
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketingProposalRequest"
+      responses:
+        "201":
+          description: The PLANNED change was created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingProposalResponse"
+        "400":
+          description: >-
+            Invalid input: a missing title or hypothesis, an unknown type, a review date that is not after today,
+            a number of signals other than two, the same metric twice, or an unreadable window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The project has no MARKETING_CHANGES workflow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The workspace already has 3 proposals this ISO week
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            A signal's evidence is refused: its metric is UNCHECKED, has a MISMATCH, has no ledger row, has no value
+            in the window, or the stated value differs from the ledger's. The reason names every refused metric
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/weekly-growth/install:
+    post:
+      tags:
+        - marketing-proposals
+      summary: Install the weekly growth workflow, disabled
+      description: >-
+        Creates the "Weekly growth review" workflow from Conductor's template: a Monday 07:30 UTC schedule and one
+        Claude Code step that reads the report, the verification ledger and the budget, and proposes at most 3
+        changes with `proposeMarketingChange`. It is created DISABLED, so nothing runs until a person enables it.
+        Idempotent: when the workspace already has a workflow with that name it is returned unchanged (200, `created`
+        false) and the template is not applied again. The workflow's Claude Code step needs a runtime target. Requires
+        ADMIN, and a person (a project key or run token cannot install workflows).
+      operationId: installWeeklyGrowthWorkflow
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The workflow was already installed; it is returned unchanged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeeklyGrowthInstallResponse"
+        "201":
+          description: The workflow was created, disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeeklyGrowthInstallResponse"
+        "400":
+          description: The workspace is at its workflow limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN
           content:
             application/json:
               schema:
@@ -12493,6 +12628,50 @@ components:
         displayId: {type: string}
         recordId: {type: string, description: "The id the record has in the source log."}
         status: {type: string, description: "The status the Work Item was created in."}
+
+    MarketingProposalRequest:
+      type: object
+      required: [title, type, hypothesis, reviewOn, signals]
+      properties:
+        title: {type: string, maxLength: 255}
+        type:
+          type: string
+          description: A type of the workspace's MARKETING_CHANGES workflow (LISTING, ADS, PRICING, PRODUCT, CONTENT, BASELINE or OTHER by default).
+        hypothesis: {type: string, maxLength: 20000, description: "What should change, and why."}
+        reviewOn: {type: string, format: date, description: "The day to review the result; after today (UTC). Becomes the change's review date."}
+        signals:
+          type: array
+          description: Exactly two signals, each on a different metric.
+          items:
+            $ref: "#/components/schemas/MarketingProposalSignal"
+        runId: {type: string, maxLength: 100, description: "The workflow run that made the proposal, when there is one."}
+
+    MarketingProposalSignal:
+      type: object
+      required: [metricRef, window, value]
+      properties:
+        metricRef: {type: string, maxLength: 120, description: "CHANNEL.metric, e.g. ADS.installs. The channel is case-insensitive."}
+        window: {type: string, maxLength: 40, description: "7d, 28d, 90d or YYYY-MM-DD..YYYY-MM-DD: the window the figure is for."}
+        value: {type: number, format: double, description: "The ledger's figure for that metric over that window."}
+        note: {type: string, maxLength: 500, description: "What the figure shows."}
+
+    MarketingProposalResponse:
+      type: object
+      required: [workItemId, displayId, proposalsThisWeek, weeklyLimit]
+      properties:
+        workItemId: {type: string}
+        displayId: {type: string}
+        proposalsThisWeek: {type: integer, format: int32, description: "Proposals made this ISO week (UTC), this one included."}
+        weeklyLimit: {type: integer, format: int32, description: "The most proposals a workspace can make in one ISO week."}
+
+    WeeklyGrowthInstallResponse:
+      type: object
+      required: [workflowId, name, enabled, created]
+      properties:
+        workflowId: {type: string}
+        name: {type: string}
+        enabled: {type: boolean, description: "False right after installing. An existing workflow keeps whatever state it is in."}
+        created: {type: boolean, description: "True when this call created the workflow, false when it was already there."}
 
     CreatorResults:
       type: object
