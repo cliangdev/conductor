@@ -345,7 +345,7 @@ any placement is fixed now, not shown.
    (layers: native, then the kit, then the spec's own top-level `style`, then the inline `style`); keep the
    result's `style`. Then
    `preview_creative_draft({kind: "CAROUSEL", brandKitId: <run.json brandKitId, the Creative's brand kit>, slidePaths, slideStyle: style, caption, slideAltText})` with the returned `slidePaths` (`9x16` for TikTok, `4x5` for Instagram),
-   the caption from `publish-pack.json` and the alt text from `direction.md`. Record the preview's
+   the caption from `publish-pack.json` and the alt text from `direction.md`. Each `slideAltText` entry describes the picture, then ends with `Text: "first line" / "second line"`, quoting the words on the slide exactly (lines separated by " / "), or `Text: none` for a slide with no words; the tool times each slide from these words (and screen readers get the on-slide text). Pass `slideshow.slideDurations` computed per `references/capabilities.md`. Record the preview's
    `draftDir` as `drafts.final`.
    **Music:** a slideshow or clip with music uses `audio` on the Creative, and a track from
    `context/media.json` (`kind: "AUDIO"`, unblocked) is reused before any new file. A new music file
@@ -359,8 +359,8 @@ any placement is fixed now, not shown.
    `references/design-critique.md` (the slideshow criteria for a slideshow, the STILL criteria
    otherwise; any criterion below 3 is fixed before anyone sees it). For a STILL: does the headline read at a
    glance, does the accent phrase fall on the words that carry the meaning, is copy on a face, are
-   the safe zones clear. For a slideshow: does slide 1 stop the scroll, is the text inside y 16 to 75,
-   is the screenshot real, and is there no logo, badge or offer. Also read the result's `checks`/`passed`: while any blocking check fails,
+   the safe zones clear. For a slideshow: does slide 1 stop the scroll, is the text inside y 16 to 75 (and that holds for burned-in captions in CLIP videos too),
+   is the screenshot real, and is there no logo, badge or offer. Look at the UI overlay sheet the preview returns (`uiOverlay`), not just the clean frames. Also read the result's `checks`/`passed`: while any blocking check fails,
    fix it (`layoutOverrides` for photo height, `typeOverrides` for text size, a shorter body) and
    re-preview **before** showing anything, and never offer Approve & upload while one still fails.
    Revise at most twice beyond that; if it is still wrong, show it honestly and say what is off.

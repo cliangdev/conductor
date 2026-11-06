@@ -511,6 +511,16 @@ Keep an eye on each platform's own duration limits (TikTok, Reels, and Shorts ar
 short vertical video; YouTube's own limits depend on the destination format) — Conductor flags a
 clip over about three minutes as a heads-up when you upload it, but doesn't refuse it.
 
+### Text under the app's buttons
+
+On a vertical video or slideshow, TikTok and Instagram draw their own buttons and captions over your
+picture: roughly the top 15% (back arrow, tabs, search), the bottom third and a column on the right.
+Keep your words inside the middle. When you hand Claude finished slides or a finished video, the
+preview reads their text, flags anything under those areas, and shows a sheet with the app's screen
+drawn on top, so look at that sheet before you approve. It can miss fancy or faint lettering, and if
+it says it could not check, check by eye. Slideshows are also timed to the words on each slide, so
+a slide with two lines stays up long enough to read.
+
 ## 6. Troubleshooting
 
 **"headline needs exactly one accent phrase (found 0 asterisks)"** (or 2, or 3) — your Brand Kit

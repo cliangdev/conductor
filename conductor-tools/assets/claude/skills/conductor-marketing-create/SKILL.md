@@ -74,14 +74,24 @@ Automated checks are real but incomplete. These are the ones worth looking for b
   check, because none of them read pixels for meaning. Open and look at every photo.
 - **A generated image depicting a product, result or claim that is not real** (a made-up app screen,
   a before/after, an invented package) passes every check. Only looking catches it.
-- **A structurally valid render is not necessarily a good one.** The checks cover spill, safe zones,
-  fonts and contrast, never whether the headline reads at a glance or the copy sits on a face. The
+- **Finished images and clips are pixels the layout engine did not place.** CAROUSEL slides, CLIP
+  media and anything rendered outside Conductor (HTML, ffmpeg, Veo or another generator) can carry
+  text under the platform UI. `preview_creative_draft` now reads their text with OCR in the UI zones
+  and returns `safeZoneText` checks, but OCR misses stylised or low-contrast text, so still look at
+  slide 1 and the first frames of each video on the UI overlay sheet. At 1080x1920: nothing above
+  y=290, nothing below y=1490 (keep long-caption posts above about y=1250), nothing in the right 15%
+  column (see `references/platform-specs.md`). A `safeZoneUnchecked` check means OCR could not run
+  and it did NOT look: check by eye. `checks: []` means it looked and found nothing.
+- **A structurally valid render is not necessarily a good one.** The layout checks cover spill, the
+  top and bottom safe zones, fonts and contrast, never whether the headline reads at a glance or the copy sits on a face. The
   design critique exists for this gap.
 - **A Brand Kit with no copy rules, or no accent-phrase requirement, never fails a save on that
   account.** That is permissive by design, which makes the model the only check on brand voice until
   someone configures rules.
 - **A draft is not a saved Creative.** A Creative or media id does not exist until
   `commit_creative_draft` runs; do not hand a draft's folder to `attach_creative_to_post` or a Post.
+  `attach_creative_to_post` also refuses a Creative whose finished pixels have a blocking safe-zone
+  error; fix the media, and use `ignoreSafeZone: true` only when the person has looked and accepts it.
 - **A stale write is refused, not overwritten.** `update_creative` requires the current `version`; a
   409 names the conflict. Reread with `get_creative` and reapply, do not retry blind.
 - **Rejected copy stays rejected.** Copy rules with ids starting `banned-` are lines or visuals the

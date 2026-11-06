@@ -28,9 +28,16 @@ needs changing until it fits.
   when the slides already exist as image files or library media. Slides are ordered per placement
   (`slides`, with `default` as the fallback) and each must match its placement's aspect. Reels,
   Stories and YouTube cannot take its photos. With a library music track (`audio.source` `track`)
-  it also gets a 9:16 slideshow video (`slideshow.slideDurations`, 1 to 10 s per slide, default 3 s
-  then 2.5 s; `zoom` default on), because no platform accepts a chosen track on photos. Each
+  it also gets a 9:16 slideshow video (`slideshow.slideDurations`, 1 to 10 s per slide; `zoom` default on), because no platform accepts a chosen track on photos. Each
   destination then sends the photos (silent) or that video (`carouselAs`: `photos` or `video`).
+  Pacing: always pass `slideshow.slideDurations` explicitly, per slide `clamp(2.4 + 0.14 x words, 3.0,
+  4.8)` s from the words on that slide, plus 0.5 s for slide 1 and 0.5 s for an app-screen or chart
+  slide. The 0.5 s cross-fade comes out of each slide's time. Write each `slideAltText` entry as a
+  description ending in `Text: "first line" / "second line"` (the words on the slide, exactly, lines
+  separated by " / "; `Text: none` when there are none): the tool times each slide from these words
+  (and screen readers get the on-slide text), and when `slideDurations` is omitted it computes the
+  same formula itself (from the `Text:` part, or OCR). With no text at all the default is 3.5 s for
+  slide 1 and 3.0 s for the rest. Say the total length when showing the draft.
 
 - **Slideshow** (organic posts): native-looking slides made locally by `compose_slideshow` (photo with
   text, app screenshot with callouts, Notes page, chat, photo grid, stacked before/after, tier list,

@@ -13,8 +13,8 @@ the Creative's own fields.
 | 0-3s | ... | ... | ... | <media id, "to film", or none> |
 
 ## Safe zones
-- Keep text out of the top ~14%, the bottom ~35% and ~6% at each side (9:16; check current
-  platform guidance).
+- At 1080x1920 keep text at y >= 290 and above y=1490 (above about y=1250 when the caption is long),
+  and out of the right 15% column (9:16; numbers in `references/platform-specs.md`).
 - Headline and CTA sit in the middle band. Nothing on a face.
 
 ## Sound

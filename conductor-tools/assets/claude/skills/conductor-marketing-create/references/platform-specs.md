@@ -18,10 +18,21 @@ ranking signals without notice, and the brief's own platform list always wins.
 
 ## Safe zone (9:16, 1080x1920)
 
-Use the Reels zone as the default for every vertical placement: keep text and faces out of the top
-~14%, the bottom ~35% and ~6% at each side. That leaves a central band of roughly 1000 px of height
-for the hook, headline and CTA. TikTok's right-hand button column and caption area, and the Shorts
-channel and title strip, take comparable space (check current platform guidance).
+Use one zone for every 9:16 surface: Reels, TikTok, Shorts, Stories and slideshow videos. Keep text
+and faces inside this box:
+
+| Zone | At 1080x1920 | Share | What covers it |
+|---|---|---|---|
+| Top | text at y >= 290 | about 15% | Reels header (about 260 px measured on iOS), TikTok tabs and search |
+| Bottom | text above y=1490 (430 px reserved) | about 22% | caption, username, music row |
+| Right | nothing right of x=918 between y=576 and y=1632 | right 15% (140 to 162 px) | like, comment and share column |
+
+Long captions and hashtags grow upward, so on a post with a long caption keep text above about
+y=1250 (the bottom ~35%). That leaves a central band of roughly 1000 px for the hook, headline and
+CTA. Shorts' channel and title strip takes comparable space (check current platform guidance). The
+layout engine reserves the top 290 px on `9x16` and `story` and checks it; for finished images and
+clips, `preview_creative_draft` reads their text with OCR and its overlay sheet shows the platform UI
+on top of the frames.
 
 ## Platforms
 

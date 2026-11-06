@@ -457,6 +457,44 @@ result per file) and find it again with `list_creative_media({labelPrefix})`. `l
 (the result carries a warning naming the file and field; the local sidecar keeps the full text), while a
 longer `label` is a 400.
 
+### Safe zones in finished pixels {#safe-zones-finished-pixels}
+
+The layout engine places the text of STILL and MOTION Creatives and checks it. A CAROUSEL slide or a
+CLIP frame is pixels it did not place, so the pixel check reads the text itself: OCR (tesseract.js,
+English data bundled, one lazily created worker) on crops of the UI zones only, every crop read as it
+is and inverted. A word counts when its confidence is at least 70, it has at least 2 letters or
+digits and its box is at least 16 px tall at 1080 wide. Zones for 9:16, at 1080x1920 and scaled to
+the real size:
+
+| Zone | Area | Severity |
+|---|---|---|
+| Top | y < 290 (Reels header, TikTok tabs and search) | error on slide 1 or at t < 3 s, warning elsewhere |
+| Bottom | y > 1490 (caption, username, music row) | warning |
+| Right | x > 918 and y 576 to 1632 (like, comment, share column) | warning |
+
+The layout engine uses the same numbers: `9x16` and `story` reserve the top 290 px, and
+`runAssertions` reports headline, body or CTA inside it as an error and the lockup as a warning.
+
+Each hit is a `safeZoneText` check with the slide index or `atSeconds`, the box, the text and the
+platforms whose UI covers it; any error makes `passed` false. If OCR cannot run the result carries a
+`safeZoneUnchecked` warning, so an empty `checks: []` always means it looked and found nothing. OCR
+misses stylised or low-contrast text, which is why the preview also returns an overlay sheet
+(`uiOverlay`: `instagram | tiktok | both | none`) with Instagram Reels and TikTok chrome drawn over
+slide 1 or the frames from the first 3 s and each cut; it is inlined by default for 9:16 CAROUSEL and
+CLIP, and written to disk (path returned) for the TikTok variant and for 9:16 STILL and MOTION.
+
+It runs in `preview_creative_draft` (CAROUSEL, and CLIP with `clipPath`/`clipPaths`, which uploads
+nothing), `preview_creative` (saved CAROUSEL and CLIP), the `attach_creative_to_post` pre-flight
+(blocks on errors unless `ignoreSafeZone: true`) and `render_creative` (reported only).
+
+**Pacing.** A slideshow without `slideshow.slideDurations` is timed from the words on each slide:
+`clamp(2.4 + 0.14 x words, 3.0, 4.8)` s, plus 0.5 s for the first slide and 0.5 s for a detail slide
+(alt text mentions a screen, app, chart, graph, screenshot, table or map). Words come from the `Text:`
+part of each `slideAltText` entry (`Text: "line one" / "line two"`, or `Text: none`), else from OCR.
+The 0.5 s cross-fade comes out of each slide's time. The preview reports the durations and the
+total, and warns when a slide gets under 0.25 s per word, or under 3 s with two or more lines. With
+no text at all the fallback is 3.5 s for the first slide and 3.0 s for the rest.
+
 ## Organic slideshows {#organic-slideshows}
 
 Organic posts (TikTok photo posts, Instagram carousels) are native-looking slideshows, not brand-layout
