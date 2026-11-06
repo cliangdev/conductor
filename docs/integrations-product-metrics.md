@@ -9,9 +9,8 @@ limits, so a v1 or v2 backend keeps working unchanged; see [Version 2](#version-
 for what they add.
 
 The machine-readable shape is [`integrations-product-metrics.schema.json`](integrations-product-metrics.schema.json)
-(JSON Schema, draft 2020-12). For versions 1 and 2 it is the single source of truth for fields and types; it does
-not describe the [Version 3](#version-3) additions yet, which that section specifies. This page explains what the
-fields mean. A backend can be a mobile app's API, a data warehouse job or a small serverless function.
+(JSON Schema, draft 2020-12). It is the single source of truth for fields and types, versions 1 to 3. This page
+explains what the fields mean. A backend can be a mobile app's API, a data warehouse job or a small serverless function.
 
 ## Connecting
 

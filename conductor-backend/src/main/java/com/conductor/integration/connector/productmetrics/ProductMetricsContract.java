@@ -39,10 +39,10 @@ import java.util.regex.Pattern;
  */
 public final class ProductMetricsContract {
 
-    /** The version the bundled JSON schema file and the local sample response declare (v2, until the schema covers v3). */
-    public static final int VERSION = 2;
-    /** The newest version {@link #parse} reads. */
+    /** The newest version {@link #parse} reads; the bundled JSON schema file and the local sample response declare it. */
     public static final int LATEST_VERSION = 3;
+    /** The version the bundled JSON schema file and the local sample response declare. */
+    public static final int VERSION = LATEST_VERSION;
     public static final int MIN_VERSION = 1;
     /** Reference values are stored as PRODUCT metrics with this prefix; the overview never lists them. */
     public static final String REFERENCE_PREFIX = "ref_";
