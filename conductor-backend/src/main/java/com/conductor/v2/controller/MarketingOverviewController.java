@@ -110,11 +110,11 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                         .toList(),
                 c.metrics().stream().map(MarketingOverviewController::toMetric).toList())
                 .lastFetchedAt(c.lastFetchedAt())
-                .targetsEditable(c.targetsEditable());
+                .targetsEditable(c.targetsEditable())
+                .mismatches(c.mismatches().stream().map(MarketingOverviewController::toMismatch).toList())
+                .partial(c.partial());
         if (c.mismatch() != null) {
-            MarketingOverviewQueryService.MismatchView m = c.mismatch();
-            channel.mismatch(new OverviewMismatch(m.metric(), m.label(), m.referenceValue(), m.channelValue(),
-                    m.gapPct(), m.from(), m.to()).channelSource(m.channelSource()).referenceSource(m.referenceSource()));
+            channel.mismatch(toMismatch(c.mismatch()));
         }
         if (c.connectHint() != null) {
             channel.connectHint(new OverviewConnectHint(c.connectHint().connectorId(),
@@ -122,6 +122,14 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                             .map(k -> new OverviewConnectorRef(k.connectorId(), k.name())).toList()));
         }
         return channel;
+    }
+
+    private static OverviewMismatch toMismatch(MarketingOverviewQueryService.MismatchView m) {
+        return new OverviewMismatch(m.metric(), m.label(), m.referenceValue(), m.channelValue(), m.gapPct(), m.from(),
+                m.to())
+                .channelSource(m.channelSource())
+                .referenceSource(m.referenceSource())
+                .kind(m.kind() == null ? null : OverviewMismatch.KindEnum.valueOf(m.kind()));
     }
 
     private static OverviewMetric toMetric(MarketingOverviewQueryService.MetricView m) {

@@ -122,6 +122,37 @@ class MarketingOverviewControllerTest {
     }
 
     @Test
+    void overview_listsEveryMismatchWithItsKindAndKeepsTheSingleMismatchForOldClients() throws Exception {
+        memberWithRole(MemberRole.REVIEWER);
+        MarketingOverviewQueryService.MismatchView backend = new MarketingOverviewQueryService.MismatchView(
+                "installs", "Installs", 23, 7, 16.0 / 23, LocalDate.of(2026, 9, 29), LocalDate.of(2026, 10, 5),
+                "Apple Search Ads", "Rexipe", MarketingOverviewQueryService.KIND_BACKEND);
+        MarketingOverviewQueryService.MismatchView platform = new MarketingOverviewQueryService.MismatchView(
+                "spend", "Spend", 190.5, 162.86, 0.145, LocalDate.of(2026, 9, 29), LocalDate.of(2026, 10, 26),
+                "Apple Search Ads", "Apple Ads console", MarketingOverviewQueryService.KIND_PLATFORM);
+        ChannelView web = webChannel(null);
+        ChannelView ads = new ChannelView("ADS", "Ads", "MISMATCH", null, web.connections(), null, web.metrics(),
+                LocalDate.of(2026, 10, 12), backend, true, List.of(backend, platform), Boolean.TRUE);
+        when(queryService.overview(PROJECT_ID, "2026-09-29..2026-10-26"))
+                .thenReturn(new Overview(window(), List.of(), List.of(ads, webChannel(null))));
+
+        mockMvc.perform(get(BASE + "/overview").param("window", "2026-09-29..2026-10-26")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.channels[0].status").value("MISMATCH"))
+                .andExpect(jsonPath("$.channels[0].partial").value(true))
+                .andExpect(jsonPath("$.channels[0].mismatch.metric").value("installs"))
+                .andExpect(jsonPath("$.channels[0].mismatch.kind").value("BACKEND"))
+                .andExpect(jsonPath("$.channels[0].mismatches.length()").value(2))
+                .andExpect(jsonPath("$.channels[0].mismatches[0].referenceValue").value(23.0))
+                .andExpect(jsonPath("$.channels[0].mismatches[1].kind").value("PLATFORM"))
+                .andExpect(jsonPath("$.channels[0].mismatches[1].referenceSource").value("Apple Ads console"))
+                // a channel with no disagreement lists none and says nothing about partial
+                .andExpect(jsonPath("$.channels[1].mismatches.length()").value(0))
+                .andExpect(jsonPath("$.channels[1].partial").doesNotExist());
+    }
+
+    @Test
     void member_readsTheOverview() throws Exception {
         memberWithRole(MemberRole.REVIEWER);
         when(queryService.overview(PROJECT_ID, "7d")).thenReturn(new Overview(window(),

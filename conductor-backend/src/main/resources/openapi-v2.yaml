@@ -18,6 +18,8 @@ tags:
     description: What every marketing metric counts, where it comes from and what it excludes
   - name: marketing-report
     description: The one-call marketing report and the industry benchmarks it compares against
+  - name: marketing-verification
+    description: The verification ledger - per metric, Conductor's value, the backend's, a direct platform read and which to trust
   - name: marketing-growth-signals
     description: Seasonal moments, the weekly ratings program and the competitor watch, from public data
   - name: marketing-changes
@@ -3115,7 +3117,10 @@ paths:
           schema:
             type: string
             default: 28d
-          description: 7d or 28d (default).
+          description: >-
+            7d or 28d (default), or a fixed range of whole days `YYYY-MM-DD..YYYY-MM-DD` (first day not after the
+            last, last day yesterday or earlier, at most 92 days). In a fixed window every channel uses exactly
+            those days; one whose settled data ends earlier is `partial`.
       responses:
         "200":
           description: The overview
@@ -3124,7 +3129,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/MarketingOverviewResponse"
         "400":
-          description: Unknown window
+          description: Unknown or invalid window (a fixed range must run first day to last day, end yesterday or earlier and span at most 92 days)
           content:
             application/json:
               schema:
@@ -3173,7 +3178,9 @@ paths:
           schema:
             type: string
             default: 28d
-          description: 7d, 28d (default) or 90d.
+          description: >-
+            7d, 28d (default) or 90d, or a fixed range of whole days `YYYY-MM-DD..YYYY-MM-DD` (first day not
+            after the last, last day yesterday or earlier, at most 92 days). A fixed window returns no `topPosts`.
       responses:
         "200":
           description: The channel
@@ -3182,7 +3189,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/MarketingChannelDetailResponse"
         "400":
-          description: Unknown channel or window
+          description: Unknown channel, or an unknown or invalid window
           content:
             application/json:
               schema:
@@ -4829,6 +4836,181 @@ paths:
                 $ref: "#/components/schemas/GrowthTrackedKeywords"
         "400":
           description: More than 25 keywords, a blank or over-long keyword, or a country that is not two letters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/verification:
+    get:
+      tags:
+        - marketing-verification
+      summary: The verification ledger
+      description: >-
+        One row per metric of every connected channel that can be checked (derived ratios are left out): Conductor's
+        value for the window, the product backend's value over the settled days both have (when a pair exists),
+        the latest direct platform read with Conductor's own figure over that read's days, and which to trust.
+        `verdict` is BOTH (every second source available agrees), CONNECTOR (trust the connector: a platform read
+        agrees with it, or the backend disagrees and no read exists yet), BACKEND (backend and platform read agree,
+        the connector does not), PLATFORM (the platform read disagrees with every other source) or UNCHECKED (no
+        second source at all; never verified). `mismatch` is true when any second source that could be compared
+        disagrees with Conductor. A read recorded more than 7 days ago is `readStale`. Only settled days are
+        compared. Computed on read; the only stored data is the reads themselves.
+      operationId: getMarketingVerification
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            default: 28d
+          description: >-
+            7d, 28d (default) or 90d, or a fixed range of whole days `YYYY-MM-DD..YYYY-MM-DD` (first day not after
+            the last, last day yesterday or earlier, at most 92 days).
+      responses:
+        "200":
+          description: The ledger
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingVerificationLedger"
+        "400":
+          description: Unknown or invalid window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/verification/reads:
+    get:
+      tags:
+        - marketing-verification
+      summary: The platform reads recorded for a metric, newest first
+      description: >-
+        The append-only history of direct platform reads, newest first. Filter by `channel` and `metric`. Reads
+        are never updated or deleted, so this is the audit trail behind every verdict.
+      operationId: listMarketingPlatformReads
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channel
+          in: query
+          required: false
+          schema:
+            type: string
+          description: WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT (case-insensitive).
+        - name: metric
+          in: query
+          required: false
+          schema:
+            type: string
+          description: The metric key within the channel, e.g. installs.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: The reads
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingPlatformReadList"
+        "400":
+          description: Unknown channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - marketing-verification
+      summary: Record a direct platform read
+      description: >-
+        Records what the platform's own UI or API showed for one metric over an explicit range of whole days
+        (`from` to `to`, `to` yesterday or earlier, at most 92 days). The read is append-only: it is never
+        updated or deleted, and a newer read supersedes it in the ledger. Conductor's value, the backend's value
+        and the verdict at the time of recording are stored with it. Returns the recomputed ledger row for exactly
+        the read's days. Requires ADMIN or CREATOR. Not idempotent: each call adds a read.
+      operationId: recordMarketingPlatformRead
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketingPlatformReadRequest"
+      responses:
+        "201":
+          description: Recorded; the recomputed ledger row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationRow"
+        "400":
+          description: Unknown channel or metric, a metric that cannot be read directly, an invalid range or a negative value
           content:
             application/json:
               schema:
@@ -10313,13 +10495,13 @@ components:
         dataCompleteThrough:
           type: string
           format: date
-          description: The channel's window ends here, the latest day with non-provisional data across its connections (never later than yesterday; yesterday when there is none).
+          description: The channel's window ends here, the latest day with non-provisional data across its connections (never later than yesterday; yesterday when there is none). In a fixed window it is never later than the window's last day.
         channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT."}
         label: {type: string}
         status:
           type: string
           enum: [LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH]
-          description: MISMATCH means the product metrics feed's reference figure (store downloads, ad spend) disagrees with this channel's own connector by more than 1%; see `mismatch`. STALE also covers a feed that keeps running while this channel's data ends more than 7 days before the freshest channel's; such a channel no longer holds the funnel window back and its funnel stages are unavailable ("No Web data since Sep 10").
+          description: MISMATCH means a second source disagrees with this channel's own connector - the product metrics feed's reference figure (ad spend and installs, store downloads and downloads of record) or a direct platform read - outside the band of 1 unit for counts under 50 and 2% above that and for money; see `mismatches`. STALE also covers a feed that keeps running while this channel's data ends more than 7 days before the freshest channel's; such a channel no longer holds the funnel window back and its funnel stages are unavailable ("No Web data since Sep 10").
         lastFetchedAt: {type: string, format: date-time, nullable: true}
         targetsEditable:
           type: boolean
@@ -10328,6 +10510,15 @@ components:
           allOf:
             - $ref: "#/components/schemas/OverviewMismatch"
           nullable: true
+          description: The entry of `mismatches` with the largest relative gap (a BACKEND one when there is any), kept for clients that read one mismatch. New clients read `mismatches`.
+        mismatches:
+          type: array
+          description: Every second source that disagrees with this channel's own figure, largest gap first - the product backend's reference per pair (ADS spend and installs, STORE downloads and downloads of record) and any direct platform read that disagrees. Empty when none do. The channel is MISMATCH while this is not empty (a lagging channel stays STALE).
+          items:
+            $ref: "#/components/schemas/OverviewMismatch"
+        partial:
+          type: boolean
+          description: Set to true only in a fixed window, when this channel's settled data ends before the window's last day; its values then cover only the days up to `dataCompleteThrough` and its previous-window comparison is withheld.
         connections:
           type: array
           items:
@@ -10343,18 +10534,170 @@ components:
 
     OverviewMismatch:
       type: object
-      description: Set when status is MISMATCH. Both figures cover the same settled days, `from` to `to`.
+      description: >-
+        One second source that disagrees with the channel's own figure, over the same settled days `from` to `to`
+        (outside the band: 1 unit for counts under 50, 2% of the larger figure above that and for money).
       required: [metric, label, referenceValue, channelValue, gapPct, from, to]
       properties:
+        kind:
+          type: string
+          enum: [BACKEND, PLATFORM]
+          description: BACKEND when the second figure is the product metrics feed's reference; PLATFORM when it is a direct platform read recorded in the verification ledger. Absent means BACKEND.
         channelSource: {type: string, description: "Name of the connection(s) behind this channel's own figure, e.g. App Store Connect."}
-        referenceSource: {type: string, description: "Name of the product metrics connection(s) that reported the reference figure."}
+        referenceSource: {type: string, description: "Name of the source of the second figure: the product metrics connection(s) for BACKEND, or the name given to the direct read (for example Apple Ads console) for PLATFORM."}
         metric: {type: string, description: "The channel metric compared, e.g. downloads or spend."}
         label: {type: string}
-        referenceValue: {type: number, format: double, description: "What the product metrics feed reports."}
+        referenceValue: {type: number, format: double, description: "What the second source reports: the product metrics feed (BACKEND) or the platform read (PLATFORM)."}
         channelValue: {type: number, format: double, description: "What this channel's own connector reports."}
         gapPct: {type: number, format: double, description: "Absolute gap as a fraction of the larger figure (0.05 is 5%)."}
         from: {type: string, format: date}
         to: {type: string, format: date}
+
+    MarketingVerificationLedger:
+      type: object
+      required: [window, rows, summary]
+      properties:
+        window:
+          $ref: "#/components/schemas/VerificationWindow"
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/VerificationRow"
+        summary:
+          $ref: "#/components/schemas/VerificationSummary"
+
+    VerificationWindow:
+      type: object
+      description: The days the ledger was asked about. Each row says which days its own Conductor value covers (a channel's rolling window ends at its own last settled day).
+      required: [from]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date, nullable: true, description: "Null when no channel has data yet."}
+
+    VerificationRow:
+      type: object
+      required: [channel, metric, metricRef, label, unit, verdict, mismatch, readStale, trustNote]
+      properties:
+        channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT."}
+        metric: {type: string, description: "The metric key within the channel, e.g. installs."}
+        metricRef: {type: string, description: "CHANNEL.metric, e.g. ADS.installs."}
+        label: {type: string}
+        unit:
+          type: string
+          enum: [COUNT, CURRENCY, PERCENT, POSITION, RATING]
+        definition:
+          allOf:
+            - $ref: "#/components/schemas/OverviewMetricDefinition"
+          nullable: true
+        windowFrom: {type: string, format: date, nullable: true, description: "First day `conductorValue` covers."}
+        windowTo: {type: string, format: date, nullable: true, description: "Last day `conductorValue` covers."}
+        conductorValue: {type: number, format: double, nullable: true, description: "Conductor's value for the window; null when it has none (unknown, never 0)."}
+        backend:
+          allOf:
+            - $ref: "#/components/schemas/VerificationBackend"
+          nullable: true
+          description: Present when the product backend reports this metric over days Conductor also has settled.
+        platformRead:
+          allOf:
+            - $ref: "#/components/schemas/VerificationPlatformRead"
+          nullable: true
+          description: The latest direct platform read for this metric, if any.
+        verdict:
+          type: string
+          enum: [BOTH, CONNECTOR, BACKEND, PLATFORM, UNCHECKED]
+        mismatch: {type: boolean, description: "True when any second source that could be compared disagrees with Conductor's figure."}
+        readStale: {type: boolean, description: "True when the latest platform read was recorded more than 7 days ago."}
+        trustNote: {type: string, description: "One plain sentence saying which figure to trust and why."}
+
+    VerificationBackend:
+      type: object
+      required: [value, conductorValue, daysCompared, source, from, to, matches]
+      properties:
+        value: {type: number, format: double, description: "The product backend's sum over the days compared."}
+        conductorValue: {type: number, format: double, description: "Conductor's sum over the same days."}
+        daysCompared: {type: integer, description: "Settled days both sides have."}
+        source: {type: string, description: "Name of the product metrics connection(s)."}
+        from: {type: string, format: date, description: "First day compared."}
+        to: {type: string, format: date, description: "Last day compared."}
+        matches: {type: boolean}
+
+    VerificationPlatformRead:
+      type: object
+      required: [id, value, from, to, sourceName, recordedAt]
+      properties:
+        id: {type: string}
+        value: {type: number, format: double, description: "What the platform showed for the read's days."}
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        sourceName: {type: string, description: "Where it was read, e.g. Apple Ads console."}
+        note: {type: string, nullable: true}
+        recordedBy: {type: string, nullable: true, description: "User id of whoever recorded it."}
+        recordedAt: {type: string, format: date-time}
+        conductorValueOverReadDays:
+          type: number
+          format: double
+          nullable: true
+          description: "Conductor's own figure over exactly the read's days (a level: its value on the last day; unique visitors: the stored count for a window of that length ending on the last day). Null when it cannot be said: Conductor has not settled those days, or unique visitors were read over a length other than 7, 28 or 90 days."
+        matches:
+          type: boolean
+          nullable: true
+          description: "Whether the read agrees with Conductor's figure over its days; null when that cannot be compared."
+
+    VerificationSummary:
+      type: object
+      required: [both, connector, backend, platform, unchecked, mismatched, staleReads]
+      properties:
+        both: {type: integer}
+        connector: {type: integer}
+        backend: {type: integer}
+        platform: {type: integer}
+        unchecked: {type: integer}
+        mismatched: {type: integer, description: "Rows with `mismatch` true."}
+        staleReads: {type: integer, description: "Rows whose latest platform read is more than 7 days old."}
+
+    MarketingPlatformReadRequest:
+      type: object
+      required: [channel, metric, from, to, value, sourceName]
+      properties:
+        channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT (case-insensitive)."}
+        metric: {type: string, description: "The metric key within the channel, e.g. installs; a sum, a level or window-unique visitors (not a derived ratio)."}
+        from: {type: string, format: date, description: "First day of the range the platform showed."}
+        to: {type: string, format: date, description: "Last day of the range; yesterday or earlier. At most 92 days from `from`."}
+        value: {type: number, format: double, minimum: 0, description: "The platform's figure for those days."}
+        sourceName: {type: string, maxLength: 120, description: "Where it was read, e.g. Apple Ads console or Search Console UI."}
+        note: {type: string, maxLength: 500}
+
+    MarketingPlatformReadList:
+      type: object
+      required: [reads]
+      properties:
+        reads:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingPlatformReadEntry"
+
+    MarketingPlatformReadEntry:
+      type: object
+      description: One recorded read with what Conductor and the backend showed when it was recorded.
+      required: [id, channel, metric, from, to, value, sourceName, recordedAt]
+      properties:
+        id: {type: string}
+        channel: {type: string}
+        metric: {type: string}
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        value: {type: number, format: double}
+        sourceName: {type: string}
+        note: {type: string, nullable: true}
+        recordedBy: {type: string, nullable: true}
+        recordedAt: {type: string, format: date-time}
+        conductorValue: {type: number, format: double, nullable: true, description: "Conductor's figure over the read's days at the time of recording."}
+        backendValue: {type: number, format: double, nullable: true, description: "The product backend's figure over the same days at the time of recording, if it had one."}
+        verdict:
+          type: string
+          nullable: true
+          enum: [BOTH, CONNECTOR, BACKEND, PLATFORM, UNCHECKED]
+          description: The verdict at the time of recording.
 
     OverviewConnection:
       type: object

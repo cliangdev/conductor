@@ -903,6 +903,25 @@
       ]
     },
     {
+      "name": "get_verification_ledger",
+      "description": "Which marketing numbers to trust: per metric, Conductor's value, the product backend's, the latest direct platform read and a verdict (BOTH, CONNECTOR, BACKEND, PLATFORM or UNCHECKED). Optional window, channel and only-problems filter.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "record_platform_read",
+      "description": "Log what a platform's own UI or API shows for one metric over an exact day range. Append-only; returns the metric's row with its verdict.",
+      "category": "marketing",
+      "requiredParams": [
+        "channel",
+        "metric",
+        "from",
+        "to",
+        "value",
+        "sourceName"
+      ]
+    },
+    {
       "name": "get_growth_signals",
       "description": "Growth signals from public data: seasonal moments with overdue warnings, weekly ratings growth, recent reviews, competitor listing changes and keyword positions.",
       "category": "marketing",
