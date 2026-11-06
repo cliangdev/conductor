@@ -107,4 +107,19 @@ class ChannelGroupTest {
                 .containsExactly(ChannelGroup.PUBLISHING);
         assertThat(ChannelGroup.forEvent(EventType.POST_AWAITING_MANUAL, Map.of())).isEmpty();
     }
+
+    @Test
+    void marketingGroupCarriesOnlyTheMarketingAlert() {
+        assertThat(ChannelGroup.MARKETING.getLabel()).isEqualTo("Marketing");
+        assertThat(ChannelGroup.MARKETING.getEventTypes()).containsExactly(EventType.MARKETING_ALERT);
+        assertThat(ChannelGroup.MARKETING.isSpecialised()).isFalse();
+        assertThat(ChannelGroup.forEventType(EventType.MARKETING_ALERT)).contains(ChannelGroup.MARKETING);
+    }
+
+    @Test
+    void aMarketingAlertTakesNoPartInAnyOtherGroupsRouting() {
+        assertThat(ChannelGroup.forEvent(EventType.MARKETING_ALERT, Map.of()))
+                .containsExactly(ChannelGroup.MARKETING);
+        assertThat(ChannelGroup.ISSUES.getEventTypes()).doesNotContain(EventType.MARKETING_ALERT);
+    }
 }

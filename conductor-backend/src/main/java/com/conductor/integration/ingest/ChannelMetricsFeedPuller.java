@@ -14,11 +14,13 @@ import com.conductor.integration.OAuthReauthRequiredException;
 import com.conductor.service.OAuthFlowService;
 import com.conductor.service.ConnectionHealthService;
 import com.conductor.service.ConnectionService;
+import com.conductor.marketing.alerts.ChannelMetricsPulledEvent;
 import com.conductor.marketing.overview.MarketingOverviewQueryService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -69,6 +71,8 @@ public class ChannelMetricsFeedPuller {
     private final OAuthFlowService oAuthFlowService;
     private final Clock clock;
     private final ConnectionHealthService connectionHealthService;
+    /** Null in plain unit tests, which then announce nothing. */
+    private final ApplicationEventPublisher eventPublisher;
 
     @org.springframework.beans.factory.annotation.Autowired
     public ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
@@ -78,9 +82,22 @@ public class ChannelMetricsFeedPuller {
                                     ChannelDimensionStateStore stateStore,
                                     ObjectMapper objectMapper,
                                     OAuthFlowService oAuthFlowService,
+                                    ConnectionHealthService connectionHealthService,
+                                    ApplicationEventPublisher eventPublisher) {
+        this(connectorRegistry, connectionService, store, definitionStore, stateStore, objectMapper, oAuthFlowService,
+                connectionHealthService, Clock.systemUTC(), eventPublisher);
+    }
+
+    public ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
+                                    ConnectionService connectionService,
+                                    ChannelMetricDailyStore store,
+                                    ChannelMetricDefinitionStore definitionStore,
+                                    ChannelDimensionStateStore stateStore,
+                                    ObjectMapper objectMapper,
+                                    OAuthFlowService oAuthFlowService,
                                     ConnectionHealthService connectionHealthService) {
         this(connectorRegistry, connectionService, store, definitionStore, stateStore, objectMapper, oAuthFlowService,
-                connectionHealthService, Clock.systemUTC());
+                connectionHealthService, Clock.systemUTC(), null);
     }
 
     ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
@@ -92,6 +109,21 @@ public class ChannelMetricsFeedPuller {
                              OAuthFlowService oAuthFlowService,
                              ConnectionHealthService connectionHealthService,
                              Clock clock) {
+        this(connectorRegistry, connectionService, store, definitionStore, stateStore, objectMapper, oAuthFlowService,
+                connectionHealthService, clock, null);
+    }
+
+    ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
+                             ConnectionService connectionService,
+                             ChannelMetricDailyStore store,
+                             ChannelMetricDefinitionStore definitionStore,
+                             ChannelDimensionStateStore stateStore,
+                             ObjectMapper objectMapper,
+                             OAuthFlowService oAuthFlowService,
+                             ConnectionHealthService connectionHealthService,
+                             Clock clock,
+                             ApplicationEventPublisher eventPublisher) {
+        this.eventPublisher = eventPublisher;
         this.connectionHealthService = connectionHealthService;
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
@@ -209,12 +241,31 @@ public class ChannelMetricsFeedPuller {
         }
         if (next == null) {
             flagStall(connection, today);
+            announcePulled(connection, source);
         }
         String cursor = "{\"" + CURSOR_LAST_DAY + "\":\"" + to + "\""
                 + (next == null ? "" : ",\"" + CURSOR_RESUME_FROM + "\":\"" + next + "\"")
                 + (hint == null ? "" : ",\"" + CURSOR_TRAILING_DAYS + "\":" + hint)
                 + (version == null ? "" : ",\"" + CURSOR_CONTRACT_VERSION + "\":" + version) + "}";
         return new IngestBatch(java.util.List.of(), cursor, next != null, false, ConnectorHealth.HEALTHY, null);
+    }
+
+    /**
+     * Tells the marketing alert evaluator that this connection's days are stored. Sent only once the pull has
+     * reached today (an unfinished backfill or re-walk is half old, half new data and would read as a mismatch)
+     * and after {@link #flagStall} has written the connection's health. There is no transaction here, so the
+     * listener runs at once on this thread. Nothing it does may fail the pull.
+     */
+    private void announcePulled(Connection connection, ChannelMetricsSource source) {
+        if (eventPublisher == null) {
+            return;
+        }
+        try {
+            eventPublisher.publishEvent(new ChannelMetricsPulledEvent(connection.getProjectId(),
+                    source.channel().name(), connection.getId()));
+        } catch (RuntimeException e) {
+            log.warn("Marketing alerts after the pull of connection {} failed: {}", connection.getId(), e.getMessage());
+        }
     }
 
     /**

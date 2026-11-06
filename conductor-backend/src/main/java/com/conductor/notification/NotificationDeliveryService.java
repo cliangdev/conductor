@@ -234,6 +234,36 @@ public class NotificationDeliveryService {
         return config != null && send(config, event);
     }
 
+    /**
+     * Sends a marketing alert to the project's Marketing channel, or to its Issues channel's webhook when it has
+     * no enabled Marketing channel, or nowhere when it has neither.
+     *
+     * <p>Not {@link #deliver}: that resolves one group and then insists the event type is switched on for it,
+     * and an Issues channel set up before alerts existed has never heard of {@code MARKETING_ALERT}, so the
+     * fallback must not consult its event list. A Marketing channel that <em>is</em> enabled keeps its say, though:
+     * with the alert switched off there, nothing is sent and nothing falls through to Issues, because that is a
+     * choice rather than a gap.
+     *
+     * <p>Sent at once and never rolled up. The caller is the alert evaluator, which has no transaction of its own
+     * to wait for and whose alerts are each a message of their own, not a line in a channel's rolling summary.
+     *
+     * @return true when a message reached the provider, false when there was no channel to send to or the send
+     *         failed, so the caller can tell a person what really happened
+     */
+    public boolean deliverAlert(NotificationMessage event) {
+        NotificationGroupConfig marketing = groupConfigRepository
+                .findByProjectIdAndChannelGroup(event.getProjectId(), ChannelGroup.MARKETING)
+                .filter(NotificationGroupConfig::isEnabled)
+                .orElse(null);
+        if (marketing != null) {
+            return marketing.getEnabledEventTypes().contains(event.getEventType().name()) && send(marketing, event);
+        }
+        return groupConfigRepository.findByProjectIdAndChannelGroup(event.getProjectId(), ChannelGroup.ISSUES)
+                .filter(NotificationGroupConfig::isEnabled)
+                .map(issues -> send(issues, event))
+                .orElse(false);
+    }
+
     /** @return true when the provider accepted the message. */
     private boolean send(NotificationGroupConfig config, NotificationMessage event) {
         NotificationProvider provider = resolveProvider(config.getProvider());
