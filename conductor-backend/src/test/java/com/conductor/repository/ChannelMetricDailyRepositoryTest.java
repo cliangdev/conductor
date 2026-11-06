@@ -173,6 +173,25 @@ class ChannelMetricDailyRepositoryTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
+    void aSkippedCampaignKeepsItsSearchTermRowsWhichHaveNoStateRow() {
+        LocalDate d = LocalDate.of(2026, 10, 10);
+        store.replaceWindow(project.getId(), connectionId, "apple-search-ads", "ADS", d, d, d, List.of(
+                pt("impressions", "searchterm:A:recipe app", d, 10), pt("impressions", "searchterm:B:meal plan", d, 20),
+                pt("impressions", "", d, 30)), true, m -> false, java.util.Set.of());
+
+        // next pull: campaign B's search-term report 400s (skipped); campaign A still reports its term
+        store.replaceWindow(project.getId(), connectionId, "apple-search-ads", "ADS", d, d, d, List.of(
+                pt("impressions", "searchterm:A:recipe app", d, 11), pt("impressions", "", d, 11)), true, m -> false,
+                java.util.Set.of("B"));
+        entityManager.flush();
+        entityManager.clear();
+
+        assertThat(repository.findByConnectionIdOrderByDayAscMetricAscDimensionKeyAsc(connectionId))
+                .extracting(ChannelMetricDaily::getDimensionKey)
+                .containsExactlyInAnyOrder("", "searchterm:A:recipe app", "searchterm:B:meal plan");
+    }
+
+    @Test
     void snapshotMetricsAreStoredNonProvisionalInsideTheTrailingWindow() {
         LocalDate d = LocalDate.of(2026, 10, 10);
         store.replaceWindow(project.getId(), connectionId, "meta", "SOCIAL", d, d, d,
