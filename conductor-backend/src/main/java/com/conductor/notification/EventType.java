@@ -111,6 +111,17 @@ public enum EventType {
     AUTO_TRANSITION_BLOCKED("An approved item could not advance automatically"),
 
     /**
+     * Marketing data needs a person: two sources disagree, a channel has gone stale, a stop rule has tripped, or
+     * a target is off track on enough data. Also sent once when such a condition stops holding. Produced by
+     * {@code MarketingAlertEvaluator} and sent with {@code NotificationDeliveryService#deliverAlert}, not through
+     * the signal bus.
+     *
+     * <p>Required metadata keys: {@code alertKey}, {@code alertKind} (MISMATCH, STALE, STOP_RULE, OFF_TRACK),
+     * {@code alertStatus} (NEW, CHANGED, RESOLVED), {@code title}, {@code text}
+     */
+    MARKETING_ALERT("A marketing alert: a mismatch, a stale channel, a stop rule or an off-track target"),
+
+    /**
      * A GitHub pull request was opened, labeled, synchronized (new commits pushed), or reopened.
      * Explicitly excludes a merge (handled separately by the issue-completion path in {@code
      * GitHubConnector.handleEvent}) and a closed-without-merge PR (an abandoned PR shouldn't trigger

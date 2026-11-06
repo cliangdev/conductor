@@ -93,6 +93,7 @@ export const EVENT_TYPE_DESCRIPTIONS: Record<string, string> = {
   WORKFLOW_AUTO_PAUSED: 'Workflow auto-paused after repeated failures',
   POST_AWAITING_MANUAL: 'Post is due to be published by hand',
   AUTO_TRANSITION_BLOCKED: 'Approved, but could not advance on its own',
+  MARKETING_ALERT: 'Marketing alert (mismatch, stale channel, stop rule, off-track target)',
 }
 
 export const EVENT_TYPE_SUBTITLES: Record<string, string> = {
@@ -114,6 +115,8 @@ export const EVENT_TYPE_SUBTITLES: Record<string, string> = {
     'When a destination that publishes by hand comes due and is waiting for someone to post it',
   AUTO_TRANSITION_BLOCKED:
     'When an approval lands but the item cannot be scheduled automatically — the gate names what to fix',
+  MARKETING_ALERT:
+    'When two sources disagree on a figure, a channel stops delivering, an Apple Ads stop rule trips or a target is off track on enough data',
 }
 
 export const ALL_EVENT_TYPES = Object.keys(EVENT_TYPE_DESCRIPTIONS)
@@ -159,6 +162,13 @@ export const CHANNEL_GROUPS: { value: string; label: string; eventTypes: string[
     value: 'WORKFLOWS',
     label: 'Workflows',
     eventTypes: ['WORKFLOW_RUN_FAILED', 'WORKFLOW_AUTO_PAUSED'],
+  },
+  {
+    // Without a Marketing channel, alerts go to the Issues channel's webhook instead (the backend falls back),
+    // so setting this up only moves them somewhere of their own.
+    value: 'MARKETING',
+    label: 'Marketing',
+    eventTypes: ['MARKETING_ALERT'],
   },
 ]
 

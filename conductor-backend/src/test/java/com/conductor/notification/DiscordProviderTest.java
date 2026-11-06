@@ -783,4 +783,78 @@ class DiscordProviderTest {
                 .isEqualTo("https://discord.com/api/webhooks/1/***?wait=true");
         assertThat(DiscordProvider.redact(null)).isNull();
     }
+
+    // --- MARKETING_ALERT: a condition worth a person's attention, with a link back to the overview ---
+
+    private Map<String, String> alertMeta(String kind, String status) {
+        Map<String, String> meta = new HashMap<>();
+        meta.put("alertKey", "mismatch:ADS:installs:BACKEND");
+        meta.put("alertKind", kind);
+        meta.put("alertStatus", status);
+        meta.put("title", "Apple Ads: Installs does not match the product backend");
+        meta.put("text", "Conductor shows 123 and the backend shows 100 for 2026-09-29 to 2026-10-26.");
+        return meta;
+    }
+
+    @Test
+    void marketingAlertCardCarriesTheTitleTheTextAndALinkToTheMarketingOverview() {
+        NotificationMessage event = NotificationMessage.of(EventType.MARKETING_ALERT, PROJECT_ID,
+                alertMeta("MISMATCH", "NEW"));
+
+        String result = discordProvider.format(event);
+
+        assertThat(result).contains("Apple Ads: Installs does not match the product backend");
+        assertThat(result).contains("Conductor shows 123 and the backend shows 100");
+        assertThat(result).contains("\"url\":\"" + FRONTEND_URL + "/app/projects/" + PROJECT_ID
+                + "/marketing/overview\"");
+    }
+
+    @Test
+    void aNewMismatchStopRuleOrOffTrackAlertIsRed() {
+        for (String kind : new String[] {"MISMATCH", "STOP_RULE", "OFF_TRACK"}) {
+            String result = discordProvider.format(NotificationMessage.of(EventType.MARKETING_ALERT, PROJECT_ID,
+                    alertMeta(kind, "NEW")));
+
+            assertThat(result).as(kind).contains("\"color\":15548997");
+        }
+    }
+
+    @Test
+    void aStaleChannelAlertIsYellowAndAResolvedAlertIsGreen() {
+        String stale = discordProvider.format(NotificationMessage.of(EventType.MARKETING_ALERT, PROJECT_ID,
+                alertMeta("STALE", "NEW")));
+        String resolved = discordProvider.format(NotificationMessage.of(EventType.MARKETING_ALERT, PROJECT_ID,
+                alertMeta("MISMATCH", "RESOLVED")));
+
+        assertThat(stale).contains("\"color\":16705372");
+        assertThat(resolved).contains("\"color\":5763719");
+    }
+
+    @Test
+    void anAlertWithNoTitleOrTextStillFormatsFromTheEventDescription() {
+        String result = discordProvider.format(NotificationMessage.of(EventType.MARKETING_ALERT, PROJECT_ID,
+                Map.of("alertKind", "STALE")));
+
+        assertThat(result).contains(EventType.MARKETING_ALERT.getDescription());
+        assertThat(result).contains("/marketing/overview");
+    }
+
+    @Test
+    void theSettingsPagesTestNotificationForTheMarketingChannelReadsAsATest() {
+        // NotificationGroupService#testGroup sends a synthetic event carrying only "test" and "description".
+        String result = discordProvider.format(NotificationMessage.of(EventType.MARKETING_ALERT, PROJECT_ID,
+                Map.of("test", "true", "description", "Test notification from Conductor")));
+
+        assertThat(result).contains("Test notification from Conductor");
+    }
+
+    @Test
+    void anAlertTextWithQuotesAndNewlinesStaysEscapedJson() {
+        Map<String, String> meta = alertMeta("MISMATCH", "NEW");
+        meta.put("text", "He said \"no\"\nsecond line");
+
+        String result = discordProvider.format(NotificationMessage.of(EventType.MARKETING_ALERT, PROJECT_ID, meta));
+
+        assertThat(result).contains("He said \\\"no\\\"\\nsecond line");
+    }
 }

@@ -40,6 +40,15 @@ public enum ChannelGroup {
     WORKFLOWS("Workflows", List.of(
             EventType.WORKFLOW_RUN_FAILED,
             EventType.WORKFLOW_AUTO_PAUSED
+    )),
+
+    /**
+     * Marketing alerts (data mismatches, stale channels, tripped stop rules, off-track targets). Delivered by
+     * {@code NotificationDeliveryService#deliverAlert}, which falls back to the {@link #ISSUES} webhook when a
+     * project has no enabled Marketing channel, so alerts are never lost for want of one more setting.
+     */
+    MARKETING("Marketing", List.of(
+            EventType.MARKETING_ALERT
     ));
 
     private final String label;

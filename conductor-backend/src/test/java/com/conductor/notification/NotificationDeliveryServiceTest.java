@@ -454,6 +454,120 @@ class NotificationDeliveryServiceTest {
         verify(discordProvider).send(WEBHOOK_URL, "{}");
     }
 
+    // --- deliverAlert: marketing alerts go to the Marketing channel, else the Issues webhook, else nowhere ---
+
+    private static final String MARKETING_WEBHOOK = "https://discord.com/api/webhooks/456/marketing";
+
+    private NotificationMessage alert() {
+        return NotificationMessage.of(EventType.MARKETING_ALERT, PROJECT_ID,
+                Map.of("title", "Apple Ads installs do not match", "text", "Conductor shows 123, backend shows 100"));
+    }
+
+    @Test
+    void anAlertGoesToTheMarketingChannelWhenItIsConfiguredAndOptedIn() {
+        NotificationGroupConfig marketing = groupConfig(ChannelGroup.MARKETING, MARKETING_WEBHOOK, true,
+                Set.of("MARKETING_ALERT"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.MARKETING))
+                .thenReturn(Optional.of(marketing));
+        NotificationMessage event = alert();
+        when(discordProvider.format(event)).thenReturn("{}");
+
+        boolean sent = deliveryService.deliverAlert(event);
+
+        assertThat(sent).isTrue();
+        verify(discordProvider).send(MARKETING_WEBHOOK, "{}");
+        verify(groupConfigRepository, never()).findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES);
+    }
+
+    @Test
+    void anAlertFallsBackToTheIssuesWebhookWhenThereIsNoMarketingChannel() {
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.MARKETING))
+                .thenReturn(Optional.empty());
+        // An Issues channel that exists today never opted into an event type that did not exist when it was
+        // set up, so the fallback must not consult its event list.
+        NotificationGroupConfig issues = groupConfig(ChannelGroup.ISSUES, WEBHOOK_URL, true,
+                Set.of("WORK_ITEM_STATUS_CHANGED"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(issues));
+        NotificationMessage event = alert();
+        when(discordProvider.format(event)).thenReturn("{}");
+
+        boolean sent = deliveryService.deliverAlert(event);
+
+        assertThat(sent).isTrue();
+        verify(discordProvider).send(WEBHOOK_URL, "{}");
+    }
+
+    @Test
+    void anAlertFallsBackToTheIssuesWebhookWhenTheMarketingChannelIsDisabled() {
+        NotificationGroupConfig marketing = groupConfig(ChannelGroup.MARKETING, MARKETING_WEBHOOK, false,
+                Set.of("MARKETING_ALERT"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.MARKETING))
+                .thenReturn(Optional.of(marketing));
+        NotificationGroupConfig issues = groupConfig(ChannelGroup.ISSUES, WEBHOOK_URL, true, Set.of());
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
+                .thenReturn(Optional.of(issues));
+        NotificationMessage event = alert();
+        when(discordProvider.format(event)).thenReturn("{}");
+
+        assertThat(deliveryService.deliverAlert(event)).isTrue();
+
+        verify(discordProvider).send(WEBHOOK_URL, "{}");
+        verify(discordProvider, never()).send(eq(MARKETING_WEBHOOK), anyString());
+    }
+
+    @Test
+    void anAlertIsSilencedWhenTheMarketingChannelExistsButHasAlertsSwitchedOff() {
+        // Switching the one event of a channel off is a choice, not a gap: it must not leak to Issues.
+        NotificationGroupConfig marketing = groupConfig(ChannelGroup.MARKETING, MARKETING_WEBHOOK, true, Set.of());
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.MARKETING))
+                .thenReturn(Optional.of(marketing));
+
+        assertThat(deliveryService.deliverAlert(alert())).isFalse();
+
+        verify(discordProvider, never()).send(anyString(), anyString());
+        verify(groupConfigRepository, never()).findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES);
+    }
+
+    @Test
+    void anAlertSendsNothingAndSaysSoWhenTheProjectHasNeitherChannel() {
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.MARKETING))
+                .thenReturn(Optional.empty());
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.ISSUES))
+                .thenReturn(Optional.empty());
+
+        assertThat(deliveryService.deliverAlert(alert())).isFalse();
+
+        verify(discordProvider, never()).format(any());
+        verify(discordProvider, never()).send(anyString(), anyString());
+    }
+
+    @Test
+    void anAlertIsNeverRolledUpIntoTheChannelsRollingMessage() {
+        NotificationGroupConfig marketing = groupConfig(ChannelGroup.MARKETING, MARKETING_WEBHOOK, true,
+                Set.of("MARKETING_ALERT"));
+        marketing.setDeliveryMode(DeliveryMode.GROUPED);
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.MARKETING))
+                .thenReturn(Optional.of(marketing));
+        when(discordProvider.format(any())).thenReturn("{}");
+
+        deliveryService.deliverAlert(alert());
+
+        verify(rollupService, never()).rollup(any(), anyList());
+        verify(discordProvider).send(MARKETING_WEBHOOK, "{}");
+    }
+
+    @Test
+    void anAlertThatCannotBeSentReportsFalseInsteadOfThrowing() {
+        NotificationGroupConfig marketing = groupConfig(ChannelGroup.MARKETING, MARKETING_WEBHOOK, true,
+                Set.of("MARKETING_ALERT"));
+        when(groupConfigRepository.findByProjectIdAndChannelGroup(PROJECT_ID, ChannelGroup.MARKETING))
+                .thenReturn(Optional.of(marketing));
+        when(discordProvider.format(any())).thenThrow(new IllegalStateException("boom"));
+
+        assertThat(deliveryService.deliverAlert(alert())).isFalse();
+    }
+
     private NotificationMessage eventOf(EventType type) {
         return NotificationMessage.of(type, PROJECT_ID, Map.of("workItemId", ISSUE_ID));
     }
