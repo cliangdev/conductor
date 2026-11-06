@@ -81,6 +81,7 @@ import {
 import { getMarketingInsights } from './tools/insights.js'
 import { getMarketingDefinitions } from './tools/marketing-definitions.js'
 import { getMarketingReport, setMarketingBenchmark, deleteMarketingBenchmark } from './tools/marketing-report.js'
+import { getVerificationLedger, recordPlatformRead } from './tools/verification.js'
 import {
   getBrandKit,
   updateBrandKit,
@@ -1443,6 +1444,35 @@ export const TOOLS = [
     },
   },
   {
+    name: 'get_verification_ledger',
+    description: 'Which marketing numbers to trust: per metric (CHANNEL.key) Conductor\'s value, the product backend\'s value over the settled days both have, the latest direct platform read and a verdict. BOTH: every second source agrees. CONNECTOR: trust the connector (a read agrees with it, or only the backend disagrees). BACKEND: backend and read agree, the connector does not. PLATFORM: the read disagrees with every other source. UNCHECKED: no second source, never verified. `mismatch` means a second source disagrees; `stale` means the read is over 7 days old; `over` is set when a row covers other days than the window. Cite a number only when its verdict is not UNCHECKED and it has no mismatch. Read-only. Use record_platform_read to log a direct read.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        window: { type: 'string', description: '7d, 28d (default), 90d, or a range of whole days YYYY-MM-DD..YYYY-MM-DD ending yesterday or earlier (at most 92 days)' },
+        channel: { type: 'string', enum: ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE', 'PRODUCT'], description: 'Only this channel\'s rows (default all)' },
+        onlyProblems: { type: 'boolean', description: 'Only rows that are UNCHECKED, have a mismatch or have a stale read (default false)' },
+      },
+    },
+  },
+  {
+    name: 'record_platform_read',
+    description: 'Log a direct read: what the platform\'s own UI or API shows for one metric over an exact day range. Look at the platform for that range; never copy Conductor\'s number. from and to are whole days, to yesterday or earlier, at most 92 days apart (a level such as followers is read on `to`; unique visitors need a range of 7, 28 or 90 days). Append-only: a newer read supersedes this one, nothing is edited or deleted. Returns the metric\'s row with its verdict. Requires the Editor role (or Admin). Always call get_verification_ledger after to verify.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', enum: ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE', 'PRODUCT'], description: 'The channel the metric belongs to' },
+        metric: { type: 'string', description: 'Metric key within the channel, e.g. installs (ADS), clicks (SEARCH), downloads (STORE); a sum, a level or visitors, not a ratio' },
+        from: { type: 'string', description: 'First day the platform figure covers, YYYY-MM-DD' },
+        to: { type: 'string', description: 'Last day the platform figure covers, YYYY-MM-DD (yesterday or earlier)' },
+        value: { type: 'number', description: 'The platform\'s figure for those days (zero or more)' },
+        sourceName: { type: 'string', description: 'Where you read it, e.g. Apple Ads console or Search Console UI' },
+        note: { type: 'string', description: 'Caveats, e.g. the filter or time zone the platform used (optional)' },
+      },
+      required: ['channel', 'metric', 'from', 'to', 'value', 'sourceName'],
+    },
+  },
+  {
     name: 'submit_review',
     description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned member holding the Reviewer role (or an Admin). Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step the person does in their own browser (request_tiktok_consent hands them the link), not this tool. Returns the confirmation table.',
     inputSchema: {
@@ -2793,6 +2823,28 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'delete_marketing_benchmark': {
           return successResponse(await deleteMarketingBenchmark(config, { metricRef: params['metricRef'] as string }))
+        }
+        case 'get_verification_ledger': {
+          return successResponse(
+            await getVerificationLedger(config, {
+              window: params['window'] as string | undefined,
+              channel: params['channel'] as string | undefined,
+              onlyProblems: params['onlyProblems'] as boolean | undefined,
+            })
+          )
+        }
+        case 'record_platform_read': {
+          return successResponse(
+            await recordPlatformRead(config, {
+              channel: params['channel'] as string,
+              metric: params['metric'] as string,
+              from: params['from'] as string,
+              to: params['to'] as string,
+              value: params['value'] as number,
+              sourceName: params['sourceName'] as string,
+              note: params['note'] as string | undefined,
+            })
+          )
         }
         case 'get_post_analytics': {
           return successResponse(
