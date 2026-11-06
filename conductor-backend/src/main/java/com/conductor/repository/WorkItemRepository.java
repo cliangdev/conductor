@@ -148,8 +148,9 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
 
     /**
      * The marketing change log behind a report, in one query: every item of the Workflow in one of the open
-     * statuses, plus those in {@code reviewedStatus} touched in {@code [reviewedSince, reviewedUntil)}. The project and
-     * assignee ride along so building a display id and an assignee never costs another query.
+     * statuses, plus those in {@code reviewedStatus} reviewed in {@code [reviewedSince, reviewedUntil)}: when the item
+     * entered its terminal status ({@code completed_at}), or, for one with no completion time, when it was last
+     * edited. The project and assignee ride along so building a display id and an assignee never costs another query.
      */
     @Query("""
             SELECT i FROM WorkItem i
@@ -158,7 +159,9 @@ public interface WorkItemRepository extends JpaRepository<WorkItem, String> {
             WHERE i.project.id = :projectId
               AND i.workflow = :workflow
               AND (i.currentStatus IN :openStatuses
-                   OR (i.currentStatus = :reviewedStatus AND i.updatedAt >= :reviewedSince AND i.updatedAt < :reviewedUntil))
+                   OR (i.currentStatus = :reviewedStatus
+                       AND COALESCE(i.completedAt, i.updatedAt) >= :reviewedSince
+                       AND COALESCE(i.completedAt, i.updatedAt) < :reviewedUntil))
             ORDER BY i.dueOn ASC NULLS LAST, i.sequenceNumber DESC
             """)
     List<WorkItem> findChangeLog(@Param("projectId") String projectId,

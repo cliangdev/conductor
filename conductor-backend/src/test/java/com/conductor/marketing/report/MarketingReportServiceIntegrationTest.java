@@ -1,5 +1,7 @@
 package com.conductor.marketing.report;
 
+import com.conductor.entity.MemberRole;
+import com.conductor.entity.ProjectMember;
 import com.conductor.entity.WorkItem;
 import com.conductor.integration.ingest.ChannelDimensionStateStore;
 import com.conductor.integration.ingest.ConnectorFeedRepository;
@@ -9,14 +11,19 @@ import com.conductor.marketing.report.MarketingReportService.Report;
 import com.conductor.repository.ChannelMetricDailyRepository;
 import com.conductor.repository.ChannelMetricDefinitionRepository;
 import com.conductor.repository.ConnectionRepository;
+import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.repository.UserRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.support.AbstractNoneWebIntegrationTest;
+import com.conductor.v2.controller.MarketingReportController;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
@@ -51,11 +58,18 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
     @Autowired private ChannelDimensionStateStore stateStore;
     @Autowired private WorkItemRepository workItemRepository;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private MarketingReportController controller;
+    @Autowired private ProjectMemberRepository projectMemberRepository;
 
     private MarketingReportFixture f;
     private String store;
     private String ads;
     private String product;
+
+    @AfterEach
+    void clearAuthentication() {
+        SecurityContextHolder.clearContext();
+    }
 
     @BeforeEach
     void setUp() {
@@ -70,7 +84,10 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         return TODAY.minusDays(days);
     }
 
-    /** Seven settled days of store and ad data: 10 search + 2 browse downloads a day, {@code adInstalls} in total. */
+    /**
+     * Seven settled days of store and ad data: 10 search + 2 browse downloads a day, and {@code adInstallsPerDay} ad
+     * installs a day, all of them first-time downloads.
+     */
     private void seedStoreAndAds(double adInstallsPerDay) {
         for (int d = 1; d <= 7; d++) {
             f.put(store, "app-store-connect", "STORE", "impressions", "", ago(d), 1000);
@@ -84,6 +101,7 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
             f.put(ads, "apple-search-ads", "ADS", "installs", "", ago(d), adInstallsPerDay);
             f.put(ads, "apple-search-ads", "ADS", "taps", "", ago(d), 20);
             f.put(ads, "apple-search-ads", "ADS", "impressions", "", ago(d), 500);
+            f.put(ads, "apple-search-ads", "ADS", "new_downloads", "", ago(d), adInstallsPerDay);
         }
     }
 
@@ -96,33 +114,36 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
     }
 
     @Test
-    void organicSearchIsStoreSearchDownloadsMinusAdInstallsAndIsFlaggedDerived() {
-        seedStoreAndAds(4); // 28 paid installs over the window; 70 search downloads
+    void organicSearchIsStoreSearchDownloadsMinusAdFirstTimeDownloadsAndIsFlaggedDerived() {
+        seedStoreAndAds(4); // 28 paid first-time downloads over the window; 70 search downloads
 
         AcquisitionRow organic = row(report(), "app_store_search");
 
         assertThat(organic.installs()).isEqualTo(42.0);
         assertThat(organic.derived()).isTrue();
-        assertThat(organic.note()).contains("minus Apple Ads installs");
-        assertThat(organic.reach()).isEqualTo(5600.0);
+        assertThat(organic.note()).contains("minus Apple Ads first-time downloads");
+        // 5,600 search impressions minus 3,500 Apple Ads impressions
+        assertThat(organic.reach()).isEqualTo(2100.0);
+        assertThat(organic.reachLabel()).isEqualTo("Impressions (organic)");
         assertThat(row(report(), "app_store_browse").installs()).isEqualTo(14.0);
         assertThat(row(report(), "apple_ads").installs()).isEqualTo(28.0);
         assertThat(row(report(), "apple_ads").cost()).isEqualTo(35.0);
     }
 
     @Test
-    void organicSearchSubtractsAdsFirstTimeDownloadsNotRedownloads() {
-        // 100 search downloads; ads report 90 tap installs, 30 of them redownloads, so 60 first-time (keyword rows)
+    void organicSearchSubtractsAdsFirstTimeDownloadsNotTapInstalls() {
+        // 100 search downloads; ads report 90 tap installs, 30 of them redownloads, so 60 first-time downloads
         f.put(store, "app-store-connect", "STORE", "downloads", "source:APP_STORE_SEARCH", ago(1), 100);
         f.put(ads, "apple-search-ads", "ADS", "installs", "", ago(1), 90);
-        f.put(ads, "apple-search-ads", "ADS", "installs", "keyword:1:alpha", ago(1), 35);
-        f.put(ads, "apple-search-ads", "ADS", "installs", "keyword:2:beta", ago(1), 25);
+        f.put(ads, "apple-search-ads", "ADS", "new_downloads", "", ago(1), 60);
 
         AcquisitionRow organic = row(report(), "app_store_search");
 
         assertThat(organic.installs()).isEqualTo(40.0);
         assertThat(organic.derived()).isTrue();
-        assertThat(organic.note()).contains("first-time downloads").contains("lower-bound");
+        assertThat(organic.note()).contains("first-time downloads").contains("floored at 0");
+        // no search impressions were stored, so the organic impressions are unknown, not 0
+        assertThat(organic.reach()).isNull();
     }
 
     @Test
@@ -259,8 +280,8 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
             f.put(store, "app-store-connect", "STORE", "impressions_unique", "", ago(d), 2);
             f.put(store, "app-store-connect", "STORE", "downloads", "", ago(d), 1);
         }
-        benchmark("STORE.conversion_rate", 0.03, TODAY.minusDays(120));
-        benchmark("STORE.downloads", 100, TODAY.minusDays(10));
+        rateBenchmark("STORE.conversion_rate", 0.03, TODAY.minusDays(120));
+        countBenchmark("STORE.downloads", 100, TODAY.minusDays(10));
         benchmark("STORE.not_a_metric", 1, TODAY);
 
         Map<String, MarketingReportService.Benchmark> byRef = new java.util.HashMap<>();
@@ -290,7 +311,7 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
             f.put(store, "app-store-connect", "STORE", "impressions_unique", "", ago(d), 1000);
             f.put(store, "app-store-connect", "STORE", "downloads", "", ago(d), 50);
         }
-        benchmark("STORE.conversion_rate", 0.03, TODAY.minusDays(5));
+        rateBenchmark("STORE.conversion_rate", 0.03, TODAY.minusDays(5));
 
         MarketingReportService.Benchmark rate = report().benchmarks().get(0);
 
@@ -383,8 +404,8 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
             f.put(store, "app-store-connect", "STORE", "impressions", "", ago(d), 100);
             f.put(store, "app-store-connect", "STORE", "impressions_unique", "", ago(d), 100);
         }
-        benchmark("STORE.downloads", 280, TODAY.minusDays(5));
-        benchmark("STORE.conversion_rate", 0.1, TODAY.minusDays(5));
+        countBenchmark("STORE.downloads", 280, TODAY.minusDays(5));
+        rateBenchmark("STORE.conversion_rate", 0.1, TODAY.minusDays(5));
 
         for (int days : new int[]{7, 28}) {
             Map<String, MarketingReportService.Benchmark> byRef = new java.util.HashMap<>();
@@ -428,6 +449,56 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
     }
 
     @Test
+    void theControllerCarriesTheNewReportFieldsThroughTheGeneratedModel() {
+        seedStoreAndAds(4);
+        for (int d = 1; d <= 7; d++) {
+            f.put(store, "app-store-connect", "STORE", "total_downloads", "source:APP_STORE_SEARCH", ago(d), 12);
+            f.put(store, "app-store-connect", "STORE", "impressions_unique", "source:APP_STORE_SEARCH", ago(d), 800);
+            f.put(ads, "apple-search-ads", "ADS", "view_installs", "", ago(d), 1);
+            f.put(ads, "apple-search-ads", "ADS", "spend", "campaign:7:Brand", ago(d), 5);
+            f.put(ads, "apple-search-ads", "ADS", "spend", "keyword:70:rexipe", ago(d), 4);
+        }
+        f.state(ads, "keyword:70:rexipe", Map.of("campaignId", "7", "campaignName", "Brand"));
+        define("STORE.conversion_rate", 0.124, ago(2), "total_downloads", "unique_impressions", "APP_STORE_SEARCH");
+        f.change("Live change", "LIVE", null, Map.of("liveSince", ago(3).toString()));
+        ProjectMember member = new ProjectMember();
+        member.setProject(f.project);
+        member.setUser(f.user);
+        member.setRole(MemberRole.ADMIN);
+        projectMemberRepository.save(member);
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(f.user, null, java.util.List.of()));
+
+        com.conductor.generated.v2.model.MarketingReport body =
+                controller.getMarketingReport(f.project.getId(), "7d").getBody();
+
+        var adsRow = body.getAcquisition().stream().filter(r -> r.getKey().equals("apple_ads")).findFirst().orElseThrow();
+        assertThat(adsRow.getInstalls()).isEqualTo(28.0);
+        assertThat(adsRow.getViewThroughInstalls()).isEqualTo(7.0);
+        var organic = body.getAcquisition().stream().filter(r -> r.getKey().equals("app_store_search")).findFirst()
+                .orElseThrow();
+        assertThat(organic.getDerivation().getDays()).isEqualTo(7);
+        assertThat(organic.getDerivation().getGrossInstalls()).isEqualTo(70.0);
+        assertThat(organic.getDerivation().getPaidInstalls()).isEqualTo(28.0);
+        assertThat(body.getSources().stream().filter(s -> s.getChannel().equals("ADS")).findFirst().orElseThrow()
+                .getSearchTermTimeZone()).isEqualTo("ORTZ");
+        var benchmark = body.getBenchmarks().get(0);
+        assertThat(benchmark.getComparable()).isTrue();
+        assertThat(benchmark.getComparedMetricRef()).isEqualTo("STORE.conversion_rate_search");
+        assertThat(benchmark.getMetricDefinition().getSourceType()).isEqualTo("APP_STORE_SEARCH");
+        assertThat(body.getDefinitions()).containsKeys("ADS.installs", "STORE.conversion_rate_search");
+        assertThat(body.getHeadline()).allSatisfy(m -> assertThat(m.getDefinition()).isNotNull());
+        assertThat(body.getScorecard()).allSatisfy(r -> assertThat(r.getDefinition()).isNotNull());
+        assertThat(body.getAdsCoverage()).hasSize(1);
+        assertThat(body.getAdsCoverage().get(0).getKeywordCoveragePct()).isCloseTo(0.8, org.assertj.core.data.Offset.offset(1e-9));
+        assertThat(body.getChangeMarkers()).hasSize(1);
+        assertThat(body.getChangeMarkers().get(0).getDay()).isEqualTo(ago(3));
+        assertThat(body.getStore().getAnalyticsDownloads()).isEqualTo(84.0);
+        assertThat(body.getStore().getDownloadsOfRecord()).isNull();
+        assertThat(body.getStore().getCoverage()).isNull();
+    }
+
+    @Test
     void windowStringsAre28dByDefaultAndOnly7dOr28dAreAccepted() {
         seedStoreAndAds(4);
         String id = f.project.getId();
@@ -441,7 +512,23 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
                 .isInstanceOf(com.conductor.exception.BusinessException.class);
     }
 
+    /** A benchmark with no definition: shown against the metric's value, never judged. */
     private void benchmark(String ref, double value, LocalDate checkedOn) {
+        define(ref, value, checkedOn, null, null, null);
+    }
+
+    /** Defined like the all-source conversion rate: first-time downloads over unique impressions. */
+    private void rateBenchmark(String ref, double value, LocalDate checkedOn) {
+        define(ref, value, checkedOn, "first_time_downloads", "unique_impressions", null);
+    }
+
+    /** Defined like the store downloads count: first-time downloads, no denominator. */
+    private void countBenchmark(String ref, double value, LocalDate checkedOn) {
+        define(ref, value, checkedOn, "first_time_downloads", null, null);
+    }
+
+    private void define(String ref, double value, LocalDate checkedOn, String numerator, String denominator,
+                        String sourceType) {
         MarketingBenchmark b = new MarketingBenchmark();
         b.setProjectId(f.project.getId());
         b.setMetricRef(ref);
@@ -449,6 +536,9 @@ class MarketingReportServiceIntegrationTest extends AbstractNoneWebIntegrationTe
         b.setSourceName("Example Study");
         b.setSourceUrl("https://example.com/study");
         b.setCheckedOn(checkedOn);
+        b.setNumerator(numerator);
+        b.setDenominator(denominator);
+        b.setSourceType(sourceType);
         benchmarkRepository.saveAndFlush(b);
     }
 }
