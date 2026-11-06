@@ -213,9 +213,30 @@ export const SETUP_VERTEX = '`conductor config set-vertex-project <id>` and `gcl
 export const SETUP_GEMINI = '`conductor config set-gemini-api-key <key>`'
 
 export class VideoRouteNotConfigured extends VideoError {
-  constructor() {
-    super('VIDEO_ROUTE_NOT_CONFIGURED', `No video route is set up. Either run ${SETUP_VERTEX} (Veo on Vertex AI), or ${SETUP_GEMINI} (Gemini Omni). Nothing was generated or billed.`)
+  /** `chosen` is config `videoRoute` when it names a route that is missing its setup. */
+  constructor(chosen?: VideoRoute) {
+    const message =
+      chosen === 'vertex'
+        ? `videoRoute is set to vertex, but no Vertex project is set. Run ${SETUP_VERTEX}, or switch with \`conductor config set-video-route gemini\`. Nothing was generated or billed.`
+        : chosen === 'gemini'
+          ? `videoRoute is set to gemini, but no Gemini API key was found (CONDUCTOR_GEMINI_API_KEY, GEMINI_API_KEY or config). Run ${SETUP_GEMINI}, or switch with \`conductor config set-video-route vertex\`. Nothing was generated or billed.`
+          : `No video route is set up. Either run ${SETUP_VERTEX} (Veo on Vertex AI), or ${SETUP_GEMINI} (Gemini Omni). Nothing was generated or billed.`
+    super('VIDEO_ROUTE_NOT_CONFIGURED', message, chosen ? { videoRoute: chosen } : {})
   }
+}
+
+/**
+ * Marks a failure that happened after Google accepted the job (a lost poll, a failed download), so the
+ * caller counts it as spent. Safety-filtered and timed-out results are billable without the mark.
+ */
+export function markBilled<E extends VideoError>(err: E): E {
+  err.details['billed'] = true
+  return err
+}
+
+export function isBilled(err: unknown): boolean {
+  if (!(err instanceof VideoError)) return false
+  return err instanceof VideoSafetyFiltered || err.code === 'VIDEO_TIMEOUT' || err.details['billed'] === true
 }
 
 export class VideoCostCapExceeded extends VideoError {

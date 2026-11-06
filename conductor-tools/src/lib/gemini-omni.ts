@@ -9,7 +9,7 @@ import { join } from 'node:path'
 import { runCapture } from './image-common.js'
 import { resolveFfmpegPath } from './media-probe.js'
 import { readConfig } from './config.js'
-import { VideoError, VideoSafetyFiltered, httpFailure, readErrorMessage, type VideoFrame, type VideoRequest } from './video-common.js'
+import { VideoError, VideoSafetyFiltered, httpFailure, markBilled, readErrorMessage, type VideoFrame, type VideoRequest } from './video-common.js'
 
 const API = 'https://generativelanguage.googleapis.com/v1beta'
 
@@ -29,10 +29,17 @@ export interface OmniDeps {
   /** Returns the audio-free bytes, or null when ffmpeg is unavailable or fails. */
   stripAudio?: (video: Buffer) => Promise<Buffer | null>
   timeoutMs?: number
+  downloadTimeoutMs?: number
 }
 
-export function buildOmniPrompt(req: VideoRequest): string {
+/** Omni has no first/last-frame fields, so the frames' roles are stated in the prompt. */
+export function buildOmniPrompt(req: VideoRequest, frames: { image?: boolean; lastFrame?: boolean } = {}): string {
   const parts = [req.prompt.trim(), `The clip is ${req.durationSeconds} seconds long.`]
+  if (frames.image && frames.lastFrame) {
+    parts.push('The first image is the opening frame: start exactly on it. The second image is the closing frame: end exactly on it.')
+  } else if (frames.image) {
+    parts.push('The image is the opening frame: start exactly on it.')
+  }
   if (req.negativePrompt) parts.push(`Avoid: ${req.negativePrompt}`)
   return parts.join('\n')
 }
@@ -42,7 +49,7 @@ export function buildOmniBody(req: VideoRequest, model: string, frames: { image?
   for (const f of [frames.image, frames.lastFrame]) {
     if (f) input.push({ type: 'image', data: f.base64, mime_type: f.mimeType })
   }
-  input.push({ type: 'text', text: buildOmniPrompt(req) })
+  input.push({ type: 'text', text: buildOmniPrompt(req, { image: !!frames.image, lastFrame: !!frames.lastFrame }) })
   return { model, input, response_format: { type: 'video', aspect_ratio: req.aspect, resolution: req.resolution }, store: false }
 }
 
@@ -118,9 +125,15 @@ export async function generateOmniClip(
   } else {
     const uri = found.uri!.replace(/^\/+/, '')
     const url = /^https?:\/\//.test(uri) ? uri : `${API}/${uri}:download?alt=media`
-    const dl = await doFetch(url, { headers: { 'x-goog-api-key': cfg.apiKey } })
-    if (!dl.ok) throw httpFailure('gemini', dl.status, await readErrorMessage(dl), cfg.model)
-    video = Buffer.from(await dl.arrayBuffer())
+    // The clip is made (and billed) by now, so a failed download is marked billed.
+    try {
+      const dl = await doFetch(url, { headers: { 'x-goog-api-key': cfg.apiKey }, signal: AbortSignal.timeout(deps.downloadTimeoutMs ?? 2 * 60_000) })
+      if (!dl.ok) throw httpFailure('gemini', dl.status, await readErrorMessage(dl), cfg.model)
+      video = Buffer.from(await dl.arrayBuffer())
+    } catch (err) {
+      if (err instanceof VideoError) throw markBilled(err)
+      throw markBilled(new VideoError('VIDEO_FAILED', `The clip was made (and billed) but could not be downloaded: ${(err as Error).message}`))
+    }
   }
 
   const warnings: string[] = []

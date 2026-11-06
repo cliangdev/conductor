@@ -1,14 +1,21 @@
 /**
  * Veo 3.1 on Vertex AI. Starts a long-running prediction, polls `fetchPredictOperation` until it is done,
  * and returns the MP4 bytes. The bearer token comes from CONDUCTOR_VERTEX_ACCESS_TOKEN or
- * `gcloud auth print-access-token`; it is never logged, returned or put in an error message.
+ * `gcloud auth print-access-token` (falling back to application-default credentials); it is never logged, returned or put in an error message.
  */
 import { execFile } from 'node:child_process'
-import { VideoError, VideoSafetyFiltered, httpFailure, readErrorMessage, SETUP_VERTEX, type VideoFrame, type VideoRequest } from './video-common.js'
+import { VideoError, VideoSafetyFiltered, httpFailure, markBilled, readErrorMessage, SETUP_VERTEX, type VideoFrame, type VideoRequest } from './video-common.js'
 
 export const POLL_INTERVAL_MS = 10_000
 export const GENERATION_TIMEOUT_MS = 10 * 60_000
-const TOKEN_TTL_MS = 50 * 60_000
+/**
+ * gcloud may hand back a token it cached itself with only minutes left, so this cache is kept short. The
+ * real expiry is unknown here; a 401/403 also clears it.
+ */
+const TOKEN_TTL_MS = 5 * 60_000
+/** Consecutive failed status checks (network errors, 429, 5xx) tolerated before giving up on a running job. */
+export const MAX_POLL_FAILURES = 3
+export const DOWNLOAD_TIMEOUT_MS = 2 * 60_000
 
 export interface VertexConfig {
   project: string
@@ -24,6 +31,7 @@ export interface VertexDeps {
   getToken?: () => Promise<string>
   pollIntervalMs?: number
   timeoutMs?: number
+  downloadTimeoutMs?: number
 }
 
 let cached: { token: string; expires: number } | null = null
@@ -107,13 +115,19 @@ function operationFailure(err: NonNullable<Operation['error']>, model: string): 
   return new VideoError('VIDEO_FAILED', `Vertex AI video generation failed: ${message}`)
 }
 
-async function downloadGcs(uri: string, token: string, doFetch: typeof fetch): Promise<Buffer> {
+/** The job is done (and billed) by the time this runs, so every failure is marked billed. */
+async function downloadGcs(uri: string, token: string, doFetch: typeof fetch, timeoutMs: number): Promise<Buffer> {
   const m = /^gs:\/\/([^/]+)\/(.+)$/.exec(uri)
-  if (!m) throw new VideoError('VIDEO_FAILED', `Vertex returned a video location I cannot read: ${uri}`)
+  if (!m) throw markBilled(new VideoError('VIDEO_FAILED', `Vertex returned a video location I cannot read: ${uri}`))
   const url = `https://storage.googleapis.com/download/storage/v1/b/${m[1]}/o/${encodeURIComponent(m[2]!)}?alt=media`
-  const res = await doFetch(url, { headers: { Authorization: `Bearer ${token}` } })
-  if (!res.ok) throw httpFailure('vertex', res.status, await readErrorMessage(res), 'the output bucket object')
-  return Buffer.from(await res.arrayBuffer())
+  try {
+    const res = await doFetch(url, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(timeoutMs) })
+    if (!res.ok) throw httpFailure('vertex', res.status, await readErrorMessage(res), 'the output bucket object')
+    return Buffer.from(await res.arrayBuffer())
+  } catch (err) {
+    if (err instanceof VideoError) throw markBilled(err)
+    throw markBilled(new VideoError('VIDEO_FAILED', `The clip was made (and billed) but could not be downloaded from ${uri}: ${(err as Error).message}`))
+  }
 }
 
 /** Returns the finished clips and any warnings. Throws VideoError (VideoSafetyFiltered when nothing came back). */
@@ -128,50 +142,87 @@ export async function generateWithVertex(
   const now = deps.now ?? Date.now
   const interval = deps.pollIntervalMs ?? POLL_INTERVAL_MS
   const timeoutMs = deps.timeoutMs ?? GENERATION_TIMEOUT_MS
-  const token = await (deps.getToken ?? (() => getVertexToken(now)))()
-  const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+  const downloadTimeoutMs = deps.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS
+  // Fetched per request (cheap while cached), so a token that expires during a 10-minute wait is replaced.
+  const token = deps.getToken ?? (() => getVertexToken(now))
   const base = vertexBaseUrl(cfg.project, cfg.region, cfg.model)
 
-  const send = async (url: string, body: unknown): Promise<Response> => {
+  const send = async (url: string, body: unknown, bearer: string): Promise<Response> => {
     try {
-      return await doFetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
+      return await doFetch(url, { method: 'POST', headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     } catch (err) {
       throw new VideoError('VIDEO_FAILED', `Could not reach Vertex AI: ${(err as Error).message}`)
     }
   }
 
   cfg.onProgress?.(`Starting ${cfg.model} on Vertex (${req.durationSeconds} s, ${req.resolution})`)
-  const start = await send(`${base}:predictLongRunning`, buildVertexBody(req, frames))
-  if (!start.ok) throw httpFailure('vertex', start.status, await readErrorMessage(start), cfg.model)
+  const start = await send(`${base}:predictLongRunning`, buildVertexBody(req, frames), await token())
+  if (!start.ok) {
+    if (start.status === 401 || start.status === 403) resetVertexTokenCache()
+    throw httpFailure('vertex', start.status, await readErrorMessage(start), cfg.model)
+  }
   const { name } = (await start.json()) as { name?: string }
   if (!name) throw new VideoError('VIDEO_FAILED', 'Vertex AI did not return an operation to wait for.')
 
+  // From here the job is running and will be billed, so a failure to follow it is marked billed.
+  const lost = (why: string) =>
+    markBilled(new VideoError('VIDEO_FAILED', `Lost track of the running Vertex job (${why}). It may still finish and be billed, so it was counted as spent. Operation: ${name}`))
   const began = now()
   let polls = 0
+  let failures = 0
+  let refreshed = false
   for (;;) {
-    const res = await send(`${base}:fetchPredictOperation`, { operationName: name })
-    if (!res.ok) throw httpFailure('vertex', res.status, await readErrorMessage(res), cfg.model)
-    const op = (await res.json()) as Operation
-    if (op.done) {
-      if (op.error) throw operationFailure(op.error, cfg.model)
-      return collect(op, token, doFetch)
+    let op: Operation | undefined
+    let problem = ''
+    try {
+      const bearer = await token()
+      const res = await send(`${base}:fetchPredictOperation`, { operationName: name }, bearer)
+      if (res.ok) {
+        op = (await res.json()) as Operation
+      } else if ((res.status === 401 || res.status === 403) && !refreshed) {
+        // The token expired mid-wait: drop it and try once more with a fresh one.
+        resetVertexTokenCache()
+        refreshed = true
+        problem = `status check returned ${res.status}`
+      } else if (res.status === 429 || res.status >= 500) {
+        problem = `status check returned ${res.status}: ${await readErrorMessage(res)}`
+      } else {
+        throw lost(`status check returned ${res.status}: ${await readErrorMessage(res)}`)
+      }
+    } catch (err) {
+      if (err instanceof VideoError && err.details['billed']) throw err
+      problem = (err as Error).message
+    }
+
+    if (op) {
+      failures = 0
+      if (op.done) {
+        if (op.error) throw operationFailure(op.error, cfg.model)
+        return collect(op, await token(), doFetch, downloadTimeoutMs)
+      }
+    } else {
+      failures += 1
+      if (failures >= MAX_POLL_FAILURES) throw lost(`${failures} status checks in a row failed; last: ${problem}`)
+      cfg.onProgress?.(`Status check failed (${problem}); retrying`)
     }
     if (now() - began >= timeoutMs) {
       throw new VideoError('VIDEO_TIMEOUT', `Vertex AI did not finish within ${Math.round(timeoutMs / 60_000)} minutes. The job may still complete and be billed; try again later.`)
     }
-    polls += 1
-    cfg.onProgress?.(`Still generating (${Math.round((now() - began) / 1000)} s, check ${polls})`)
+    if (op) {
+      polls += 1
+      cfg.onProgress?.(`Still generating (${Math.round((now() - began) / 1000)} s, check ${polls})`)
+    }
     await sleep(interval)
   }
 }
 
-async function collect(op: Operation, token: string, doFetch: typeof fetch): Promise<{ videos: Buffer[]; warnings: string[] }> {
+async function collect(op: Operation, token: string, doFetch: typeof fetch, timeoutMs: number): Promise<{ videos: Buffer[]; warnings: string[] }> {
   const r = op.response ?? {}
   const warnings: string[] = []
   const videos: Buffer[] = []
   for (const v of r.videos ?? []) {
     if (v.bytesBase64Encoded) videos.push(Buffer.from(v.bytesBase64Encoded, 'base64'))
-    else if (v.gcsUri) videos.push(await downloadGcs(v.gcsUri, token, doFetch))
+    else if (v.gcsUri) videos.push(await downloadGcs(v.gcsUri, token, doFetch, timeoutMs))
   }
   const filtered = r.raiMediaFilteredCount ?? 0
   const reasons = r.raiMediaFilteredReasons?.join('; ')

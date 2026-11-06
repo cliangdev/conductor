@@ -39,6 +39,8 @@ const gen = (width: number, height: number, extra: Partial<GenerateVideosResult>
     route: 'vertex',
     model: 'veo-3.1-fast-generate-001',
     estimateUsd: 1.6,
+    perClipUsd: 0.8,
+    billedUsd: 1.6,
     spentTodayUsd: 1.6,
     dailyCapUsd: 5,
     warnings: ['from the route'],
@@ -85,6 +87,24 @@ describe('generateCreativeVideo', () => {
     })
     expect(sidecar.source).toMatch(/^Generated with veo-3\.1-fast-generate-001 via Vertex AI on \d{4}-\d{2}-\d{2}$/)
     expect(new Date(sidecar.generatedAt).toString()).not.toBe('Invalid Date')
+  })
+
+  it('reports what was billed, and the per-clip estimate in the sidecar, when Omni stopped early', async () => {
+    const one = vi.fn().mockResolvedValue({
+      videos: [tinyMp4(720, 1280)],
+      request: { prompt: 'a', aspect: '9:16', durationSeconds: 5, resolution: '720p', tier: 'fast', generateAudio: false, count: 2, confirmCost: true },
+      route: 'gemini',
+      model: 'gemini-omni-1.1-flash',
+      estimateUsd: 1,
+      perClipUsd: 0.5,
+      billedUsd: 0.5,
+      spentTodayUsd: 0.5,
+      dailyCapUsd: 5,
+      warnings: ['Clip 2 of 2 failed'],
+    } satisfies GenerateVideosResult)
+    const res = await generateCreativeVideo({ prompt: 'a' }, { outDir: tmp, generate: one, contactSheet: async () => undefined })
+    expect(res.estimatedCostUsd).toBe(0.5)
+    expect(JSON.parse(fs.readFileSync(`${res.files[0]!.path}.provenance.json`, 'utf8')).estimatedCostUsd).toBe(0.5)
   })
 
   it('warns about 720p on 1080-wide placements', async () => {

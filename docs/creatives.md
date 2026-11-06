@@ -233,7 +233,9 @@ with `{estimateUsd, breakdown, spentTodayUsd, dailyCapUsd}`. Caps default to $2 
 (`VIDEO_COST_CAP_EXCEEDED`) and $5 per local day (`VIDEO_DAILY_CAP_EXCEEDED`); change them with
 `conductor config set-video-caps --per-call <usd> --daily <usd>`. Spend is recorded in
 `~/.conductor/video-spend.json` after a successful response; a safety-filtered result still counts when
-Google bills it, and so does a timeout (the job may still finish). `conductor doctor` reports the route and
+Google bills it, and so does any failure after Google accepted the job: a timeout, a job lost after three
+failed status checks in a row (the error names the operation), or a failed download. Those errors carry
+`billed: true`. `conductor doctor` reports the route and
 today's spend against the cap. The default per-second rates (`lite`, `fast`, `standard`, each also as
 `<tier>+audio`, plus `omni-720p` and `omni-1080p`) can be overridden with a partial `videoRates` map in
 `~/.conductor/config.json`, for example `"videoRates": {"fast+audio": 0.15}`.

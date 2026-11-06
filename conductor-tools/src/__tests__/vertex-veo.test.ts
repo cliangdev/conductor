@@ -79,6 +79,66 @@ describe('generateWithVertex', () => {
     expect((init as RequestInit).headers).toEqual({ Authorization: 'Bearer secret-token' })
   })
 
+  it('marks a failed gs:// download as billed, as a VideoError', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ name: 'op' }))
+      .mockResolvedValueOnce(json({ done: true, response: { videos: [{ gcsUri: 'gs://b/clip.mp4' }] } }))
+      .mockRejectedValueOnce(new TypeError('fetch failed'))
+    const err = await generateWithVertex(req, {}, cfg, { fetch: fetchMock as unknown as typeof fetch, getToken: async () => 't', ...clock() }).catch((e) => e)
+    expect(err).toMatchObject({ name: 'VideoError', code: 'VIDEO_FAILED', details: { billed: true } })
+    expect((fetchMock.mock.calls[2]![1] as RequestInit).signal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('rides out a few failed status checks on a running job', async () => {
+    const c = clock()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ name: 'op' }))
+      .mockRejectedValueOnce(new TypeError('socket hang up'))
+      .mockResolvedValueOnce(json({ error: { message: 'busy' } }, 503))
+      .mockResolvedValueOnce(json({ done: false }))
+      .mockRejectedValueOnce(new TypeError('blip'))
+      .mockResolvedValueOnce(json({ done: true, response: { videos: [{ bytesBase64Encoded: Buffer.from('ok').toString('base64') }] } }))
+    const out = await generateWithVertex(req, {}, cfg, { fetch: fetchMock as unknown as typeof fetch, getToken: async () => 't', ...c })
+    expect(out.videos[0]!.toString()).toBe('ok')
+    expect(fetchMock).toHaveBeenCalledTimes(6)
+  })
+
+  it('gives up after three failed checks in a row, marked billed with the operation name', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(json({ name: 'projects/p/op-9' })).mockRejectedValue(new TypeError('offline'))
+    const err = await generateWithVertex(req, {}, cfg, { fetch: fetchMock as unknown as typeof fetch, getToken: async () => 't', ...clock() }).catch((e) => e)
+    expect(err).toMatchObject({ code: 'VIDEO_FAILED', details: { billed: true } })
+    expect(err.message).toContain('projects/p/op-9')
+    expect(fetchMock).toHaveBeenCalledTimes(4)
+  })
+
+  it('a 400 on a status check is lost at once (billed); a 401 on start is not billed and clears the token', async () => {
+    const lost = await generateWithVertex(req, {}, cfg, {
+      fetch: vi.fn().mockResolvedValueOnce(json({ name: 'op' })).mockResolvedValueOnce(json({ error: { message: 'bad op' } }, 400)) as unknown as typeof fetch,
+      getToken: async () => 't',
+      ...clock(),
+    }).catch((e) => e)
+    expect(lost).toMatchObject({ code: 'VIDEO_FAILED', details: { billed: true } })
+    const auth = await generateWithVertex(req, {}, cfg, {
+      fetch: vi.fn().mockResolvedValueOnce(json({ error: { message: 'expired' } }, 401)) as unknown as typeof fetch,
+      getToken: async () => 't',
+      ...clock(),
+    }).catch((e) => e)
+    expect(auth).toMatchObject({ code: 'VIDEO_AUTH' })
+    expect(auth.details['billed']).toBeUndefined()
+  })
+
+  it('refreshes the token when a status check returns 401 mid-wait', async () => {
+    const tokens = ['old', 'new']
+    const getToken = vi.fn(async () => tokens[0]!)
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json({ name: 'op' }))
+      .mockImplementationOnce(async () => { tokens.shift(); return json({ error: { message: 'expired' } }, 401) })
+      .mockResolvedValueOnce(json({ done: true, response: { videos: [{ bytesBase64Encoded: Buffer.from('ok').toString('base64') }] } }))
+    const out = await generateWithVertex(req, {}, cfg, { fetch: fetchMock as unknown as typeof fetch, getToken, ...clock() })
+    expect(out.videos).toHaveLength(1)
+    expect((fetchMock.mock.calls[2]![1] as RequestInit).headers).toMatchObject({ Authorization: 'Bearer new' })
+  })
+
   it('reports an empty result as safety filtered, with reasons', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(json({ name: 'op' }))
@@ -144,17 +204,20 @@ describe('getVertexToken', () => {
     expect(execFileMock).not.toHaveBeenCalled()
   })
 
-  it('asks gcloud and caches for about 50 minutes', async () => {
+  it('asks gcloud and caches for about 5 minutes', async () => {
     execFileMock.mockImplementation((_cmd: string, _args: string[], _opts: unknown, cb: (e: Error | null, out: string) => void) => cb(null, 'gcloud-token\n'))
     let t = 1_000
     expect(await getVertexToken(() => t)).toBe('gcloud-token')
     expect(execFileMock.mock.calls[0]!.slice(0, 2)).toEqual(['gcloud', ['auth', 'print-access-token']])
-    t += 49 * 60_000
+    t += 4 * 60_000
     await getVertexToken(() => t)
     expect(execFileMock).toHaveBeenCalledTimes(1)
     t += 2 * 60_000
     await getVertexToken(() => t)
     expect(execFileMock).toHaveBeenCalledTimes(2)
+    resetVertexTokenCache()
+    await getVertexToken(() => t)
+    expect(execFileMock).toHaveBeenCalledTimes(3)
   })
 
   it('falls back to application-default credentials', async () => {

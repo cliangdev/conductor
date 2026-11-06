@@ -4,11 +4,9 @@ import { runCapture, type PlacementFit } from '../../lib/image-common.js'
 import { resolveFfmpegPath } from '../../lib/media-probe.js'
 import { probeVideo } from '../../lib/mp4-probe.js'
 import { writeProvenanceSidecar } from '../../lib/provenance-sidecar.js'
-import { slugify } from '../../lib/slug.js'
 import { generateVideos } from '../../lib/video-generation.js'
 import { videoPlacementFit, type VideoParams, type VideoRoute } from '../../lib/video-common.js'
-import { findProjectRoot, stamp } from './creative-drafts.js'
-import { GENERATED_SUBDIR, pruneGenerated } from './creative-images.js'
+import { prepareGeneratedOutDir } from './creative-images.js'
 
 /**
  * generate_creative_video: makes a short clip from a still (Veo on Vertex AI, or Gemini Omni), on this
@@ -74,22 +72,12 @@ export async function generateCreativeVideo(params: VideoParams, options: Genera
   // The gate (route, validation, caps, confirmation) runs inside and throws before anything is created on disk.
   const gen = await run(params, { onProgress: options.log, ...(options.cwd ? { cwd: options.cwd } : {}) })
 
-  let outDir = options.outDir
-  if (!outDir) {
-    const projectRoot = findProjectRoot(options.cwd)
-    const root = join(resolve(projectRoot), GENERATED_SUBDIR)
-    await pruneGenerated(projectRoot)
-    await mkdir(root, { recursive: true })
-    await writeFile(join(root, '.gitignore'), '*\n').catch(() => {})
-    outDir = join(root, `${stamp(new Date())}-${slugify(gen.request.prompt)}`)
-  }
-  outDir = resolve(outDir)
+  const outDir = resolve(options.outDir ?? (await prepareGeneratedOutDir(gen.request.prompt, options.cwd)))
   await mkdir(outDir, { recursive: true })
 
   const date = new Date().toISOString().slice(0, 10)
   const routeName = gen.route === 'vertex' ? 'Vertex AI' : 'the Gemini API'
   const provenance = { source: `Generated with ${gen.model} via ${routeName} on ${date}`, licence: 'Generated, house use', aiGenerated: true as const }
-  const perClip = Math.round((gen.estimateUsd / gen.videos.length) * 10000) / 10000
   const warnings = [...gen.warnings]
 
   const files: GeneratedClip[] = []
@@ -106,7 +94,7 @@ export async function generateCreativeVideo(params: VideoParams, options: Genera
       ...(gen.route === 'vertex' ? { tier: gen.request.tier } : {}),
       resolution: gen.request.resolution,
       generateAudio: gen.request.generateAudio,
-      estimatedCostUsd: perClip,
+      estimatedCostUsd: gen.perClipUsd,
       ...(gen.sourceImagePath ? { sourceImagePath: gen.sourceImagePath } : {}),
       ...(gen.lastFramePath ? { lastFramePath: gen.lastFramePath } : {}),
       generatedAt: new Date().toISOString(),
@@ -127,7 +115,8 @@ export async function generateCreativeVideo(params: VideoParams, options: Genera
   return {
     files,
     ...(fit ? { placementFit: fit } : {}),
-    estimatedCostUsd: gen.estimateUsd,
+    // What this call cost: less than the estimate when an Omni run stopped early.
+    estimatedCostUsd: gen.billedUsd,
     spentTodayUsd: gen.spentTodayUsd,
     dailyCapUsd: gen.dailyCapUsd,
     generator: { route: gen.route, model: gen.model },

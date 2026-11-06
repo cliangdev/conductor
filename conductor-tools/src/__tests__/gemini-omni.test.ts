@@ -15,6 +15,9 @@ describe('Omni request', () => {
     expect(buildOmniPrompt({ ...req, negativePrompt: 'text, logos' })).toBe('a cat walks\nThe clip is 6 seconds long.\nAvoid: text, logos')
   })
 
+  it('names the opening frame when only a first frame is sent', () => {
+    expect(buildOmniPrompt(req, { image: true })).toBe('a cat walks\nThe clip is 6 seconds long.\nThe image is the opening frame: start exactly on it.')
+  })
   it('sends first and last frame as images before the text', () => {
     const body = buildOmniBody(req, cfg.model, { image: img, lastFrame: img2 })
     expect(body).toEqual({
@@ -22,7 +25,7 @@ describe('Omni request', () => {
       input: [
         { type: 'image', data: 'IMG1', mime_type: 'image/png' },
         { type: 'image', data: 'IMG2', mime_type: 'image/jpeg' },
-        { type: 'text', text: 'a cat walks\nThe clip is 6 seconds long.' },
+        { type: 'text', text: 'a cat walks\nThe clip is 6 seconds long.\nThe first image is the opening frame: start exactly on it. The second image is the closing frame: end exactly on it.' },
       ],
       response_format: { type: 'video', aspect_ratio: '9:16', resolution: '720p' },
       store: false,
@@ -50,6 +53,20 @@ describe('generateOmniClip', () => {
     const [url, init] = fetchMock.mock.calls[1]!
     expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/files/abc123:download?alt=media')
     expect((init as RequestInit).headers).toEqual({ 'x-goog-api-key': 'AIza-secret' })
+  })
+
+  it('marks a failed download as billed, as a VideoError', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(json(modelOutput([{ type: 'video', uri: 'files/abc123' }])))
+      .mockRejectedValueOnce(new TypeError('fetch failed: ECONNRESET'))
+    const err = await generateOmniClip(req, {}, cfg, { fetch: fetchMock as unknown as typeof fetch }).catch((e) => e)
+    expect(err).toMatchObject({ name: 'VideoError', code: 'VIDEO_FAILED', details: { billed: true } })
+    expect(err.message).toContain('ECONNRESET')
+    expect(err.message).not.toContain('AIza-secret')
+    const err2 = await generateOmniClip(req, {}, cfg, {
+      fetch: vi.fn().mockResolvedValueOnce(json(modelOutput([{ type: 'video', uri: 'files/x' }]))).mockResolvedValueOnce(json({ error: { message: 'gone' } }, 500)) as unknown as typeof fetch,
+    }).catch((e) => e)
+    expect(err2).toMatchObject({ code: 'VIDEO_FAILED', details: { billed: true } })
   })
 
   it('also reads a top-level outputs[] list', async () => {

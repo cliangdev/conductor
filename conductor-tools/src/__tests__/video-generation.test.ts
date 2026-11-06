@@ -11,7 +11,7 @@ const omniMock = vi.hoisted(() => vi.fn())
 vi.mock('../lib/gemini-omni.js', async (orig) => ({ ...(await orig<typeof import('../lib/gemini-omni.js')>()), generateOmniClip: omniMock }))
 
 import { generateVideos, pickVideoRoute, videoModel } from '../lib/video-generation.js'
-import { VideoError, VideoSafetyFiltered } from '../lib/video-common.js'
+import { VideoError, VideoSafetyFiltered, markBilled } from '../lib/video-common.js'
 import { record, spentToday } from '../lib/video-spend.js'
 
 let tmp: string
@@ -72,6 +72,20 @@ describe('gate order', () => {
     expect(err.message).toContain('conductor config set-vertex-project <id>')
     expect(err.message).toContain('gcloud auth login')
     expect(err.message).toContain('conductor config set-gemini-api-key <key>')
+  })
+
+  it('1b. names the chosen route and what it lacks when videoRoute is set', async () => {
+    process.env['GEMINI_API_KEY'] = 'k'
+    readConfigMock.mockReturnValue({ videoRoute: 'vertex' })
+    const err = await generateVideos({ prompt: 'a' }, { spend }).catch((e) => e)
+    expect(err).toMatchObject({ code: 'VIDEO_ROUTE_NOT_CONFIGURED', details: { videoRoute: 'vertex' } })
+    expect(err.message).toMatch(/videoRoute is set to vertex, but no Vertex project is set/)
+    expect(err.message).toContain('set-video-route gemini')
+    expect(err.message).not.toContain('set-gemini-api-key')
+    delete process.env['GEMINI_API_KEY']
+    readConfigMock.mockReturnValue({ videoRoute: 'gemini', vertexProject: 'p' })
+    const err2 = await generateVideos({ prompt: 'a' }, { spend }).catch((e) => e)
+    expect(err2.message).toMatch(/videoRoute is set to gemini, but no Gemini API key was found/)
   })
 
   it('2. validation runs before the caps', async () => {
@@ -153,6 +167,23 @@ describe('running', () => {
     expect(res.videos).toHaveLength(1)
     expect(res.warnings.join(' ')).toContain('Clip 2 of 2 failed')
     expect(spentToday(spend)).toBe(0.5)
+    expect(res).toMatchObject({ estimateUsd: 1, perClipUsd: 0.5, billedUsd: 0.5 })
+  })
+
+  it('records spend when a job was lost or a download failed after Google accepted it', async () => {
+    readConfigMock.mockReturnValue({ vertexProject: 'p' })
+    vertexMock.mockRejectedValueOnce(markBilled(new VideoError('VIDEO_FAILED', 'lost track')))
+    await expect(generateVideos({ prompt: 'a', confirmCost: true }, { spend })).rejects.toMatchObject({ code: 'VIDEO_FAILED', details: { billed: true } })
+    expect(spentToday(spend)).toBe(0.6)
+  })
+
+  it('counts a billed Omni failure after a finished clip', async () => {
+    readConfigMock.mockReturnValue({ geminiApiKey: 'k' })
+    omniMock.mockResolvedValueOnce({ video: Buffer.from('o'), warnings: [] }).mockRejectedValueOnce(markBilled(new VideoError('VIDEO_FAILED', 'download failed')))
+    const res = await generateVideos({ prompt: 'a', count: 2, durationSeconds: 5, resolution: '720p', confirmCost: true }, { spend })
+    expect(res.videos).toHaveLength(1)
+    expect(res.billedUsd).toBe(1)
+    expect(spentToday(spend)).toBe(1)
   })
 
   it('records spend on a timeout, since the job may still be billed', async () => {

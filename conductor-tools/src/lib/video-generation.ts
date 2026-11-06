@@ -1,7 +1,8 @@
 /**
  * Picks the video route and runs the gate, in this order: route configured, inputs valid, per-call cap,
  * daily cap, cost confirmation. Only then does it call Veo (Vertex) or Gemini Omni. Spend is recorded after
- * a successful call, and after a safety-filtered one because Google bills it.
+ * a successful call, and after any failure Google still bills (safety filter, timeout, a job lost after it
+ * was accepted, a failed download): see isBilled.
  */
 import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
@@ -20,10 +21,9 @@ import {
   VideoCostCapExceeded,
   VideoCostConfirmationRequired,
   VideoDailyCapExceeded,
-  VideoError,
   VideoRouteNotConfigured,
-  VideoSafetyFiltered,
   estimateCost,
+  isBilled,
   normalizeVideoParams,
   type VideoFrame,
   type VideoParams,
@@ -86,7 +86,12 @@ export interface GenerateVideosResult {
   request: VideoRequest
   route: VideoRoute
   model: string
+  /** The estimate for everything asked for. */
   estimateUsd: number
+  /** The estimate for one clip. */
+  perClipUsd: number
+  /** What was counted as spent for this call (less than estimateUsd when an Omni run stopped early). */
+  billedUsd: number
   spentTodayUsd: number
   dailyCapUsd: number
   warnings: string[]
@@ -98,7 +103,10 @@ export async function generateVideos(params: VideoParams, options: GenerateVideo
   const cwd = options.cwd ?? process.cwd()
   // 1. A route must be set up.
   const choice = pickVideoRoute()
-  if (!choice) throw new VideoRouteNotConfigured()
+  if (!choice) {
+    const chosen = readConfig()?.videoRoute
+    throw new VideoRouteNotConfigured(chosen === 'vertex' || chosen === 'gemini' ? chosen : undefined)
+  }
   // 2. Inputs against what the route can do.
   const { request, warnings } = normalizeVideoParams(params, choice.route, choice.region)
   const image = request.imagePath ? checkFrame('imagePath', request.imagePath, cwd) : undefined
@@ -120,12 +128,17 @@ export async function generateVideos(params: VideoParams, options: GenerateVideo
   const clean = <T extends object>(o: T) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T
 
   const videos: Buffer[] = []
+  let billedUsd = 0
+  const bill = (usd: number) => {
+    record(usd, options.spend)
+    billedUsd += usd
+  }
   try {
     if (choice.route === 'vertex') {
       const out = await generateWithVertex(request, clean(frames), { project: choice.project!, region: choice.region, model, onProgress: options.onProgress }, options.vertex)
       videos.push(...out.videos)
       warnings.push(...out.warnings)
-      record(est.estimateUsd, options.spend)
+      bill(est.estimateUsd)
     } else {
       for (let i = 0; i < request.count; i++) {
         if (request.count > 1) options.onProgress?.(`Clip ${i + 1} of ${request.count}`)
@@ -133,19 +146,19 @@ export async function generateVideos(params: VideoParams, options: GenerateVideo
           const out = await generateOmniClip(request, clean(frames), { apiKey: choice.apiKey!, model, onProgress: options.onProgress }, options.omni)
           videos.push(out.video)
           warnings.push(...out.warnings)
-          record(est.perClipUsd, options.spend)
+          bill(est.perClipUsd)
         } catch (err) {
           // Keep the clips already made (and billed) rather than throwing them away.
           if (videos.length === 0) throw err
-          if (err instanceof VideoSafetyFiltered || (err instanceof VideoError && err.code === 'VIDEO_TIMEOUT')) record(est.perClipUsd, options.spend)
+          if (isBilled(err)) bill(est.perClipUsd)
           warnings.push(`Clip ${i + 1} of ${request.count} failed (${(err as Error).message}); returning the ${videos.length} that finished.`)
           break
         }
       }
     }
   } catch (err) {
-    // Google bills a safety-filtered request, and a timed-out job may still finish and be billed.
-    if (err instanceof VideoSafetyFiltered || (err instanceof VideoError && err.code === 'VIDEO_TIMEOUT')) record(choice.route === 'vertex' ? est.estimateUsd : est.perClipUsd, options.spend)
+    // Google bills a safety-filtered request, and a timed-out or lost job may still finish and be billed.
+    if (isBilled(err)) bill(choice.route === 'vertex' ? est.estimateUsd : est.perClipUsd)
     throw err
   }
 
@@ -155,6 +168,8 @@ export async function generateVideos(params: VideoParams, options: GenerateVideo
     route: choice.route,
     model,
     estimateUsd: est.estimateUsd,
+    perClipUsd: est.perClipUsd,
+    billedUsd: Math.round(billedUsd * 10000) / 10000,
     spentTodayUsd: spentToday(options.spend),
     dailyCapUsd: caps.dailyUsd,
     warnings,
