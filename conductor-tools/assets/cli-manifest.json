@@ -1002,6 +1002,14 @@
       ]
     },
     {
+      "name": "get_creator_results",
+      "description": "What one creator has produced: its posts with views, the downloads of its campaign links and the redemptions of its offer code over a window of settled days. An unknown figure is null with a note, never 0.",
+      "category": "marketing",
+      "requiredParams": [
+        "creatorId"
+      ]
+    },
+    {
       "name": "create_tracked_link",
       "description": "Create an App Store campaign link (pt/ct) for a bio, creator, email or other place and return its url. Every new Post already gets one automatically. Tokens roll up by family past Apple's reporting threshold.",
       "category": "marketing",

@@ -26,6 +26,8 @@ tags:
     description: Weekly checks of whether AI assistants name the brand for a fixed set of questions
   - name: marketing-changes
     description: Marketing change records (the MARKETING_CHANGES workflow), imported from an outside change log
+  - name: marketing-creators
+    description: What a creator (the CREATORS workflow) has produced - its posts, campaign-link downloads and offer-code redemptions
   - name: marketing-links
     description: Tracked App Store campaign links for Posts, bios, creators and email, and the downloads they bring
   - name: work-items
@@ -4387,6 +4389,84 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: The project has no MARKETING_CHANGES workflow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creators/{workItemId}/results:
+    get:
+      tags:
+        - marketing-creators
+      summary: What one creator has produced
+      description: >-
+        A creator (a Work Item on the CREATORS workflow) and what it has produced: its posts with their views,
+        the downloads of its campaign links, and the redemptions of its offer code. `workItemId` is the Work
+        Item's id or its display id (e.g. RE-12). Posts are the Post Work Items whose parent is the creator or that
+        carry the tag `creator:<handle>`; `views` is the sum of each published destination's latest snapshot, and
+        null while none has reported (not 0). Link downloads are the settled `campaign_downloads` of the creator's
+        CREATOR tracked links (and the `linkToken` field), and offer redemptions the settled `offer_redemptions` at
+        `offer:<code>` from the product backend, both over the window. Apple omits campaign rows under its reporting
+        threshold and a product backend may not send redemptions at all, so an unknown figure is null with a note,
+        never 0. The window is `from`..`to` inclusive, full UTC days, default the 28 days ending yesterday, at most
+        92 days, ending yesterday or earlier; only settled days count.
+      operationId: getCreatorResults
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          description: The creator's Work Item id, or its display id (e.g. RE-12).
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          description: First day of the window (yyyy-MM-dd). Default 27 days before `to`.
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          description: Last day of the window (yyyy-MM-dd), yesterday or earlier. Default yesterday (UTC).
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: The creator's results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatorResults"
+        "400":
+          description: A window that is reversed, longer than 92 days or ends after yesterday
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such Work Item in this project, or it is not on the CREATORS workflow
           content:
             application/json:
               schema:
@@ -12335,6 +12415,93 @@ components:
         displayId: {type: string}
         recordId: {type: string, description: "The id the record has in the source log."}
         status: {type: string, description: "The status the Work Item was created in."}
+
+    CreatorResults:
+      type: object
+      required: [window, creator, postCount, posts, linkDownloads, offerRedemptions]
+      properties:
+        window:
+          $ref: "#/components/schemas/CreatorResultsWindow"
+        creator:
+          $ref: "#/components/schemas/CreatorResultsCreator"
+        postCount:
+          type: integer
+          format: int32
+          description: How many Posts the creator has in all; `posts` lists the newest 50.
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreatorResultsPost"
+        linkDownloads:
+          $ref: "#/components/schemas/CreatorResultsLinkDownloads"
+        offerRedemptions:
+          $ref: "#/components/schemas/CreatorResultsOfferRedemptions"
+
+    CreatorResultsWindow:
+      type: object
+      required: [from, to]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+
+    CreatorResultsCreator:
+      type: object
+      required: [workItemId, displayId, status]
+      properties:
+        workItemId: {type: string}
+        displayId: {type: string}
+        handle: {type: string, nullable: true, description: "The creator's handle field; null until it is filled in."}
+        status: {type: string, description: "PROSPECT, BRIEFED, POSTED, PAID_OUT or DROPPED."}
+
+    CreatorResultsPost:
+      type: object
+      required: [workItemId, displayId, title, status]
+      properties:
+        workItemId: {type: string}
+        displayId: {type: string}
+        title: {type: string}
+        status: {type: string}
+        views:
+          type: integer
+          format: int64
+          nullable: true
+          description: Sum of each published destination's latest snapshot. Null while no destination has reported views; never 0 for "not reported".
+
+    CreatorResultsLinkDownloads:
+      type: object
+      required: [tokens, belowThreshold]
+      properties:
+        tokens:
+          type: array
+          description: The campaign tokens read - the creator's CREATOR tracked links plus its `linkToken` field. Empty when it has none.
+          items: {type: string}
+        downloads:
+          type: number
+          format: double
+          nullable: true
+          description: Settled first-time downloads of those tokens over the window. Null when Apple reported no row for any of them, or there is no token; never 0 for "not reported".
+        belowThreshold:
+          type: boolean
+          description: True when the creator has tokens but Apple reported no row for any (rows under its reporting threshold are omitted).
+        note:
+          type: string
+          nullable: true
+          description: Why downloads is null, or that it counts only the links Apple reported.
+
+    CreatorResultsOfferRedemptions:
+      type: object
+      required: [code]
+      properties:
+        code: {type: string, nullable: true, description: "The creator's offerCode field; null until it is filled in."}
+        value:
+          type: number
+          format: double
+          nullable: true
+          description: Settled `offer_redemptions` at `offer:<code>` over the window. Null when the product backend sent none; never 0 for "not reported".
+        note:
+          type: string
+          nullable: true
+          description: Why value is null.
 
     MarketingTarget:
       type: object

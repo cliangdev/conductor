@@ -246,6 +246,42 @@ class WorkflowSeederTest {
     }
 
     @Test
+    void seedsCreatorsHeaderAndVersionSnapshotBesideThePostsInTheMarketingArea() {
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "CREATORS")).thenReturn(false);
+        when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        seeder.seedCreators(project);
+
+        ArgumentCaptor<WorkflowDefinition> headerCaptor = ArgumentCaptor.forClass(WorkflowDefinition.class);
+        verify(workflowRepository).save(headerCaptor.capture());
+        WorkflowDefinition header = headerCaptor.getValue();
+        assertThat(header.getName()).isEqualTo("CREATORS");
+        assertThat(header.getArea()).isEqualTo("MARKETING");
+        assertThat(header.getState()).isEqualTo("PUBLISHED");
+        assertThat(header.getVersion()).isEqualTo(1);
+        assertThat(header.getSchemaVersion()).isEqualTo(1);
+        assertThat(header.isSidebarEnabled()).isTrue();
+        assertThat(header.isLifecycle()).isTrue();
+        assertThat(header.getDefinition().get("noun").asText()).isEqualTo("Creator");
+
+        ArgumentCaptor<WorkflowDefinitionVersion> versionCaptor = ArgumentCaptor.forClass(WorkflowDefinitionVersion.class);
+        verify(versionRepository).save(versionCaptor.capture());
+        assertThat(versionCaptor.getValue().getVersion()).isEqualTo(1);
+        assertThat(versionCaptor.getValue().getDefinition().get("id").asText()).isEqualTo("CREATORS");
+        assertThat(versionCaptor.getValue().getWorkflowDefinition()).isSameAs(header);
+    }
+
+    @Test
+    void isIdempotentWhenCreatorsAlreadyExists() {
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug("proj-1", "CREATORS")).thenReturn(true);
+
+        seeder.seedCreators(project);
+
+        verify(workflowRepository, never()).save(any());
+        verifyNoInteractions(versionRepository);
+    }
+
+    @Test
     void headerAreaComesFromTheDefinitionNotTheSlug() {
         when(workflowRepository.existsByProjectIdAndDefinitionSlug(any(), any())).thenReturn(false);
         when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));

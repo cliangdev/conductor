@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "CREATORS",
+  "area": "MARKETING",
+  "version": 1,
+  "state": "PUBLISHED",
+  "noun": "Creator",
+  "default_view": "board",
+  "types": ["CREATOR"],
+  "metric": null,
+  "dueLabel": "Post by",
+  "fields": [
+    { "key": "handle", "label": "Handle", "type": "text", "requiredIn": ["BRIEFED", "POSTED", "PAID_OUT"] },
+    {
+      "key": "platform",
+      "label": "Platform",
+      "type": "enum",
+      "options": ["tiktok", "instagram", "youtube", "other"]
+    },
+    { "key": "offerCode", "label": "Offer code", "type": "text" },
+    { "key": "fee", "label": "Fee", "type": "number" },
+    { "key": "linkToken", "label": "Link token", "type": "text" },
+    { "key": "briefUrl", "label": "Brief URL", "type": "url" },
+    { "key": "notes", "label": "Notes", "type": "longtext" }
+  ],
+  "statuses": [
+    { "id": "PROSPECT", "label": "Prospect", "category": "open", "initial": true },
+    { "id": "BRIEFED", "label": "Briefed", "category": "in_progress" },
+    { "id": "POSTED", "label": "Posted", "category": "in_progress" },
+    { "id": "PAID_OUT", "label": "Paid out", "category": "terminal", "terminal": true },
+    { "id": "DROPPED", "label": "Dropped", "category": "terminal", "terminal": true }
+  ],
+  "transitions": [
+    { "from": "PROSPECT", "to": "BRIEFED", "label": "Send brief" },
+    { "from": "PROSPECT", "to": "DROPPED", "label": "Drop" },
+    { "from": "BRIEFED", "to": "POSTED", "label": "Mark posted" },
+    { "from": "BRIEFED", "to": "DROPPED", "label": "Drop" },
+    { "from": "POSTED", "to": "PAID_OUT", "label": "Mark paid out" },
+    { "from": "POSTED", "to": "DROPPED", "label": "Drop" }
+  ]
+}

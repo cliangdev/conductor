@@ -93,6 +93,7 @@ import {
 } from './tools/growth-signals.js'
 import { getAiVisibility, setAiQuestions, runAiVisibilityCheck } from './tools/ai-visibility.js'
 import { importMarketingChanges } from './tools/marketing-changes.js'
+import { getCreatorResults } from './tools/creators.js'
 import { createTrackedLink, listTrackedLinks } from './tools/links.js'
 import {
   getBrandKit,
@@ -1652,6 +1653,19 @@ export const TOOLS = [
     },
   },
   {
+    name: 'get_creator_results',
+    description: 'What one creator (a Work Item on the CREATORS workflow) has produced: its posts with views, the downloads of its campaign links, and the redemptions of its offer code over a window of settled days (default the 28 days ending yesterday). An unknown figure is null with a note (Apple omits links under its reporting threshold; the product backend may not send redemptions), never 0. Read-only. Fill in the creator\'s fields with update_work_item.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creatorId: { type: 'string', description: 'The creator Work Item: its id or display id (e.g. RE-12)' },
+        from: { type: 'string', description: 'First day, YYYY-MM-DD (default 27 days before to)' },
+        to: { type: 'string', description: 'Last day, YYYY-MM-DD, yesterday or earlier (default yesterday); at most 92 days from from' },
+      },
+      required: ['creatorId'],
+    },
+  },
+  {
     name: 'create_tracked_link',
     description: 'Create an App Store campaign link (pt/ct) for a bio, creator, email or any other place, and return its url. Every new Post already gets one automatically, so use this for the rest. token is the ct (lowercase letters, digits, dashes, at most 40); family groups tokens so their downloads add up past Apple\'s reporting threshold (about 5 per token). One kind per family. Needs an App Store Connect connection with its provider token set. Requires the Editor role (or Admin). Verify with list_tracked_links.',
     inputSchema: {
@@ -3143,6 +3157,15 @@ export async function runMcpServer(): Promise<void> {
             await importMarketingChanges(config, {
               filePath: params['filePath'] as string,
               source: params['source'] as string | undefined,
+            })
+          )
+        }
+        case 'get_creator_results': {
+          return successResponse(
+            await getCreatorResults(config, {
+              creatorId: params['creatorId'] as string,
+              from: params['from'] as string | undefined,
+              to: params['to'] as string | undefined,
             })
           )
         }
