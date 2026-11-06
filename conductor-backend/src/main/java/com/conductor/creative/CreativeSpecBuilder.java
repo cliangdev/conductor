@@ -125,12 +125,12 @@ public class CreativeSpecBuilder {
     static final BigDecimal FADE_IN_SEC = new BigDecimal("0.5");
     static final BigDecimal TARGET_LUFS = new BigDecimal("-14");
     static final BigDecimal CROSSFADE_SEC = new BigDecimal("0.5");
-    static final double DEFAULT_FIRST_SLIDE_SEC = 3.0;
-    static final double DEFAULT_SLIDE_SEC = 2.5;
+    static final double DEFAULT_FIRST_SLIDE_SEC = 3.5;
+    static final double DEFAULT_SLIDE_SEC = 3.0;
     static final int SLIDESHOW_WIDTH = 1080;
     static final int SLIDESHOW_HEIGHT = 1920;
 
-    /** One duration per slide: the requested list when it fits, else 3.0 s for the first slide and 2.5 s for the rest. */
+    /** One duration per slide: the requested list when it fits, else 3.5 s for the first slide and 3.0 s for the rest. */
     static List<BigDecimal> resolveSlideDurations(CreativeSlideshow slideshow, int slideCount) {
         List<BigDecimal> requested = slideshow != null ? slideshow.getSlideDurations() : null;
         if (requested != null && requested.size() == slideCount) {

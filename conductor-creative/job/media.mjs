@@ -122,11 +122,11 @@ const COLOR_TAGS = ['-color_range', 'tv', '-colorspace', 'bt709', '-color_primar
 const VIDEO_ENCODE = ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p'];
 const AUDIO_ENCODE = ['-c:a', 'aac', '-b:a', '128k', '-ar', '48000', '-ac', '2'];
 
-/** Per-slide durations resolved against the slide count: given values win; defaults are 3.0 s first, 2.5 s after. */
+/** Per-slide durations resolved against the slide count: given values win; defaults are 3.5 s first, 3.0 s after. */
 export function resolveSlideDurations(slideDurations, count) {
   return Array.from({ length: count }, (_, i) => {
     const d = slideDurations && slideDurations[i];
-    return d != null ? d : (i === 0 ? 3.0 : 2.5);
+    return d != null ? d : (i === 0 ? 3.5 : 3.0);
   });
 }
 

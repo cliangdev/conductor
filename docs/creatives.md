@@ -909,8 +909,8 @@ posts have no audio, and YouTube has no photo post. So a carousel with a track g
 publish target chooses `carouselAs: photos | video` (see [`publishing.md`](publishing.md#carousels-from-a-creative)).
 
 **`slideshow`** (CAROUSEL only; refused on other kinds): `{slideDurations?: number[], zoom?: boolean}`.
-`slideDurations` has one entry per `9x16` slide, each 1 to 10 s; the default is 3 s for the first slide
-and 2.5 s for the rest (the TikTok-native pace, which keeps 20 slides under 60 s). `zoom` (default true) is a
+`slideDurations` has one entry per `9x16` slide, each 1 to 10 s; the fallback default (a slide with no text to time) is 3.5 s for the first slide
+and 3 s for the rest (the Creative tools set longer times for slides with more text). `zoom` (default true) is a
 slow push-in on each slide. Slides cross-fade for a fixed 0.5 s, so the video lasts the sum of the
 durations minus 0.5 s per join. It is built from the `9x16` slide list (falling back to `default`).
 

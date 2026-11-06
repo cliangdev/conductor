@@ -330,7 +330,7 @@ sent as a video instead. Ask Claude for "a slideshow with a music track". Claude
 your audio library and reuses a track that fits; a new file is added to the library with its source
 and licence first (never mixed into an MP4 somewhere else). The preview then also builds a 9:16
 slideshow video on your machine (it needs ffmpeg) and gives you its path to watch before you approve.
-Slides last 3 seconds for the first and 2.5 seconds for the rest, with a slow zoom and 0.5-second
+Slides last 3.5 seconds for the first and 3 seconds for the rest by default (longer when a slide has more text), with a slow zoom and 0.5-second
 cross-fades; ask for different timing or no zoom. Keep it under about 60 seconds, since YouTube
 blocks a Short longer than that when it has a track, and Facebook reels run 3 to 90 seconds. When
 you attach it to a Post, each destination sends either the photos (silent) or the video: TikTok and
