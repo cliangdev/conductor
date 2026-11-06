@@ -963,6 +963,14 @@
       ]
     },
     {
+      "name": "get_creator_results",
+      "description": "What one creator has produced: its posts with views, the downloads of its campaign links and the redemptions of its offer code over a window of settled days. An unknown figure is null with a note, never 0.",
+      "category": "marketing",
+      "requiredParams": [
+        "creatorId"
+      ]
+    },
+    {
       "name": "submit_review",
       "description": "Record an approve / request_changes verdict on a Post as this API key's user (an assigned REVIEWER). Approval schedules the Post.",
       "category": "marketing",

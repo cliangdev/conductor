@@ -91,6 +91,7 @@ import {
   setTrackedKeywords,
 } from './tools/growth-signals.js'
 import { importMarketingChanges } from './tools/marketing-changes.js'
+import { getCreatorResults } from './tools/creators.js'
 import {
   getBrandKit,
   updateBrandKit,
@@ -1593,6 +1594,19 @@ export const TOOLS = [
     },
   },
   {
+    name: 'get_creator_results',
+    description: 'What one creator (a Work Item on the CREATORS workflow) has produced: its posts with views, the downloads of its campaign links, and the redemptions of its offer code over a window of settled days (default the 28 days ending yesterday). An unknown figure is null with a note (Apple omits links under its reporting threshold; the product backend may not send redemptions), never 0. Read-only. Fill in the creator\'s fields with update_work_item.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creatorId: { type: 'string', description: 'The creator Work Item: its id or display id (e.g. RE-12)' },
+        from: { type: 'string', description: 'First day, YYYY-MM-DD (default 27 days before to)' },
+        to: { type: 'string', description: 'Last day, YYYY-MM-DD, yesterday or earlier (default yesterday); at most 92 days from from' },
+      },
+      required: ['creatorId'],
+    },
+  },
+  {
     name: 'submit_review',
     description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned member holding the Reviewer role (or an Admin). Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step the person does in their own browser (request_tiktok_consent hands them the link), not this tool. Returns the confirmation table.',
     inputSchema: {
@@ -3021,6 +3035,15 @@ export async function runMcpServer(): Promise<void> {
             await importMarketingChanges(config, {
               filePath: params['filePath'] as string,
               source: params['source'] as string | undefined,
+            })
+          )
+        }
+        case 'get_creator_results': {
+          return successResponse(
+            await getCreatorResults(config, {
+              creatorId: params['creatorId'] as string,
+              from: params['from'] as string | undefined,
+              to: params['to'] as string | undefined,
             })
           )
         }
