@@ -1,6 +1,7 @@
 package com.conductor.integration.connector.appstoreconnect;
 
 import com.conductor.integration.ChannelMetricPoint;
+import com.conductor.integration.ChannelMetricsPull;
 import com.conductor.integration.ChannelMetricsSource;
 import com.conductor.integration.ChannelMetricsSourceException;
 import com.conductor.integration.ConnectionContext;
@@ -31,8 +32,10 @@ import org.springframework.web.client.RestTemplate;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -44,8 +47,12 @@ import java.util.regex.Pattern;
 
 /**
  * App Store Connect (FETCH connector): the daily App Store numbers of one iOS app, from Apple's Analytics
- * Reports API (impressions, page views, first-time downloads and redownloads, in total and per source type),
- * plus the public rating count and average. One connection per app.
+ * Reports API (impressions, page views, first-time downloads, redownloads and their sum {@code total_downloads},
+ * in total and per source type), plus the public rating count and average. One connection per app.
+ *
+ * <p>With the optional {@code vendorNumber} it also reads Apple's Sales Reports, the number of record for
+ * first-time downloads ({@code downloads_of_record}, total only) and which days that report was read
+ * ({@code sales_report_days}). Sales never fail the Analytics part of a pull.
  *
  * <p>Auth is an ES256 JWT used directly as the bearer ({@link AppStoreConnectTokenService}); the {@code .p8}
  * is the encrypted secret ({@code ctx.accessToken()}), the identifiers are plaintext config.
@@ -63,11 +70,23 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     static final String LOOKUP_URL = "https://itunes.apple.com/lookup";
     static final String RATING_COUNT = "rating_count";
     static final String RATING_AVG = "rating_avg";
+    static final String TOTAL_DOWNLOADS = "total_downloads";
+    static final String DOWNLOADS_OF_RECORD = "downloads_of_record";
+    static final String SALES_REPORT_DAYS = "sales_report_days";
+    /**
+     * Version 2: {@code total_downloads} exists. The version differing from the one in the feed cursor makes the
+     * puller re-walk the backfill window once, so stored history gets it too.
+     */
+    static final int CONTRACT_VERSION = 2;
+    /** Apple dates its Sales reports in Pacific time; a day is not published before that day has ended there. */
+    private static final ZoneId SALES_REPORT_ZONE = ZoneId.of("America/Los_Angeles");
     private static final Pattern NUMERIC = Pattern.compile("\\d+");
     static final String APP_ID_MESSAGE = "The App Apple ID must be numbers only, e.g. 1234567890 "
             + "(App Store Connect → the app → App Information)";
     static final String KEY_UNUSABLE_MESSAGE =
             "App Store Connect could not use the private key — paste the whole .p8 file";
+    static final String VENDOR_NUMBER_MESSAGE = "The vendor number must be numbers only, e.g. 94514742 "
+            + "(App Store Connect → Payments and Financial Reports), or left empty";
     private static final Set<String> SNAPSHOT_METRICS = Set.of(RATING_COUNT, RATING_AVG);
     private static final String[] REPORT_METRICS = {
             AppStoreAnalyticsClient.M_IMPRESSIONS, AppStoreAnalyticsClient.M_IMPRESSIONS_UNIQUE,
@@ -78,6 +97,8 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     private final AppStoreConnectTokenService tokenService;
     private final AppStoreAnalyticsClient client;
     private final AppStoreListingClient listingClient;
+    private final AppStoreSalesClient salesClient;
+    private final Clock clock;
     private final ObjectMapper mapper = new ObjectMapper();
 
     public AppStoreConnectConnector() {
@@ -87,10 +108,17 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
 
     /** Test seam. */
     AppStoreConnectConnector(RestTemplate restTemplate, AppStoreConnectTokenService tokenService) {
+        this(restTemplate, tokenService, Clock.systemUTC());
+    }
+
+    /** Test seam: the clock decides which report days Apple can have published. */
+    AppStoreConnectConnector(RestTemplate restTemplate, AppStoreConnectTokenService tokenService, Clock clock) {
         this.restTemplate = restTemplate;
         this.tokenService = tokenService;
         this.client = new AppStoreAnalyticsClient(restTemplate);
         this.listingClient = new AppStoreListingClient(restTemplate);
+        this.salesClient = new AppStoreSalesClient(restTemplate);
+        this.clock = clock;
     }
 
     @Override
@@ -113,6 +141,9 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
             ConnectorConfigField.userInput("appId", "App Apple ID",
                 "The numeric Apple ID of the app, digits only (App Store Connect → the app → App Information)",
                 FieldType.STRING, true),
+            ConnectorConfigField.userInput("vendorNumber", "Vendor number",
+                "Sales and Trends vendor number, from App Store Connect → Payments and Financial Reports. Optional: "
+                    + "with it, downloads of record are read from Apple's Sales Reports", FieldType.STRING, false),
             ConnectorConfigField.userInput("ratingsCountry", "Ratings country",
                 "Two-letter App Store country the rating is read from (default us)", FieldType.STRING, false),
             // Keyed "apiKey" so the framework stores it as the ENCRYPTED secret (ctx.accessToken()).
@@ -216,6 +247,10 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
         if (!isNumeric(appId)) {
             return Optional.of(APP_ID_MESSAGE);
         }
+        String vendorNumber = vendorNumber(ctx);
+        if (vendorNumber != null && !isNumeric(vendorNumber)) {
+            return Optional.of(VENDOR_NUMBER_MESSAGE);
+        }
         appId = appId.trim();
         String token;
         try {
@@ -259,10 +294,18 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     @Override
     public boolean snapshot(String metric) { return SNAPSHOT_METRICS.contains(metric); }
 
+    /** The same points as {@link #pullDaily}, tagged with {@link #CONTRACT_VERSION}. */
+    @Override
+    public ChannelMetricsPull pull(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        return new ChannelMetricsPull(pullDaily(ctx, from, to), null, null, null, Set.of(), List.of(),
+                CONTRACT_VERSION);
+    }
+
     /**
      * Totals (empty dimension key) and per source type ({@code source:APP_STORE_SEARCH}, ...) for every report
-     * day Apple has published within {@code from..to}; no row for a day it has not. When the window reaches
-     * today the public rating count and average are added for today (best effort).
+     * day Apple has published within {@code from..to}; no row for a day it has not. With a vendor number, the
+     * Sales Reports days Apple has published are added (best effort, never failing the pull). When the window
+     * reaches today the public rating count and average are added for today (best effort).
      */
     @Override
     public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
@@ -305,7 +348,12 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
         List<ChannelMetricPoint> points = new ArrayList<>();
         days.forEach((day, rows) -> emit(day, rows, points));
 
-        if (!to.isBefore(LocalDate.now(ZoneOffset.UTC))) {
+        String vendorNumber = vendorNumber(ctx);
+        if (vendorNumber != null) {
+            points.addAll(pullSales(token, appId, vendorNumber, from, to));
+        }
+
+        if (!to.isBefore(LocalDate.now(clock.withZone(ZoneOffset.UTC)))) {
             try {
                 lookupRatings(appId, country(ctx)).forEach((metric, value) ->
                         points.add(ChannelMetricPoint.total(metric, to, value)));
@@ -317,6 +365,7 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     }
 
     private static void emit(LocalDate day, AppStoreAnalyticsClient.DayRows rows, List<ChannelMetricPoint> out) {
+        Map<String, Double> dayTotals = new HashMap<>();
         for (String metric : REPORT_METRICS) {
             double total = 0;
             boolean present = false;
@@ -328,12 +377,63 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
                 out.add(ChannelMetricPoint.of(metric, "source:" + source.getKey(), day, v));
             }
             if (present) {
+                dayTotals.put(metric, total);
                 out.add(ChannelMetricPoint.total(metric, day, total));
             } else if (rows.coveredMetrics().contains(metric)) {
                 // Apple's TSVs omit zero rows; a processed day with none for this metric really was zero.
+                dayTotals.put(metric, 0.0);
                 out.add(ChannelMetricPoint.total(metric, day, 0));
             }
         }
+        emitTotalDownloads(day, rows, dayTotals, out);
+    }
+
+    /** First-time + redownloads, for the day and per source, wherever both inputs exist (never guessed as 0). */
+    private static void emitTotalDownloads(LocalDate day, AppStoreAnalyticsClient.DayRows rows,
+                                           Map<String, Double> dayTotals, List<ChannelMetricPoint> out) {
+        Double downloads = dayTotals.get(AppStoreAnalyticsClient.M_DOWNLOADS);
+        Double redownloads = dayTotals.get(AppStoreAnalyticsClient.M_REDOWNLOADS);
+        if (downloads != null && redownloads != null) {
+            out.add(ChannelMetricPoint.total(TOTAL_DOWNLOADS, day, downloads + redownloads));
+        }
+        rows.bySource().forEach((source, metrics) -> {
+            Double d = metrics.get(AppStoreAnalyticsClient.M_DOWNLOADS);
+            Double r = metrics.get(AppStoreAnalyticsClient.M_REDOWNLOADS);
+            if (d != null && r != null) {
+                out.add(ChannelMetricPoint.of(TOTAL_DOWNLOADS, "source:" + source, day, d + r));
+            }
+        });
+    }
+
+    // -- sales reports (downloads of record) -----------------------------------------------------------
+
+    /**
+     * One Sales report per day in {@code from..to} that Apple can have published. A day without a report writes
+     * nothing. The first failure (a refused role, a rate limit, an unreadable file) ends the sales part of this
+     * pull: the days already read are kept, the rest are tried again on the next pull, and Analytics is untouched.
+     */
+    private List<ChannelMetricPoint> pullSales(String token, String appId, String vendorNumber,
+                                               LocalDate from, LocalDate to) {
+        if (!isNumeric(vendorNumber)) {
+            log.warn("App Store Connect vendor number for app {} is not numbers only; Sales Reports skipped", appId);
+            return List.of();
+        }
+        LocalDate newest = LocalDate.now(clock.withZone(SALES_REPORT_ZONE)).minusDays(1);
+        List<ChannelMetricPoint> points = new ArrayList<>();
+        for (LocalDate day = from; !day.isAfter(to) && !day.isAfter(newest); day = day.plusDays(1)) {
+            try {
+                Optional<AppStoreSalesClient.SalesDay> report = salesClient.fetchDay(token, vendorNumber, appId, day);
+                if (report.isPresent()) {
+                    points.add(ChannelMetricPoint.total(DOWNLOADS_OF_RECORD, day, report.get().firstTimeDownloads()));
+                    points.add(ChannelMetricPoint.total(SALES_REPORT_DAYS, day, 1));
+                }
+            } catch (RuntimeException e) {
+                log.warn("App Store Connect Sales Reports for app {} failed on {} (sales skipped for this pull): {}",
+                        appId, day, e.getMessage());
+                break;
+            }
+        }
+        return points;
     }
 
     // -- ratings (public iTunes lookup) ----------------------------------------------------------------
@@ -353,6 +453,12 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
         } catch (java.io.IOException e) {
             throw new IllegalStateException("rating lookup returned a response that is not JSON");
         }
+    }
+
+    /** The configured vendor number, trimmed; null when none is set (then Sales Reports are not read at all). */
+    private static String vendorNumber(ConnectionContext ctx) {
+        String raw = str(ctx.configValue("vendorNumber"));
+        return isBlank(raw) ? null : raw.trim();
     }
 
     private static String country(ConnectionContext ctx) {
