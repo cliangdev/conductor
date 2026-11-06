@@ -93,6 +93,7 @@ import {
   setTrackedKeywords,
 } from './tools/growth-signals.js'
 import { getAiVisibility, setAiQuestions, runAiVisibilityCheck } from './tools/ai-visibility.js'
+import { createSwitchbackTest, startSwitchbackTest, getSwitchbackTest, listSwitchbackTests } from './tools/switchback.js'
 import { importMarketingChanges } from './tools/marketing-changes.js'
 import { getCreatorResults } from './tools/creators.js'
 import { createTrackedLink, listTrackedLinks } from './tools/links.js'
@@ -1678,6 +1679,59 @@ export const TOOLS = [
     inputSchema: { type: 'object', properties: {} },
   },
   {
+    name: 'create_switchback_test',
+    description: 'Declare a weekly on/off test of one Apple Ads keyword to see whether paid adds installs or only relabels organic ones. Give weeks, or startWeek (a Monday) with weekCount (2-12, alternating, first week ON). The rule and minimum n are fixed up front (defaults: total installs up by at least 1 a week, organic down by at most 20%, 20 search downloads). Creates a draft; call start_switchback_test to freeze it. A person switches the keyword in the ad platform or through Rexipe\'s gated tool; Conductor never does. Requires the Editor role (or Admin). Verify with get_switchback_test.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'A label for the test' },
+        keywordId: { type: 'string', description: 'The Apple Ads keyword id' },
+        keywordText: { type: 'string', description: 'The keyword text' },
+        weeks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              weekStart: { type: 'string', description: 'A Monday, yyyy-MM-dd (UTC)' },
+              on: { type: 'boolean', description: 'true = keyword on that week, false = off' },
+            },
+            required: ['weekStart', 'on'],
+          },
+          description: 'Consecutive Mondays with at least one on and one off week (omit when using startWeek and weekCount)',
+        },
+        startWeek: { type: 'string', description: 'First Monday, yyyy-MM-dd; use with weekCount instead of weeks' },
+        weekCount: { type: 'integer', description: 'How many weeks, 2-12; used with startWeek' },
+        minN: { type: 'integer', description: 'Fewest first-time search downloads across all weeks a verdict may rest on (default 20)' },
+        minLift: { type: 'number', description: 'Extra total first-time installs a week paid must add (default 1)' },
+        maxCannibalisationPct: { type: 'number', description: 'Most the on-week organic mean may fall, in percent (default 20)' },
+      },
+      required: ['name', 'keywordId', 'keywordText'],
+    },
+  },
+  {
+    name: 'start_switchback_test',
+    description: 'Start a drafted switchback test: from now its weeks and rule cannot change (edits are refused). The first week must not have begun. The test then settles itself once its last week has ended and the daily data is settled, recording the verdict as a reviewed change; no polling needed. Requires the Editor role (or Admin). Verify with get_switchback_test, which also says which state the keyword should be in this week.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The test id' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'get_switchback_test',
+    description: 'One switchback test: its plan, the rule, which state (ON, OFF or not running) the keyword should be in this week, what it is waiting for when its last week has ended but data is not settled, and once settled the verdict, per-week figures, n reached and the change Work Item that records it. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The test id' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'list_switchback_tests',
+    description: 'The workspace\'s switchback tests, newest first, with status, this week\'s state and any verdict. Read-only. Read one with get_switchback_test.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'import_marketing_changes',
     description: 'Import a marketing change log from a local JSONL file (one record per line: id, date, type, title, status, changed, evidence[], hypothesis, baseline, control, live_since, review_on, outcome, verdict, lesson, stop_rules, stop_rules_note) as Changes on the MARKETING_CHANGES workflow, each in the status its record has. Reference records are skipped; an unknown status or verdict refuses that record and names it, never guessed. A bad line stops everything before anything is sent. Safe to run again: a record already imported (same source and id) is left alone. Requires the Editor role (or Admin). Verify with get_marketing_report (changes).',
     inputSchema: {
@@ -3203,6 +3257,30 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'run_ai_visibility_check': {
           return successResponse(await runAiVisibilityCheck(config))
+        }
+        case 'create_switchback_test': {
+          return successResponse(
+            await createSwitchbackTest(config, {
+              name: params['name'] as string,
+              keywordId: params['keywordId'] as string,
+              keywordText: params['keywordText'] as string,
+              weeks: params['weeks'] as Array<{ weekStart: string; on: boolean }> | undefined,
+              startWeek: params['startWeek'] as string | undefined,
+              weekCount: params['weekCount'] as number | undefined,
+              minN: params['minN'] as number | undefined,
+              minLift: params['minLift'] as number | undefined,
+              maxCannibalisationPct: params['maxCannibalisationPct'] as number | undefined,
+            })
+          )
+        }
+        case 'start_switchback_test': {
+          return successResponse(await startSwitchbackTest(config, { id: params['id'] as string }))
+        }
+        case 'get_switchback_test': {
+          return successResponse(await getSwitchbackTest(config, { id: params['id'] as string }))
+        }
+        case 'list_switchback_tests': {
+          return successResponse(await listSwitchbackTests(config))
         }
         case 'import_marketing_changes': {
           return successResponse(

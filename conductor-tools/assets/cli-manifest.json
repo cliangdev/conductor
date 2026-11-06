@@ -1012,6 +1012,38 @@
       "requiredParams": []
     },
     {
+      "name": "create_switchback_test",
+      "description": "Declare a weekly on/off test of one Apple Ads keyword (weeks, decision rule and minimum n fixed up front) to see whether paid adds installs or only relabels organic ones. A person applies the switch; the test settles itself.",
+      "category": "marketing",
+      "requiredParams": [
+        "name",
+        "keywordId",
+        "keywordText"
+      ]
+    },
+    {
+      "name": "start_switchback_test",
+      "description": "Start a drafted switchback test: its weeks and rule are frozen and it settles itself into a reviewed change once the last week has ended and the data is settled.",
+      "category": "marketing",
+      "requiredParams": [
+        "id"
+      ]
+    },
+    {
+      "name": "get_switchback_test",
+      "description": "One switchback test: plan, rule, the state the keyword should be in this week, and once settled the verdict, per-week figures, n reached and the change that records it.",
+      "category": "marketing",
+      "requiredParams": [
+        "id"
+      ]
+    },
+    {
+      "name": "list_switchback_tests",
+      "description": "The workspace's switchback tests with status, this week's state and any verdict.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
       "name": "import_marketing_changes",
       "description": "Import a marketing change log from a local JSONL file as Changes on the MARKETING_CHANGES workflow. Reference records are skipped, an unknown status or verdict refuses that record, and re-running skips what was already imported.",
       "category": "marketing",
