@@ -971,7 +971,7 @@
     },
     {
       "name": "render_creative",
-      "description": "Render a Creative locally to upload-ready frames (JPEG per placement; MP4 for MOTION, a CAROUSEL with a track, or a CLIP with new audio, encoded with ffmpeg here), or a contact sheet with previewOnly. Runs synchronously and returns the render id, state and frame URLs.",
+      "description": "Render a Creative locally to upload-ready frames (JPEG per placement; MP4 for MOTION, a CAROUSEL with a track, or a CLIP with new audio, encoded with ffmpeg here), or a contact sheet with previewOnly. Runs synchronously and returns the render id, state and frame URLs. A CAROUSEL or CLIP with a 9x16 placement also reports checks for text under the platform UI (reported only, never blocking).",
       "category": "marketing",
       "requiredParams": [
         "creativeId"
@@ -979,7 +979,7 @@
     },
     {
       "name": "preview_creative",
-      "description": "Look at a Creative: returns its latest contact sheet as an image, rendering a fresh preview first if none exists yet.",
+      "description": "Look at a Creative: returns its latest contact sheet as an image, rendering a fresh preview first if none exists yet. A saved CAROUSEL or CLIP with a 9x16 placement is also checked for text under the platform UI (checks, passed) and gets Instagram/TikTok UI overlay sheets on disk.",
       "category": "marketing",
       "requiredParams": [
         "creativeId"
@@ -1026,7 +1026,7 @@
     },
     {
       "name": "preview_creative_draft",
-      "description": "Look at a Creative before anything is saved: renders a draft locally from the create_creative fields plus local files (photoPath, clipPath, audioPath) and returns the contact sheet as an image; a CAROUSEL with a track also renders its slideshow MP4 and returns the path. Never writes to Conductor; commit only after the person approves.",
+      "description": "Look at a Creative before anything is saved: renders a draft locally from the create_creative fields plus local files (photoPath, clipPath, audioPath) and returns the contact sheet as an image; a CAROUSEL with a track also renders its slideshow MP4 and returns the path, timing each slide from its text when slideDurations is omitted. Finished 9:16 slides and CLIP videos (clipPath or clipPaths, no commit) are checked for text under the platform UI (checks, passed) and shown with the Instagram UI drawn over them (overlaySheets, uiOverlay). Never writes to Conductor; commit only after the person approves.",
       "category": "marketing"
     },
     {
@@ -1039,7 +1039,7 @@
     },
     {
       "name": "attach_creative_to_post",
-      "description": "Attach a Creative's rendered frames to a Post as its media, placement to platform, for every destination without its own custom media. A CAROUSEL with a track is sent per target as photos or its slideshow video (carouselAs). Call get_post_status (postId) to verify.",
+      "description": "Attach a Creative's rendered frames to a Post as its media, placement to platform, for every destination without its own custom media. A CAROUSEL with a track is sent per target as photos or its slideshow video (carouselAs). A CAROUSEL or CLIP with text under the platform UI is refused (SAFE_ZONE_TEXT) unless ignoreSafeZone is true. Call get_post_status (postId) to verify.",
       "category": "marketing",
       "requiredParams": [
         "creativeId",

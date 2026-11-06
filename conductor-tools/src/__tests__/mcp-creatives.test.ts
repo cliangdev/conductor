@@ -1445,8 +1445,10 @@ describe('preview_creative (MOTION)', () => {
 describe('attach_creative_to_post', () => {
   it('uses the given renderId without listing renders', async () => {
     mocked(apiPost).mockResolvedValue({ assets: [] })
+    mocked(apiGet).mockResolvedValue({ kind: 'STILL' })
     await attachCreativeToPost({ creativeId: 'c1', workItemId: 'w1', renderId: 'r9' }, config)
-    expect(apiGet).not.toHaveBeenCalled()
+    // Only the Creative is read (for its kind, to decide on the pixel pre-flight); the render list is not.
+    expect(apiGet).not.toHaveBeenCalledWith(expect.stringContaining('/renders'), expect.anything())
     expect(apiPost).toHaveBeenCalledWith(
       '/api/v2/projects/proj-1/marketing/creatives/c1/attach',
       { renderId: 'r9', workItemId: 'w1' },
