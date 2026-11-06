@@ -92,6 +92,7 @@ import {
   setTrackedKeywords,
 } from './tools/growth-signals.js'
 import { importMarketingChanges } from './tools/marketing-changes.js'
+import { createTrackedLink, listTrackedLinks } from './tools/links.js'
 import {
   getBrandKit,
   updateBrandKit,
@@ -1623,6 +1624,33 @@ export const TOOLS = [
     },
   },
   {
+    name: 'create_tracked_link',
+    description: 'Create an App Store campaign link (pt/ct) for a bio, creator, email or any other place, and return its url. Every new Post already gets one automatically, so use this for the rest. token is the ct (lowercase letters, digits, dashes, at most 40); family groups tokens so their downloads add up past Apple\'s reporting threshold (about 5 per token). One kind per family. Needs an App Store Connect connection with its provider token set. Requires the Editor role (or Admin). Verify with list_tracked_links.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['POST', 'BIO', 'CREATOR', 'EMAIL', 'OTHER'], description: 'What the link is for. POST needs workItemId' },
+        family: { type: 'string', description: 'The group the token rolls up into, e.g. creators (lowercase letters, digits, dashes, at most 64)' },
+        token: { type: 'string', description: 'The campaign token (ct)' },
+        label: { type: 'string', description: 'What the link is for, at most 200 characters (optional)' },
+        workItemId: { type: 'string', description: 'The Work Item it belongs to, e.g. the creator (optional; required for POST)' },
+      },
+      required: ['kind', 'family', 'token'],
+    },
+  },
+  {
+    name: 'list_tracked_links',
+    description: 'List tracked App Store links, newest first, with their urls. withPerformance adds per family: tokens, first-time downloads over the last 28 settled days and, for Post links, views. A family Apple reported nothing for has downloads null and belowThreshold true ("below Apple\'s reporting threshold"), which is not 0. Read-only. Create more with create_tracked_link; a Post\'s own link is also in get_post_status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['POST', 'BIO', 'CREATOR', 'EMAIL', 'OTHER'], description: 'Only this kind (optional)' },
+        workItemId: { type: 'string', description: 'Only the links of this Work Item (optional)' },
+        withPerformance: { type: 'boolean', description: 'Add downloads and views per family (default false)' },
+      },
+    },
+  },
+  {
     name: 'submit_review',
     description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned member holding the Reviewer role (or an Admin). Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step the person does in their own browser (request_tiktok_consent hands them the link), not this tool. Returns the confirmation table.',
     inputSchema: {
@@ -3073,6 +3101,26 @@ export async function runMcpServer(): Promise<void> {
             await importMarketingChanges(config, {
               filePath: params['filePath'] as string,
               source: params['source'] as string | undefined,
+            })
+          )
+        }
+        case 'create_tracked_link': {
+          return successResponse(
+            await createTrackedLink(config, {
+              kind: params['kind'] as string,
+              family: params['family'] as string,
+              token: params['token'] as string,
+              label: params['label'] as string | undefined,
+              workItemId: params['workItemId'] as string | undefined,
+            })
+          )
+        }
+        case 'list_tracked_links': {
+          return successResponse(
+            await listTrackedLinks(config, {
+              kind: params['kind'] as string | undefined,
+              workItemId: params['workItemId'] as string | undefined,
+              withPerformance: params['withPerformance'] as boolean | undefined,
             })
           )
         }

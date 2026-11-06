@@ -28,6 +28,7 @@ import com.conductor.workflow.lifecycle.StatechartTransition;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -75,6 +76,7 @@ public class WorkItemService {
     private final PostScheduleValidator postScheduleValidator;
     private final WorkItemHierarchyService hierarchyService;
     private final MilestoneService milestoneService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public WorkItemService(
             WorkItemRepository workItemRepository,
@@ -93,7 +95,9 @@ public class WorkItemService {
             PublishPlatformRegistry platformRegistry,
             PostScheduleValidator postScheduleValidator,
             WorkItemHierarchyService hierarchyService,
-            MilestoneService milestoneService) {
+            MilestoneService milestoneService,
+            ApplicationEventPublisher eventPublisher) {
+        this.eventPublisher = eventPublisher;
         this.hierarchyService = hierarchyService;
         this.milestoneService = milestoneService;
         this.platformRegistry = platformRegistry;
@@ -245,8 +249,16 @@ public class WorkItemService {
         workItem.setSequenceNumber(nextSeq);
 
         workItemRepository.save(workItem);
+        eventPublisher.publishEvent(new Created(workItem));
         return workItem;
     }
+
+    /**
+     * Published synchronously, inside the creating transaction, once a Work Item is saved: a listener joins that
+     * transaction, so what it writes exists exactly when the Work Item does. (An after-commit listener would hold
+     * a second pooled connection while the first is still bound.)
+     */
+    public record Created(WorkItem workItem) {}
 
     /**
      * Canonical patch-Work-Item business logic, returning the persisted entity. The v2 controller maps the

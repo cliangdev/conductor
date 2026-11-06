@@ -30,6 +30,7 @@ import org.mockito.Spy;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.io.InputStream;
 import java.time.OffsetDateTime;
@@ -99,6 +100,9 @@ class WorkItemServiceTest {
 
     @Mock
     private MilestoneService milestoneService;
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     private WorkItemService workItemService;

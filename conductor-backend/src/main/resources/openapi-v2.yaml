@@ -24,6 +24,8 @@ tags:
     description: Seasonal moments, the weekly ratings program and the competitor watch, from public data
   - name: marketing-changes
     description: Marketing change records (the MARKETING_CHANGES workflow), imported from an outside change log
+  - name: marketing-links
+    description: Tracked App Store campaign links for Posts, bios, creators and email, and the downloads they bring
   - name: work-items
     description: Work Item management endpoints (canonical successor to v1 issues)
   - name: work-item-tree
@@ -5023,6 +5025,202 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/links:
+    get:
+      tags:
+        - marketing-links
+      summary: List the project's tracked links, newest first
+      description: >-
+        A tracked link is an App Store campaign link (`pt` provider token, `ct` campaign token) that tells Apple
+        which Post, bio, creator or email a first-time download came from. Every new Post in a publishing Workflow
+        gets one automatically (kind POST, family `posts`) once the project's App Store Connect connection has an
+        app id and a provider token. `url` is stored as it was handed out. Filter by `kind` (POST, BIO, CREATOR,
+        EMAIL or OTHER) or by the Work Item the link belongs to. Any project member can read.
+      operationId: listTrackedLinks
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "POST, BIO, CREATOR, EMAIL or OTHER. Omit for every kind."
+        - name: workItemId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Only the links that belong to this Work Item.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: "How many links to return, 1 to 1000. Default 200. `total` always counts every match."
+      responses:
+        "200":
+          description: The links
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackedLinkListResponse"
+        "400":
+          description: kind is not one of the five kinds, or limit is out of range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - marketing-links
+      summary: Create a tracked link for a bio, creator, email or Post
+      description: >-
+        Builds `https://apps.apple.com/app/apple-store/id{appId}?pt={providerToken}&ct={token}` from the project's
+        App Store Connect connection. `token` (the `ct`) is lowercase letters, digits and dashes, starting with a
+        letter or digit, at most 40 characters. `family` (lowercase letters, digits and dashes, at most 64) is how
+        tokens roll up: Apple drops downloads below about 5 per token, so one family can show downloads where each
+        token alone would show none. A family holds one kind of link, and the family `posts` is reserved for POST
+        links. A POST link needs `workItemId` and a Post has at most one. Requires ADMIN or CREATOR. Answers 409 when
+        the project has no App Store Connect connection or the connection has no provider token (App Store Connect →
+        App Analytics → Campaigns → Generate a Link), when the token is taken, when the family holds another kind of
+        link, or when the Post already has a link.
+      operationId: createTrackedLink
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTrackedLinkRequest"
+      responses:
+        "201":
+          description: The new link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackedLink"
+        "400":
+          description: kind, family or token is missing or malformed, a POST link has no workItemId, or the family `posts` was used for another kind
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: workItemId is not a Work Item of this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: No App Store Connect connection or provider token, the token is taken, the family holds another kind of link, or the Post already has a link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/links/performance:
+    get:
+      tags:
+        - marketing-links
+      summary: Downloads and views per link family
+      description: >-
+        Per family: how many tokens it has, first-time downloads Apple attributed to those tokens over the window
+        (the App Downloads Detailed report, settled days only), and for POST links the latest views of the linked
+        Posts' destinations. Apple omits a token's downloads below its privacy threshold (about 5), so a family with
+        no row in the window is never read as 0: `downloads` is null, `belowThreshold` is true and `note` says
+        "below Apple's reporting threshold". `views` is cumulative as of each destination's latest snapshot (not
+        limited to the window) and is null when no linked Post has reported views. The window defaults to the last
+        28 settled days: it ends on the latest settled App Store day (yesterday when there is none) and starts 27
+        days earlier. Days are UTC.
+      operationId: getTrackedLinkPerformance
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: "First day, inclusive (UTC). With only `to`, 27 days before it."
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: "Last day, inclusive (UTC). With only `from`, the default end day."
+      responses:
+        "200":
+          description: The families, ordered by family
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkPerformanceResponse"
+        "400":
+          description: from is after to, or the window is longer than 366 days
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
           content:
             application/json:
               schema:
@@ -10985,6 +11183,65 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/StopRule"
+
+    TrackedLink:
+      type: object
+      required: [id, kind, family, token, url, createdAt]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [POST, BIO, CREATOR, EMAIL, OTHER]}
+        family: {type: string, description: "The group tokens roll up into, e.g. posts."}
+        token: {type: string, description: "The campaign token (`ct`)."}
+        url: {type: string, description: "The App Store campaign link, as handed out when the link was made."}
+        workItemId: {type: string, nullable: true, description: "The Post (or creator) this link belongs to. Null once that Work Item is deleted, or for a link not tied to one."}
+        label: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+
+    TrackedLinkListResponse:
+      type: object
+      required: [links, total]
+      properties:
+        links:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackedLink"
+        total:
+          type: integer
+          format: int64
+          description: How many links match, which can exceed the number returned.
+
+    CreateTrackedLinkRequest:
+      type: object
+      required: [kind, family, token]
+      properties:
+        kind: {type: string, enum: [POST, BIO, CREATOR, EMAIL, OTHER]}
+        family: {type: string, description: "Lowercase letters, digits and dashes, starting with a letter or digit, at most 64 characters."}
+        token: {type: string, description: "Lowercase letters, digits and dashes, starting with a letter or digit, at most 40 characters."}
+        label: {type: string, description: "What the link is for, at most 200 characters."}
+        workItemId: {type: string, description: "The Work Item the link belongs to. Required for kind POST."}
+
+    LinkFamilyPerformance:
+      type: object
+      required: [family, kind, tokens, belowThreshold]
+      properties:
+        family: {type: string}
+        kind: {type: string, enum: [POST, BIO, CREATOR, EMAIL, OTHER]}
+        tokens: {type: integer, description: "How many links the family holds."}
+        downloads: {type: integer, format: int64, nullable: true, description: "First-time downloads over the window, settled days. Null (never 0) when no token of the family has a row in the window."}
+        belowThreshold: {type: boolean, description: "True when no token of the family has a row in the window: Apple reports nothing under its privacy threshold."}
+        note: {type: string, nullable: true, description: "The words \"below Apple's reporting threshold\" when belowThreshold."}
+        views: {type: integer, format: int64, nullable: true, description: "POST families only: the latest views of the linked Posts' destinations, cumulative. Null when none has reported views."}
+
+    LinkPerformanceResponse:
+      type: object
+      required: [from, to, families]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        families:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkFamilyPerformance"
 
     OverviewMetricDefinition:
       type: object

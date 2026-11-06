@@ -148,6 +148,9 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
             ConnectorConfigField.userInput("vendorNumber", "Vendor number",
                 "Sales and Trends vendor number, from App Store Connect → Payments and Financial Reports. Optional: "
                     + "with it, downloads of record are read from Apple's Sales Reports", FieldType.STRING, false),
+            ConnectorConfigField.userInput("providerToken", "App Store Connect provider token (pt)",
+                "App Store Connect → App Analytics → Campaigns → Generate a Link (the number after pt=). Optional: "
+                    + "with it, every new Post gets its own campaign link", FieldType.STRING, false),
             ConnectorConfigField.userInput("ratingsCountry", "Ratings country",
                 "Two-letter App Store country the rating is read from (default us)", FieldType.STRING, false),
             // Keyed "apiKey" so the framework stores it as the ENCRYPTED secret (ctx.accessToken()).
