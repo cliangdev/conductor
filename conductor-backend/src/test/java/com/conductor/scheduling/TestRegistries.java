@@ -6,6 +6,7 @@ import com.conductor.knowledge.KnowledgeIngestScheduler;
 import com.conductor.knowledge.KnowledgeRetentionService;
 import com.conductor.marketing.aivisibility.AiVisibilityJob;
 import com.conductor.marketing.growth.GrowthSignalsJob;
+import com.conductor.marketing.switchback.SwitchbackSettleJob;
 import com.conductor.memory.MemoryMaintenanceScheduler;
 import com.conductor.service.ActionInvocationService;
 import com.conductor.service.DaemonEventService;
@@ -32,7 +33,7 @@ public final class TestRegistries {
                 mock(NativePublishConfirmationPoller.class), mock(PublishOutcomeService.class),
                 mock(WebhookRetryScheduler.class), mock(PostPublishScheduler.class),
                 mock(WorkflowExecutionEngine.class), mock(WorkflowScheduler.class), mock(GrowthSignalsJob.class),
-                mock(AiVisibilityJob.class));
+                mock(AiVisibilityJob.class), mock(SwitchbackSettleJob.class));
     }
 
     public static java.time.Duration fixedDelay(String job) {

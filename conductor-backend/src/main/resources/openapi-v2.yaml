@@ -26,6 +26,8 @@ tags:
     description: Weekly checks of whether AI assistants name the brand for a fixed set of questions
   - name: marketing-changes
     description: Marketing change records (the MARKETING_CHANGES workflow), imported from an outside change log
+  - name: marketing-switchback
+    description: Weekly on/off incrementality tests of one Apple Ads keyword, which settle themselves into a change record
   - name: marketing-creators
     description: What a creator (the CREATORS workflow) has produced - its posts, campaign-link downloads and offer-code redemptions
   - name: marketing-links
@@ -4389,6 +4391,328 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: The project has no MARKETING_CHANGES workflow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/switchback-tests:
+    get:
+      tags:
+        - marketing-switchback
+      summary: List the project's switchback tests, newest first
+      description: >-
+        Every test in every status, each with the state its keyword should be in this week (`currentWeek`) and,
+        once settled, its result. Any project member may read.
+      operationId: listSwitchbackTests
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The tests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTestList"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - marketing-switchback
+      summary: Declare a switchback test (a draft)
+      description: >-
+        Declares the plan of an on/off test of one Apple Ads keyword: 2 to 12 consecutive weeks (each a Monday, UTC)
+        with the keyword on or off in each, at least one of each; the decision rule (default: paid is incremental when
+        the on-week mean of total first-time installs beats the off-week mean by at least 1 and the on-week mean of
+        organic search first-time downloads does not fall by more than 20 percent); and `minN`, the fewest
+        first-time App Store search downloads across all weeks a verdict may rest on (default 20). The test is a
+        DRAFT until started and can be edited until then. Conductor never switches the keyword: a person applies
+        each week's state in the ad platform or through a gated tool, and the test settles itself afterwards.
+        Requires ADMIN or CREATOR.
+      operationId: createSwitchbackTest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSwitchbackTestRequest"
+      responses:
+        "201":
+          description: The draft test
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTest"
+        "400":
+          description: Blank or over-long name, keywordId or keywordText; weeks that are not 2 to 12 consecutive Mondays with at least one on and one off; an unknown rule metric, a negative minLift, a maxCannibalisationPct outside 0-100, or a minN below 1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/switchback-tests/{testId}:
+    get:
+      tags:
+        - marketing-switchback
+      summary: Read one switchback test
+      description: >-
+        The plan, the decision rule (with its sentence), `currentWeek` (ON, OFF or "not running": the state the
+        keyword should be in today, UTC) and, once the test has settled, the verdict and the per-week result with
+        the n reached. A running test whose last week has ended but whose data is not settled yet reports what it is
+        `waitingFor`. A test never settles on provisional days.
+      operationId: getSwitchbackTest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: testId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The test
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTest"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such test in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      tags:
+        - marketing-switchback
+      summary: Edit a draft switchback test
+      description: >-
+        Changes a DRAFT test's name, keyword, weeks, decision rule or minN; a field left out is unchanged. Once a test
+        is RUNNING (and after it settles or is cancelled) its weeks and rule are fixed and every edit is refused with
+        409. Requires ADMIN or CREATOR.
+      operationId: updateSwitchbackTest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: testId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSwitchbackTestRequest"
+      responses:
+        "200":
+          description: The edited draft
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTest"
+        "400":
+          description: The same checks as creating a test
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such test in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The test is no longer a draft, so its weeks and rule are fixed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/switchback-tests/{testId}/start:
+    post:
+      tags:
+        - marketing-switchback
+      summary: Start a switchback test
+      description: >-
+        DRAFT to RUNNING. From now on the weeks and the decision rule cannot change. The first week must not have
+        begun (its Monday must be today or later, UTC), and no other running test of the same keyword may cover any
+        of the same weeks. Refused with 409 otherwise. Requires ADMIN or CREATOR.
+      operationId: startSwitchbackTest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: testId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The running test
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTest"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such test in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Not a draft, the first week has already begun, or another running test of this keyword overlaps its weeks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/switchback-tests/{testId}/cancel:
+    post:
+      tags:
+        - marketing-switchback
+      summary: Cancel a switchback test
+      description: >-
+        DRAFT or RUNNING to CANCELLED; no verdict is recorded and no change is written. Cancelling a cancelled test
+        changes nothing. A test that has settled cannot be cancelled. Requires ADMIN or CREATOR.
+      operationId: cancelSwitchbackTest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: testId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The cancelled test
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTest"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such test in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The test has already settled
           content:
             application/json:
               schema:
@@ -12415,6 +12739,148 @@ components:
         displayId: {type: string}
         recordId: {type: string, description: "The id the record has in the source log."}
         status: {type: string, description: "The status the Work Item was created in."}
+
+    SwitchbackPlanWeek:
+      type: object
+      required: [weekStart, "on"]
+      properties:
+        weekStart: {type: string, format: date, description: "A Monday (UTC). The week runs Monday to Sunday."}
+        "on": {type: boolean, description: "Whether the keyword should be switched on (true) or off (false) this week."}
+
+    SwitchbackDecisionRule:
+      type: object
+      required: [metric, minLift, maxCannibalisationPct, incrementalIf]
+      properties:
+        metric: {type: string, description: "What is compared. Only organic_search_first_time_downloads (search first-time downloads minus Apple Ads first-time downloads) is supported."}
+        minLift: {type: number, format: double, description: "How many more total first-time installs a week (mean of on weeks minus mean of off weeks) paid must add to count as incremental."}
+        maxCannibalisationPct: {type: number, format: double, description: "How far, in percent, the on-week mean of organic first-time downloads may fall below the off-week mean before paid counts as relabelling organic."}
+        incrementalIf: {type: string, description: "The rule in one sentence, computed from the fields above."}
+
+    SwitchbackDecisionRuleInput:
+      type: object
+      description: Any field left out takes its default.
+      properties:
+        metric: {type: string, description: "Only organic_search_first_time_downloads (the default)."}
+        minLift: {type: number, format: double, minimum: 0, description: "Default 1."}
+        maxCannibalisationPct: {type: number, format: double, minimum: 0, maximum: 100, description: "Default 20."}
+
+    SwitchbackCurrentWeek:
+      type: object
+      required: [state]
+      properties:
+        state: {type: string, description: "ON or OFF: the state the keyword should be in today (UTC). \"not running\" when the test is not running, or today falls before its first week or after its last."}
+        weekStart: {type: string, format: date, nullable: true, description: "Monday of the week today falls in; null when not running."}
+        weekEnd: {type: string, format: date, nullable: true, description: "Sunday of that week; null when not running."}
+
+    SwitchbackResultWeek:
+      type: object
+      required: [weekStart, "on", searchDownloads, adsNewDownloads, organic, totalInstalls]
+      properties:
+        weekStart: {type: string, format: date}
+        "on": {type: boolean}
+        searchDownloads: {type: number, format: double, description: "App Store first-time downloads from search, summed over the week's settled days."}
+        adsNewDownloads: {type: number, format: double, description: "Apple Ads tap first-time downloads, summed over the same days."}
+        organic: {type: number, format: double, description: "searchDownloads minus adsNewDownloads, floored at 0 for the week."}
+        totalInstalls: {type: number, format: double, description: "organic plus adsNewDownloads."}
+
+    SwitchbackResultMeans:
+      type: object
+      required: [weeks, meanOrganic, meanTotalInstalls]
+      properties:
+        weeks: {type: integer, format: int32}
+        meanOrganic: {type: number, format: double, description: "Mean weekly organic first-time downloads, two decimals."}
+        meanTotalInstalls: {type: number, format: double, description: "Mean weekly total first-time installs, two decimals."}
+
+    SwitchbackResult:
+      type: object
+      description: The settled snapshot. It is stored when the test settles and never recomputed.
+      required: [weeks, onWeeks, offWeeks, n, minN, lift, verdict, reason]
+      properties:
+        weeks:
+          type: array
+          items:
+            $ref: "#/components/schemas/SwitchbackResultWeek"
+        onWeeks:
+          $ref: "#/components/schemas/SwitchbackResultMeans"
+        offWeeks:
+          $ref: "#/components/schemas/SwitchbackResultMeans"
+        n: {type: integer, format: int64, description: "First-time App Store search downloads across all weeks: the n the verdict rests on."}
+        minN: {type: integer, format: int32}
+        lift: {type: number, format: double, description: "On-week mean of total installs minus the off-week mean."}
+        organicChangePct: {type: number, format: double, nullable: true, description: "Change of the on-week organic mean against the off-week mean, in percent (negative = fell). Null when the off-week mean is 0, since nothing could fall."}
+        verdict: {type: string, description: "worked (paid is incremental), did_not_work (paid only relabels organic), no_effect or inconclusive (n below minN)."}
+        reason: {type: string, description: "One sentence saying why; for an inconclusive test it states the n reached against the minimum."}
+
+    SwitchbackTest:
+      type: object
+      required: [id, name, keywordId, keywordText, status, weeks, decisionRule, minN, currentWeek, createdAt]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        keywordId: {type: string, description: "The Apple Ads keyword id (the id in `keyword:{id}:{text}` rows)."}
+        keywordText: {type: string}
+        status: {type: string, enum: [DRAFT, RUNNING, SETTLED, INCONCLUSIVE, CANCELLED]}
+        weeks:
+          type: array
+          items:
+            $ref: "#/components/schemas/SwitchbackPlanWeek"
+        decisionRule:
+          $ref: "#/components/schemas/SwitchbackDecisionRule"
+        minN: {type: integer, format: int32, description: "The fewest first-time search downloads, across all weeks, a verdict may rest on."}
+        verdict: {type: string, nullable: true, description: "Null until the test settles."}
+        currentWeek:
+          $ref: "#/components/schemas/SwitchbackCurrentWeek"
+        waitingFor: {type: string, nullable: true, description: "Set on a running test whose last week has ended but whose days are not all settled yet, naming what is missing. Null otherwise."}
+        result:
+          allOf:
+            - $ref: "#/components/schemas/SwitchbackResult"
+          nullable: true
+        changeWorkItemId: {type: string, nullable: true, description: "The REVIEWED MARKETING_CHANGES Work Item that recorded the verdict; null until the test settles."}
+        createdAt: {type: string, format: date-time}
+        startedAt: {type: string, format: date-time, nullable: true}
+        settledAt: {type: string, format: date-time, nullable: true}
+
+    SwitchbackTestList:
+      type: object
+      required: [tests]
+      properties:
+        tests:
+          type: array
+          items:
+            $ref: "#/components/schemas/SwitchbackTest"
+
+    CreateSwitchbackTestRequest:
+      type: object
+      required: [name, keywordId, keywordText, weeks]
+      properties:
+        name: {type: string, maxLength: 200}
+        keywordId: {type: string, maxLength: 64, description: "The Apple Ads keyword id."}
+        keywordText: {type: string, maxLength: 200}
+        weeks:
+          type: array
+          minItems: 2
+          maxItems: 12
+          items:
+            $ref: "#/components/schemas/SwitchbackPlanWeek"
+        minN: {type: integer, format: int32, minimum: 1, description: "Default 20."}
+        decisionRule:
+          $ref: "#/components/schemas/SwitchbackDecisionRuleInput"
+
+    UpdateSwitchbackTestRequest:
+      type: object
+      description: A field left out is unchanged. An empty `weeks` list counts as left out; the same 2 to 12 week check as creating applies to any weeks sent.
+      properties:
+        name: {type: string, maxLength: 200}
+        keywordId: {type: string, maxLength: 64}
+        keywordText: {type: string, maxLength: 200}
+        weeks:
+          type: array
+          maxItems: 12
+          items:
+            $ref: "#/components/schemas/SwitchbackPlanWeek"
+        minN: {type: integer, format: int32, minimum: 1}
+        decisionRule:
+          $ref: "#/components/schemas/SwitchbackDecisionRuleInput"
 
     CreatorResults:
       type: object
