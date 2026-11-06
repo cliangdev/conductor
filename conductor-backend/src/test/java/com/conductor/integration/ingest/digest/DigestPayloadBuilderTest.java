@@ -95,6 +95,24 @@ class DigestPayloadBuilderTest {
     }
 
     @Test
+    void changesDueForReviewFromExtraAreCopiedVerbatimWhenPresentAndNonEmpty() {
+        IngestSpec spec = gscLikeSpec();
+        ChangeDetectionResult result = resultWith(List.of(), Map.of(), false, null);
+        Map<String, Object> section = Map.of(
+                "label", "Changes past their review date with no verdict", "count", 1,
+                "changes", List.of(Map.of("displayId", "MK-3", "title", "New title", "status", "LIVE",
+                        "dueOn", "2026-10-20")));
+
+        Map<String, Object> with = builder.build(spec, "2026-W30", result, Map.of("changesDueForReview", section));
+        assertThat(with).containsEntry("changesDueForReview", section);
+
+        Map<String, Object> empty = builder.build(spec, "2026-W30", result, Map.of("changesDueForReview", Map.of()));
+        assertThat(empty).doesNotContainKey("changesDueForReview");
+
+        assertThat(builder.build(spec, "2026-W30", result)).doesNotContainKey("changesDueForReview");
+    }
+
+    @Test
     void surfacesPeriodMoversComparedToLowConfidenceReasonDomainAndPagePath() {
         IngestSpec spec = gscLikeSpec();
         List<MetricChange> changes = List.of(

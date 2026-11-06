@@ -19,7 +19,7 @@
       "key": "verdict",
       "label": "Verdict",
       "type": "enum",
-      "options": ["worked", "did_not_work", "inconclusive"],
+      "options": ["worked", "did_not_work", "no_effect", "expected", "inconclusive"],
       "requiredIn": ["REVIEWED"]
     },
     { "key": "lesson", "label": "Lesson", "type": "longtext", "requiredIn": ["REVIEWED"] },

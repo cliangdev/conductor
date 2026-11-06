@@ -21,6 +21,9 @@ import java.util.Map;
  */
 public class DigestPayloadBuilder {
 
+    /** The connector payload key naming marketing changes whose review is overdue; see {@code MarketingInsightsSnapshotQuery}. */
+    public static final String CHANGES_DUE_FOR_REVIEW = "changesDueForReview";
+
     public Map<String, Object> build(IngestSpec spec, String periodKey, ChangeDetectionResult result) {
         return build(spec, periodKey, result, Map.of());
     }
@@ -28,8 +31,9 @@ public class DigestPayloadBuilder {
     /**
      * Same as {@link #build(IngestSpec, String, ChangeDetectionResult)}, plus a narrow, already-narrated-
      * safe {@code extra} passthrough: today only its {@code hookWinners} key (COND-24 T5 — decided
-     * creative experiments since the last run) is copied onto the payload verbatim, when present and
-     * non-empty. This is not a general escape hatch for raw data — {@code extra} is the connector's own
+     * creative experiments since the last run) and its {@code changesDueForReview} section (marketing
+     * changes past their review date with no verdict) are copied onto the payload verbatim, when present
+     * and non-empty. This is not a general escape hatch for raw data — {@code extra} is the connector's own
      * raw pulled snapshot, and every other key in it is still deliberately ignored, for the same reason
      * the class javadoc gives: the narrator must never see anything beyond already-computed changes.
      */
@@ -81,6 +85,9 @@ public class DigestPayloadBuilder {
 
         if (extra != null && extra.get("hookWinners") instanceof List<?> hookWinners && !hookWinners.isEmpty()) {
             payload.put("hookWinners", hookWinners);
+        }
+        if (extra != null && extra.get(CHANGES_DUE_FOR_REVIEW) instanceof Map<?, ?> due && !due.isEmpty()) {
+            payload.put(CHANGES_DUE_FOR_REVIEW, due);
         }
 
         return payload;

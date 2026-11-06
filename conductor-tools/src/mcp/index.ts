@@ -80,6 +80,7 @@ import {
 } from './tools/posts.js'
 import { getMarketingInsights } from './tools/insights.js'
 import { getMarketingReport, setMarketingBenchmark, deleteMarketingBenchmark } from './tools/marketing-report.js'
+import { importMarketingChanges } from './tools/marketing-changes.js'
 import {
   getBrandKit,
   updateBrandKit,
@@ -1432,6 +1433,18 @@ export const TOOLS = [
     },
   },
   {
+    name: 'import_marketing_changes',
+    description: 'Import a marketing change log from a local JSONL file (one record per line: id, date, type, title, status, changed, evidence[], hypothesis, baseline, control, live_since, review_on, outcome, verdict, lesson, stop_rules, stop_rules_note) as Changes on the MARKETING_CHANGES workflow, each in the status its record has. Reference records are skipped; an unknown status or verdict refuses that record and names it, never guessed. A bad line stops everything before anything is sent. Safe to run again: a record already imported (same source and id) is left alone. Requires the Editor role (or Admin). Verify with get_marketing_report (changes).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Absolute path to the .jsonl file on this machine' },
+        source: { type: 'string', description: 'Names the log the records come from (default "rexipe"); a record id is unique within its source' },
+      },
+      required: ['filePath'],
+    },
+  },
+  {
     name: 'submit_review',
     description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned member holding the Reviewer role (or an Admin). Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step the person does in their own browser (request_tiktok_consent hands them the link), not this tool. Returns the confirmation table.',
     inputSchema: {
@@ -2779,6 +2792,14 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'delete_marketing_benchmark': {
           return successResponse(await deleteMarketingBenchmark(config, { metricRef: params['metricRef'] as string }))
+        }
+        case 'import_marketing_changes': {
+          return successResponse(
+            await importMarketingChanges(config, {
+              filePath: params['filePath'] as string,
+              source: params['source'] as string | undefined,
+            })
+          )
         }
         case 'get_post_analytics': {
           return successResponse(

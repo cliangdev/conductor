@@ -14,6 +14,8 @@ tags:
     description: Daily channel metrics, funnel and targets
   - name: marketing-report
     description: The one-call marketing report and the industry benchmarks it compares against
+  - name: marketing-changes
+    description: Marketing change records (the MARKETING_CHANGES workflow), imported from an outside change log
   - name: work-items
     description: Work Item management endpoints (canonical successor to v1 issues)
   - name: work-item-tree
@@ -4008,6 +4010,71 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/changes/import:
+    post:
+      tags:
+        - marketing-changes
+      summary: Import change records into the MARKETING_CHANGES workflow
+      description: >-
+        Imports an outside change log (up to 500 records per call) as Work Items on the project's
+        MARKETING_CHANGES workflow, each created directly in the status its record has (planned -> PLANNED,
+        live -> LIVE, reviewed -> REVIEWED, abandoned or stopped -> ABANDONED). Transition gates and the
+        required-fields check are skipped, since the record already happened; the type and the verdict must still
+        be valid for the workflow. A `reference` record is skipped, not imported. A verdict is mapped, never
+        coerced: worked, hurt (did_not_work), no effect (no_effect), expected... (expected) and inconclusive;
+        any other verdict refuses that record. When the original wording differs from the mapped option the
+        outcome ends with an `Original verdict:` line. A date such as `2026-09-01 (approved ...)` fills liveSince or
+        dueOn from its leading date and keeps the full text in the description. Idempotent on (source, record id):
+        a record already imported from the same source is reported in `alreadyImported` and left untouched. A
+        refused record never blocks the others. Requires ADMIN or CREATOR.
+      operationId: importMarketingChanges
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketingChangesImportRequest"
+      responses:
+        "200":
+          description: What was created, skipped, refused or already there
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingChangesImportResponse"
+        "400":
+          description: No records, more than 500 records, or an invalid source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The project has no MARKETING_CHANGES workflow
           content:
             application/json:
               schema:
@@ -10071,6 +10138,87 @@ components:
           type: object
           additionalProperties: true
           nullable: true
+
+    MarketingChangesImportRequest:
+      type: object
+      required: [records]
+      properties:
+        source:
+          type: string
+          maxLength: 64
+          default: rexipe
+          description: "Names the change log the records come from. A record is idempotent on (source, id), so two logs may reuse an id."
+        records:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/MarketingChangeRecord"
+
+    MarketingChangeRecord:
+      type: object
+      description: >-
+        One record of the outside change log, in that log's own shape (so live_since, review_on and stop_rules keep
+        their snake_case names). Every key is optional except that a record needs an `id` and a known `status`; a
+        missing key is the same as null.
+      properties:
+        id: {type: string, description: "The record's id in the source log; the idempotency key (at most 190 characters)."}
+        date: {type: string, nullable: true, description: "When the change was made, yyyy-MM-dd. Stands in for a missing or unreadable live_since on a live or reviewed record."}
+        type: {type: string, nullable: true, description: "seo, asa-change, asa-campaign, aso-visible, aso-keywords, cpp, ppo, release, onboarding, paywall or baseline; anything else is imported as OTHER."}
+        title: {type: string, nullable: true, description: "At most 255 characters."}
+        status: {type: string, description: "planned, live, reviewed, abandoned, stopped or reference (skipped). Any other value refuses the record."}
+        changed: {type: string, nullable: true, description: "What changed; becomes the description."}
+        evidence:
+          type: array
+          nullable: true
+          items: {type: string}
+        hypothesis: {type: string, nullable: true}
+        baseline: {type: string, nullable: true}
+        control: {type: string, nullable: true}
+        live_since: {type: string, nullable: true, description: "A leading yyyy-MM-dd fills liveSince; any further text is kept in the description."}
+        review_on: {type: string, nullable: true, description: "A leading yyyy-MM-dd fills the review date (dueOn); any further text is kept in the description."}
+        outcome: {type: string, nullable: true}
+        verdict: {type: string, nullable: true, description: "worked, hurt, no effect, expected..., or inconclusive. Anything else refuses the record."}
+        lesson: {type: string, nullable: true}
+        stop_rules: {type: string, nullable: true}
+        stop_rules_note: {type: string, nullable: true}
+
+    MarketingChangesImportResponse:
+      type: object
+      required: [created, alreadyImported, skipped, refused, items]
+      properties:
+        created: {type: integer, format: int32}
+        alreadyImported: {type: integer, format: int32, description: "Records whose (source, id) was imported before; left untouched."}
+        skipped:
+          type: array
+          description: Records that are not changes (reference records).
+          items:
+            $ref: "#/components/schemas/MarketingChangeImportNote"
+        refused:
+          type: array
+          description: Records that could not be imported, each with the reason. The rest of the request is unaffected.
+          items:
+            $ref: "#/components/schemas/MarketingChangeImportNote"
+        items:
+          type: array
+          description: The Work Items this call created.
+          items:
+            $ref: "#/components/schemas/MarketingChangeImportItem"
+
+    MarketingChangeImportNote:
+      type: object
+      required: [id, reason]
+      properties:
+        id: {type: string, description: "The record id, or #<position> for a record that has none."}
+        reason: {type: string}
+
+    MarketingChangeImportItem:
+      type: object
+      required: [id, displayId, recordId, status]
+      properties:
+        id: {type: string, description: "The Work Item id."}
+        displayId: {type: string}
+        recordId: {type: string, description: "The id the record has in the source log."}
+        status: {type: string, description: "The status the Work Item was created in."}
 
     MarketingTarget:
       type: object

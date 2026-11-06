@@ -86,7 +86,10 @@ public class MetricsDigestService {
         // A decided hook experiment (COND-24 T5) is worth narrating even on an otherwise-flat week --
         // the change detector has no notion of it since it never runs through a MetricSpec/DimensionSpec.
         boolean hasHookWinners = rawPayload.get("hookWinners") instanceof List<?> hookWinners && !hookWinners.isEmpty();
-        boolean material = result.material() || hasHookWinners;
+        // A change past its review date with no verdict is an open action, not noise: say so even on a flat week.
+        boolean hasOverdueReviews = rawPayload.get(DigestPayloadBuilder.CHANGES_DUE_FOR_REVIEW) instanceof Map<?, ?> due
+                && !due.isEmpty();
+        boolean material = result.material() || hasHookWinners || hasOverdueReviews;
 
         ConnectorFeedDigest digest = new ConnectorFeedDigest();
         digest.setProjectId(feed.getProjectId());
