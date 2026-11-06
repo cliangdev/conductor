@@ -922,6 +922,24 @@
       ]
     },
     {
+      "name": "propose_marketing_change",
+      "description": "Propose one marketing change with exactly two ledger-verified signals as a PLANNED change with a review date. Refuses unverified evidence and more than 3 a week; a person approves every change and moves it to LIVE.",
+      "category": "marketing",
+      "requiredParams": [
+        "title",
+        "type",
+        "hypothesis",
+        "reviewOn",
+        "signals"
+      ]
+    },
+    {
+      "name": "install_weekly_growth_workflow",
+      "description": "Install the Weekly growth review workflow from the template, disabled (Admin; safe to repeat). It needs a runtime target for Claude Code steps and a person to enable it.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
       "name": "get_growth_signals",
       "description": "Growth signals from public data: seasonal moments with overdue warnings, weekly ratings growth, recent reviews, competitor listing changes and keyword positions.",
       "category": "marketing",
