@@ -30,9 +30,16 @@ public class MarketingBenchmarkService {
         this.repository = repository;
     }
 
-    /** The fields of a benchmark a caller supplies; the metric reference comes from the path. */
+    /**
+     * The fields of a benchmark a caller supplies; the metric reference comes from the path. An upsert replaces the
+     * whole benchmark, so an omitted {@code numerator}, {@code denominator} or {@code sourceType} clears the stored one.
+     */
     public record Input(String label, Double value, String rangeText, String segment, String sourceName,
-                        String sourceUrl, LocalDate checkedOn, String notes) {}
+                        String sourceUrl, LocalDate checkedOn, String notes, String numerator, String denominator,
+                        String sourceType) {}
+
+    /** A benchmark's definition after validation and normalisation; all fields null when none was supplied. */
+    private record Definition(String numerator, String denominator, String sourceType) {}
 
     @Transactional(readOnly = true)
     public List<MarketingBenchmark> list(String projectId) {
@@ -55,6 +62,7 @@ public class MarketingBenchmarkService {
         if (input.checkedOn().isAfter(LocalDate.now(ZoneOffset.UTC))) {
             throw new BusinessException("checkedOn cannot be in the future");
         }
+        Definition definition = validateDefinition(input);
         MarketingBenchmark row = repository.findByProjectIdAndMetricRef(projectId, metricRef).orElseGet(() -> {
             MarketingBenchmark created = new MarketingBenchmark();
             created.setProjectId(projectId);
@@ -70,6 +78,9 @@ public class MarketingBenchmarkService {
         row.setSourceUrl(input.sourceUrl().trim());
         row.setCheckedOn(input.checkedOn());
         row.setNotes(blankToNull(input.notes()));
+        row.setNumerator(definition.numerator());
+        row.setDenominator(definition.denominator());
+        row.setSourceType(definition.sourceType());
         row.setUpdatedAt(OffsetDateTime.now());
         return repository.save(row);
     }
@@ -98,6 +109,34 @@ public class MarketingBenchmarkService {
             throw new BusinessException("metricRef has an invalid metric key '" + metric + "'");
         }
         return channel + "." + metric;
+    }
+
+    /** A denominator or source type means nothing without a numerator, so a numerator is required with either. */
+    private static Definition validateDefinition(Input input) {
+        String numerator = BenchmarkComparability.measure(input.numerator());
+        String denominator = BenchmarkComparability.measure(input.denominator());
+        String sourceType = BenchmarkComparability.sourceTypeOrNull(input.sourceType());
+        if (numerator == null && (denominator != null || sourceType != null)) {
+            throw new BusinessException("A benchmark definition needs a numerator when a denominator or sourceType is "
+                    + "given; numerator is required. Allowed measures: " + allowedMeasures());
+        }
+        if (numerator != null && !BenchmarkComparability.isMeasure(numerator)) {
+            throw new BusinessException("Unknown numerator '" + input.numerator().trim() + "'. Allowed: " + allowedMeasures());
+        }
+        if (denominator != null && !BenchmarkComparability.isMeasure(denominator)) {
+            throw new BusinessException("Unknown denominator '" + input.denominator().trim() + "'. Allowed: "
+                    + allowedMeasures());
+        }
+        if (sourceType != null && !BenchmarkComparability.SOURCE_TYPES.contains(sourceType)) {
+            throw new BusinessException("Unknown sourceType '" + input.sourceType().trim() + "'. Allowed: "
+                    + String.join(", ", BenchmarkComparability.SOURCE_TYPES));
+        }
+        return new Definition(numerator, denominator, sourceType);
+    }
+
+    private static String allowedMeasures() {
+        return String.join(", ", BenchmarkComparability.MEASURES) + ", or product:<key> (lower-case letters, digits and "
+                + "underscores, starting with a letter, up to 64 characters)";
     }
 
     private static void requireHttpUrl(String url) {

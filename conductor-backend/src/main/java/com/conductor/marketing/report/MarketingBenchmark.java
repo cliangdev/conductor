@@ -51,6 +51,18 @@ public class MarketingBenchmark {
     @Column(name = "notes")
     private String notes;
 
+    /** A measure name or {@code product:<key>}; null while the definition is unknown. See V186. */
+    @Column(name = "numerator", length = 64)
+    private String numerator;
+
+    /** A measure name or {@code product:<key>}; null for a count. */
+    @Column(name = "denominator", length = 64)
+    private String denominator;
+
+    /** The traffic source the benchmark covers; null means {@code ALL}. */
+    @Column(name = "source_type", length = 32)
+    private String sourceType;
+
     @Column(name = "created_by", length = 36)
     private String createdBy;
 
@@ -89,6 +101,12 @@ public class MarketingBenchmark {
     public void setCheckedOn(LocalDate checkedOn) { this.checkedOn = checkedOn; }
     public String getNotes() { return notes; }
     public void setNotes(String notes) { this.notes = notes; }
+    public String getNumerator() { return numerator; }
+    public void setNumerator(String numerator) { this.numerator = numerator; }
+    public String getDenominator() { return denominator; }
+    public void setDenominator(String denominator) { this.denominator = denominator; }
+    public String getSourceType() { return sourceType; }
+    public void setSourceType(String sourceType) { this.sourceType = sourceType; }
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }

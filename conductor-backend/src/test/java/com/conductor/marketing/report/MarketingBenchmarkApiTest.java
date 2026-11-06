@@ -151,4 +151,71 @@ class MarketingBenchmarkApiTest extends AbstractNoneWebIntegrationTest {
                 .isInstanceOf(com.conductor.exception.BusinessException.class);
         assertThat(benchmarkRepository.findByProjectIdOrderByMetricRefAsc(p.getId())).isEmpty();
     }
+
+    @Test
+    void theDefinitionRoundTripsThroughUpsertAndList() {
+        User admin = user();
+        Project p = project(admin);
+        member(p, admin, MemberRole.ADMIN);
+        actAs(admin);
+
+        var saved = controller.setMarketingBenchmark(p.getId(), "STORE.conversion_rate",
+                request(0.124).numerator("total_downloads").denominator("unique_impressions")
+                        .sourceType("APP_STORE_SEARCH")).getBody();
+
+        assertThat(saved.getNumerator()).isEqualTo("total_downloads");
+        assertThat(saved.getDenominator()).isEqualTo("unique_impressions");
+        assertThat(saved.getSourceType()).isEqualTo("APP_STORE_SEARCH");
+        var listed = controller.listMarketingBenchmarks(p.getId()).getBody().getBenchmarks().get(0);
+        assertThat(listed.getNumerator()).isEqualTo("total_downloads");
+        assertThat(listed.getDenominator()).isEqualTo("unique_impressions");
+        assertThat(listed.getSourceType()).isEqualTo("APP_STORE_SEARCH");
+    }
+
+    @Test
+    void aBenchmarkWithoutADefinitionReadsBackWithNullFields() {
+        User admin = user();
+        Project p = project(admin);
+        member(p, admin, MemberRole.ADMIN);
+        actAs(admin);
+
+        var saved = controller.setMarketingBenchmark(p.getId(), "STORE.downloads", request(100)).getBody();
+
+        assertThat(saved.getNumerator()).isNull();
+        assertThat(saved.getDenominator()).isNull();
+        assertThat(saved.getSourceType()).isNull();
+    }
+
+    @Test
+    void aSecondPutWithoutTheDefinitionClearsIt() {
+        User admin = user();
+        Project p = project(admin);
+        member(p, admin, MemberRole.ADMIN);
+        actAs(admin);
+        controller.setMarketingBenchmark(p.getId(), "STORE.conversion_rate",
+                request(0.124).numerator("total_downloads").denominator("unique_impressions"));
+
+        var replaced = controller.setMarketingBenchmark(p.getId(), "STORE.conversion_rate", request(0.12)).getBody();
+
+        assertThat(replaced.getNumerator()).isNull();
+        assertThat(replaced.getDenominator()).isNull();
+        var stored = benchmarkRepository.findByProjectIdAndMetricRef(p.getId(), "STORE.conversion_rate").orElseThrow();
+        assertThat(stored.getNumerator()).isNull();
+        assertThat(stored.getDenominator()).isNull();
+        assertThat(stored.getSourceType()).isNull();
+    }
+
+    @Test
+    void anUnknownMeasureIsRefusedAndNothingIsStored() {
+        User admin = user();
+        Project p = project(admin);
+        member(p, admin, MemberRole.ADMIN);
+        actAs(admin);
+
+        assertThatThrownBy(() -> controller.setMarketingBenchmark(p.getId(), "STORE.conversion_rate",
+                request(0.124).numerator("downloadz")))
+                .isInstanceOf(com.conductor.exception.BusinessException.class)
+                .hasMessageContaining("total_downloads");
+        assertThat(benchmarkRepository.findByProjectIdOrderByMetricRefAsc(p.getId())).isEmpty();
+    }
 }

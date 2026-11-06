@@ -8,6 +8,7 @@ vi.mock('../mcp/api.js', () => ({
 }))
 
 import { apiGet, apiPut, apiDelete } from '../mcp/api.js'
+import { TOOLS } from '../mcp/index.js'
 import {
   getMarketingReport,
   setMarketingBenchmark,
@@ -107,6 +108,52 @@ describe('setMarketingBenchmark', () => {
     expect(path).toBe('/api/v2/projects/proj-1/marketing/benchmarks/STORE.conversion_rate')
     expect(body).toMatchObject({ value: 0.03, sourceUrl: ok.sourceUrl, checkedOn: '2026-10-22', segment: 'US' })
     expect(out).toEqual({ metricRef: 'STORE.conversion_rate', value: 0.03 })
+  })
+
+  it('passes the definition (numerator, denominator, sourceType) to the API', async () => {
+    mocked(apiPut).mockResolvedValue({
+      metricRef: 'STORE.conversion_rate',
+      value: 0.124,
+      numerator: 'total_downloads',
+      denominator: 'unique_impressions',
+      sourceType: 'APP_STORE_SEARCH',
+    })
+    const out = await setMarketingBenchmark(config, {
+      ...ok,
+      value: 0.124,
+      numerator: 'total_downloads',
+      denominator: 'unique_impressions',
+      sourceType: 'APP_STORE_SEARCH',
+    })
+    const [, body] = mocked(apiPut).mock.calls[0]!
+    expect(body).toMatchObject({
+      numerator: 'total_downloads',
+      denominator: 'unique_impressions',
+      sourceType: 'APP_STORE_SEARCH',
+    })
+    expect(out).toMatchObject({ numerator: 'total_downloads', denominator: 'unique_impressions', sourceType: 'APP_STORE_SEARCH' })
+  })
+
+  it('still succeeds for an old call without a definition and sends none', async () => {
+    mocked(apiPut).mockResolvedValue({ metricRef: 'STORE.conversion_rate', value: 0.03 })
+    await expect(setMarketingBenchmark(config, ok)).resolves.toEqual({ metricRef: 'STORE.conversion_rate', value: 0.03 })
+    const [, body] = mocked(apiPut).mock.calls[0]!
+    expect(JSON.parse(JSON.stringify(body))).not.toHaveProperty('numerator')
+    expect(JSON.parse(JSON.stringify(body))).not.toHaveProperty('denominator')
+    expect(JSON.parse(JSON.stringify(body))).not.toHaveProperty('sourceType')
+  })
+
+  it('describes the vocabulary and the AppFollow example in the tool schema', () => {
+    const tool = TOOLS.find((t) => t.name === 'set_marketing_benchmark')!
+    const schema = tool.inputSchema as { properties: Record<string, { description: string }>; required: string[] }
+    expect(Object.keys(schema.properties)).toEqual(expect.arrayContaining(['numerator', 'denominator', 'sourceType']))
+    expect(schema.required).not.toEqual(expect.arrayContaining(['numerator']))
+    expect(schema.required).not.toEqual(expect.arrayContaining(['sourceType']))
+    expect(schema.properties['numerator']!.description).toMatch(/total_downloads/)
+    expect(schema.properties['numerator']!.description).toMatch(/product:<key>/)
+    expect(schema.properties['denominator']!.description).toMatch(/unique_impressions/)
+    expect(schema.properties['sourceType']!.description).toMatch(/APP_STORE_SEARCH/)
+    expect(schema.properties['sourceType']!.description).toMatch(/ALL/)
   })
 
   it('refuses a benchmark without a real source URL or a date', async () => {

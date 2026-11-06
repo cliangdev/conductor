@@ -67,7 +67,7 @@ public class MarketingReportController implements MarketingReportApi {
         var saved = benchmarkService.upsert(projectId, metricRef,
                 new MarketingBenchmarkService.Input(request.getLabel(), request.getValue(), request.getRangeText(),
                         request.getSegment(), request.getSourceName(), request.getSourceUrl(), request.getCheckedOn(),
-                        request.getNotes()),
+                        request.getNotes(), request.getNumerator(), request.getDenominator(), request.getSourceType()),
                 actor.userId());
         return ResponseEntity.ok(toBenchmark(saved));
     }
@@ -84,7 +84,8 @@ public class MarketingReportController implements MarketingReportApi {
     private static MarketingBenchmark toBenchmark(com.conductor.marketing.report.MarketingBenchmark b) {
         return new MarketingBenchmark(b.getMetricRef(), b.getValue().doubleValue(), b.getSourceName(),
                 b.getSourceUrl(), b.getCheckedOn(), b.getUpdatedAt())
-                .label(b.getLabel()).rangeText(b.getRangeText()).segment(b.getSegment()).notes(b.getNotes());
+                .label(b.getLabel()).rangeText(b.getRangeText()).segment(b.getSegment()).notes(b.getNotes())
+                .numerator(b.getNumerator()).denominator(b.getDenominator()).sourceType(b.getSourceType());
     }
 
     static MarketingReport toReport(MarketingReportService.Report r) {
