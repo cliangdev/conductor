@@ -278,8 +278,7 @@ class CreatorResultsServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     }
 
     @Test
-    void withoutATrackedLinkTableTheLinkTokenFieldStillWorks() {
-        fixture.dropTrackedLinkTable();
+    void theLinkTokenFieldAloneIsReadWhenTheCreatorHasNoTrackedLink() {
         WorkItem creator = fixture.creator(project, user, "POSTED", Map.of("linkToken", "jane-a"));
         downloads("jane-a", "2026-10-01", 5);
 
@@ -290,8 +289,7 @@ class CreatorResultsServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     }
 
     @Test
-    void withoutATrackedLinkTableAndNoTokenDownloadsAreNullWithANote() {
-        fixture.dropTrackedLinkTable();
+    void withNoTokenAtAllDownloadsAreNullWithANote() {
         WorkItem creator = fixture.creator(project, user, "POSTED", Map.of("handle", "jane"));
 
         Results out = results(creator);

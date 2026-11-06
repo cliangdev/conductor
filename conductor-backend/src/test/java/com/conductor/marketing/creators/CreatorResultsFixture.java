@@ -165,25 +165,8 @@ final class CreatorResultsFixture {
                 dimension, day, BigDecimal.valueOf(value), provisional);
     }
 
-    /**
-     * Makes sure a {@code tracked_link} table exists in this transaction (the real one arrives with V189; the
-     * DDL here is rolled back with the test) and inserts one link row.
-     */
+    /** Inserts one {@code tracked_link} row (V189). */
     void trackedLink(Project project, User by, String kind, String token, String workItemId) {
-        entityManager.createNativeQuery("""
-                CREATE TABLE IF NOT EXISTS tracked_link (
-                    id VARCHAR(36) PRIMARY KEY,
-                    project_id VARCHAR(36) NOT NULL,
-                    kind TEXT NOT NULL,
-                    family TEXT NOT NULL,
-                    token TEXT NOT NULL,
-                    url TEXT NOT NULL,
-                    work_item_id VARCHAR(36),
-                    label TEXT,
-                    created_by VARCHAR(36),
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-                )
-                """).executeUpdate();
         entityManager.createNativeQuery("""
                 INSERT INTO tracked_link (id, project_id, kind, family, token, url, work_item_id, label, created_by, created_at)
                 VALUES (:id, :projectId, :kind, :family, :token, :url, :workItemId, :label, :createdBy, now())
@@ -198,9 +181,5 @@ final class CreatorResultsFixture {
                 .setParameter("label", "link " + token)
                 .setParameter("createdBy", by.getId())
                 .executeUpdate();
-    }
-
-    void dropTrackedLinkTable() {
-        entityManager.createNativeQuery("DROP TABLE IF EXISTS tracked_link").executeUpdate();
     }
 }

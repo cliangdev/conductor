@@ -35,16 +35,8 @@ public class CreatorMetricsReader {
         this.jdbc = new NamedParameterJdbcTemplate(dataSource);
     }
 
-    /**
-     * The tokens of the creator's CREATOR tracked links, oldest first. Empty when it has none, and when the
-     * {@code tracked_link} table does not exist (the tracked-links migration has not run on this database).
-     */
+    /** The tokens of the creator's CREATOR tracked links (V189 {@code tracked_link}), oldest first; empty when none. */
     List<String> trackedLinkTokens(String projectId, String workItemId) {
-        Boolean tableExists = jdbc.queryForObject("SELECT to_regclass('tracked_link') IS NOT NULL",
-                new MapSqlParameterSource(), Boolean.class);
-        if (!Boolean.TRUE.equals(tableExists)) {
-            return List.of();
-        }
         return jdbc.queryForList("""
                 SELECT token FROM tracked_link
                  WHERE project_id = :projectId AND work_item_id = :workItemId AND kind = 'CREATOR'
