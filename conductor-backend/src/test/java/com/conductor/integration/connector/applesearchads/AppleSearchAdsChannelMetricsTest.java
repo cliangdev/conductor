@@ -102,6 +102,132 @@ class AppleSearchAdsChannelMetricsTest {
         server.verify();
     }
 
+    /** The reference window in miniature: tap installs 17 + 4 + 2 + 0, one view-through install, USD 162.86. */
+    private static final String FOUR_CAMPAIGNS = """
+            {"data":{"reportingDataResponse":{"row":[
+              {"metadata":{"campaignId":1,"campaignName":"A"},"granularity":[
+                {"date":"2026-10-01","impressions":1200,"taps":40,"tapInstalls":10,"tapNewDownloads":8,"tapRedownloads":2,
+                 "viewInstalls":0,"localSpend":{"amount":"40.10","currency":"USD"}},
+                {"date":"2026-10-02","impressions":600,"taps":12,"tapInstalls":7,"tapNewDownloads":5,"tapRedownloads":2,
+                 "viewInstalls":1,"localSpend":{"amount":"22.66","currency":"USD"}}]},
+              {"metadata":{"campaignId":2,"campaignName":"B"},"granularity":[
+                {"date":"2026-10-01","impressions":500,"taps":15,"tapInstalls":3,"tapNewDownloads":3,"tapRedownloads":0,
+                 "localSpend":{"amount":"30.50","currency":"USD"}},
+                {"date":"2026-10-02","impressions":300,"taps":8,"tapInstalls":1,"tapNewDownloads":1,
+                 "localSpend":{"amount":"20.00","currency":"USD"}}]},
+              {"metadata":{"campaignId":3,"campaignName":"C"},"granularity":[
+                {"date":"2026-10-02","impressions":450,"taps":9,"tapInstalls":2,"tapNewDownloads":1,"tapRedownloads":1,
+                 "localSpend":{"amount":"25.10","currency":"USD"}}]},
+              {"metadata":{"campaignId":4,"campaignName":"D"},"granularity":[
+                {"date":"2026-10-01","impressions":355,"taps":5,"tapInstalls":0,"tapNewDownloads":0,"tapRedownloads":0,
+                 "localSpend":{"amount":"24.50","currency":"USD"}}]}
+            ]}}}""";
+
+    private void expectReport(String body) {
+        server.expect(once(), requestTo(URL)).andRespond(withSuccess(body, MediaType.APPLICATION_JSON));
+        expectNoCampaigns();
+    }
+
+    @Test
+    void fourCampaignsAddUpToTheAppleTotals() {
+        expectReport(FOUR_CAMPAIGNS);
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(), LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 2));
+
+        assertThat(sum(points, "installs", "")).isEqualByComparingTo("23");
+        assertThat(sum(points, "view_installs", "")).isEqualByComparingTo("1");
+        assertThat(sum(points, "spend", "")).isEqualByComparingTo("162.86");
+        assertThat(sum(points, "impressions", "")).isEqualByComparingTo("3405");
+        assertThat(sum(points, "taps", "")).isEqualByComparingTo("89");
+        // tap and view-through installs stay two numbers
+        assertThat(sum(points, "installs", "campaign:1:A")).isEqualByComparingTo("17");
+        assertThat(sum(points, "installs", "campaign:2:B")).isEqualByComparingTo("4");
+        assertThat(sum(points, "installs", "campaign:3:C")).isEqualByComparingTo("2");
+        assertThat(sum(points, "installs", "campaign:4:D")).isEqualByComparingTo("0");
+        assertThat(sum(points, "view_installs", "campaign:1:A")).isEqualByComparingTo("1");
+    }
+
+    @Test
+    void campaignAndTotalRowsCarryFirstTimeAndReDownloads() {
+        expectReport(FOUR_CAMPAIGNS);
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(), LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 2));
+
+        assertThat(value(points, "new_downloads", "campaign:1:A", "2026-10-01")).isEqualByComparingTo("8");
+        assertThat(value(points, "redownloads", "campaign:1:A", "2026-10-01")).isEqualByComparingTo("2");
+        // a reported zero is a point
+        assertThat(value(points, "redownloads", "campaign:2:B", "2026-10-01")).isEqualByComparingTo("0");
+        assertThat(value(points, "view_installs", "campaign:1:A", "2026-10-01")).isEqualByComparingTo("0");
+        assertThat(value(points, "new_downloads", "", "2026-10-01")).isEqualByComparingTo("11");
+        assertThat(value(points, "redownloads", "", "2026-10-01")).isEqualByComparingTo("2");
+        assertThat(sum(points, "new_downloads", "")).isEqualByComparingTo("18");
+        assertThat(sum(points, "redownloads", "")).isEqualByComparingTo("5");
+    }
+
+    @Test
+    void aFieldAppleDoesNotSendWritesNoPointNeverZero() {
+        expectReport(FOUR_CAMPAIGNS);
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(), LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 2));
+
+        // B and C never send viewInstalls: they get no view_installs row at all
+        assertThat(points).noneMatch(p -> p.metric().equals("view_installs") && p.dimensionKey().equals("campaign:2:B"));
+        assertThat(points).noneMatch(p -> p.metric().equals("view_installs") && p.dimensionKey().equals("campaign:3:C"));
+        // B's second day sends no tapRedownloads
+        assertThat(points).noneMatch(p -> p.metric().equals("redownloads") && p.dimensionKey().equals("campaign:2:B")
+                && p.day().equals(LocalDate.of(2026, 10, 2)));
+    }
+
+    private static final String LEGACY_AND_PARTIAL = """
+            {"data":{"reportingDataResponse":{"row":[
+              {"metadata":{"campaignId":1,"campaignName":"Legacy"},"granularity":[
+                {"date":"2026-10-01","impressions":10,"taps":1,"installs":5,"localSpend":{"amount":"1.00","currency":"USD"}}]},
+              {"metadata":{"campaignId":2,"campaignName":"Parts"},"granularity":[
+                {"date":"2026-10-01","impressions":10,"taps":1,"tapNewDownloads":2,"tapRedownloads":1,
+                 "localSpend":{"amount":"1.00","currency":"USD"}}]},
+              {"metadata":{"campaignId":3,"campaignName":"Silent"},"granularity":[
+                {"date":"2026-10-01","impressions":10,"taps":1,"localSpend":{"amount":"1.00","currency":"USD"}}]},
+              {"metadata":{"campaignId":4,"campaignName":"Both"},"granularity":[
+                {"date":"2026-10-01","impressions":10,"taps":1,"tapInstalls":3,"installs":99,
+                 "localSpend":{"amount":"1.00","currency":"USD"}}]}
+            ]}}}""";
+
+    @Test
+    void installsAreTapInstallsWithLegacyThenTheTapPartsAsFallbackAndNothingWhenUnknown() {
+        expectReport(LEGACY_AND_PARTIAL);
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(), LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 1));
+
+        assertThat(value(points, "installs", "campaign:1:Legacy", "2026-10-01")).isEqualByComparingTo("5");
+        assertThat(value(points, "installs", "campaign:2:Parts", "2026-10-01")).isEqualByComparingTo("3");
+        assertThat(value(points, "installs", "campaign:4:Both", "2026-10-01")).isEqualByComparingTo("3");
+        // nothing sent: unknown, not zero
+        assertThat(points).noneMatch(p -> p.metric().equals("installs") && p.dimensionKey().equals("campaign:3:Silent"));
+        assertThat(value(points, "installs", "", "2026-10-01")).isEqualByComparingTo("11");
+    }
+
+    @Test
+    void aDayWhereNoCampaignSendsInstallsHasNoInstallsTotal() {
+        expectReport("""
+                {"data":{"reportingDataResponse":{"row":[
+                  {"metadata":{"campaignId":3,"campaignName":"Silent"},"granularity":[
+                    {"date":"2026-10-01","impressions":10,"taps":1,"localSpend":{"amount":"1.00","currency":"USD"}}]}
+                ]}}}""");
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(), LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 1));
+
+        assertThat(value(points, "impressions", "", "2026-10-01")).isEqualByComparingTo("10");
+        assertThat(points).noneMatch(p -> p.metric().equals("installs"));
+    }
+
+    @Test
+    void thePullReportsContractVersionTwo() {
+        expectReport(REPORT);
+
+        assertThat(connector.pull(ctx(), LocalDate.of(2026, 10, 1), LocalDate.of(2026, 10, 2)).contractVersion())
+                .isEqualTo(2);
+    }
+
     @Test
     void windowsLongerThanNinetyDaysAreSplit() {
         server.expect(once(), requestTo(URL))
@@ -147,5 +273,14 @@ class AppleSearchAdsChannelMetricsTest {
         return points.stream()
                 .filter(p -> p.metric().equals(metric) && p.dimensionKey().equals(dimension) && p.day().toString().equals(day))
                 .map(ChannelMetricPoint::value).findFirst().orElseThrow();
+    }
+
+    /** The value over every day of one metric and dimension; fails if there is no point at all. */
+    private static java.math.BigDecimal sum(List<ChannelMetricPoint> points, String metric, String dimension) {
+        List<java.math.BigDecimal> values = points.stream()
+                .filter(p -> p.metric().equals(metric) && p.dimensionKey().equals(dimension))
+                .map(ChannelMetricPoint::value).toList();
+        assertThat(values).as("points for %s %s", metric, dimension).isNotEmpty();
+        return values.stream().reduce(java.math.BigDecimal.ZERO, java.math.BigDecimal::add);
     }
 }

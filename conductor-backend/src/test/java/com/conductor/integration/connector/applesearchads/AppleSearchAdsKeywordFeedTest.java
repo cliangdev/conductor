@@ -134,10 +134,16 @@ class AppleSearchAdsKeywordFeedTest {
         server.expect(once(), requestTo(BASE + "/reports/campaigns/1001/ads"))
                 .andExpect(jsonPath("$.timeZone").value("UTC"))
                 .andRespond(withSuccess(AD_REPORT, MediaType.APPLICATION_JSON));
+        expectEmptySearchTerms("1001");
+    }
+
+    private void expectEmptySearchTerms(String campaignId) {
+        server.expect(once(), requestTo(BASE + "/reports/campaigns/" + campaignId + "/searchterms"))
+                .andRespond(withSuccess("{\"data\":{\"reportingDataResponse\":{\"row\":[]}}}", MediaType.APPLICATION_JSON));
     }
 
     @Test
-    void keywordAndAdRowsAreKeyedPagedAndUseFirstTimeInstalls() {
+    void keywordAndAdRowsAreKeyedPagedAndUseTapInstalls() {
         expectCampaigns();
         expectBreakdownReports();
 
@@ -148,15 +154,23 @@ class AppleSearchAdsKeywordFeedTest {
         assertThat(value(points, "spend", "keyword:77:meal planner", "2026-10-01")).isEqualByComparingTo("12.25");
         assertThat(value(points, "impressions", "keyword:78:recipes: easy", "2026-10-01")).isEqualByComparingTo("100");
         assertThat(value(points, "impressions", "keyword:79:diet", "2026-10-01")).isEqualByComparingTo("10");
-        // installs are the first-time downloads; tapInstalls is only the fallback
-        assertThat(value(points, "installs", "keyword:77:meal planner", "2026-10-01")).isEqualByComparingTo("6");
-        assertThat(value(points, "installs", "keyword:77:meal planner", "2026-10-02")).isEqualByComparingTo("3");
-        assertThat(value(points, "installs", "keyword:78:recipes: easy", "2026-10-01")).isEqualByComparingTo("2");
+        // installs are tap installs at every level; first-time and re-downloads are their own points
+        assertThat(value(points, "installs", "keyword:77:meal planner", "2026-10-01")).isEqualByComparingTo("9");
+        assertThat(value(points, "new_downloads", "keyword:77:meal planner", "2026-10-01")).isEqualByComparingTo("6");
         assertThat(value(points, "redownloads", "keyword:77:meal planner", "2026-10-01")).isEqualByComparingTo("3");
+        assertThat(value(points, "installs", "keyword:77:meal planner", "2026-10-02")).isEqualByComparingTo("4");
+        assertThat(value(points, "new_downloads", "keyword:77:meal planner", "2026-10-02")).isEqualByComparingTo("3");
         assertThat(points).noneMatch(p -> p.metric().equals("redownloads") && p.dimensionKey().equals("keyword:77:meal planner")
                 && p.day().equals(TO));
+        assertThat(value(points, "installs", "keyword:78:recipes: easy", "2026-10-01")).isEqualByComparingTo("2");
+        // keyword 78 sends no tapNewDownloads: no first-time point, never a zero
+        assertThat(points).noneMatch(p -> p.metric().equals("new_downloads") && p.dimensionKey().equals("keyword:78:recipes: easy"));
+        // keyword 79 sends only tapNewDownloads 0: that is a reported zero, and the only install count it has
+        assertThat(value(points, "new_downloads", "keyword:79:diet", "2026-10-01")).isEqualByComparingTo("0");
+        assertThat(value(points, "installs", "keyword:79:diet", "2026-10-01")).isEqualByComparingTo("0");
         assertThat(value(points, "taps", "ad:55:9:Variant A", "2026-10-01")).isEqualByComparingTo("50");
-        assertThat(value(points, "installs", "ad:55:9:Variant A", "2026-10-01")).isEqualByComparingTo("10");
+        assertThat(value(points, "installs", "ad:55:9:Variant A", "2026-10-01")).isEqualByComparingTo("12");
+        assertThat(value(points, "new_downloads", "ad:55:9:Variant A", "2026-10-01")).isEqualByComparingTo("10");
         // the default-page pseudo-ad (-1) is kept once per ad group, never merged, and named when Apple gives no name
         assertThat(value(points, "impressions", "ad:55:-1:Default product page", "2026-10-01")).isEqualByComparingTo("300");
         assertThat(value(points, "impressions", "ad:56:-1:Default product page", "2026-10-01")).isEqualByComparingTo("90");
@@ -167,6 +181,42 @@ class AppleSearchAdsKeywordFeedTest {
         assertThat(value(points, "installs", "", "2026-10-01")).isEqualByComparingTo("20");
         assertThat(value(points, "spend", "", "2026-10-01")).isEqualByComparingTo("50.50");
         server.verify();
+    }
+
+    @Test
+    void aKeywordWithFirstTimeAndReDownloadsStoresTheirSumAsInstalls() {
+        server.expect(once(), requestTo(BASE + "/reports/campaigns"))
+                .andRespond(withSuccess(CAMPAIGN_REPORT, MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(BASE + "/campaigns?limit=1000&offset=0"))
+                .andRespond(withSuccess("""
+                        {"data":[{"id":1001,"name":"Brand","adChannelType":"SEARCH"}],"pagination":{"totalResults":1}}""",
+                        MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(BASE + "/reports/campaigns/1001/keywords"))
+                .andRespond(withSuccess("""
+                        {"data":{"reportingDataResponse":{"row":[
+                          {"metadata":{"keywordId":80,"keyword":"with tapInstalls"},
+                           "granularity":[{"date":"2026-10-01","impressions":9,"taps":4,"tapInstalls":3,
+                              "tapNewDownloads":2,"tapRedownloads":1,"viewInstalls":1,
+                              "localSpend":{"amount":"2.00","currency":"USD"}}]},
+                          {"metadata":{"keywordId":81,"keyword":"parts only"},
+                           "granularity":[{"date":"2026-10-01","impressions":9,"taps":4,
+                              "tapNewDownloads":2,"tapRedownloads":1,
+                              "localSpend":{"amount":"2.00","currency":"USD"}}]}
+                        ]}}}""", MediaType.APPLICATION_JSON));
+        server.expect(once(), requestTo(BASE + "/reports/campaigns/1001/ads"))
+                .andRespond(withSuccess("{\"data\":{\"reportingDataResponse\":{\"row\":[]}}}", MediaType.APPLICATION_JSON));
+        expectEmptySearchTerms("1001");
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(), FROM, LocalDate.of(2026, 10, 1));
+
+        for (String key : List.of("keyword:80:with tapInstalls", "keyword:81:parts only")) {
+            assertThat(value(points, "installs", key, "2026-10-01")).isEqualByComparingTo("3");
+            assertThat(value(points, "new_downloads", key, "2026-10-01")).isEqualByComparingTo("2");
+            assertThat(value(points, "redownloads", key, "2026-10-01")).isEqualByComparingTo("1");
+        }
+        // view-through installs are their own point, only where Apple sent them, never part of installs
+        assertThat(value(points, "view_installs", "keyword:80:with tapInstalls", "2026-10-01")).isEqualByComparingTo("1");
+        assertThat(points).noneMatch(p -> p.metric().equals("view_installs") && p.dimensionKey().equals("keyword:81:parts only"));
     }
 
     @Test
@@ -286,7 +336,7 @@ class AppleSearchAdsKeywordFeedTest {
     }
 
     @Test
-    void nonSearchCampaignsAreNotAskedForKeywordOrAdReports() {
+    void nonSearchCampaignsAreNotAskedForKeywordAdOrSearchTermReports() {
         expectMixedCampaigns();
         expectBreakdownReports();
         // campaign 1004 has no adChannelType, so it is still queried
@@ -294,6 +344,7 @@ class AppleSearchAdsKeywordFeedTest {
                 .andRespond(withSuccess("{\"data\":{\"reportingDataResponse\":{\"row\":[]}}}", MediaType.APPLICATION_JSON));
         server.expect(once(), requestTo(BASE + "/reports/campaigns/1004/ads"))
                 .andRespond(withSuccess("{\"data\":{\"reportingDataResponse\":{\"row\":[]}}}", MediaType.APPLICATION_JSON));
+        expectEmptySearchTerms("1004");
 
         connector.pullDaily(ctx(), FROM, TO);
 
