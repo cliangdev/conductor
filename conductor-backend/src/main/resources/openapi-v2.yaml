@@ -12,6 +12,8 @@ servers:
 tags:
   - name: marketing-overview
     description: Daily channel metrics, funnel and targets
+  - name: marketing-budget
+    description: The monthly paid budget, its pacing across paid channels, and the stop rules that guard each channel
   - name: marketing-definitions
     description: What every marketing metric counts, where it comes from and what it excludes
   - name: marketing-report
@@ -3994,6 +3996,256 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Work Item not found, or caller is not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/budget:
+    get:
+      tags:
+        - marketing-budget
+      summary: Month-to-date paid spend against the monthly cap, per paid channel
+      description: >-
+        Paces the month's paid budget across the paid channels (any channel with a `spend` metric; today Apple Ads,
+        channel ADS). Computed on read from settled days only: provisional days (the source may still restate them)
+        are reported apart as `provisionalSpend` and never count toward month-to-date spend, a cost per install or a
+        stop rule. `capAmount`, `expectedSpend` and `pacePct` are null when the month has no cap (never a cap of 0).
+        Pace is straight line: `pacePct = mtdSpend / (capAmount * daysElapsed / daysInMonth)`, 1.0 = on pace, and
+        `projectedSpend = mtdSpend / daysElapsed * daysInMonth`. Each channel carries `compliant` (a paid channel
+        with no active stop rule is non-compliant, reason "no stop rule"), every active rule with its observed value
+        and whether it is tripped, and the marginal cost per install (last 7 settled days, the 7 before, and
+        month-to-date). A rule below its `minSample` never trips. Days are UTC. Conductor only proposes and records:
+        a bid or budget change is made by a human in the ad platform.
+      operationId: getMarketingBudget
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: month
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "YYYY-MM (UTC). Defaults to the current UTC month."
+      responses:
+        "200":
+          description: The pacing view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BudgetPacing"
+        "400":
+          description: month is not YYYY-MM
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/budget/{month}:
+    put:
+      tags:
+        - marketing-budget
+      summary: Set the paid budget cap for a month
+      description: >-
+        Idempotent upsert of the month's cap (YYYY-MM, UTC). `capAmount` must be greater than 0: a month with no
+        cap simply has none (pacing reads null), a cap of 0 is refused. `currency` is a three-letter code and
+        defaults to USD; spend is summed as the ad platform reports it, so keep the cap in the account currency.
+        Requires ADMIN or CREATOR.
+      operationId: setMarketingBudget
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: month
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "YYYY-MM (UTC)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BudgetCapRequest"
+      responses:
+        "200":
+          description: The stored cap
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingBudgetCap"
+        "400":
+          description: month is not YYYY-MM, or capAmount is missing, not above 0 or too large, or currency is not a three-letter code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/stop-rules:
+    get:
+      tags:
+        - marketing-budget
+      summary: List the project's active stop rules
+      description: Active rules only, oldest first. A removed rule stays on record but is not listed.
+      operationId: listMarketingStopRules
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The active rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopRuleListResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - marketing-budget
+      summary: Add a stop rule for a paid channel
+      description: >-
+        A stop rule reads "when `metric` is above (GT) or below (LT) `threshold` over the last `windowDays` settled
+        days at `scope`, once the window holds at least `minSample` taps". A paid channel with spend needs at least
+        one active rule or it shows as non-compliant. Rules are evaluated, never enforced: tripping one means a
+        human should look at the bid or budget in the ad platform. Requires ADMIN or CREATOR.
+      operationId: createMarketingStopRule
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StopRuleRequest"
+      responses:
+        "201":
+          description: The stored rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopRule"
+        "400":
+          description: >-
+            Unknown channel, scope, metric or comparator, a missing or negative threshold, a negative minSample,
+            windowDays outside 1-90, or a note over 500 characters (the message lists the allowed values)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/stop-rules/{ruleId}:
+    delete:
+      tags:
+        - marketing-budget
+      summary: Remove a stop rule
+      description: >-
+        Soft removal (the rule is marked inactive and kept on record). Idempotent: removing a rule that is already
+        removed succeeds. Requires ADMIN or CREATOR.
+      operationId: deleteMarketingStopRule
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: ruleId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such rule in this project
           content:
             application/json:
               schema:
@@ -9836,6 +10088,160 @@ components:
         provisional:
           type: boolean
           description: True for days the source may still restate, including every day after the channel's dataCompleteThrough. Draw them differently; they are not in the totals.
+
+    BudgetPacing:
+      type: object
+      required: [month, daysElapsed, daysInMonth, mtdSpend, provisionalSpend, daily, channels]
+      properties:
+        month: {type: string, description: "YYYY-MM (UTC)."}
+        capAmount: {type: number, format: double, nullable: true, description: "The month's cap. Null when none is set; never 0."}
+        currency: {type: string, nullable: true, description: "The cap's currency. Null when no cap is set."}
+        through: {type: string, format: date, nullable: true, description: "The latest settled day counted toward the month. Null before any settled spend."}
+        daysElapsed: {type: integer, description: "Days from the 1st through `through`; 0 before any settled spend."}
+        daysInMonth: {type: integer}
+        mtdSpend: {type: number, format: double, description: "Settled spend this month across paid channels, as the ad platforms report it."}
+        provisionalSpend: {type: number, format: double, description: "Spend on days the source may still restate. Not in mtdSpend, pace or the projection."}
+        expectedSpend: {type: number, format: double, nullable: true, description: "Straight-line spend to `through` (capAmount * daysElapsed / daysInMonth). Null without a cap or settled spend."}
+        pacePct: {type: number, format: double, nullable: true, description: "mtdSpend / expectedSpend as a fraction: 1.0 on pace, above 1 ahead of the cap. Null without a cap or settled spend."}
+        projectedSpend: {type: number, format: double, nullable: true, description: "mtdSpend / daysElapsed * daysInMonth. Null before any settled spend."}
+        daily:
+          type: array
+          description: Every day from the 1st to the last day with a spend row, across paid channels.
+          items:
+            $ref: "#/components/schemas/BudgetDay"
+        channels:
+          type: array
+          description: Paid channels, by name. A channel with an active rule is listed even before its first spend row of the month.
+          items:
+            $ref: "#/components/schemas/BudgetChannel"
+
+    BudgetDay:
+      type: object
+      required: [day, cumulativeSpend]
+      properties:
+        day: {type: string, format: date}
+        spend: {type: number, format: double, nullable: true, description: "Settled spend that day. Null when no settled row was reported (not 0)."}
+        provisionalSpend: {type: number, format: double, nullable: true, description: "Spend the source may still restate. Null when none. Draw it differently."}
+        cumulativeSpend: {type: number, format: double, description: "Settled spend from the 1st through this day; provisional days add nothing."}
+        expectedSpend: {type: number, format: double, nullable: true, description: "Straight-line cumulative cap to this day. Only on the cross-channel series, and null without a cap."}
+
+    BudgetChannel:
+      type: object
+      required: [channel, mtdSpend, provisionalSpend, compliant, daily, rules]
+      properties:
+        channel: {type: string, description: "ADS, SOCIAL, ..."}
+        through: {type: string, format: date, nullable: true, description: "The channel's latest settled spend day on or before the as-of day; it can precede the month. Null before any settled spend."}
+        mtdSpend: {type: number, format: double}
+        provisionalSpend: {type: number, format: double}
+        installs: {type: number, format: double, nullable: true, description: "Settled installs this month. Null when the channel reports none."}
+        cpi: {type: number, format: double, nullable: true, description: "Month-to-date cost per install. Null when installs are null or 0 (read as 'no installs')."}
+        compliant: {type: boolean, description: "False when the channel has spend and no active stop rule."}
+        complianceReason: {type: string, nullable: true, description: "'no stop rule' when not compliant."}
+        daily:
+          type: array
+          items:
+            $ref: "#/components/schemas/BudgetDay"
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/BudgetRuleEvaluation"
+        marginalCpi:
+          nullable: true
+          description: Null when the channel has no settled spend yet.
+          allOf:
+            - $ref: "#/components/schemas/BudgetMarginalCpi"
+
+    BudgetMarginalCpi:
+      type: object
+      required: [last7, prior7, monthToDate]
+      properties:
+        last7: {$ref: "#/components/schemas/BudgetCpiWindow"}
+        prior7: {$ref: "#/components/schemas/BudgetCpiWindow"}
+        monthToDate: {$ref: "#/components/schemas/BudgetCpiWindow"}
+
+    BudgetCpiWindow:
+      type: object
+      required: [from]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date, nullable: true}
+        spend: {type: number, format: double, nullable: true, description: "Settled spend in the window. Null when no row was reported."}
+        installs: {type: number, format: double, nullable: true, description: "Settled installs in the window. Null when no row was reported; 0 when reported zero."}
+        cpi: {type: number, format: double, nullable: true, description: "spend / installs. Null when installs are null or 0 (read as 'no installs')."}
+
+    BudgetRuleEvaluation:
+      type: object
+      required: [ruleId, channel, scope, metric, comparator, threshold, minSample, windowDays, tripped, belowMinSample]
+      properties:
+        ruleId: {type: string}
+        channel: {type: string}
+        scope: {type: string, description: "channel, campaign:<id> or keyword:<id>."}
+        metric: {type: string}
+        comparator: {type: string, description: "GT or LT."}
+        threshold: {type: number, format: double}
+        minSample: {type: integer}
+        windowDays: {type: integer}
+        note: {type: string, nullable: true}
+        windowFrom: {type: string, format: date, nullable: true, description: "First day of the settled window. Null when the channel has no settled data."}
+        windowTo: {type: string, format: date, nullable: true}
+        observed: {type: number, format: double, nullable: true, description: "The metric over the window. Null when it cannot be computed (no data, a zero denominator, or a cost per install with no installs)."}
+        sample: {type: number, format: double, nullable: true, description: "Taps in the window. Null when taps are not reported."}
+        tripped: {type: boolean, description: "The comparator holds and the sample reaches minSample. A cost per install above the threshold also holds when there is spend and zero installs."}
+        belowMinSample: {type: boolean, description: "minSample is above 0 and the window's taps are fewer (or not reported). Such a rule never trips."}
+        detail: {type: string, nullable: true, description: "Why the rule is not computed or not tripped, in words."}
+
+    MarketingBudgetCap:
+      type: object
+      required: [month, capAmount, currency, updatedAt]
+      properties:
+        month: {type: string}
+        capAmount: {type: number, format: double}
+        currency: {type: string}
+        updatedAt: {type: string, format: date-time}
+
+    BudgetCapRequest:
+      type: object
+      required: [capAmount]
+      properties:
+        capAmount: {type: number, format: double, description: "Greater than 0 and below 1,000,000,000,000; two decimals are kept."}
+        currency: {type: string, maxLength: 3, description: "Three-letter code. Defaults to USD."}
+
+    StopRule:
+      type: object
+      required: [id, channel, scope, metric, comparator, threshold, minSample, windowDays, createdAt]
+      properties:
+        id: {type: string}
+        channel: {type: string}
+        scope: {type: string, description: "channel, campaign:<id> or keyword:<id>."}
+        metric: {type: string, description: "cost_per_install, spend, installs, taps, tap_through_rate or install_rate."}
+        comparator: {type: string, description: "GT (above) or LT (below)."}
+        threshold: {type: number, format: double}
+        minSample: {type: integer}
+        windowDays: {type: integer}
+        note: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+
+    StopRuleRequest:
+      type: object
+      required: [channel, metric, comparator, threshold]
+      properties:
+        channel: {type: string, maxLength: 32, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT (case-insensitive). A paid channel is one with a spend metric."}
+        scope: {type: string, maxLength: 200, description: "channel (default: the channel's total rows), campaign:<id> or keyword:<id> (rows of that campaign or keyword; the id is matched whole)."}
+        metric: {type: string, maxLength: 64, description: "cost_per_install, spend, installs, taps, tap_through_rate (taps / impressions) or install_rate (installs / taps). Rates are fractions."}
+        comparator: {type: string, maxLength: 2, description: "GT (trips above the threshold) or LT (trips below)."}
+        threshold: {type: number, format: double, description: "0 or more, in the metric's own unit."}
+        minSample: {type: integer, description: "Taps the window must hold before the rule can trip. Default 0 (no minimum); set one for any rate or cost per install."}
+        windowDays: {type: integer, description: "Settled days the rule reads, 1 to 90. Default 7."}
+        note: {type: string, maxLength: 500, description: "What a human should consider when it trips."}
+
+    StopRuleListResponse:
+      type: object
+      required: [stopRules]
+      properties:
+        stopRules:
+          type: array
+          items:
+            $ref: "#/components/schemas/StopRule"
 
     OverviewMetricDefinition:
       type: object

@@ -79,6 +79,7 @@ import {
   type CreatePostParams,
 } from './tools/posts.js'
 import { getMarketingInsights } from './tools/insights.js'
+import { getBudgetPacing, setMarketingBudget, setStopRule, removeStopRule } from './tools/budget.js'
 import { getMarketingDefinitions } from './tools/marketing-definitions.js'
 import { getMarketingReport, setMarketingBenchmark, deleteMarketingBenchmark } from './tools/marketing-report.js'
 import {
@@ -1389,6 +1390,56 @@ export const TOOLS = [
         platform: { type: 'string', description: 'Restrict posts to one platform, from the project\'s connected platforms (optional; needs "posts")' },
         channel: { type: 'string', enum: ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE', 'PRODUCT'], description: 'With "channels": add this channel\'s series and breakdown tables (optional)' },
       },
+    },
+  },
+  {
+    name: 'get_budget_pacing',
+    description: 'Paid spend against the month\'s budget cap, per paid channel (any channel with a spend metric; Apple Ads is one). Returns the cap (null when none is set: then there is no pace), settled month-to-date spend (provisionalSpend is kept apart and never counted), pacePct against a straight-line expectation (1.0 = on pace), projected month-end spend, the last 7 days, and per channel: compliance (spend with no active stop rule is non-compliant), each stop rule with its observed value and state (TRIPPED, BELOW_MIN_SAMPLE, NO_DATA, OK), and marginal cost per install (last 7 settled days vs the prior 7 vs month-to-date; cpiNote "no installs" when a window has none). Read-only. Conductor only proposes and records: a tripped rule is a prompt for a human to change the bid or budget in the ad platform (or Rexipe\'s gated tool). Set the cap with set_marketing_budget and rules with set_stop_rule.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        month: { type: 'string', description: 'YYYY-MM, UTC (default: the current month)' },
+      },
+    },
+  },
+  {
+    name: 'set_marketing_budget',
+    description: 'Set or replace the paid budget cap for a month (idempotent per month). capAmount must be above 0; to have no cap, set none. Spend is summed as the ad platform reports it, so give the cap in that account\'s currency. Records the cap only; it does not change any ad platform. Requires the Editor role (or Admin). Verify with get_budget_pacing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        month: { type: 'string', description: 'YYYY-MM, UTC' },
+        capAmount: { type: 'number', description: 'The month\'s cap, above 0' },
+        currency: { type: 'string', description: 'Three-letter code (default USD)' },
+      },
+      required: ['month', 'capAmount'],
+    },
+  },
+  {
+    name: 'set_stop_rule',
+    description: 'Add a stop rule for a paid channel: it trips when `metric` is above (GT) or below (LT) `threshold` over the last `windowDays` settled days, once the window holds at least `minSample` taps. A rule below its minSample never trips, so set one for any rate or cost per install. A paid channel with spend needs at least one active rule or get_budget_pacing flags it non-compliant. Rates are fractions (0.05 = 5%). scope narrows it to one campaign or keyword by id. Conductor only evaluates and records: a tripped rule is a prompt for a human to change the bid or budget in the ad platform (or Rexipe\'s gated tool), never an action taken here. Requires the Editor role (or Admin). Verify with get_budget_pacing; remove with remove_stop_rule.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'The channel, e.g. ADS' },
+        metric: { type: 'string', enum: ['cost_per_install', 'spend', 'installs', 'taps', 'tap_through_rate', 'install_rate'], description: 'What to watch. tap_through_rate = taps / impressions; install_rate = installs / taps' },
+        comparator: { type: 'string', enum: ['GT', 'LT'], description: 'GT trips above the threshold, LT below' },
+        threshold: { type: 'number', description: 'In the metric\'s own unit, 0 or more' },
+        minSample: { type: 'number', description: 'Taps the window must hold before the rule can trip (default 0 = none)' },
+        windowDays: { type: 'number', description: 'Settled days to read, 1 to 90 (default 7)' },
+        scope: { type: 'string', description: 'channel (default), campaign:<id> or keyword:<id>' },
+        note: { type: 'string', description: 'What a human should consider when it trips (optional)' },
+      },
+      required: ['channel', 'metric', 'comparator', 'threshold'],
+    },
+  },
+  {
+    name: 'remove_stop_rule',
+    description: 'Remove a stop rule by id (it stays on record but stops being evaluated). Removing the last active rule of a paid channel makes it non-compliant again. Requires the Editor role (or Admin). Find ruleId in get_budget_pacing (channels[].rules); verify there afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: { ruleId: { type: 'string', description: 'The rule id from get_budget_pacing or set_stop_rule' } },
+      required: ['ruleId'],
     },
   },
   {
@@ -2766,6 +2817,35 @@ export async function runMcpServer(): Promise<void> {
               channel: params['channel'] as string | undefined,
             })
           )
+        }
+        case 'get_budget_pacing': {
+          return successResponse(await getBudgetPacing(config, { month: params['month'] as string | undefined }))
+        }
+        case 'set_marketing_budget': {
+          return successResponse(
+            await setMarketingBudget(config, {
+              month: params['month'] as string,
+              capAmount: params['capAmount'] as number,
+              currency: params['currency'] as string | undefined,
+            })
+          )
+        }
+        case 'set_stop_rule': {
+          return successResponse(
+            await setStopRule(config, {
+              channel: params['channel'] as string,
+              metric: params['metric'] as string,
+              comparator: params['comparator'] as string,
+              threshold: params['threshold'] as number,
+              minSample: params['minSample'] as number | undefined,
+              windowDays: params['windowDays'] as number | undefined,
+              scope: params['scope'] as string | undefined,
+              note: params['note'] as string | undefined,
+            })
+          )
+        }
+        case 'remove_stop_rule': {
+          return successResponse(await removeStopRule(config, { ruleId: params['ruleId'] as string }))
         }
         case 'get_marketing_definitions': {
           return successResponse(await getMarketingDefinitions(config, { channel: params['channel'] as string | undefined }))

@@ -162,7 +162,7 @@
     }
   ],
   "claudeIntegration": {
-    "description": "Conductor ships a full Claude Code plugin \u2014 slash commands, skills, and a background agent \u2014 installed automatically by conductor init into your Claude Code configuration.",
+    "description": "Conductor ships a full Claude Code plugin — slash commands, skills, and a background agent — installed automatically by conductor init into your Claude Code configuration.",
     "mcpConfig": "{\n  \"mcpServers\": {\n    \"conductor\": {\n      \"command\": \"conductor\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}",
     "slashCommands": [
       {
@@ -175,15 +175,15 @@
       },
       {
         "name": "conductor:implement",
-        "description": "Take a PRD issue from BACKLOG to a green PR \u2014 status transitions, branch, parallel coding agents, CI monitoring."
+        "description": "Take a PRD issue from BACKLOG to a green PR — status transitions, branch, parallel coding agents, CI monitoring."
       },
       {
         "name": "conductor:fix",
-        "description": "Fix a bug found during PR review \u2014 root cause investigation, full build validation, push to the existing PR branch."
+        "description": "Fix a bug found during PR review — root cause investigation, full build validation, push to the existing PR branch."
       },
       {
         "name": "conductor:workflow",
-        "description": "Design and create a Conductor workflow \u2014 YAML automation or statechart lifecycle \u2014 via guided discovery and MCP creation."
+        "description": "Design and create a Conductor workflow — YAML automation or statechart lifecycle — via guided discovery and MCP creation."
       },
       {
         "name": "conductor:marketing",
@@ -380,7 +380,7 @@
     },
     {
       "name": "write_document",
-      "description": "Create or update a Work Item document by filename with full content (upsert). Works headlessly \u2014 supersedes scaffold_document+Write for new documents.",
+      "description": "Create or update a Work Item document by filename with full content (upsert). Works headlessly — supersedes scaffold_document+Write for new documents.",
       "category": "documents",
       "requiredParams": [
         "issueId",
@@ -408,7 +408,7 @@
     },
     {
       "name": "list_workflows",
-      "description": "List the project's Workflows. Discovery entry point \u2014 resolves workflow names to slugs before creating a Work Item.",
+      "description": "List the project's Workflows. Discovery entry point — resolves workflow names to slugs before creating a Work Item.",
       "category": "workflows"
     },
     {
@@ -470,7 +470,7 @@
     },
     {
       "name": "update_workflow",
-      "description": "Update a DRAFT workflow definition. Fix validation errors before retrying publish \u2014 do not create a second workflow.",
+      "description": "Update a DRAFT workflow definition. Fix validation errors before retrying publish — do not create a second workflow.",
       "category": "workflows",
       "requiredParams": [
         "workflowId"
@@ -478,7 +478,7 @@
     },
     {
       "name": "delete_workflow",
-      "description": "Delete a DRAFT workflow definition. PUBLISHED and DISABLED workflows are rejected \u2014 prefer update_workflow to fix a DRAFT in place.",
+      "description": "Delete a DRAFT workflow definition. PUBLISHED and DISABLED workflows are rejected — prefer update_workflow to fix a DRAFT in place.",
       "category": "workflows",
       "requiredParams": [
         "workflowId"
@@ -528,7 +528,7 @@
     },
     {
       "name": "list_workflow_secrets",
-      "description": "List the names of workflow secrets configured for this project (keys only \u2014 values are never returned over MCP).",
+      "description": "List the names of workflow secrets configured for this project (keys only — values are never returned over MCP).",
       "category": "workflows"
     },
     {
@@ -562,7 +562,7 @@
     },
     {
       "name": "update_agent",
-      "description": "Update an existing AI Agent. Partial \u2014 only the supplied fields change. Also how an ACTIVE agent is set back to DRAFT so it can be deleted.",
+      "description": "Update an existing AI Agent. Partial — only the supplied fields change. Also how an ACTIVE agent is set back to DRAFT so it can be deleted.",
       "category": "discovery",
       "requiredParams": [
         "agentId"
@@ -570,7 +570,7 @@
     },
     {
       "name": "delete_agent",
-      "description": "Delete a DRAFT AI Agent. An ACTIVE agent is rejected \u2014 set it to DRAFT with update_agent first. Also rejected if a workflow still references this agent.",
+      "description": "Delete a DRAFT AI Agent. An ACTIVE agent is rejected — set it to DRAFT with update_agent first. Also rejected if a workflow still references this agent.",
       "category": "discovery",
       "requiredParams": [
         "agentId"
@@ -631,7 +631,7 @@
     },
     {
       "name": "list_knowledge_domains",
-      "description": "List this project's knowledge domains \u2014 slug, displayName, description, pathPrefix, filing conventions.",
+      "description": "List this project's knowledge domains — slug, displayName, description, pathPrefix, filing conventions.",
       "category": "knowledge"
     },
     {
@@ -646,12 +646,12 @@
     },
     {
       "name": "list_project_docs",
-      "description": "Map the project's Docs section \u2014 folder paths and every document as a \"Folder/Title\" path, or full-text search with query.",
+      "description": "Map the project's Docs section — folder paths and every document as a \"Folder/Title\" path, or full-text search with query.",
       "category": "project-docs"
     },
     {
       "name": "read_project_doc",
-      "description": "Read one project document by path or docId \u2014 full Markdown plus taskLines (every checkbox with its line number and state).",
+      "description": "Read one project document by path or docId — full Markdown plus taskLines (every checkbox with its line number and state).",
       "category": "project-docs"
     },
     {
@@ -701,7 +701,7 @@
     },
     {
       "name": "respond_to_project_doc_comment",
-      "description": "Answer a comment thread on a project document \u2014 reply, resolve, or both.",
+      "description": "Answer a comment thread on a project document — reply, resolve, or both.",
       "category": "project-docs",
       "requiredParams": [
         "commentId"
@@ -709,7 +709,7 @@
     },
     {
       "name": "list_project_doc_versions",
-      "description": "List a project document's edit history \u2014 version number, author and timestamp, newest first.",
+      "description": "List a project document's edit history — version number, author and timestamp, newest first.",
       "category": "project-docs"
     },
     {
@@ -793,7 +793,7 @@
     },
     {
       "name": "list_assets",
-      "description": "Every Asset on a Work Item \u2014 uploaded media and recorded links, with the ids set_publish_targets takes.",
+      "description": "Every Asset on a Work Item — uploaded media and recorded links, with the ids set_publish_targets takes.",
       "category": "marketing",
       "requiredParams": [
         "issueId"
@@ -835,6 +835,40 @@
       "description": "What is working across the project's published Posts: totals, engagement rate by platform, format and time, best and worst posts, and movers vs the prior window. Add include [\"channels\"] for per-channel status, funnel and metrics.",
       "category": "marketing",
       "requiredParams": []
+    },
+    {
+      "name": "get_budget_pacing",
+      "description": "Paid spend against the month's budget cap per paid channel: month-to-date spend, pace, projected month-end, compliance (a paid channel needs a stop rule), tripped stop rules and marginal cost per install.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "set_marketing_budget",
+      "description": "Set the paid budget cap for a month. Records the cap only; it changes nothing on an ad platform.",
+      "category": "marketing",
+      "requiredParams": [
+        "month",
+        "capAmount"
+      ]
+    },
+    {
+      "name": "set_stop_rule",
+      "description": "Add a stop rule for a paid channel (metric, comparator, threshold, minimum sample, window). Conductor evaluates and records it; a human applies any bid or budget change.",
+      "category": "marketing",
+      "requiredParams": [
+        "channel",
+        "metric",
+        "comparator",
+        "threshold"
+      ]
+    },
+    {
+      "name": "remove_stop_rule",
+      "description": "Remove a stop rule by id.",
+      "category": "marketing",
+      "requiredParams": [
+        "ruleId"
+      ]
     },
     {
       "name": "get_marketing_definitions",
@@ -972,7 +1006,7 @@
     },
     {
       "name": "upload_creative_photo",
-      "description": "Deprecated alias for upload_creative_media \u2014 same behavior, including for video/audio.",
+      "description": "Deprecated alias for upload_creative_media — same behavior, including for video/audio.",
       "category": "marketing"
     },
     {
