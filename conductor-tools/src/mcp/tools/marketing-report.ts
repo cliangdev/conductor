@@ -65,7 +65,9 @@ export async function getMarketingReport(
   params: { window?: string }
 ): Promise<Record<string, unknown>> {
   const window = params.window ?? '28d'
-  if (window !== '7d' && window !== '28d') throw new Error(`Unknown window "${window}": use "7d" or "28d"`)
+  if (window !== '7d' && window !== '28d' && !/^\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}$/.test(window)) {
+    throw new Error(`Unknown window "${window}": use "7d", "28d" or a date range "YYYY-MM-DD..YYYY-MM-DD"`)
+  }
   const report = await apiGet<ReportPayload>(
     `/api/v2/projects/${config.projectId}/marketing/report?window=${window}`,
     config

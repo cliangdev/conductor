@@ -1467,7 +1467,7 @@ export const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        window: { type: 'string', enum: ['7d', '28d'], description: 'Report window (default 28d)' },
+        window: { type: 'string', description: 'Report window: "7d", "28d" (default) or a fixed range "YYYY-MM-DD..YYYY-MM-DD" (at most 92 days, ending yesterday or earlier), e.g. to check a past window against platform numbers' },
       },
     },
   },

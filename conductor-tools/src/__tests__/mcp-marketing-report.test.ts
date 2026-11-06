@@ -170,6 +170,14 @@ describe('getMarketingReport', () => {
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/report?window=7d', config)
     await expect(getMarketingReport(config, { window: '30d' })).rejects.toThrow(/Unknown window/)
   })
+
+  it('passes a fixed date range and rejects a malformed one', async () => {
+    mocked(apiGet).mockResolvedValue({ window: { from: '2026-09-29', to: '2026-10-26' } })
+    await getMarketingReport(config, { window: '2026-09-29..2026-10-26' })
+    expect(apiGet).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/report?window=2026-09-29..2026-10-26', config)
+    await expect(getMarketingReport(config, { window: '2026-09-29-2026-10-26' })).rejects.toThrow(/Unknown window/)
+  })
 })
 
 describe('setMarketingBenchmark', () => {
