@@ -39,5 +39,23 @@ To rotate:
   which returns fake data and makes no Apple calls.
 - **Rate limits are unpublished.** Apple returns an `X-Rate-Limit` header but documents no numeric
   limit; the connector caches data for 6h (`getMaxCacheAge`) to stay well clear.
-- **`newDownloads` vs `installs`.** The connector reports `newDownloads` (first-time installs) as the
-  acquisition metric; `installs` includes redownloads and overstates new-user acquisition.
+## What the daily feed stores
+
+The `channel_metrics` feed writes ADS rows for the day total, every campaign (`campaign:{id}:{name}`), keyword
+(`keyword:{id}:{text}`), ad (`ad:{adGroupId}:{adId}:{name}`) and search term (`searchterm:{campaignId}:{term}`):
+
+| Key | Apple field | Notes |
+|---|---|---|
+| `spend` | `localSpend.amount` | |
+| `impressions`, `taps` | same | |
+| `installs` | `tapInstalls` | Tap new downloads plus tap redownloads, the figure Apple's console calls installs. The same meaning at every level, so cost per install is spend over tap installs everywhere. |
+| `new_downloads` | `tapNewDownloads` | First-time downloads. Organic App Store search subtracts this from the store's search downloads. |
+| `redownloads` | `tapRedownloads` | |
+| `view_installs` | `viewInstalls` | View-through installs. Shown separately and never added to `installs`. |
+
+A field Apple omits writes no row, never a 0. Campaign, keyword and ad rows use UTC days, like every other
+channel. Search-term rows use the org's time zone (`ORTZ`), the only zone Apple's search-term report allows, so
+they are a breakdown table only and never feed totals; a term Apple suppresses for low volume is stored as
+`(low volume)`. A 4xx on one campaign's keyword, ad or search-term report skips that campaign and keeps its
+stored rows. The connector reports contract version 2; a version change makes the feed re-read its 90-day
+history once, which repaired rows stored before tap installs were read (they had installs 0).
