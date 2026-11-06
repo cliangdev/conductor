@@ -131,6 +131,24 @@ billed per image), or asks you. `conductor doctor` shows both routes.
 Generated photos contain no text or logos, and never show your real product unless you give Claude a
 real photo of it.
 
+#### Want motion? Have a clip generated from a photo
+
+Ask for motion or a video ("make this photo move", "a 4 second clip of them laughing") and Claude can
+turn a still into a short clip, with sound if you want it. **It always tells you the estimated price
+first and waits for your yes**; nothing is generated or billed until you agree. Spending is capped at
+$2 per clip run and $5 a day by default (`conductor config set-video-caps --per-call <usd> --daily <usd>`).
+
+Video is off until you set up one route:
+
+- **Veo on Vertex AI** (uses your Google Cloud login): `conductor config set-vertex-project <id>` and
+  `gcloud auth login`. Billed to that project.
+- **Gemini Omni** (uses a Gemini API key): `conductor config set-gemini-api-key <key>`.
+
+A 4 second clip takes one to three minutes. Claude checks it for AI tells (warped faces or hands, a
+face that changes, lips that don't match the sound) and retries at most twice before telling you it
+still looks generated. The clip is recorded as AI-generated, so the AI label applies when you publish.
+If it has a spoken line, add captions. `conductor doctor` shows the route and today's spend.
+
 ### b. In the web app
 
 Go to **Marketing → Creatives → New creative**. It opens straight into the Creative editor:
