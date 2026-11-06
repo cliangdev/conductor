@@ -28,6 +28,9 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
     static final Duration CHANNEL_METRICS_CONNECT_TIMEOUT = Duration.ofSeconds(10);
     static final Duration CHANNEL_METRICS_READ_TIMEOUT = Duration.ofSeconds(180);
 
+    /** Bump when the stored meaning of a WEB metric changes; see {@link #pull}. */
+    static final int CHANNEL_METRICS_CONTRACT_VERSION = 2;
+
     public PostHogConnector() {
         this(ConnectorHttp.restTemplate(),
                 ConnectorHttp.restTemplate(CHANNEL_METRICS_CONNECT_TIMEOUT, CHANNEL_METRICS_READ_TIMEOUT));
@@ -63,7 +66,13 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
             ConnectorConfigField.userInput("eventFilter", "Event filter",
                 "Only count events matching property = 'value', for example $lib = 'web'", FieldType.STRING, false),
             ConnectorConfigField.userInput("conversionEvent", "Conversion event",
-                "Event name to track as conversion clicks (optional)", FieldType.STRING, false)
+                "Event name to track as conversion clicks and conversion sessions (optional)", FieldType.STRING, false),
+            ConnectorConfigField.userInput("internalCohortId", "Internal users cohort ID",
+                "Optional. Digits only: the number in your PostHog cohort's URL (Cohorts, then open the cohort). "
+                    + "People in this cohort, such as your team's browsers, are left out of every web number", FieldType.STRING, false),
+            ConnectorConfigField.userInput("excludePathPrefixes", "Excluded page prefixes",
+                "Optional. Comma-separated paths whose events are left out, for example /share,/s/ for shared "
+                    + "review pages. Each starts with / and matches every page that begins with it (max 10)", FieldType.STRING, false)
         ));
     }
 
@@ -342,6 +351,17 @@ public class PostHogConnector implements FetchConnector, ChannelMetricsSource {
     @Override
     public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
         return channelMetrics.pull(ctx, from, to);
+    }
+
+    /**
+     * Version 2: {@code visitors} counts persons with a pageview (it counted every distinct id over all events),
+     * the window-unique series exist, and the exclusions apply. The version differing from the one in the feed
+     * cursor makes the puller re-walk the backfill window once, so stored history is recomputed.
+     */
+    @Override
+    public ChannelMetricsPull pull(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        return new ChannelMetricsPull(pullDaily(ctx, from, to), null, null, null, Set.of(), List.of(),
+                CHANNEL_METRICS_CONTRACT_VERSION);
     }
 
     @Override
