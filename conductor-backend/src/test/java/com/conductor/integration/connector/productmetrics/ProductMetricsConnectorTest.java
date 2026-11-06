@@ -1,5 +1,9 @@
 package com.conductor.integration.connector.productmetrics;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.conductor.integration.ChannelMetricPoint;
 import com.conductor.integration.ChannelMetricsPull;
 import com.conductor.integration.ChannelMetricsSourceException;
@@ -10,6 +14,7 @@ import com.conductor.integration.OutboundUrlGuard;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -17,6 +22,7 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -174,14 +180,26 @@ class ProductMetricsConnectorTest {
 
     @Test
     void aWrongContractVersionIsRefusedWithThePlainReason() {
-        respond(response("3", METRICS, "[]", "[]"));
+        for (String version : new String[]{"4", "5", "0"}) {
+            server.reset();
+            respond(response(version, METRICS, "[]", "[]"));
+
+            assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO)).as("version " + version)
+                    .isInstanceOfSatisfying(ChannelMetricsSourceException.class, e -> {
+                        assertThat(e.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
+                        assertThat(e.getMessage()).isEqualTo("The server speaks product metrics contract version "
+                                + version + "; Conductor reads versions 1, 2 and 3.");
+                    });
+        }
+    }
+
+    @Test
+    void aMissingContractVersionNamesTheVersionsConductorReads() {
+        respond("""
+                {"timezone":"UTC","dataCompleteThrough":"2026-10-12","restatementDays":3,"metrics":[],"points":[]}""");
 
         assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
-                .isInstanceOfSatisfying(ChannelMetricsSourceException.class, e -> {
-                    assertThat(e.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
-                    assertThat(e.getMessage()).isEqualTo(
-                            "The server speaks product metrics contract version 3; Conductor reads versions 1 and 2.");
-                });
+                .hasMessage("The response has no contractVersion. Conductor reads versions 1, 2 and 3.");
     }
 
     @Test
@@ -248,15 +266,19 @@ class ProductMetricsConnectorTest {
     }
 
     @Test
-    void reservedKeysAndBadReferenceMetricsAreRefused() {
+    void reservedKeysAreRefused() {
         respond(response("1", """
                 [{"key":"ref_x","label":"X","unit":"COUNT","aggregation":"SUM"}]""", "[]", "[]"));
         assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO)).hasMessageContaining("not starting with ref_");
+    }
 
-        server.reset();
+    @Test
+    void aReferenceValueWithoutAMetricNameIsRefused() {
         respond(response("1", METRICS, "[]", """
-                [{"metric":"revenue","day":"2026-10-11","value":1}]"""));
-        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO)).hasMessageContaining("'revenue'");
+                [{"day":"2026-10-11","value":1}]"""));
+
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
+                .hasMessage("A reference value names 'null'; expected one of [ads_spend, store_downloads].");
     }
 
     // ---- contract v2 ------------------------------------------------------------------------------
@@ -369,6 +391,228 @@ class ProductMetricsConnectorTest {
                 [{"metric":"a","day":"2026-10-11","value":1,"dimension":"keyword:77"}]"""));
         assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
                 .hasMessageContaining("source:, campaign:, keyword: or ad:");
+    }
+
+    // ---- contract v3 ------------------------------------------------------------------------------
+
+    private static final List<String> V3_PREFIXES = List.of("offer", "link", "message", "intent", "aso", "channel",
+            "paywall");
+
+    private static final String ALL_PREFIXES_V3 =
+            "source:, campaign:, keyword:, ad:, offer:, link:, message:, intent:, aso:, channel: or paywall:";
+
+    private static final String METRICS_V3 = """
+            [{"key":"activated","label":"Activated installs","unit":"COUNT","aggregation":"SUM","area":"ACTIVATION",
+              "exclusions":"Likely App Review installs (7 in the window)"},
+             {"key":"aso_rank","label":"Organic rank","unit":"POSITION","aggregation":"LEVEL","good":"DOWN"},
+             {"key":"offer_redemptions","label":"Offer redemptions","unit":"COUNT","aggregation":"SUM"}]""";
+
+    private static String versioned(int version, String metrics, String points, String reference) {
+        return """
+                {"contractVersion":%d,"timezone":"America/Los_Angeles","dataCompleteThrough":"2026-10-12",
+                 "restatementDays":14,"metrics":%s,"points":%s,"reference":%s}"""
+                .formatted(version, metrics, points, reference);
+    }
+
+    private static String v3(String metrics, String points, String reference) {
+        return versioned(3, metrics, points, reference);
+    }
+
+    private static String point(String dimension) {
+        return """
+                [{"metric":"activated","day":"2026-10-11","value":1,"dimension":"%s"}]""".formatted(dimension);
+    }
+
+    @Test
+    void aVersion3ResponseReadsEveryNewDimensionPrefixAndBothNewReferenceMetrics() {
+        respond(v3(METRICS_V3, """
+                [{"metric":"activated","day":"2026-10-11","value":12,"dimension":"channel:email"},
+                 {"metric":"offer_redemptions","day":"2026-10-11","value":3,"dimension":"offer:CREATOR10"},
+                 {"metric":"activated","day":"2026-10-11","value":4,"dimension":"link:ab12cd"},
+                 {"metric":"activated","day":"2026-10-11","value":5,"dimension":"message:fast weeknight dinners"},
+                 {"metric":"activated","day":"2026-10-11","value":6,"dimension":"intent:plan meals"},
+                 {"metric":"aso_rank","day":"2026-10-11","value":7,"dimension":"aso:meal planner"},
+                 {"metric":"activated","day":"2026-10-11","value":8,"dimension":"paywall:Cook smarter: try it free"},
+                 {"metric":"activated","day":"2026-10-11","value":9,"dimension":"keyword:77:meal planner"}]""", """
+                [{"metric":"store_downloads","day":"2026-10-11","value":131},
+                 {"metric":"ads_spend","day":"2026-10-11","value":212.4},
+                 {"metric":"ads_tap_installs","day":"2026-10-11","value":58},
+                 {"metric":"sales_first_time_downloads","day":"2026-10-11","value":129}]"""));
+
+        ChannelMetricsPull pull = connector.pull(ctx(URL), FROM, TO);
+
+        assertThat(pull.contractVersion()).isEqualTo(3);
+        assertThat(pull.points()).filteredOn(p -> !p.metric().startsWith("ref_"))
+                .extracting(ChannelMetricPoint::dimensionKey)
+                .containsExactly("channel:email", "offer:CREATOR10", "link:ab12cd", "message:fast weeknight dinners",
+                        "intent:plan meals", "aso:meal planner", "paywall:Cook smarter: try it free",
+                        "keyword:77:meal planner");
+        assertThat(pull.points()).filteredOn(p -> p.metric().startsWith("ref_"))
+                .extracting(ChannelMetricPoint::metric, ChannelMetricPoint::dimensionKey,
+                        p -> p.value().doubleValue())
+                .containsExactlyInAnyOrder(
+                        org.assertj.core.groups.Tuple.tuple("ref_store_downloads", "", 131.0),
+                        org.assertj.core.groups.Tuple.tuple("ref_ads_spend", "", 212.4),
+                        org.assertj.core.groups.Tuple.tuple("ref_ads_tap_installs", "", 58.0),
+                        org.assertj.core.groups.Tuple.tuple("ref_sales_first_time_downloads", "", 129.0));
+        assertThat(pull.snapshotMetrics()).containsExactly("aso_rank");
+    }
+
+    @Test
+    void aVersion3ResponseCarriesExclusionsAndThePositionUnit() {
+        respond(v3(METRICS_V3, "[]", "[]"));
+
+        ChannelMetricsPull pull = connector.pull(ctx(URL), FROM, TO);
+
+        assertThat(pull.definitions()).filteredOn(d -> d.metric().equals("activated")).singleElement()
+                .satisfies(d -> assertThat(d.exclusions()).isEqualTo("Likely App Review installs (7 in the window)"));
+        assertThat(pull.definitions()).filteredOn(d -> d.metric().equals("aso_rank")).singleElement()
+                .satisfies(d -> {
+                    assertThat(d.unit()).isEqualTo("POSITION");
+                    assertThat(d.good()).isEqualTo("DOWN");
+                    assertThat(d.exclusions()).isNull();
+                });
+        assertThat(pull.definitions()).filteredOn(d -> d.metric().equals("offer_redemptions")).singleElement()
+                .satisfies(d -> assertThat(d.exclusions()).isNull());
+    }
+
+    @Test
+    void exclusionsAtTheLimitAreAcceptedAndALongerTextIsRefusedWithTheContractReason() {
+        String metric = """
+                [{"key":"a","label":"A","unit":"COUNT","aggregation":"SUM","exclusions":"%s"}]""";
+        respond(v3(metric.formatted("x".repeat(240)), "[]", "[]"));
+        assertThat(connector.pull(ctx(URL), FROM, TO).definitions()).singleElement()
+                .satisfies(d -> assertThat(d.exclusions()).hasSize(240));
+
+        server.reset();
+        respond(v3(metric.formatted("x".repeat(241)), "[]", "[]"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO)).isInstanceOfSatisfying(
+                ChannelMetricsSourceException.class, e -> {
+                    assertThat(e.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
+                    assertThat(e.getMessage()).isEqualTo("The exclusions of 'a' are longer than 240 characters.");
+                });
+    }
+
+    @Test
+    void aVersion3DimensionAtTheLimitIsAcceptedAndALongerOrEmptyOneIsRefusedWithTheContractReason() {
+        String metrics = """
+                [{"key":"activated","label":"Activated","unit":"COUNT","aggregation":"SUM"}]""";
+        for (String prefix : V3_PREFIXES) {
+            server.reset();
+            respond(v3(metrics, point(prefix + ":" + "x".repeat(190)), "[]"));
+            assertThat(connector.pull(ctx(URL), FROM, TO).points()).as(prefix + " at 190").hasSize(1);
+
+            for (String bad : new String[]{prefix + ":" + "x".repeat(191), prefix + ":"}) {
+                server.reset();
+                respond(v3(metrics, point(bad), "[]"));
+                assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO)).as(bad.length() + " chars")
+                        .isInstanceOfSatisfying(ChannelMetricsSourceException.class, e -> {
+                            assertThat(e.health()).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
+                            assertThat(e.getMessage()).startsWith("A dimension must be empty or start with "
+                                    + ALL_PREFIXES_V3 + "; got '" + prefix + ":");
+                        });
+            }
+        }
+    }
+
+    @Test
+    void anUnknownPrefixIsStillRefusedOnVersion3AndReferenceValuesStayTotals() {
+        String metrics = """
+                [{"key":"activated","label":"Activated","unit":"COUNT","aggregation":"SUM"}]""";
+        respond(v3(metrics, point("user:42"), "[]"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
+                .hasMessage("A dimension must be empty or start with " + ALL_PREFIXES_V3 + "; got 'user:42'.");
+
+        server.reset();
+        respond(v3(metrics, "[]", """
+                [{"metric":"ads_tap_installs","day":"2026-10-11","value":5,"dimension":"offer:X"}]"""));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
+                .hasMessage("Reference values are totals; leave dimension empty.");
+    }
+
+    @Test
+    void aVersion2ResponseIgnoresVersion3FieldsAndRefusesTheVersion3OnlyPrefixesAndUnit() {
+        respond(versioned(2, """
+                [{"key":"a","label":"A","unit":"COUNT","aggregation":"SUM","exclusions":"Likely App Review installs"}]""",
+                "[]", """
+                [{"metric":"store_downloads","day":"2026-10-11","value":131},
+                 {"metric":"ads_tap_installs","day":"2026-10-11","value":58},
+                 {"metric":"sales_first_time_downloads","day":"2026-10-11","value":129}]"""));
+        ChannelMetricsPull pull = connector.pull(ctx(URL), FROM, TO);
+        assertThat(pull.definitions()).singleElement().satisfies(d -> assertThat(d.exclusions()).isNull());
+        assertThat(pull.points()).extracting(ChannelMetricPoint::metric).containsExactly("ref_store_downloads");
+        assertThat(pull.contractVersion()).isEqualTo(2);
+
+        for (String prefix : V3_PREFIXES) {
+            server.reset();
+            respond(versioned(2, """
+                    [{"key":"activated","label":"Activated","unit":"COUNT","aggregation":"SUM"}]""",
+                    point(prefix + ":x"), "[]"));
+            assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO)).as(prefix)
+                    .hasMessage("A dimension must be empty or start with source:, campaign:, keyword: or ad:; got '"
+                            + prefix + ":x'.");
+        }
+
+        server.reset();
+        respond(versioned(2, """
+                [{"key":"aso_rank","label":"Rank","unit":"POSITION","aggregation":"LEVEL"}]""", "[]", "[]"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO)).hasMessage(
+                "The metric 'aso_rank' has an unknown unit 'POSITION'; expected COUNT, CURRENCY or PERCENT.");
+    }
+
+    @Test
+    void aVersion1ResponseIgnoresVersion3FieldsAndRefusesTheVersion3OnlyPrefixesAndUnit() {
+        respond(versioned(1, """
+                [{"key":"a","label":"A","unit":"COUNT","aggregation":"SUM","exclusions":"Likely App Review installs"}]""",
+                "[]", """
+                [{"metric":"ads_spend","day":"2026-10-11","value":212.4},
+                 {"metric":"ads_tap_installs","day":"2026-10-11","value":58}]"""));
+        ChannelMetricsPull pull = connector.pull(ctx(URL), FROM, TO);
+        assertThat(pull.definitions()).singleElement().satisfies(d -> assertThat(d.exclusions()).isNull());
+        assertThat(pull.points()).extracting(ChannelMetricPoint::metric).containsExactly("ref_ads_spend");
+
+        server.reset();
+        respond(versioned(1, """
+                [{"key":"activated","label":"Activated","unit":"COUNT","aggregation":"SUM"}]""",
+                point("offer:CREATOR10"), "[]"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO))
+                .hasMessage("A dimension must be empty or start with source: or campaign:; got 'offer:CREATOR10'.");
+
+        server.reset();
+        respond(versioned(1, """
+                [{"key":"aso_rank","label":"Rank","unit":"POSITION","aggregation":"LEVEL"}]""", "[]", "[]"));
+        assertThatThrownBy(() -> connector.pull(ctx(URL), FROM, TO)).hasMessageContaining("unknown unit 'POSITION'");
+    }
+
+    @Test
+    void anUnknownReferenceMetricIsIgnoredAndLoggedOnceInEveryVersion() {
+        Logger logger = (Logger) LoggerFactory.getLogger(ProductMetricsContract.class);
+        Level before = logger.getLevel();
+        logger.setLevel(Level.ALL);
+        ListAppender<ILoggingEvent> logs = new ListAppender<>();
+        logs.start();
+        logger.addAppender(logs);
+        try {
+            for (int version = 1; version <= 3; version++) {
+                server.reset();
+                logs.list.clear();
+                respond(versioned(version, METRICS, "[]", """
+                        [{"metric":"revenue","day":"2026-10-10","value":1},
+                         {"metric":"revenue","day":"2026-10-11","value":2},
+                         {"metric":"revenue","day":"2026-10-12","value":3},
+                         {"metric":"store_downloads","day":"2026-10-11","value":131}]"""));
+
+                ChannelMetricsPull pull = connector.pull(ctx(URL), FROM, TO);
+
+                assertThat(pull.points()).as("v" + version).extracting(ChannelMetricPoint::metric)
+                        .containsExactly("ref_store_downloads");
+                assertThat(logs.list).as("v" + version)
+                        .filteredOn(e -> e.getFormattedMessage().contains("revenue")).hasSize(1);
+            }
+        } finally {
+            logger.detachAppender(logs);
+            logger.setLevel(before);
+        }
     }
 
     // ---- HTTP -------------------------------------------------------------------------------------
@@ -498,7 +742,7 @@ class ProductMetricsConnectorTest {
 
     @Test
     void healthIsSetupRequiredForAWrongVersionAndDegradedForAServerError() {
-        server.expect(once(), r -> { }).andRespond(withSuccess(response("3", METRICS, "[]", "[]"), MediaType.APPLICATION_JSON));
+        server.expect(once(), r -> { }).andRespond(withSuccess(response("4", METRICS, "[]", "[]"), MediaType.APPLICATION_JSON));
         assertThat(connector.checkHealth(ctx(URL))).isEqualTo(ConnectorHealth.SETUP_REQUIRED);
 
         server.reset();

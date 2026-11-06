@@ -1,15 +1,17 @@
-# Product metrics contract (v2)
+# Product metrics contract (v3)
 
 The `product-metrics` connector reads your product's own numbers (first opens, trials, paid, cost per trial)
 from a URL you host, so the marketing overview can show the in-app half of the funnel next to the web, store
 and ads channels. Conductor owns this contract. Your backend serves it; Conductor only reads.
 
-Conductor reads **version 1 and version 2**. Version 2 only adds optional fields and wider limits, so a v1
-backend keeps working unchanged; see [Version 2](#version-2) for what it adds.
+Conductor reads **version 1, version 2 and version 3**. Versions 2 and 3 only add optional fields and wider
+limits, so a v1 or v2 backend keeps working unchanged; see [Version 2](#version-2) and [Version 3](#version-3)
+for what they add.
 
 The machine-readable shape is [`integrations-product-metrics.schema.json`](integrations-product-metrics.schema.json)
-(JSON Schema, draft 2020-12). It is the single source of truth for fields and types; this page explains what
-they mean. A backend can be a mobile app's API, a data warehouse job or a small serverless function.
+(JSON Schema, draft 2020-12). For versions 1 and 2 it is the single source of truth for fields and types; it does
+not describe the [Version 3](#version-3) additions yet, which that section specifies. This page explains what the
+fields mean. A backend can be a mobile app's API, a data warehouse job or a small serverless function.
 
 ## Connecting
 
@@ -71,10 +73,10 @@ Redirects are not followed. Respond within about 30 seconds.
 
 | Field | Meaning |
 |---|---|
-| `contractVersion` | `1` or `2`. Any other value is refused with "the server speaks contract version N". The v2-only fields below are read only when this is `2`. |
+| `contractVersion` | `1`, `2` or `3`. Any other value is refused with "the server speaks contract version N". The v2-only fields below are read only when this is `2` or more, the v3-only fields only when it is `3`. |
 | `timezone` | IANA zone the days are reckoned in. Days are never re-bucketed to UTC. |
 | `dataCompleteThrough` | The last day whose numbers are final. Days **after** it are stored **provisional**: shown on charts, left out of totals and changes, and re-read on the next sync until the backend moves this date forward. |
-| `restatementDays` | How many days back you may still change a number after reporting it. Conductor re-reads that many days (or back to `dataCompleteThrough`, if that lags more) on every sync. 0 to 30 on v1, 0 to 60 on v2. |
+| `restatementDays` | How many days back you may still change a number after reporting it. Conductor re-reads that many days (or back to `dataCompleteThrough`, if that lags more) on every sync. 0 to 30 on v1, 0 to 60 on v2 and v3. |
 | `metrics` | The metric definitions (1 to 50). Conductor replaces its stored set on every sync, so a metric you stop sending disappears. |
 | `points` | Daily values. |
 | `reference` | Optional cross-check figures (see below). |
@@ -88,7 +90,7 @@ applied) and the connection shows the reason.
 |---|---|
 | `key` | Stable id: lowercase letters, digits, underscores, starts with a letter, at most 64 characters, must not start with `ref_`. |
 | `label` | What people see. |
-| `unit` | `COUNT`, `CURRENCY` or `PERCENT`. |
+| `unit` | `COUNT`, `CURRENCY` or `PERCENT` (v3 also `POSITION`, a rank). |
 | `aggregation` | `SUM`: daily values add up over a window (opens, spend). `LEVEL`: a stock whose latest value counts (active subscribers). `RATIO`: see below. |
 | `numerator`, `denominator` | `RATIO` only. Keys of other metrics in the same response, which must be `SUM` or `LEVEL` (not another `RATIO`). |
 | `good` | `UP` (default) or `DOWN`: which direction reads as good news (`DOWN` for cost per trial). |
@@ -106,14 +108,15 @@ daily ratios. Do not send points for a `RATIO` metric. Cost per trial is `paid_s
 | `metric` | A `key` from `metrics`. |
 | `day` | `YYYY-MM-DD` in `timezone`. |
 | `value` | A number. |
-| `dimension` | `null` for the day's total, or `source:<name>` / `campaign:<id>:<name>` for a breakdown row (v2 also `keyword:<id>:<text>` and `ad:<id>:<name>`). The overview's headline numbers read the totals; breakdown rows feed the "By source" and "By campaign" tables. Send totals for every metric you want to show. |
+| `dimension` | `null` for the day's total, or `source:<name>` / `campaign:<id>:<name>` for a breakdown row (v2 also `keyword:<id>:<text>` and `ad:<id>:<name>`; v3 also `offer:`, `link:`, `message:`, `intent:`, `aso:`, `channel:` and `paywall:`, see [Version 3](#version-3)). The overview's headline numbers read the totals; breakdown rows feed the "By source" and "By campaign" tables. Send totals for every metric you want to show. |
 | `sampleSize` | Optional whole number: how many users or events the value rests on. Under 20 for a window is flagged **insufficient data** and never read as a real change. Without it, Conductor judges noise itself. |
 
 Points outside the requested `from`..`to` are ignored.
 
 ### Reference values
 
-`reference` lets Conductor check its own connectors against your backend. Two metrics are understood:
+`reference` lets Conductor check its own connectors against your backend. Two metrics are understood on every
+version (v3 adds two more, see [Version 3](#version-3)):
 
 - `store_downloads`: downloads as your backend counts them. Compared with the App Store channel's downloads.
 - `ads_spend`: paid acquisition spend as your backend counts it. Compared with the Ads channel's spend.
@@ -121,6 +124,10 @@ Points outside the requested `from`..`to` are ignored.
 Reference rows are totals (`dimension` null). Over the settled days both sides have, if the two sums differ by
 more than 1% of the larger, that channel's status becomes `MISMATCH`, and the overview shows both figures and
 the gap. Reference values are never listed as metrics.
+
+A reference metric Conductor does not understand is **ignored**, not refused, on every version (Conductor logs
+its name once per response). A backend can therefore start sending a newer reference series before its connected
+Conductor reads it, and a v1 or v2 response that carries a v3 reference metric simply has it skipped.
 
 ## Version 2
 
@@ -221,10 +228,136 @@ total** target that declares a `window` is prorated to the requested window (a 7
 of a `28d` target); a target with no window is compared as stated.
 Rates and levels are compared as they are.
 
+## Version 3
+
+Everything in v1 and v2 still applies. A `contractVersion: 3` response may add the following, all **optional**.
+It is read only when `contractVersion` is `3`:
+
+| Field | Meaning |
+|---|---|
+| `exclusions` | Per metric: a string of up to 240 characters saying what the value leaves out, for example `"Likely App Review installs (7 in the window)"`. Conductor keeps it with the metric definition so a reader can see what the number does not include. |
+| `unit` | Also `POSITION`: a rank, where 1 is first. Use it with `aggregation: LEVEL` and `good: DOWN` (`aso_rank`). |
+| `dimension` | Also the seven prefixes below, each followed by one value of 1 to 190 characters. |
+| `reference` | Also `ads_tap_installs` and `sales_first_time_downloads`, see below. |
+
+Leave `exclusions` out when you have nothing to say. Absent means "not stated"; Conductor never reads it as
+"nothing is excluded". An empty or blank string is treated as absent.
+
+**In a v1 or v2 response** a v3-only field is **ignored**: `exclusions` is dropped and an `ads_tap_installs` or
+`sales_first_time_downloads` reference value is skipped. A v3-only **dimension prefix** or the `POSITION` unit is
+**refused** there, exactly as any other unknown prefix or unit is. An over-long `exclusions` text (more than 240
+characters) or dimension value (more than 190) in a v3 response is refused with the reason, like an over-long
+`description`.
+
+### Reference metrics
+
+Four reference metrics are understood on v3. Each is a daily total (`dimension` null), and is stored as a hidden
+`ref_<metric>` series for cross-checking Conductor's own connectors.
+
+| Metric | Added in | What it is |
+|---|---|---|
+| `store_downloads` | v1 | Downloads as your backend counts them. |
+| `ads_spend` | v1 | Paid acquisition spend as your backend counts it. |
+| `ads_tap_installs` | v3 | Installs your backend attributes to Apple Ads taps (first-time downloads and redownloads). |
+| `sales_first_time_downloads` | v3 | First-time downloads as Apple's Sales Reports count them. |
+
+Any other reference metric is ignored on every version.
+
+### Dimension prefixes
+
+A point carries **one** dimension. Each v3 prefix is followed by a single value, at most 190 characters (and at
+least 1); the value may itself contain colons.
+
+| Prefix | Rows are broken down by | Example |
+|---|---|---|
+| `offer:<code>` | Offer code | `offer:CREATOR10` |
+| `link:<token>` | Tracked-link token. It names a link, never a person or a device. | `link:ab12cd` |
+| `message:<tag>` | Message or promise tag | `message:fast weeknight dinners` |
+| `intent:<pick>` | The answer people picked when asked what they came to do | `intent:plan meals` |
+| `aso:<keyword>` | Tracked App Store keyword | `aso:meal planner` |
+| `channel:<name>` | Acquisition channel, by name | `channel:email` |
+| `paywall:<headline>` | Paywall variant, by its headline | `paywall:Cook smarter: try it free` |
+
+Do not join two dimensions in one string. Instead:
+
+- **Quality by source, campaign, keyword or ad** uses the existing `source:`, `campaign:`, `keyword:` and `ad:`
+  dimensions on the same metric keys (`activated`, `trial_started`, `paid`, ...).
+- **Intent mix** is the count of a metric on `intent:<pick>` rows, for example `activated` at `intent:plan meals`.
+- **Intent mix per message** is one metric per pick, `intent_<pick>` (for example `intent_plan_meals`), with its
+  points on `message:<tag>` rows.
+
+Conductor stores every accepted dimension row. Today's tables read only the `source:`, `campaign:`, `keyword:` and
+`ad:` rows; the v3 prefixes are read by name by the features that use them.
+
+### Well-known metric keys
+
+All optional. Conductor reads these keys by name when you send them, as counts or levels (never a pre-computed
+rate under one of these keys). Any other key you send shows up as an ordinary metric.
+
+| Key | Unit, aggregation | What it counts | Sent with |
+|---|---|---|---|
+| `activated` | COUNT, SUM | Installs that reached your activation moment | total |
+| `retained_d1` | COUNT, SUM | Installs still active on day 1 | total |
+| `retained_d7` | COUNT, SUM | Installs still active on day 7 | total |
+| `retained_w2` | COUNT, SUM | Installs still active in week 2 | total |
+| `trial_started` | COUNT, SUM | Installs that started a free trial | total |
+| `paid` | COUNT, SUM | Installs that became paying subscribers | total |
+| `proceeds_net` | CURRENCY, SUM | Proceeds after Apple's commission, counted by cohort, 12-month horizon | total |
+| `app_review_installs_excluded` | COUNT, SUM | Likely App Review installs left out of the other numbers | total |
+| `email_sends` | COUNT, SUM | Lifecycle emails sent | total |
+| `email_clicks` | COUNT, SUM | Clicks in those emails | total |
+| `email_trials_saved` | COUNT, SUM | Free trials kept after a lifecycle email; state your rule in `description` | total |
+| `share_links_created` | COUNT, SUM | Share links created in the app | total |
+| `share_views` | COUNT, SUM | Views of shared pages | total |
+| `share_installs` | COUNT, SUM | Installs that came from a share link | total |
+| `offer_redemptions` | COUNT, SUM | Offer-code redemptions | total, `offer:<code>` |
+| `aso_rank` | POSITION, LEVEL | Organic App Store rank for a keyword, 1 first; send `good: DOWN` | `aso:<keyword>` |
+| `aso_popularity` | COUNT, LEVEL | Search popularity score of a keyword | `aso:<keyword>` |
+
+The quality metrics (`activated`, `retained_*`, `trial_started`, `paid`, `proceeds_net`) can also be sent by
+source, campaign, keyword and ad: use the existing `source:`, `campaign:`, `keyword:` and `ad:` dimensions on the
+same keys.
+
+`proceeds_net` is counted by cohort over a 12-month horizon: mark it `"basis": "COHORT"` and restate it as the
+cohort matures (see [Cohort basis](#cohort-basis)), so a recent cohort stays low until it has had the time. Use
+`exclusions` to say what a number leaves out, for example the App Review installs that
+`app_review_installs_excluded` counts.
+
+### Example
+
+```json
+{
+  "contractVersion": 3,
+  "timezone": "America/Los_Angeles",
+  "dataCompleteThrough": "2026-10-14",
+  "restatementDays": 45,
+  "metrics": [
+    { "key": "activated", "label": "Activated installs", "unit": "COUNT", "aggregation": "SUM", "basis": "COHORT",
+      "area": "ACTIVATION", "exclusions": "Likely App Review installs (7 in the window)" },
+    { "key": "intent_plan_meals", "label": "Picked: plan meals", "unit": "COUNT", "aggregation": "SUM" },
+    { "key": "offer_redemptions", "label": "Offer redemptions", "unit": "COUNT", "aggregation": "SUM" },
+    { "key": "aso_rank", "label": "Organic rank", "unit": "POSITION", "aggregation": "LEVEL", "good": "DOWN" }
+  ],
+  "points": [
+    { "metric": "activated", "day": "2026-10-01", "value": 41, "dimension": null },
+    { "metric": "activated", "day": "2026-10-01", "value": 6, "dimension": "keyword:42:meal planner" },
+    { "metric": "activated", "day": "2026-10-01", "value": 9, "dimension": "intent:plan meals" },
+    { "metric": "intent_plan_meals", "day": "2026-10-01", "value": 5, "dimension": "message:fast weeknight dinners" },
+    { "metric": "offer_redemptions", "day": "2026-10-01", "value": 3, "dimension": "offer:CREATOR10" },
+    { "metric": "aso_rank", "day": "2026-10-01", "value": 14, "dimension": "aso:meal planner" }
+  ],
+  "reference": [
+    { "metric": "ads_tap_installs", "day": "2026-10-01", "value": 58, "dimension": null },
+    { "metric": "sales_first_time_downloads", "day": "2026-10-01", "value": 129, "dimension": null }
+  ]
+}
+```
+
 ## Privacy
 
 Send aggregates only. **Never send user ids, install ids, device ids, emails or any other per-person
-identifier**, not even inside a `dimension` string. `sampleSize` is a count, never a list.
+identifier**, not even inside a `dimension` string (a `link:` token identifies a link, never the person who
+opened it). `sampleSize` is a count, never a list.
 
 ## Errors
 
@@ -240,7 +373,7 @@ connected the integration, so write it for them.
 | 3xx | "The server redirected the request." Give the final URL; redirects are not followed. |
 | 429 | Retried later; the connection shows as degraded. |
 | 5xx, timeouts | Retried at the next sync; the connection shows as degraded. |
-| 200 with a body that is not valid JSON, has an unsupported `contractVersion`, a bad v2 `basis` or `area`, an unknown `aggregation`, a `RATIO` naming a metric that is not in the response, or a point for an undefined metric | The reason, in plain words. |
+| 200 with a body that is not valid JSON, has an unsupported `contractVersion`, a bad v2 `basis` or `area`, an unknown `aggregation`, an unknown dimension prefix or `unit` for the version, an over-long v3 `exclusions` or dimension value, a `RATIO` naming a metric that is not in the response, or a point for an undefined metric | The reason, in plain words. |
 
 ## Where the numbers show up
 
