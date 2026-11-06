@@ -167,7 +167,7 @@ class AppStoreConnectChannelMetricsTest {
         assertThat(connector.snapshot("downloads")).isFalse();
         assertThat(connector.getSpec().singleInstance()).isFalse();
         assertThat(connector.getSpec().fields()).extracting(f -> f.key())
-                .containsExactly("issuerId", "keyId", "appId", "vendorNumber", "ratingsCountry", "apiKey");
+                .containsExactly("issuerId", "keyId", "appId", "vendorNumber", "providerToken", "ratingsCountry", "apiKey");
         assertThat(connector.getSpec().fields()).filteredOn(f -> f.key().equals("vendorNumber"))
                 .singleElement().satisfies(f -> {
                     assertThat(f.required()).isFalse();

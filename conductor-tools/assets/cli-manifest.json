@@ -911,6 +911,22 @@
       ]
     },
     {
+      "name": "create_tracked_link",
+      "description": "Create an App Store campaign link (pt/ct) for a bio, creator, email or other place and return its url. Every new Post already gets one automatically. Tokens roll up by family past Apple's reporting threshold.",
+      "category": "marketing",
+      "requiredParams": [
+        "kind",
+        "family",
+        "token"
+      ]
+    },
+    {
+      "name": "list_tracked_links",
+      "description": "List tracked App Store links with their urls. Optionally add downloads and views per family; a family Apple reported nothing for reads below the threshold, never 0.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
       "name": "submit_review",
       "description": "Record an approve / request_changes verdict on a Post as this API key's user (an assigned REVIEWER). Approval schedules the Post.",
       "category": "marketing",
