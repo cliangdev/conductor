@@ -955,6 +955,26 @@
       ]
     },
     {
+      "name": "get_ai_visibility",
+      "description": "Whether AI assistants name the brand for a fixed set of questions, checked weekly: per question and assistant the latest answer and a weekly trend. An assistant with no provider key is skipped, never shown as not named.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "set_ai_questions",
+      "description": "Replace the questions put to the AI assistants each week, and optionally the brand terms that count as naming the brand.",
+      "category": "marketing",
+      "requiredParams": [
+        "questions"
+      ]
+    },
+    {
+      "name": "run_ai_visibility_check",
+      "description": "Run this week's AI-assistant checks now with the workspace's own provider keys (Admin; at most 20 calls a week, safe to repeat).",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
       "name": "import_marketing_changes",
       "description": "Import a marketing change log from a local JSONL file as Changes on the MARKETING_CHANGES workflow. Reference records are skipped, an unknown status or verdict refuses that record, and re-running skips what was already imported.",
       "category": "marketing",

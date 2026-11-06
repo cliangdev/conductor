@@ -36,6 +36,7 @@ JOBS=(
   "memory-maintenance|17 3 * * *|1800s|3|5m|1h"
   "workflow-stuck-run-cleanup|0 2 * * *|1800s|3|5m|1h"
   "marketing-growth-signals|0 6 * * 1|1800s|2|5m|1h"
+  "marketing-ai-visibility|0 7 * * 1|1800s|2|5m|1h"
 )
 
 usage() { sed -n "2,9p" "$0"; exit "${1:-0}"; }
