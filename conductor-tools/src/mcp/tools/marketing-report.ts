@@ -9,6 +9,8 @@ import { apiGet, apiPut, apiDelete } from '../api.js'
 
 export const MAX_REPORT_KEYWORDS = 25
 export const MAX_REPORT_ADS = 20
+export const MAX_REPORT_ADS_COVERAGE = 20
+export const MAX_REPORT_CHANGE_MARKERS = 20
 
 type Json = unknown
 
@@ -41,9 +43,22 @@ export function trimReportValue(value: Json): Json {
 interface ReportPayload extends Record<string, Json> {
   keywords?: Json[]
   ads?: Json[]
+  adsCoverage?: Json[]
+  changeMarkers?: Json[]
 }
 
-const ALWAYS_PRESENT = ['sources', 'headline', 'acquisition', 'daily', 'scorecard', 'keywords', 'ads', 'benchmarks']
+const ALWAYS_PRESENT = [
+  'sources',
+  'headline',
+  'acquisition',
+  'daily',
+  'scorecard',
+  'keywords',
+  'ads',
+  'benchmarks',
+  'adsCoverage',
+  'changeMarkers',
+]
 
 export async function getMarketingReport(
   config: Config,
@@ -57,13 +72,19 @@ export async function getMarketingReport(
   )
   const keywords = report.keywords ?? []
   const ads = report.ads ?? []
+  const adsCoverage = report.adsCoverage ?? []
+  // Markers arrive oldest first; when there are too many the newest are the ones worth marking.
+  const changeMarkers = report.changeMarkers ?? []
   const trimmed = trimReportValue({
     ...report,
     keywords: keywords.slice(0, MAX_REPORT_KEYWORDS),
     ads: ads.slice(0, MAX_REPORT_ADS),
+    adsCoverage: adsCoverage.slice(0, MAX_REPORT_ADS_COVERAGE),
+    changeMarkers: changeMarkers.slice(-MAX_REPORT_CHANGE_MARKERS),
   }) as Record<string, unknown>
   // An emptied section must still read as "none", not as a missing key.
   for (const k of ALWAYS_PRESENT) if (!(k in trimmed)) trimmed[k] = []
+  if (!('definitions' in trimmed)) trimmed['definitions'] = {}
   // All three change buckets stay present even when empty: "nothing due" must not read as a missing key.
   const changes = (trimmed['changes'] ?? {}) as Record<string, unknown>
   trimmed['changes'] = {
@@ -74,8 +95,12 @@ export async function getMarketingReport(
   // window.to is null until a source has data; keep the key so "no data yet" is explicit.
   const w = report['window'] as { from?: string | null; to?: string | null } | undefined
   if (w) trimmed['window'] = { from: w.from ?? null, to: w.to ?? null }
-  // The backend already caps keywords at MAX_REPORT_KEYWORDS, so only ads can run past their cap here.
-  return ads.length > MAX_REPORT_ADS ? { ...trimmed, totalRows: { ads: ads.length } } : trimmed
+  // The backend already caps keywords at MAX_REPORT_KEYWORDS, so only the other lists can run past their cap here.
+  const totalRows: Record<string, number> = {}
+  if (ads.length > MAX_REPORT_ADS) totalRows['ads'] = ads.length
+  if (adsCoverage.length > MAX_REPORT_ADS_COVERAGE) totalRows['adsCoverage'] = adsCoverage.length
+  if (changeMarkers.length > MAX_REPORT_CHANGE_MARKERS) totalRows['changeMarkers'] = changeMarkers.length
+  return Object.keys(totalRows).length > 0 ? { ...trimmed, totalRows } : trimmed
 }
 
 // the metric part mirrors the backend's METRIC_KEY ([A-Za-z0-9_.-]{1,64}, MarketingBenchmarkService)
