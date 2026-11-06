@@ -40,7 +40,9 @@ import java.time.ZoneOffset;
  * the cursor records the chunk's last day and the batch says {@code hasMore}, so the scheduler re-dues the
  * feed at once; the next pull resumes the day after (cursor {@code resumeFrom}) and moves on, until it reaches today. A
  * restatement window wider than a chunk is therefore walked over several pulls, each replacing only its own days.
- * A response that adds metric keys or changes contract version re-walks the whole backfill window.
+ * A response that adds metric keys, or any source whose reported contract version differs from the one in the
+ * cursor (a cursor with no version counts as different; a first-ever pull is already a backfill), re-walks the
+ * whole backfill window once.
  * The OAuth access token is refreshed first (Google tokens last an hour).
  */
 @Service
@@ -174,28 +176,33 @@ public class ChannelMetricsFeedPuller {
                 source.channel().name(), from, to, provisionalFrom, pulled.points(),
                 source.prunesMissingDimensions(), metric -> source.snapshot(metric) || pulledSnapshots.contains(metric),
                 pulled.skippedCampaignIds());
-        boolean rewalk = false;
+        boolean newKeys = false;
         if (pulled.definitions() != null) {
             java.util.Set<String> before = definitionStore.keys(connection.getId());
-            boolean newKeys = !before.isEmpty() && pulled.definitions().stream()
+            newKeys = !before.isEmpty() && pulled.definitions().stream()
                     .anyMatch(d -> !before.contains(d.metric()));
-            Integer previousVersion = parseInt(request.cursor(), CURSOR_CONTRACT_VERSION);
-            boolean versionChanged = lastDay != null && pulled.contractVersion() != null
-                    && !pulled.contractVersion().equals(previousVersion);
-            rewalk = newKeys || versionChanged;
             definitionStore.replace(connection.getProjectId(), connection.getId(), pulled.definitions());
         }
+        // Any source can bump its contract version, with or without metric definitions. The cursor stores the new
+        // version below, so the walk this schedules (resumeFrom) sees an unchanged version and never restarts.
+        Integer previousVersion = parseInt(request.cursor(), CURSOR_CONTRACT_VERSION);
+        boolean versionChanged = lastDay != null && pulled.contractVersion() != null
+                && !pulled.contractVersion().equals(previousVersion);
         if (!pulled.dimensionStates().isEmpty()) {
             stateStore.upsert(connection.getId(), pulled.dimensionStates());
         }
         log.info("Channel metrics feed {} upserted {} point(s) for {}..{}", feed.getId(), written, from, to);
         Integer hint = pulled.trailingDays() != null ? pulled.trailingDays() : previousHint;
-        Integer version = pulled.contractVersion() != null ? pulled.contractVersion()
-                : parseInt(request.cursor(), CURSOR_CONTRACT_VERSION);
+        Integer version = pulled.contractVersion() != null ? pulled.contractVersion() : previousVersion;
         LocalDate next = null;
-        if (rewalk) {
-            log.info("Channel metrics feed {} gained metrics or changed contract version; backfilling from {}",
-                    feed.getId(), floor);
+        if (newKeys || versionChanged) {
+            if (versionChanged) {
+                log.info("Channel metrics feed {} contract version changed from {} to {}; re-walking from {}",
+                        feed.getId(), previousVersion, pulled.contractVersion(), floor);
+            }
+            if (newKeys) {
+                log.info("Channel metrics feed {} gained metrics; re-walking from {}", feed.getId(), floor);
+            }
             next = floor;
         } else if (to.isBefore(today)) {
             next = to.plusDays(1);

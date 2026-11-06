@@ -539,6 +539,109 @@ class ChannelMetricsFeedPullerTest {
         assertThat(batch.hasMore()).isFalse();
     }
 
+    // ---- a version change re-walks history for every source, with or without metric definitions ----
+
+    private static ChannelMetricsPull noDefinitionsVersion(Integer version) {
+        return new ChannelMetricsPull(List.of(), null, null, null, java.util.Set.of(), List.of(), version);
+    }
+
+    @Test
+    void aVersionChangeOnASourceWithoutDefinitionsSchedulesTheBackfillWalkFromTheFloor() {
+        stubPull(noDefinitionsVersion(2));
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-13\"}");
+
+        assertThat(batch.hasMore()).isTrue();
+        assertThat(batch.nextCursor()).contains("\"resumeFrom\":\"" + TODAY.minusDays(90) + "\"")
+                .contains("\"contractVersion\":2");
+        verify(definitionStore, never()).replace(any(), any(), any());
+        verify(definitionStore, never()).keys(any());
+    }
+
+    @Test
+    void aVersionChangeWalksTheBackfillWindowExactlyOnce() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+
+        List<LocalDate[]> calls = drain("{\"lastDay\":\"2026-10-13\",\"trailingDays\":3}", 3,
+                h -> noDefinitionsVersion(2));
+
+        // the pull that noticed the change re-reads the trailing window, then one walk covers floor..today
+        assertThat(calls).hasSize(1 + 7);
+        assertContiguousWithinCap(calls.subList(1, calls.size()), TODAY.minusDays(90));
+        assertThat(lastCursor).isEqualTo("{\"lastDay\":\"2026-10-14\",\"trailingDays\":3,\"contractVersion\":2}");
+    }
+
+    @Test
+    void aSourceAlreadyOnTheCursorsVersionDoesNotWalkAgain() {
+        stubPull(noDefinitionsVersion(2));
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-13\",\"contractVersion\":2}");
+
+        assertThat(batch.hasMore()).isFalse();
+        assertThat(batch.nextCursor()).doesNotContain("resumeFrom").contains("\"contractVersion\":2");
+    }
+
+    @Test
+    void aSourceReportingNoVersionNeverWalksAndKeepsTheStoredOne() {
+        stubPull(noDefinitionsVersion(null));
+
+        IngestBatch withoutStored = pull("{\"lastDay\":\"2026-10-13\"}");
+        IngestBatch withStored = pull("{\"lastDay\":\"2026-10-13\",\"contractVersion\":2}");
+
+        assertThat(withoutStored.hasMore()).isFalse();
+        assertThat(withoutStored.nextCursor()).doesNotContain("resumeFrom").doesNotContain("contractVersion");
+        assertThat(withStored.hasMore()).isFalse();
+        assertThat(withStored.nextCursor()).doesNotContain("resumeFrom").contains("\"contractVersion\":2");
+    }
+
+    @Test
+    void aFirstPullReportingAVersionBackfillsOnceWithoutAnExtraWalk() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+
+        List<LocalDate[]> calls = drain(null, 3, h -> noDefinitionsVersion(2));
+
+        assertThat(calls).hasSize(7);
+        assertContiguousWithinCap(calls, TODAY.minusDays(90));
+        assertThat(lastCursor).isEqualTo("{\"lastDay\":\"2026-10-14\",\"contractVersion\":2}");
+    }
+
+    @Test
+    void aWalkInProgressIsNotRestartedByTheVersionItsOwnCursorAlreadyStores() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+        stubPull(noDefinitionsVersion(2));
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-08-26\",\"resumeFrom\":\"2026-08-27\",\"contractVersion\":2}");
+
+        assertThat(batch.hasMore()).isTrue();
+        verify(source).pull(any(), eq(LocalDate.of(2026, 8, 27)), eq(LocalDate.of(2026, 9, 9)));
+        assertThat(batch.nextCursor()).contains("\"resumeFrom\":\"2026-09-10\"");
+    }
+
+    @Test
+    void aVersionChangeAndNewMetricKeysTogetherScheduleOneWalk() {
+        when(source.maxDaysPerPull()).thenReturn(14);
+        when(definitionStore.keys("conn-1")).thenReturn(java.util.Set.of("sessions"));
+        stubPull(new ChannelMetricsPull(List.of(), null, List.of(def("sessions"), def("signups")), 3,
+                java.util.Set.of(), List.of(), 3));
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-13\",\"trailingDays\":3,\"contractVersion\":2}");
+
+        assertThat(batch.hasMore()).isTrue();
+        assertThat(batch.nextCursor()).contains("\"resumeFrom\":\"" + TODAY.minusDays(90) + "\"")
+                .contains("\"contractVersion\":3");
+    }
+
+    @Test
+    void aVersionThatDiffersInEitherDirectionWalks() {
+        stubPull(noDefinitionsVersion(1));
+
+        IngestBatch batch = pull("{\"lastDay\":\"2026-10-13\",\"contractVersion\":2}");
+
+        assertThat(batch.hasMore()).isTrue();
+        assertThat(batch.nextCursor()).contains("\"resumeFrom\":\"" + TODAY.minusDays(90) + "\"")
+                .contains("\"contractVersion\":1");
+    }
+
     // ---- chunked backfill ----
 
     @Test
