@@ -224,6 +224,15 @@ interface OverviewMetric {
   basis?: string | null
   description?: string | null
   headline?: number | null
+  note?: string | null
+  definition?: {
+    source: string
+    numerator: string
+    denominator?: string | null
+    sourceType?: string | null
+    exclusions?: string | null
+    timeZone?: string | null
+  } | null
   target?: {
     value: number
     direction: string
@@ -371,6 +380,10 @@ function trimMetric(
     headline: m.headline,
     // COHORT: each day counts the people who first opened that day, followed to now (EVENT is the default).
     basis: m.basis === 'COHORT' ? m.basis : null,
+    // What the number counts (source, numerator, denominator, source type, exclusions, time zone), and, on a null
+    // value, why the stored data cannot answer (e.g. unique visitors exist only for 7, 28 and 90 days).
+    definition: m.definition ? omitNulls({ ...m.definition }) : null,
+    note: m.note,
     series: withSeries ? bucketSeries(m.series ?? [], m.unit) : null,
   })
 }

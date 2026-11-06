@@ -14,10 +14,12 @@ import com.conductor.generated.v2.model.OverviewDimensionColumn;
 import com.conductor.generated.v2.model.OverviewDimensionRow;
 import com.conductor.generated.v2.model.OverviewFunnelStage;
 import com.conductor.generated.v2.model.OverviewMetric;
+import com.conductor.generated.v2.model.OverviewMetricDefinition;
 import com.conductor.generated.v2.model.OverviewMismatch;
 import com.conductor.generated.v2.model.OverviewSeriesPoint;
 import com.conductor.generated.v2.model.OverviewWindow;
 import com.conductor.marketing.overview.MarketingOverviewQueryService;
+import com.conductor.marketing.overview.MetricCatalog;
 import com.conductor.service.ProjectSecurityService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -143,7 +145,17 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                 .area(m.area() == null ? null : OverviewMetric.AreaEnum.valueOf(m.area()))
                 .description(m.description())
                 .headline(m.headline())
-                .basis(m.basis() == null ? null : OverviewMetric.BasisEnum.valueOf(m.basis()));
+                .basis(m.basis() == null ? null : OverviewMetric.BasisEnum.valueOf(m.basis()))
+                .definition(toDefinition(m.definition()))
+                .note(m.note());
+    }
+
+    static OverviewMetricDefinition toDefinition(MetricCatalog.Definition d) {
+        return d == null ? null : new OverviewMetricDefinition(d.source(), d.numerator())
+                .denominator(d.denominator())
+                .sourceType(d.sourceType())
+                .exclusions(d.exclusions())
+                .timeZone(d.timeZone());
     }
 
     private static MarketingTarget toTarget(MarketingOverviewQueryService.TargetView t) {
