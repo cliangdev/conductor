@@ -13,6 +13,10 @@ import {
 } from '@/lib/api';
 import { ExternalLink } from 'lucide-react';
 import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { useCan } from '@/contexts/PermissionsContext';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { ConnectorHeader } from './ConnectorHeader';
 import { useConnectorCatalogItem } from './ConnectorCatalogContext';
@@ -40,8 +44,16 @@ interface GcpBillingData {
   oauthConnected?: boolean;
 }
 
+const EXPECTED_PROJECT_HINT = 'The Google Cloud project whose costs this export should contain, e.g. rexipe-prod';
+
+function storedExpectedProject(config: Record<string, unknown> | null | undefined): string {
+  const value = config?.expectedProjectId;
+  return typeof value === 'string' ? value : '';
+}
+
 export default function GcpBillingConnectorPage({ projectId }: { projectId: string }) {
   const { accessToken } = useAuth();
+  const canMutate = useCan('integration.manage');
   const { item } = useConnectorCatalogItem();
   const [response, setResponse] = useState<ConnectionDataResponse | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -56,6 +68,12 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [loadingDatasets, setLoadingDatasets] = useState(false);
   const [saving, setSaving] = useState(false);
+  // The project the export is expected to contain: what is typed, and what the connection has stored. Blank
+  // means no check; saving a blank value clears it.
+  const [expectedProject, setExpectedProject] = useState('');
+  const [savedExpectedProject, setSavedExpectedProject] = useState('');
+  const [savingExpected, setSavingExpected] = useState(false);
+  const [expectedSaved, setExpectedSaved] = useState(false);
   // Same shape as GenericConnectorPage: the catalog entry carries readiness on the first paint and
   // the panel's own responses take over once an admin edits the credential. Derived during render
   // so the authorize button below is never gated on a stale value for a frame.
@@ -82,6 +100,9 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
       const conns = await listConnections(projectId, 'gcp-billing', accessToken);
       const connId = conns[0]?.id ?? null;
       setConnectionId(connId);
+      const stored = storedExpectedProject(conns[0]?.config);
+      setExpectedProject(stored);
+      setSavedExpectedProject(stored);
       if (!connId) { setResponse(null); return; }
       const data = await fetchConnectionData(projectId, 'gcp-billing', connId, accessToken, isRefresh);
       setResponse(data);
@@ -146,7 +167,13 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
         projectId,
         'gcp-billing',
         connectionId,
-        { config: { bqProjectId: selectedGcpProject, bqDatasetName: selectedDataset } },
+        {
+          config: {
+            bqProjectId: selectedGcpProject,
+            bqDatasetName: selectedDataset,
+            ...(expectedProject.trim() ? { expectedProjectId: expectedProject.trim() } : {}),
+          },
+        },
         accessToken
       );
       await loadData();
@@ -156,6 +183,39 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
       setSaving(false);
     }
   };
+
+  const handleSaveExpectedProject = async () => {
+    if (!accessToken || !connectionId) return;
+    const value = expectedProject.trim();
+    setSavingExpected(true);
+    setExpectedSaved(false);
+    try {
+      await patchConnection(projectId, 'gcp-billing', connectionId, { config: { expectedProjectId: value } }, accessToken);
+      setExpectedProject(value);
+      setSavedExpectedProject(value);
+      setExpectedSaved(true);
+    } catch (e) {
+      toastError(apiErrorMessage(e, 'Could not save the expected project'));
+    } finally {
+      setSavingExpected(false);
+    }
+  };
+
+  const expectedProjectField = (
+    <div>
+      <Label htmlFor="gcp-expected-project">Expected project</Label>
+      <Input
+        id="gcp-expected-project"
+        value={expectedProject}
+        onChange={e => { setExpectedProject(e.target.value); setExpectedSaved(false); }}
+        placeholder="rexipe-prod"
+        disabled={!canMutate && connectionId != null}
+      />
+      <p className="mt-1 text-xs text-muted-foreground">
+        {EXPECTED_PROJECT_HINT}. If the export has no rows for it, the connection shows a warning. Leave blank to skip the check.
+      </p>
+    </div>
+  );
 
   if (loading) {
     return (
@@ -295,6 +355,7 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
                 )}
               </div>
             </div>
+            {expectedProjectField}
             {errorBanner && (
               <Alert variant="warning" className="text-xs">{errorBanner}</Alert>
             )}
@@ -337,6 +398,23 @@ export default function GcpBillingConnectorPage({ projectId }: { projectId: stri
           <p className="mt-0.5 break-words">{errorBanner}</p>
         </Alert>
       )}
+
+      <div className="bg-card rounded-lg border border-border p-4 mb-6 max-w-lg space-y-3">
+        {expectedProjectField}
+        {canMutate && (
+          <div className="flex items-center gap-3">
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleSaveExpectedProject}
+              disabled={savingExpected || expectedProject.trim() === savedExpectedProject.trim()}
+            >
+              {savingExpected ? 'Saving…' : 'Save expected project'}
+            </Button>
+            {expectedSaved && <span role="status" className="text-xs text-muted-foreground">Saved</span>}
+          </div>
+        )}
+      </div>
 
       {/* Summary */}
       <div className="bg-card rounded-lg border border-border p-6 mb-6">

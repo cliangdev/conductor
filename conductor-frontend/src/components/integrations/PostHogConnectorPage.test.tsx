@@ -124,12 +124,21 @@ describe('PostHogConnectorPage', () => {
     expect((screen.getByLabelText(/Event filter/) as HTMLInputElement).value).toBe("$host = 'a.io'")
 
     fireEvent.change(screen.getByLabelText(/Conversion event/), { target: { value: 'signup' } })
+    fireEvent.change(screen.getByLabelText(/Internal users cohort ID/), { target: { value: '339420' } })
+    fireEvent.change(screen.getByLabelText(/Excluded page prefixes/), { target: { value: '/share, /s/' } })
     fireEvent.change(screen.getByLabelText(/Replace Personal API key/), { target: { value: 'phx_new' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(api.patchConnection).toHaveBeenCalled())
     expect(vi.mocked(api.patchConnection).mock.calls[0].slice(0, 4)).toEqual(['p1', 'posthog', 'c1', {
-      config: { projectId: '42', host: 'eu', eventFilter: "$host = 'a.io'", conversionEvent: 'signup' },
+      config: {
+        projectId: '42',
+        host: 'eu',
+        eventFilter: "$host = 'a.io'",
+        conversionEvent: 'signup',
+        internalCohortId: '339420',
+        excludePathPrefixes: '/share, /s/',
+      },
       apiKey: 'phx_new',
     }])
   })

@@ -24,7 +24,52 @@ describe('buildPostHogConfig', () => {
 describe('buildPostHogConfigPatch', () => {
   it('sends cleared fields as empty strings so they are cleared', () => {
     expect(buildPostHogConfigPatch({ ...EMPTY_POSTHOG_FORM, projectId: '1' }))
-      .toEqual({ projectId: '1', host: '', eventFilter: '', conversionEvent: '' })
+      .toEqual({ projectId: '1', host: '', eventFilter: '', conversionEvent: '', internalCohortId: '', excludePathPrefixes: '' })
+  })
+  it('sends the internal users cohort and the excluded page prefixes, trimmed and tidied', () => {
+    expect(
+      buildPostHogConfigPatch({ ...EMPTY_POSTHOG_FORM, projectId: '1', internalCohortId: ' 339420 ', excludePathPrefixes: ' /share ,, /s/ ,' }),
+    ).toMatchObject({ internalCohortId: '339420', excludePathPrefixes: '/share, /s/' })
+  })
+})
+
+describe('buildPostHogConfig with the exclusions', () => {
+  it('sends them when set and leaves them out when blank', () => {
+    expect(buildPostHogConfig({ ...EMPTY_POSTHOG_FORM, projectId: '1', internalCohortId: '339420', excludePathPrefixes: '/share,/s/' }))
+      .toEqual({ projectId: '1', internalCohortId: '339420', excludePathPrefixes: '/share, /s/' })
+    expect(buildPostHogConfig({ ...EMPTY_POSTHOG_FORM, projectId: '1', internalCohortId: '  ', excludePathPrefixes: ' , ' }))
+      .toEqual({ projectId: '1' })
+  })
+})
+
+describe('formFromConfig with the exclusions', () => {
+  it('reads them back, including a cohort id stored as a number, and defaults to empty', () => {
+    expect(formFromConfig({ projectId: 1, internalCohortId: 339420, excludePathPrefixes: '/share, /s/' }))
+      .toMatchObject({ internalCohortId: '339420', excludePathPrefixes: '/share, /s/' })
+    expect(formFromConfig({ projectId: 1 })).toMatchObject({ internalCohortId: '', excludePathPrefixes: '' })
+    expect(formFromConfig({ internalCohortId: null })).toMatchObject({ internalCohortId: '' })
+  })
+})
+
+describe('validatePostHogForm with the exclusions', () => {
+  const ok = { ...EMPTY_POSTHOG_FORM, projectId: '1' }
+  it('accepts blank and valid values', () => {
+    expect(validatePostHogForm({ ...ok, internalCohortId: '339420', excludePathPrefixes: '/share, /s/, /a_b.c-d' })).toBeNull()
+    expect(validatePostHogForm({ ...ok, internalCohortId: ' ', excludePathPrefixes: ' , ' })).toBeNull()
+  })
+  it('wants a cohort id of 1 to 12 digits', () => {
+    for (const bad of ['12a', '-1', '1 2', '1234567890123', '339420 OR 1=1']) {
+      expect(validatePostHogForm({ ...ok, internalCohortId: bad })).toMatch(/digits only/)
+    }
+  })
+  it('wants paths that start with / and use letters, digits and / _ . -', () => {
+    for (const bad of ['share', '/a b', '/a?x=1', 'https://rexipe.io/share', '/' + 'a'.repeat(101)]) {
+      expect(validatePostHogForm({ ...ok, excludePathPrefixes: bad })).toMatch(/start with \//)
+    }
+  })
+  it('refuses the bare root, which would exclude every page, and more than 10 prefixes', () => {
+    expect(validatePostHogForm({ ...ok, excludePathPrefixes: '/share, /' })).toMatch(/every page/)
+    expect(validatePostHogForm({ ...ok, excludePathPrefixes: Array.from({ length: 11 }, (_, i) => `/p${i}`).join(',') })).toMatch(/At most 10/)
   })
 })
 
