@@ -97,6 +97,7 @@ import { createSwitchbackTest, startSwitchbackTest, getSwitchbackTest, listSwitc
 import { importMarketingChanges } from './tools/marketing-changes.js'
 import { getCreatorResults } from './tools/creators.js'
 import { createTrackedLink, listTrackedLinks } from './tools/links.js'
+import { tagMessage, untagMessage, listPromises } from './tools/promises.js'
 import {
   getBrandKit,
   updateBrandKit,
@@ -1784,6 +1785,43 @@ export const TOOLS = [
     },
   },
   {
+    name: 'tag_message',
+    description: 'Tag a target with the message it makes (a short tag such as save-from-tiktok): an Apple Ads keyword, a custom product page, a Post, a creative or a paywall headline. list_promises then joins the message to installs, intent picks, trial rate and D7. A target carries one message: tagging it again moves it and replaces its label. targetRef is the keyword id, product page id, Post id or creative id, or the headline text for a paywall headline. Requires the Editor role (or Admin). Verify with list_promises.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'The message, at most 120 characters (stored lower-case). Match the product feed\'s message:<tag> value to see outcomes' },
+        targetKind: { type: 'string', enum: ['CREATIVE', 'PRODUCT_PAGE', 'KEYWORD', 'PAYWALL_HEADLINE', 'POST'], description: 'What is being tagged' },
+        targetRef: { type: 'string', description: 'The target\'s id, or the headline text for PAYWALL_HEADLINE' },
+        label: { type: 'string', description: 'A human name for the target, at most 200 characters (optional)' },
+      },
+      required: ['message', 'targetKind', 'targetRef'],
+    },
+  },
+  {
+    name: 'untag_message',
+    description: 'Remove the message from a target. Safe to repeat: untagging a target with no tag changes nothing. Requires the Editor role (or Admin). Verify with list_promises.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        targetKind: { type: 'string', enum: ['CREATIVE', 'PRODUCT_PAGE', 'KEYWORD', 'PAYWALL_HEADLINE', 'POST'], description: 'What was tagged' },
+        targetRef: { type: 'string', description: 'The id (or headline text) the tag was made with' },
+      },
+      required: ['targetKind', 'targetRef'],
+    },
+  },
+  {
+    name: 'list_promises',
+    description: 'The promise ledger: per message, the tagged targets by kind, installs (Apple Ads tap installs of tagged keywords and product pages plus first-time downloads of tagged Posts\' links), intent mix, trial rate and D7, each rate with its 95% range and n, flagged "small sample" under n=20. A figure with no data is null, never 0. Default window: the last 28 settled days. Read-only. Tag targets with tag_message.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'First day, YYYY-MM-DD (default 27 days before to)' },
+        to: { type: 'string', description: 'Last day, YYYY-MM-DD (default the latest settled day)' },
+      },
+    },
+  },
+  {
     name: 'submit_review',
     description: 'Record a review verdict on a Post as this API key\'s user, who must be an assigned member holding the Reviewer role (or an Admin). Approving on a reviewed Workflow schedules it in the same call. TikTok consent is a human step the person does in their own browser (request_tiktok_consent hands them the link), not this tool. Returns the confirmation table.',
     inputSchema: {
@@ -3316,6 +3354,32 @@ export async function runMcpServer(): Promise<void> {
               kind: params['kind'] as string | undefined,
               workItemId: params['workItemId'] as string | undefined,
               withPerformance: params['withPerformance'] as boolean | undefined,
+            })
+          )
+        }
+        case 'tag_message': {
+          return successResponse(
+            await tagMessage(config, {
+              message: params['message'] as string,
+              targetKind: params['targetKind'] as string,
+              targetRef: params['targetRef'] as string,
+              label: params['label'] as string | undefined,
+            })
+          )
+        }
+        case 'untag_message': {
+          return successResponse(
+            await untagMessage(config, {
+              targetKind: params['targetKind'] as string,
+              targetRef: params['targetRef'] as string,
+            })
+          )
+        }
+        case 'list_promises': {
+          return successResponse(
+            await listPromises(config, {
+              from: params['from'] as string | undefined,
+              to: params['to'] as string | undefined,
             })
           )
         }
