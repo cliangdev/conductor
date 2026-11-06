@@ -167,7 +167,27 @@ In the report each benchmark gets `ratio` (compared value / prorated benchmark),
 
 ## Reference window
 
-Every acceptance number for RE-99 is stated for 2026-09-29..2026-10-26 (28 days): Apple Ads 23 tap installs (1 view-through) for USD 162.86, 3,405 impressions, 89 taps and a cost per install of USD 7.08; organic search 6 first-time downloads (29 - 23) and 3,696 impressions (7,101 - 3,405); search conversion 0.59%; Sales Reports 30 downloads on 28 of 28 days. `MarketingReportReferenceWindowTest` rebuilds that window from rows and asserts each. To check a live workspace, read the report for exactly those days with the fixed-window form of the `window` parameter (`window=2026-09-29..2026-10-26`, from the fixed-window task), after each connector's re-walk has run.
+Every acceptance number for RE-99 is stated for 2026-09-29..2026-10-26 (28 days): Apple Ads 23 tap installs (1 view-through) for USD 162.86, 3,405 impressions, 89 taps and a cost per install of USD 7.08; organic search 6 first-time downloads (29 - 23) and 3,696 impressions (7,101 - 3,405); search conversion 0.59%; Sales Reports 30 downloads on 28 of 28 days. `MarketingReportReferenceWindowTest` rebuilds that window from rows and asserts each. To check a live workspace, read the report for exactly those days with the fixed-window form of the `window` parameter (`window=2026-09-29..2026-10-26`; at most 92 days, ending yesterday or earlier), after each connector's re-walk has run.
+
+## Other marketing surfaces
+
+The report is one call; these sit beside it, each with its own endpoint under `/projects/{projectId}/marketing/` and MCP tools.
+
+| Surface | Endpoint | MCP | What it answers |
+|---|---|---|---|
+| Verification ledger | `verification`, `verification/reads` | `get_verification_ledger`, `record_platform_read` | Per metric: Conductor, the product backend, a direct platform read, and which to trust (BOTH, CONNECTOR, BACKEND, PLATFORM, UNCHECKED). Reads are append-only. |
+| Definitions | `definitions` | `get_marketing_definitions` | What each metric counts: numerator, denominator, source type, exclusions, time zone. |
+| Budget pacing | `budget`, `stop-rules` | `get_budget_pacing`, `set_marketing_budget`, `set_stop_rule`, `remove_stop_rule` | Month-to-date paid spend against the cap, required stop rules per paid channel, marginal cost per install. |
+| Alerts | none (Discord) | none | After each feed pull: a MISMATCH, a stale channel, a tripped stop rule or an off-track target with enough data. Never on noise. Posted once per condition, plus one "resolved". |
+| Change records | `changes/import` | `import_marketing_changes` | Imports an outside change log (Rexipe's `marketing-changes.jsonl`) into `MARKETING_CHANGES`, idempotently, without coercing verdicts. |
+| Tracked links | `links`, `links/performance` | `create_tracked_link`, `list_tracked_links` | App Store campaign links (`pt`/`ct`) for Posts (automatic), bios, creators and email, rolled up by family; below Apple's threshold reads as such, never 0. |
+| Creators | `creators/{workItemId}/results` | `get_creator_results` | Posts, link downloads and offer-code redemptions per `CREATORS` Work Item. |
+| Switchback tests | `switchback-tests` | `create_switchback_test`, `start_switchback_test`, `get_switchback_test`, `list_switchback_tests` | One keyword alternated on and off by week; settles itself daily into a REVIEWED change. A person applies the switch. |
+| Promise ledger | `promises`, `message-tags` | `tag_message`, `untag_message`, `list_promises` | Per message: installs, intent mix, trial rate and D7 with Wilson ranges at small n. |
+| Growth signals | `growth-signals`, `moments`, `competitors`, `tracked-keywords` | `get_growth_signals`, `set_marketing_moment`, `link_moment_change`, `add_competitor`, `remove_competitor`, `set_tracked_keywords` | Seasonal moments with due-date warnings, weekly ratings growth and reviews, competitor listing changes and keyword presence (public iTunes data, weekly job). |
+| AI visibility | `ai-visibility` | `get_ai_visibility`, `set_ai_questions`, `run_ai_visibility_check` | Weekly, per question and assistant (the workspace's own provider keys): is the brand named. |
+
+The web app shows the ledger at **Marketing → Overview → Verification** and the definitions at **Definitions**.
 
 ## Weekly growth workflow
 

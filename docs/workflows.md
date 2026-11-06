@@ -1812,7 +1812,13 @@ needs no new column or component. Both are optional, top-level keys of the defin
 The built-in `MARKETING_CHANGES` lifecycle ("Change": `PLANNED -> LIVE -> REVIEWED`, or `ABANDONED`) uses all of
 this as a log of changes and what came of them: hypothesis, baseline, control, live since, outcome, verdict, lesson and
 evidence, with the due date labelled "Review on". `REVIEWED` is review-gated, so a person approves the verdict. It is
-seeded into new workspaces and (migration V157) every existing one.
+seeded into new workspaces and (migration V157) every existing one. Verdicts are worked, did_not_work, no_effect,
+expected and inconclusive (V187).
+
+The built-in `CREATORS` lifecycle ("Creator": `PROSPECT -> BRIEFED -> POSTED -> PAID_OUT`, or `DROPPED`) runs a creator
+partnership: handle, platform, offer code, fee, link token and brief, with the due date labelled "Post by". Its results
+(posts, campaign-link downloads, offer-code redemptions) come from `GET /marketing/creators/{workItemId}/results`. It
+is seeded into new workspaces and (migration V190) every existing one.
 
 ### System triggers (event-driven auto-transitions)
 
