@@ -404,7 +404,8 @@ function trimChannel(c: OverviewChannel, withSeries: boolean): Record<string, un
     status: c.status,
     dataCompleteThrough: c.dataCompleteThrough,
     connect: c.status === 'NOT_CONNECTED' ? c.connectHint?.connectors?.map((x) => x.name).join(', ') || null : null,
-    // MISMATCH: a connector's own figure and the product backend's reference disagree by more than 1%.
+    // MISMATCH: a connector's own figure and a second source (the product backend's reference or a direct platform
+    // read) differ outside the band: 1 unit for counts under 50, else 2%. get_verification_ledger lists every one.
     mismatch: c.mismatch
       ? omitNulls({
           metric: c.mismatch.metric,

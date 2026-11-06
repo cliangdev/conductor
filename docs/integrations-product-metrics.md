@@ -120,9 +120,11 @@ version (v3 adds two more, see [Version 3](#version-3)):
 - `store_downloads`: downloads as your backend counts them. Compared with the App Store channel's downloads.
 - `ads_spend`: paid acquisition spend as your backend counts it. Compared with the Ads channel's spend.
 
-Reference rows are totals (`dimension` null). Over the settled days both sides have, if the two sums differ by
-more than 1% of the larger, that channel's status becomes `MISMATCH`, and the overview shows both figures and
-the gap. Reference values are never listed as metrics.
+Reference rows are totals (`dimension` null). Over the settled days both sides have, the two sums are compared
+in a band: counts under 50 may differ by 1, larger counts and money by 2% of the larger figure. Outside the band,
+that channel's status becomes `MISMATCH`, and the overview and the verification ledger
+(`GET /marketing/verification`) show both figures, the days compared and which source to trust. Reference values
+are never listed as metrics.
 
 A reference metric Conductor does not understand is **ignored**, not refused, on every version (Conductor logs
 its name once per response). A backend can therefore start sending a newer reference series before its connected

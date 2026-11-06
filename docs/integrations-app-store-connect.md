@@ -15,6 +15,9 @@ It is multi-instance: connect it once per app.
 5. In Conductor open **Integrations → App Store Connect**, enter the Issuer ID, Key ID and Apple ID,
    paste the whole `.p8` file as the private key, and optionally set the ratings country (two letters,
    default `us`).
+6. Optional: set the **vendor number** (Payments and Financial Reports, Sales and Trends) to read Sales Reports
+   downloads of record, and the **provider token** (the number after `pt=` in a link from App Analytics →
+   Campaigns → Generate a Link) so Conductor can make App Store campaign links for Posts, bios, creators and email.
 
 **Role.** Creating the app's report request needs an **Admin** key. Reading reports once the request
 exists is allowed to roles that can read Analytics Reports. We could not confirm the exact minimum
