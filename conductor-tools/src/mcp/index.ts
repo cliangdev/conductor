@@ -91,6 +91,7 @@ import {
   removeCompetitor,
   setTrackedKeywords,
 } from './tools/growth-signals.js'
+import { getAiVisibility, setAiQuestions, runAiVisibilityCheck } from './tools/ai-visibility.js'
 import { importMarketingChanges } from './tools/marketing-changes.js'
 import { createTrackedLink, listTrackedLinks } from './tools/links.js'
 import {
@@ -1612,6 +1613,33 @@ export const TOOLS = [
     },
   },
   {
+    name: 'get_ai_visibility',
+    description: 'Whether AI assistants name the brand when asked a fixed set of questions, checked weekly: per question and assistant the latest answer (named or not, list rank, excerpt) and a weekly trend. An assistant the workspace has no provider key for is listed under skipped and has no readings; it is never shown as not named. Read-only. Change the questions with set_ai_questions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        weeks: { type: 'integer', description: 'ISO weeks back to read, 1-52 (default 8)' },
+      },
+    },
+  },
+  {
+    name: 'set_ai_questions',
+    description: 'Replace the questions put to the AI assistants each week (at most 20; an empty list switches all off; dropped questions keep their history), and optionally the brand terms that count as naming the brand (default: the workspace name; an empty list goes back to it). Requires the Editor role (or Admin). Verify with get_ai_visibility.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        questions: { type: 'array', items: { type: 'string' }, description: 'The full list of questions, e.g. "best app to save recipes from TikTok"' },
+        brandTerms: { type: 'array', items: { type: 'string' }, description: 'Words that count as naming the brand, whole word in any case with an optional plural s (omit to leave unchanged)' },
+      },
+      required: ['questions'],
+    },
+  },
+  {
+    name: 'run_ai_visibility_check',
+    description: 'Run this week\'s AI-assistant checks now instead of waiting for Monday. Spends the workspace\'s own AI provider keys (at most 20 calls a week) and needs the Admin role. Safe to repeat: a question and assistant already read this week is not asked again. Returns what was recorded, skipped (no credential, weekly limit) and failed. Call get_ai_visibility after to read the results.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'import_marketing_changes',
     description: 'Import a marketing change log from a local JSONL file (one record per line: id, date, type, title, status, changed, evidence[], hypothesis, baseline, control, live_since, review_on, outcome, verdict, lesson, stop_rules, stop_rules_note) as Changes on the MARKETING_CHANGES workflow, each in the status its record has. Reference records are skipped; an unknown status or verdict refuses that record and names it, never guessed. A bad line stops everything before anything is sent. Safe to run again: a record already imported (same source and id) is left alone. Requires the Editor role (or Admin). Verify with get_marketing_report (changes).',
     inputSchema: {
@@ -3095,6 +3123,20 @@ export async function runMcpServer(): Promise<void> {
               country: params['country'] as string | undefined,
             })
           )
+        }
+        case 'get_ai_visibility': {
+          return successResponse(await getAiVisibility(config, { weeks: params['weeks'] as number | undefined }))
+        }
+        case 'set_ai_questions': {
+          return successResponse(
+            await setAiQuestions(config, {
+              questions: params['questions'] as string[],
+              brandTerms: params['brandTerms'] as string[] | undefined,
+            })
+          )
+        }
+        case 'run_ai_visibility_check': {
+          return successResponse(await runAiVisibilityCheck(config))
         }
         case 'import_marketing_changes': {
           return successResponse(

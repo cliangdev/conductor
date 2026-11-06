@@ -22,6 +22,8 @@ tags:
     description: The verification ledger - per metric, Conductor's value, the backend's, a direct platform read and which to trust
   - name: marketing-growth-signals
     description: Seasonal moments, the weekly ratings program and the competitor watch, from public data
+  - name: marketing-ai-visibility
+    description: Weekly checks of whether AI assistants name the brand for a fixed set of questions
   - name: marketing-changes
     description: Marketing change records (the MARKETING_CHANGES workflow), imported from an outside change log
   - name: marketing-links
@@ -5221,6 +5223,213 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/ai-visibility:
+    get:
+      tags:
+        - marketing-ai-visibility
+      summary: Whether AI assistants name the brand, per question and assistant, with a weekly trend
+      description: >-
+        Once a week (Monday 07:00 UTC) each active question is put to each AI assistant the workspace holds a
+        provider key for (Settings, AI Providers), and whether the answer names the brand is recorded. A brand term
+        counts when it appears as a whole word in any case, with an optional plural "s" ("Rexipe", "REXIPES" and
+        "rexipe.io" count; "rexipeapp" does not). `brandTerms` are the terms in force (the workspace name until set).
+        `questions` lists the active questions, plus dropped ones that still have readings in the window. Per
+        assistant, `latest` is its newest reading in the window (`rankInAnswer` is the 1-based position of the first
+        list item naming the brand when the answer was a numbered or bulleted list, else null; `excerpt` is about 200
+        characters either side of the first mention, or the start of the answer when not named) and `trend` is one
+        point per week read, oldest first. A week with no reading is absent from the trend, never `named: false`:
+        an assistant with no credential, an error or a skipped question leaves no reading. `skipped` lists the
+        assistants the workspace has no credential for.
+      operationId: getAiVisibility
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: weeks
+          in: query
+          required: false
+          description: How many ISO weeks back to read, including this one (1 to 52).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 52
+            default: 8
+      responses:
+        "200":
+          description: The AI-assistant visibility readings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiVisibility"
+        "400":
+          description: weeks is outside 1 to 52
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/ai-visibility/questions:
+    put:
+      tags:
+        - marketing-ai-visibility
+      summary: Replace the questions put to the AI assistants each week
+      description: >-
+        Idempotent full replace of the active question set (at most 20; an empty list switches every question
+        off). Questions are trimmed, whitespace-collapsed and de-duplicated ignoring case. A listed question is
+        active (one dropped earlier is reactivated with its history), a question left out becomes inactive and its
+        history stays readable. The response lists every question of the workspace, the listed ones first in the
+        order given. Requires ADMIN or CREATOR.
+      operationId: setAiVisibilityQuestions
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAiQuestionsRequest"
+      responses:
+        "200":
+          description: Every question of the workspace after the replace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiQuestionList"
+        "400":
+          description: A blank question, one over 400 characters, or more than 20 questions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/ai-visibility/brand-terms:
+    put:
+      tags:
+        - marketing-ai-visibility
+      summary: Replace the words that count as naming the brand
+      description: >-
+        Idempotent full replace of the brand terms (at most 10, each up to 80 characters). Terms are trimmed and
+        de-duplicated ignoring case. An empty list goes back to the default, the workspace name. Applies to the
+        next check; stored readings are not re-judged. Requires ADMIN or CREATOR.
+      operationId: setAiVisibilityBrandTerms
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAiBrandTermsRequest"
+      responses:
+        "200":
+          description: The brand terms now in force
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiBrandTerms"
+        "400":
+          description: More than 10 terms, or a term over 80 characters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/ai-visibility/run:
+    post:
+      tags:
+        - marketing-ai-visibility
+      summary: Run this week's AI-visibility checks now
+      description: >-
+        Runs the checks the weekly job would run, for this workspace and this ISO week (Monday, UTC), and waits for
+        them. Idempotent: a question and assistant already read this week is not asked again, so a repeat makes no
+        calls; a check that failed earlier is retried. At most 20 assistant calls are made per workspace per week.
+        `skipped` reports assistants with no credential and checks held back by that limit; `errors` reports
+        provider failures. Neither writes a reading, so neither can appear as "not named". Requires ADMIN.
+      operationId: runAiVisibilityCheck
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: What the run recorded, found already recorded, skipped and could not do
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiVisibilityRunResult"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN
           content:
             application/json:
               schema:
@@ -11550,6 +11759,140 @@ components:
           maxItems: 25
           items: {type: string, maxLength: 100}
         country: {type: string, maxLength: 2, description: "Two-letter App Store country the keywords are searched in; defaults to the workspace's own."}
+
+    AiVisibility:
+      type: object
+      required: [brandTerms, questions, skipped]
+      properties:
+        brandTerms:
+          type: array
+          items: {type: string}
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiVisibilityQuestion"
+        skipped:
+          type: array
+          description: Assistants the workspace has no credential for. Computed on read.
+          items:
+            $ref: "#/components/schemas/AiVisibilitySkipped"
+
+    AiVisibilityQuestion:
+      type: object
+      required: [id, question, active, assistants]
+      properties:
+        id: {type: string}
+        question: {type: string}
+        active: {type: boolean}
+        assistants:
+          type: array
+          description: Only assistants with at least one reading in the window.
+          items:
+            $ref: "#/components/schemas/AiVisibilityAssistant"
+
+    AiVisibilityAssistant:
+      type: object
+      required: [assistant, latest, trend]
+      properties:
+        assistant: {type: string, description: "The model provider id: claude, openai, ..."}
+        latest:
+          $ref: "#/components/schemas/AiVisibilityResult"
+        trend:
+          type: array
+          description: One point per week read, oldest first. A week with no reading is absent.
+          items:
+            $ref: "#/components/schemas/AiVisibilityTrendPoint"
+
+    AiVisibilityResult:
+      type: object
+      required: [weekStart, named]
+      properties:
+        weekStart: {type: string, format: date, description: "The Monday (UTC) of the ISO week read."}
+        named: {type: boolean}
+        rankInAnswer: {type: integer, nullable: true, description: "1-based position of the first list item naming the brand; null when not named or the answer was not a list."}
+        excerpt: {type: string, nullable: true}
+        model: {type: string, nullable: true, description: "The model asked; null when the provider chose its own."}
+
+    AiVisibilityTrendPoint:
+      type: object
+      required: [weekStart, named]
+      properties:
+        weekStart: {type: string, format: date}
+        named: {type: boolean}
+
+    AiVisibilitySkipped:
+      type: object
+      required: [assistant, reason]
+      properties:
+        assistant: {type: string}
+        reason: {type: string, description: "no credential, or the weekly limit of 20 checks reached."}
+
+    AiVisibilityFailure:
+      type: object
+      required: [assistant, reason]
+      properties:
+        assistant: {type: string}
+        question: {type: string, nullable: true, description: "Null when the failure is not about one question (a credential that could not be read)."}
+        reason: {type: string, description: "One line with any key removed."}
+
+    AiVisibilityRunResult:
+      type: object
+      required: [weekStart, recorded, alreadyRecorded, skipped, errors]
+      properties:
+        weekStart: {type: string, format: date}
+        recorded: {type: integer, description: "Readings written by this run."}
+        alreadyRecorded: {type: integer, description: "Question and assistant pairs already read this week; no call was made for them."}
+        skipped:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiVisibilitySkipped"
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiVisibilityFailure"
+
+    SetAiQuestionsRequest:
+      type: object
+      required: [questions]
+      properties:
+        questions:
+          type: array
+          maxItems: 20
+          items: {type: string, maxLength: 400}
+
+    AiQuestionList:
+      type: object
+      required: [questions]
+      properties:
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiQuestion"
+
+    AiQuestion:
+      type: object
+      required: [id, question, active]
+      properties:
+        id: {type: string}
+        question: {type: string}
+        active: {type: boolean}
+
+    SetAiBrandTermsRequest:
+      type: object
+      required: [brandTerms]
+      properties:
+        brandTerms:
+          type: array
+          maxItems: 10
+          items: {type: string, maxLength: 80}
+
+    AiBrandTerms:
+      type: object
+      required: [brandTerms]
+      properties:
+        brandTerms:
+          type: array
+          items: {type: string}
 
     MarketingReport:
       type: object
