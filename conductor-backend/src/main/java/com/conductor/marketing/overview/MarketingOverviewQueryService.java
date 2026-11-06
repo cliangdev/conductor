@@ -23,6 +23,10 @@ import com.conductor.integration.ingest.ChannelDimensionStateStore;
 import com.conductor.marketing.overview.MetricCatalog.Dimension;
 import com.conductor.marketing.overview.MetricCatalog.Metric;
 import com.conductor.marketing.overview.MetricCatalog.Unit;
+import com.conductor.marketing.verification.MarketingPlatformRead;
+import com.conductor.marketing.verification.MarketingPlatformReadRepository;
+import com.conductor.marketing.verification.ReconciliationBand;
+import com.conductor.marketing.verification.ReferencePairs;
 import com.conductor.repository.ChannelMetricDailyRepository;
 import com.conductor.repository.ChannelMetricDefinitionRepository;
 import com.conductor.repository.ChannelMetricTargetRepository;
@@ -46,6 +50,8 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Computes the marketing overview: the funnel, every channel's freshness, and each metric's value, change
@@ -73,6 +79,20 @@ import java.util.TreeMap;
  * replayed through it as consecutive periods to build its baseline, then the current window is checked
  * against it with the detector's own gates (absolute, relative, statistical) and defaults. A change that
  * does not clear them is {@code noise}.
+ *
+ * <p><b>Fixed windows.</b> A window may instead be named by its days, {@code YYYY-MM-DD..YYYY-MM-DD}: first day
+ * not after the last, the last no later than yesterday (UTC), at most {@link #FIXED_WINDOW_MAX_DAYS} days. Every
+ * channel then reads exactly those days, not a window ending at its own {@code dataCompleteThrough}; the previous
+ * window is the same number of days immediately before. A channel whose settled data ends before the last day
+ * counts only the days it has settled (days still being restated are never counted, as in a rolling window),
+ * reports {@code partial}, and withholds the previous-window comparison of its flows: a short window set against
+ * a full one is no comparison.
+ *
+ * <p><b>Reconciliation.</b> Each channel metric the product backend also reports (see {@link ReferencePairs}) is
+ * compared with the backend's reference over the settled days both have, judged by {@link ReconciliationBand}; a
+ * direct platform read recorded in the verification ledger is compared with the channel's own figure over the
+ * read's days. Each disagreement is a {@link MismatchView} in {@link ChannelView#mismatches()} and the channel
+ * reads MISMATCH (unless it is lagging, which wins).
  */
 @Service
 public class MarketingOverviewQueryService {
@@ -87,10 +107,14 @@ public class MarketingOverviewQueryService {
     static final double DEFAULT_WATCH_BAND_PCT = 10;
     /** The period a count or currency total target is stated for when it does not say. */
     static final int DEFAULT_TARGET_WINDOW_DAYS = 28;
-    /** A reference figure that differs from the channel's own connector by more than this is a mismatch. */
-    static final double MISMATCH_THRESHOLD = 0.01;
-    /** Reference values a product feed sends are stored as PRODUCT rows under this metric prefix. */
-    static final String REFERENCE_PREFIX = "ref_";
+    /** The most days a fixed window may span. */
+    public static final int FIXED_WINDOW_MAX_DAYS = 92;
+    private static final Pattern FIXED_WINDOW = Pattern.compile("^(\\d{4}-\\d{2}-\\d{2})\\.\\.(\\d{4}-\\d{2}-\\d{2})$");
+    /** The window a request gets when it names none. */
+    static final String DEFAULT_WINDOW = "28d";
+    /** The rolling lengths the overview and the report accept; the channel detail also takes 90. */
+    static final Set<Integer> ROLLING_OVERVIEW_DAYS = Set.of(7, 28);
+    static final Set<Integer> ROLLING_CHANNEL_DAYS = Set.of(7, 28, 90);
     /** Said on a window-unique metric with no value: the connector stores these distinct counts for three window lengths only. */
     static final String WINDOW_UNIQUE_NOTE = "Unique visitors are stored for 7, 28 and 90 days";
     /**
@@ -185,15 +209,45 @@ public class MarketingOverviewQueryService {
         }
     }
 
-    /** The product backend's reference figure against the channel's own connector, over the same settled days. */
+    public static final String KIND_BACKEND = "BACKEND";
+    public static final String KIND_PLATFORM = "PLATFORM";
+
+    /**
+     * A second source's figure against the channel's own connector, over the same settled days
+     * ({@code from}..{@code to}). {@code kind} is {@link #KIND_BACKEND} when the second figure is the product
+     * backend's reference ({@code referenceSource} names its connection) and {@link #KIND_PLATFORM} when it is a
+     * direct platform read ({@code referenceSource} is the name the read was recorded under); {@code gapPct} is
+     * the difference as a fraction of the larger figure.
+     */
     public record MismatchView(String metric, String label, double referenceValue, double channelValue,
                                double gapPct, LocalDate from, LocalDate to,
-                               String channelSource, String referenceSource) {}
+                               String channelSource, String referenceSource, String kind) {
+        public MismatchView(String metric, String label, double referenceValue, double channelValue,
+                            double gapPct, LocalDate from, LocalDate to, String channelSource,
+                            String referenceSource) {
+            this(metric, label, referenceValue, channelValue, gapPct, from, to, channelSource, referenceSource,
+                    KIND_BACKEND);
+        }
+    }
 
+    /**
+     * {@code mismatch} is the entry of {@code mismatches} with the largest gap (a backend one when there is any),
+     * for clients that read one; {@code mismatches} lists every second source that disagrees, largest gap first.
+     * {@code partial} is true only in a fixed window, when the channel's settled data ends before the window's
+     * last day (null otherwise: a rolling window always ends where the data does).
+     */
     public record ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
                               List<ConnectionView> connections, ConnectHint connectHint,
                               List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch,
-                              boolean targetsEditable) {
+                              boolean targetsEditable, List<MismatchView> mismatches, Boolean partial) {
+        public ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
+                           List<ConnectionView> connections, ConnectHint connectHint,
+                           List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch,
+                           boolean targetsEditable) {
+            this(channel, label, status, lastFetchedAt, connections, connectHint, metrics, dataCompleteThrough,
+                    mismatch, targetsEditable, mismatch == null ? List.of() : List.of(mismatch), null);
+        }
+
         public ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
                            List<ConnectionView> connections, ConnectHint connectHint,
                            List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch) {
@@ -251,6 +305,7 @@ public class MarketingOverviewQueryService {
     private final MarketingInsightsQueryService insightsQueryService;
     private final PublishPlatformRegistry platformRegistry;
     private final ChannelDimensionStateStore stateStore;
+    private final MarketingPlatformReadRepository platformReadRepository;
     private final MetricsChangeDetector changeDetector = new MetricsChangeDetector();
 
     public MarketingOverviewQueryService(ChannelMetricDailyRepository dailyRepository,
@@ -260,7 +315,8 @@ public class MarketingOverviewQueryService {
                                          ConnectorFeedRepository feedRepository,
                                          MarketingInsightsQueryService insightsQueryService,
                                          PublishPlatformRegistry platformRegistry,
-                                         ChannelDimensionStateStore stateStore) {
+                                         ChannelDimensionStateStore stateStore,
+                                         MarketingPlatformReadRepository platformReadRepository) {
         this.dailyRepository = dailyRepository;
         this.targetRepository = targetRepository;
         this.definitionRepository = definitionRepository;
@@ -269,23 +325,53 @@ public class MarketingOverviewQueryService {
         this.insightsQueryService = insightsQueryService;
         this.platformRegistry = platformRegistry;
         this.stateStore = stateStore;
+        this.platformReadRepository = platformReadRepository;
     }
 
     // ---- reads --------------------------------------------------------------------------------------
 
     @Transactional(readOnly = true)
     public Overview overview(String projectId, String windowRaw) {
-        return overview(projectId, parseWindow(windowRaw, Set.of(7, 28)), LocalDate.now(ZoneOffset.UTC),
-                OffsetDateTime.now());
+        return overview(projectId, windowRaw, LocalDate.now(ZoneOffset.UTC), OffsetDateTime.now());
+    }
+
+    /** Package-visible so a test can pin "today" and "now"; {@code windowRaw} is parsed like the public one. */
+    Overview overview(String projectId, String windowRaw, LocalDate today, OffsetDateTime now) {
+        return overview(projectId, parseWindow(windowRaw, ROLLING_OVERVIEW_DAYS, today), today, now);
     }
 
     /** Package-visible so a test can pin "today" and "now". */
     Overview overview(String projectId, int days, LocalDate today, OffsetDateTime now) {
-        return computeOverview(context(projectId, days, today, now), new LinkedHashMap<>());
+        return overview(projectId, WindowSpec.rolling(days), today, now);
     }
 
-    /** One channel with every metric (not just the headline ones) and the dimension tables the report reads. */
-    public record SnapshotChannel(ChannelView view, MetricCatalog.Channel catalog, List<DimensionTable> dimensions) {}
+    private Overview overview(String projectId, WindowSpec window, LocalDate today, OffsetDateTime now) {
+        return computeOverview(context(projectId, window, today, now), new LinkedHashMap<>());
+    }
+
+    /**
+     * Conductor's value for one metric over an explicit range of days, read from a snapshot: the sum of the settled
+     * days for a flow, the latest reading at or before {@code to} for a level, the stored distinct count for a
+     * window of that length ending on {@code to} for a window-unique metric. Null when it cannot be said: the
+     * channel's settled data ends before {@code to}, the range starts before the loaded history, or there are no rows.
+     */
+    @FunctionalInterface
+    public interface RangeValues {
+        Double valueOver(MetricChannel channel, String metricKey, LocalDate from, LocalDate to);
+    }
+
+    /**
+     * One channel with every metric (not just the headline ones) and the dimension tables the report reads.
+     * {@code window} is the channel's own window (what its metric values cover; in a fixed window it ends where the
+     * channel's settled data does, when that is earlier); {@code settledThrough} is the latest day its flows have
+     * settled on every connection, or null when it has no connection or no settled data.
+     */
+    public record SnapshotChannel(ChannelView view, MetricCatalog.Channel catalog, List<DimensionTable> dimensions,
+                                  Window window, LocalDate settledThrough) {
+        public SnapshotChannel(ChannelView view, MetricCatalog.Channel catalog, List<DimensionTable> dimensions) {
+            this(view, catalog, dimensions, null, null);
+        }
+    }
 
     /**
      * The overview plus, for each channel, every metric and (for STORE, ADS and PRODUCT) the dimension tables a
@@ -294,10 +380,20 @@ public class MarketingOverviewQueryService {
      * can be joined to the ADS ones by keyword id.
      */
     public record Snapshot(Overview overview, Map<MetricChannel, SnapshotChannel> channels,
-                           SettledDailyValues settled) {
+                           SettledDailyValues settled, RangeValues ranges) {
+
+        public Snapshot(Overview overview, Map<MetricChannel, SnapshotChannel> channels,
+                        SettledDailyValues settled) {
+            this(overview, channels, settled, (channel, metric, from, to) -> null);
+        }
 
         public Snapshot(Overview overview, Map<MetricChannel, SnapshotChannel> channels) {
             this(overview, channels, SettledDailyValues.NONE);
+        }
+
+        /** Conductor's value for one metric over an explicit range of days; see {@link RangeValues}. */
+        public Double valueOver(MetricChannel channel, String metricKey, LocalDate from, LocalDate to) {
+            return ranges.valueOver(channel, metricKey, from, to);
         }
 
         /**
@@ -377,13 +473,33 @@ public class MarketingOverviewQueryService {
 
     @Transactional(readOnly = true)
     public Snapshot snapshot(String projectId, String windowRaw) {
-        return snapshot(projectId, parseWindow(windowRaw, Set.of(7, 28)), LocalDate.now(ZoneOffset.UTC),
-                OffsetDateTime.now());
+        return snapshot(projectId, windowRaw, ROLLING_OVERVIEW_DAYS);
+    }
+
+    /** As {@link #snapshot(String, String)} with the rolling window lengths the caller accepts (a fixed window is always accepted). */
+    @Transactional(readOnly = true)
+    public Snapshot snapshot(String projectId, String windowRaw, Set<Integer> allowedDays) {
+        return snapshot(projectId, windowRaw, allowedDays, LocalDate.now(ZoneOffset.UTC), OffsetDateTime.now());
     }
 
     /** Public so the report's tests can pin "today" and "now". */
     public Snapshot snapshot(String projectId, int days, LocalDate today, OffsetDateTime now) {
-        Context ctx = context(projectId, days, today, now);
+        return snapshot(projectId, WindowSpec.rolling(days), today, now);
+    }
+
+    /** Public so tests can pin "today" and "now" with a rolling or a fixed window named as a request names it. */
+    public Snapshot snapshot(String projectId, String windowRaw, LocalDate today, OffsetDateTime now) {
+        return snapshot(projectId, windowRaw, ROLLING_OVERVIEW_DAYS, today, now);
+    }
+
+    /** As above, with the rolling window lengths the caller accepts (a fixed window is always accepted). */
+    public Snapshot snapshot(String projectId, String windowRaw, Set<Integer> allowedDays, LocalDate today,
+                             OffsetDateTime now) {
+        return snapshot(projectId, parseWindow(windowRaw, allowedDays, today), today, now);
+    }
+
+    private Snapshot snapshot(String projectId, WindowSpec window, LocalDate today, OffsetDateTime now) {
+        Context ctx = context(projectId, window, today, now);
         Map<MetricChannel, ChannelBuild> builds = new LinkedHashMap<>();
         Overview overview = computeOverview(ctx, builds);
         Map<MetricChannel, SnapshotChannel> channels = new LinkedHashMap<>();
@@ -394,12 +510,18 @@ public class MarketingOverviewQueryService {
             if (build.live() && (id == MetricChannel.STORE || id == MetricChannel.ADS || id == MetricChannel.PRODUCT)) {
                 tables = dimensions(ctx, build.channel, build, reportTableOptions(id));
             }
-            channels.put(id, new SnapshotChannel(build.view(false), build.channel, tables));
+            channels.put(id, new SnapshotChannel(build.view(false), build.channel, tables, build.window,
+                    build.settledThrough));
             if (build.data != null) {
                 rows.put(id, build.data.rows());
             }
         }
-        return new Snapshot(overview, channels, SettledDailyValues.of(rows, ctx.yesterday));
+        RangeValues ranges = (channel, metricKey, from, to) -> {
+            ChannelBuild build = builds.get(channel);
+            Metric metric = build == null ? null : build.channel.metric(metricKey).orElse(null);
+            return metric == null ? null : valueOver(ctx, build, metric, from, to);
+        };
+        return new Snapshot(overview, channels, SettledDailyValues.of(rows, ctx.yesterday), ranges);
     }
 
     private static java.util.function.Function<Dimension, TableOptions> reportTableOptions(MetricChannel channel) {
@@ -429,7 +551,7 @@ public class MarketingOverviewQueryService {
         List<FunnelStageView> stages = new ArrayList<>();
         for (MetricCatalog.FunnelStage stage : MetricCatalog.funnel(ctx.productChannel)) {
             stages.add(funnelStage(stage, builds.get(stage.channel()), funnelWindow,
-                    lagging.contains(stage.channel())));
+                    lagging.contains(stage.channel()), ctx.fixed() && funnelWindow.to().isBefore(ctx.fixedTo)));
         }
         List<FunnelStageView> funnel = withConversions(stages);
         List<ChannelView> channels = builds.values().stream()
@@ -457,13 +579,25 @@ public class MarketingOverviewQueryService {
     @Transactional(readOnly = true)
     public ChannelDetail channel(String projectId, String channelRaw, String windowRaw) {
         MetricCatalog.Channel channel = requireChannel(channelRaw);
-        int days = parseWindow(windowRaw, Set.of(7, 28, 90));
-        return channel(projectId, channel, days, LocalDate.now(ZoneOffset.UTC), OffsetDateTime.now());
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        return channel(projectId, channel, parseWindow(windowRaw, ROLLING_CHANNEL_DAYS, today), today,
+                OffsetDateTime.now());
     }
 
     ChannelDetail channel(String projectId, MetricCatalog.Channel channel, int days, LocalDate today,
                           OffsetDateTime now) {
-        Context ctx = context(projectId, days, today, now);
+        return channel(projectId, channel, WindowSpec.rolling(days), today, now);
+    }
+
+    /** Package-visible so a test can pin "today" and "now" with a window named as a request names it. */
+    ChannelDetail channel(String projectId, MetricCatalog.Channel channel, String windowRaw, LocalDate today,
+                          OffsetDateTime now) {
+        return channel(projectId, channel, parseWindow(windowRaw, ROLLING_CHANNEL_DAYS, today), today, now);
+    }
+
+    private ChannelDetail channel(String projectId, MetricCatalog.Channel channel, WindowSpec window,
+                                  LocalDate today, OffsetDateTime now) {
+        Context ctx = context(projectId, window, today, now);
         channel = ctx.resolve(channel);
         ChannelBuild build = build(ctx, channel);
         if (build.live() && build.hasData()) {
@@ -476,8 +610,9 @@ public class MarketingOverviewQueryService {
         }
         List<DimensionTable> dimensions = build.live()
                 ? dimensions(ctx, channel, build, d -> new TableOptions(null, DIMENSION_ROWS)) : List.of();
-        List<MarketingInsightsQueryService.Post> topPosts = channel.channel() == MetricChannel.SOCIAL
-                ? insightsQueryService.topPosts(projectId, days, TOP_POSTS)
+        // Top posts are ranked over the trailing days from now; a fixed window of past days has no such ranking.
+        List<MarketingInsightsQueryService.Post> topPosts = channel.channel() == MetricChannel.SOCIAL && !ctx.fixed()
+                ? insightsQueryService.topPosts(projectId, ctx.days, TOP_POSTS)
                 : List.of();
         return new ChannelDetail(build.window, build.view(false), dimensions, topPosts);
     }
@@ -574,20 +709,74 @@ public class MarketingOverviewQueryService {
                         + channel.channel().name()));
     }
 
-    static int parseWindow(String raw, Set<Integer> allowed) {
-        String normalized = raw == null || raw.isBlank() ? "28d" : raw.trim().toLowerCase(Locale.ROOT);
+    /**
+     * A requested window: a rolling one of {@code days} days ending where each channel's data does, or (when
+     * {@code from} and {@code to} are set) exactly those days for every channel, {@code days} being their count.
+     */
+    record WindowSpec(int days, LocalDate from, LocalDate to) {
+        static WindowSpec rolling(int days) {
+            return new WindowSpec(days, null, null);
+        }
+
+        static WindowSpec fixed(LocalDate from, LocalDate to) {
+            return new WindowSpec((int) (to.toEpochDay() - from.toEpochDay() + 1), from, to);
+        }
+
+        boolean fixed() {
+            return from != null;
+        }
+    }
+
+    /**
+     * Reads a window parameter: {@code 7d}, {@code 28d} ... for the lengths {@code allowed}, or a fixed range
+     * {@code YYYY-MM-DD..YYYY-MM-DD}. A fixed range must run first day to last day, end no later than yesterday
+     * (UTC: today is still partial) and span at most {@link #FIXED_WINDOW_MAX_DAYS} days; anything else is a 400
+     * with a plain message. A blank window is the default, {@value #DEFAULT_WINDOW}.
+     */
+    static WindowSpec parseWindow(String raw, Set<Integer> allowed, LocalDate today) {
+        String normalized = raw == null || raw.isBlank() ? DEFAULT_WINDOW : raw.trim().toLowerCase(Locale.ROOT);
+        Matcher fixed = FIXED_WINDOW.matcher(normalized);
+        if (fixed.matches()) {
+            return fixedWindow(raw, fixed.group(1), fixed.group(2), today);
+        }
         if (normalized.endsWith("d")) {
             try {
                 int days = Integer.parseInt(normalized.substring(0, normalized.length() - 1));
                 if (allowed.contains(days)) {
-                    return days;
+                    return WindowSpec.rolling(days);
                 }
             } catch (NumberFormatException ignored) {
                 // falls through to the 400 below
             }
         }
         throw new BusinessException("Unknown window '" + raw + "'; expected "
-                + allowed.stream().sorted().map(d -> d + "d").toList());
+                + allowed.stream().sorted().map(d -> d + "d").toList() + " or a range of days YYYY-MM-DD..YYYY-MM-DD");
+    }
+
+    private static WindowSpec fixedWindow(String raw, String fromText, String toText, LocalDate today) {
+        LocalDate from;
+        LocalDate to;
+        try {
+            from = LocalDate.parse(fromText);
+            to = LocalDate.parse(toText);
+        } catch (java.time.format.DateTimeParseException e) {
+            throw new BusinessException("Unknown window '" + raw + "': not a calendar day in YYYY-MM-DD..YYYY-MM-DD");
+        }
+        if (from.isAfter(to)) {
+            throw new BusinessException("Window starts on " + from + ", after it ends on " + to
+                    + "; give the first day, then the last");
+        }
+        LocalDate yesterday = today.minusDays(1);
+        if (to.isAfter(yesterday)) {
+            throw new BusinessException("Window ends on " + to + ", but only days up to " + yesterday
+                    + " are complete; today is still partial");
+        }
+        WindowSpec spec = WindowSpec.fixed(from, to);
+        if (spec.days() > FIXED_WINDOW_MAX_DAYS) {
+            throw new BusinessException("Window of " + spec.days() + " days is too long; ask for at most "
+                    + FIXED_WINDOW_MAX_DAYS + " days");
+        }
+        return spec;
     }
 
     // ---- context ------------------------------------------------------------------------------------
@@ -627,7 +816,11 @@ public class MarketingOverviewQueryService {
     /** Everything one request shares across channels. */
     private final class Context {
         final String projectId;
+        /** The window's length in days (a fixed window's own count). */
         final int days;
+        /** The first and last day of a fixed window; both null for a rolling one. */
+        final LocalDate fixedFrom;
+        final LocalDate fixedTo;
         final LocalDate yesterday;
         final LocalDate today;
         /** Where a window ends when a channel has no settled data. */
@@ -643,10 +836,14 @@ public class MarketingOverviewQueryService {
         final Map<String, TargetView> feedTargets = new HashMap<>();
         final Set<String> productConnectionIds = new HashSet<>();
         private List<ChannelMetricDaily> referenceRows;
+        private List<MarketingPlatformRead> platformReads;
 
-        Context(String projectId, int days, LocalDate today, OffsetDateTime now) {
+        Context(String projectId, WindowSpec window, LocalDate today, OffsetDateTime now) {
             this.projectId = projectId;
+            int days = window.days();
             this.days = days;
+            this.fixedFrom = window.from();
+            this.fixedTo = window.to();
             this.now = now;
             LocalDate to = today.minusDays(1);
             this.yesterday = to;
@@ -655,7 +852,9 @@ public class MarketingOverviewQueryService {
             // window must never end on a day that is still going. Two days back is complete everywhere.
             this.fallbackEnd = today.minusDays(2);
             int lookback = Math.max(2 * days, Math.min(days * (HISTORY_PERIODS + 1), MAX_HISTORY_DAYS));
-            this.historyStart = to.minusDays(lookback - 1L);
+            // The history reaches back from the window's last day, so a fixed window in the past still has its
+            // previous window and noise baseline loaded.
+            this.historyStart = (window.fixed() ? window.to() : to).minusDays(lookback - 1L);
             this.connections = connectionRepository.findByProjectId(projectId).stream()
                     .filter(c -> "ACTIVE".equals(c.getStatus()))
                     .toList();
@@ -683,6 +882,10 @@ public class MarketingOverviewQueryService {
             }
         }
 
+        boolean fixed() {
+            return fixedFrom != null;
+        }
+
         MetricCatalog.Channel resolve(MetricCatalog.Channel channel) {
             return channel.channel() == MetricChannel.PRODUCT ? productChannel : channel;
         }
@@ -692,18 +895,25 @@ public class MarketingOverviewQueryService {
             if (referenceRows == null) {
                 referenceRows = productConnectionIds.isEmpty() ? List.of()
                         : dailyRepository.findByProjectIdAndChannelAndMetricInAndDayBetween(projectId, "PRODUCT",
-                                List.of(REFERENCE_PREFIX + "store_downloads", REFERENCE_PREFIX + "ads_spend"),
-                                historyStart, yesterday).stream()
+                                ReferencePairs.referenceMetrics(), historyStart, yesterday).stream()
                         .filter(r -> r.getDimensionKey().isEmpty() && !r.isProvisional()
                                 && productConnectionIds.contains(r.getConnectionId()))
                         .toList();
             }
             return referenceRows;
         }
+
+        /** The newest direct platform read of each (channel, metric), loaded once per request. */
+        List<MarketingPlatformRead> platformReads() {
+            if (platformReads == null) {
+                platformReads = platformReadRepository.findLatestByProject(projectId);
+            }
+            return platformReads;
+        }
     }
 
-    private Context context(String projectId, int days, LocalDate today, OffsetDateTime now) {
-        return new Context(projectId, days, today, now);
+    private Context context(String projectId, WindowSpec window, LocalDate today, OffsetDateTime now) {
+        return new Context(projectId, window, today, now);
     }
 
     // ---- channel build ------------------------------------------------------------------------------
@@ -716,20 +926,27 @@ public class MarketingOverviewQueryService {
         final ConnectHint connectHint;
         final List<MetricView> metrics;
         final Window window;
-        final MismatchView mismatch;
+        /** Every second source that disagrees, largest gap first. */
+        final List<MismatchView> mismatches;
+        /** True only in a fixed window the channel's settled data does not reach the end of. */
+        final Boolean partial;
+        /** The latest day the channel's flows are settled on every connection; null with no connection or no settled data. */
+        final LocalDate settledThrough;
         /** The channel's rows (null when it has no connection), so the funnel can re-read them over its own window. */
         ChannelData data;
 
         ChannelBuild(MetricCatalog.Channel channel, String status, OffsetDateTime lastFetchedAt,
                      List<ConnectionView> connections, ConnectHint connectHint, List<MetricView> metrics,
                      Window window) {
-            this(channel, status, lastFetchedAt, connections, connectHint, metrics, window, null);
+            this(channel, status, lastFetchedAt, connections, connectHint, metrics, window, List.of(), null, null);
         }
 
         ChannelBuild(MetricCatalog.Channel channel, String status, OffsetDateTime lastFetchedAt,
                      List<ConnectionView> connections, ConnectHint connectHint, List<MetricView> metrics,
-                     Window window, MismatchView mismatch) {
-            this.mismatch = mismatch;
+                     Window window, List<MismatchView> mismatches, Boolean partial, LocalDate settledThrough) {
+            this.mismatches = mismatches;
+            this.partial = partial;
+            this.settledThrough = settledThrough;
             this.window = window;
             this.channel = channel;
             this.status = status;
@@ -782,10 +999,17 @@ public class MarketingOverviewQueryService {
             return ordered;
         }
 
+        /** The mismatch old clients read: the backend one with the largest gap, else the platform read's. */
+        private MismatchView legacyMismatch() {
+            return mismatches.stream().filter(m -> KIND_BACKEND.equals(m.kind())).findFirst()
+                    .or(() -> mismatches.stream().findFirst()).orElse(null);
+        }
+
         ChannelView view(boolean headlineOnly) {
             List<MetricView> shown = headlineOnly ? headlineMetrics() : metrics;
             return new ChannelView(channel.channel().name(), channel.label(), status, lastFetchedAt, connections,
-                    connectHint, shown, window.to(), mismatch, channel.channel() != MetricChannel.PRODUCT);
+                    connectHint, shown, window.to(), legacyMismatch(), channel.channel() != MetricChannel.PRODUCT,
+                    mismatches, partial);
         }
     }
 
@@ -836,19 +1060,22 @@ public class MarketingOverviewQueryService {
         LocalDate completeThrough = settled != null ? settled
                 : olderSettled != null ? olderSettled : ctx.fallbackEnd;
         Window window = windowEnding(ctx, completeThrough);
+        LocalDate settledThrough = settled != null ? settled : olderSettled;
+        // Only a fixed window can outrun the data: a rolling one ends where the channel's data does.
+        boolean partial = ctx.fixed() && settledThrough != null && settledThrough.isBefore(ctx.fixedTo);
         ChannelData data = new ChannelData(channel, rows);
         List<MetricView> metrics = new ArrayList<>();
         for (Metric metric : channel.visibleMetrics()) {
             if (metric.optional() && !data.hasRows(metric)) {
                 continue;
             }
-            metrics.add(metricView(ctx, channel, data, metric, window));
+            metrics.add(metricView(ctx, channel, data, metric, window, partial));
         }
-        MismatchView mismatch = mismatch(ctx, channel, data, window);
+        List<MismatchView> mismatches = mismatches(ctx, channel, data, window, settledThrough);
         String status = olderSettled != null ? "STALE"
-                : mismatch != null ? "MISMATCH" : anyLive ? "LIVE" : "STALE";
+                : !mismatches.isEmpty() ? "MISMATCH" : anyLive ? "LIVE" : "STALE";
         ChannelBuild built = new ChannelBuild(channel, status, lastFetchedAt, connectionViews, hint, metrics, window,
-                mismatch);
+                mismatches, partial ? Boolean.TRUE : null, settledThrough);
         built.data = data;
         return built;
     }
@@ -861,51 +1088,94 @@ public class MarketingOverviewQueryService {
     }
 
     /**
-     * Compares a product feed's reference figure with this channel's own connector over the settled days both
-     * have (store downloads against STORE downloads, ad spend against ADS spend). A gap above
-     * {@link #MISMATCH_THRESHOLD} of the larger figure is a mismatch; with no day in common there is nothing to say.
+     * Every second source that disagrees with this channel's own figures, largest gap first:
+     * <ul>
+     *   <li>the product backend's reference for each pair of {@link ReferencePairs}, over the settled days both
+     *       sides have inside the window (with no day in common there is nothing to say);</li>
+     *   <li>the newest direct platform read of each metric, against the channel's own figure over exactly the
+     *       read's days (nothing to say while the channel has not settled those days).</li>
+     * </ul>
+     * Both are judged by {@link ReconciliationBand}.
      */
-    private MismatchView mismatch(Context ctx, MetricCatalog.Channel channel, ChannelData data, Window w) {
-        String reference;
-        String own;
-        String label;
-        switch (channel.channel()) {
-            case ADS -> { reference = REFERENCE_PREFIX + "ads_spend"; own = "spend"; label = "Spend"; }
-            case STORE -> { reference = REFERENCE_PREFIX + "store_downloads"; own = "downloads"; label = "Downloads"; }
-            default -> { return null; }
-        }
-        Metric ownMetric = channel.metric(own).orElse(null);
-        if (ownMetric == null) {
-            return null;
-        }
-        Map<LocalDate, Double> referenceByDay = new TreeMap<>();
-        for (ChannelMetricDaily row : ctx.referenceRows()) {
-            if (row.getMetric().equals(reference) && !row.getDay().isBefore(w.from()) && !row.getDay().isAfter(w.to())) {
-                referenceByDay.merge(row.getDay(), row.getValue().doubleValue(), Double::sum);
-            }
-        }
-        double referenceSum = 0;
-        double ownSum = 0;
-        LocalDate first = null;
-        LocalDate last = null;
-        for (Map.Entry<LocalDate, Double> e : referenceByDay.entrySet()) {
-            Double ownValue = data.dayValue(ownMetric, e.getKey());
-            if (ownValue == null) {
+    private List<MismatchView> mismatches(Context ctx, MetricCatalog.Channel channel, ChannelData data, Window w,
+                                          LocalDate settledThrough) {
+        List<MismatchView> out = new ArrayList<>();
+        String channelSource = sourceNames(ctx, channel.connectorIds(), channel.label());
+        for (ReferencePairs.Pair pair : ReferencePairs.forChannel(channel.channel())) {
+            Metric own = channel.metric(pair.metric()).orElse(null);
+            if (own == null) {
                 continue;
             }
-            referenceSum += e.getValue();
-            ownSum += ownValue;
-            first = first == null ? e.getKey() : first;
-            last = e.getKey();
+            Map<LocalDate, Double> ownByDay = new TreeMap<>();
+            for (LocalDate day = w.from(); !day.isAfter(w.to()); day = day.plusDays(1)) {
+                Double value = data.dayValue(own, day);
+                if (value != null && !data.isProvisional(own, day)) {
+                    ownByDay.put(day, value);
+                }
+            }
+            Map<LocalDate, Double> referenceByDay = new TreeMap<>();
+            for (ChannelMetricDaily row : ctx.referenceRows()) {
+                if (row.getMetric().equals(pair.reference())) {
+                    referenceByDay.merge(row.getDay(), row.getValue().doubleValue(), Double::sum);
+                }
+            }
+            ReferencePairs.compare(ownByDay, referenceByDay, w.from(), w.to()).ifPresent(c -> {
+                if (!ReconciliationBand.matches(c.ownSum(), c.referenceSum(), judgedByPercentOnly(own))) {
+                    out.add(new MismatchView(own.key(), own.label(), c.referenceSum(), c.ownSum(),
+                            ReconciliationBand.gap(c.ownSum(), c.referenceSum()), c.first(), c.last(), channelSource,
+                            sourceNames(ctx, List.of(MetricCatalog.PRODUCT_CONNECTOR_ID), "Product metrics"),
+                            KIND_BACKEND));
+                }
+            });
         }
-        double larger = Math.max(referenceSum, ownSum);
-        if (first == null || larger <= 0) {
+        for (MarketingPlatformRead read : ctx.platformReads()) {
+            Metric metric = read.getChannel().equals(channel.channel().name())
+                    ? channel.metric(read.getMetric()).filter(m -> !m.hidden()).orElse(null) : null;
+            if (metric == null || metric.agg() == Aggregation.DERIVED) {
+                continue;
+            }
+            Double conductor = valueOver(ctx, data, settledThrough, metric, read.getDayFrom(), read.getDayTo());
+            double platform = read.getValue().doubleValue();
+            if (conductor != null && !ReconciliationBand.matches(conductor, platform, judgedByPercentOnly(metric))) {
+                out.add(new MismatchView(metric.key(), metric.label(), platform, conductor,
+                        ReconciliationBand.gap(conductor, platform), read.getDayFrom(), read.getDayTo(), channelSource,
+                        read.getSourceName(), KIND_PLATFORM));
+            }
+        }
+        out.sort(Comparator.comparingDouble(MismatchView::gapPct).reversed()
+                .thenComparing(MismatchView::metric).thenComparing(MismatchView::kind));
+        return out;
+    }
+
+    /**
+     * True for a figure the reconciliation band judges by percent only: money and ratings, which have no
+     * whole-number "one unit" to allow. A count also gets the one-unit allowance below 50.
+     */
+    public static boolean judgedByPercentOnly(Metric metric) {
+        return metric.unit() != Unit.COUNT;
+    }
+
+    /** {@link #valueOver(Context, ChannelData, LocalDate, Metric, LocalDate, LocalDate)} for a built channel. */
+    private Double valueOver(Context ctx, ChannelBuild build, Metric metric, LocalDate from, LocalDate to) {
+        return valueOver(ctx, build.data, build.settledThrough, metric, from, to);
+    }
+
+    /**
+     * The channel's own figure for {@code metric} over {@code from}..{@code to}: its settled days (a flow), its
+     * latest reading at or before {@code to} (a level) or its stored distinct count for a window of that length
+     * ending on {@code to}. Null when that cannot be said without guessing: no data, the channel's settled data ends
+     * before {@code to}, or the days are older than the history this request loaded.
+     */
+    private static Double valueOver(Context ctx, ChannelData data, LocalDate settledThrough, Metric metric,
+                                    LocalDate from, LocalDate to) {
+        if (data == null || settledThrough == null || to.isBefore(from) || settledThrough.isBefore(to)) {
             return null;
         }
-        double gap = Math.abs(referenceSum - ownSum) / larger;
-        return gap > MISMATCH_THRESHOLD ? new MismatchView(own, label, referenceSum, ownSum, gap, first, last,
-                sourceNames(ctx, channel.connectorIds(), channel.label()),
-                sourceNames(ctx, List.of(MetricCatalog.PRODUCT_CONNECTOR_ID), "Product metrics")) : null;
+        boolean needsEveryDay = metric.agg() == Aggregation.SUM || metric.agg() == Aggregation.DERIVED;
+        if ((needsEveryDay ? from : to).isBefore(ctx.historyStart)) {
+            return null;
+        }
+        return data.valueOver(metric, from, to);
     }
 
     /** The display labels of the project's connections for these connectors, e.g. "Rexipe" or "Rexipe, Beta". */
@@ -931,7 +1201,15 @@ public class MarketingOverviewQueryService {
         return last != null && last.plusMinutes((long) STALE_INTERVALS * feed.getIntervalMinutes()).isAfter(now);
     }
 
+    /**
+     * The window ending on {@code to}; in a fixed window, the fixed days instead, ending on {@code to} only when
+     * that is earlier than the window's last day (a channel whose data stops short of it).
+     */
     private static Window windowEnding(Context ctx, LocalDate to) {
+        if (ctx.fixed()) {
+            LocalDate end = to.isAfter(ctx.fixedTo) ? ctx.fixedTo : to;
+            return new Window(ctx.fixedFrom, end, ctx.fixedFrom.minusDays(ctx.days), ctx.fixedFrom.minusDays(1), end);
+        }
         LocalDate from = to.minusDays(ctx.days - 1L);
         return new Window(from, to, from.minusDays(ctx.days), from.minusDays(1), to);
     }
@@ -1098,6 +1376,9 @@ public class MarketingOverviewQueryService {
                 var latest = series.floorEntry(to);
                 return latest == null ? null : latest.getValue();
             }
+            if (to.isBefore(from)) {
+                return null;
+            }
             var window = series.subMap(from, true, to, true);
             return window.isEmpty() ? null : window.values().stream().mapToLong(Long::longValue).sum();
         }
@@ -1118,7 +1399,8 @@ public class MarketingOverviewQueryService {
             return switch (metric.agg()) {
                 case SUM -> {
                     TreeMap<LocalDate, Double> series = daily.get(metric.key());
-                    if (series == null) {
+                    // a fixed window can end before it begins for a channel whose data stops short of it
+                    if (series == null || to.isBefore(from)) {
                         yield null;
                     }
                     var window = series.subMap(from, true, to, true);
@@ -1127,6 +1409,36 @@ public class MarketingOverviewQueryService {
                 case LEVEL -> levelAt(metric, to);
                 case DERIVED -> ratio(periodValue(component(metric.numerator()), from, to),
                         periodValue(component(metric.denominator()), from, to));
+                case WINDOW_UNIQUE -> windowUniqueValue(metric, from, to);
+            };
+        }
+
+        /**
+         * The value over an explicit range counting only settled days: like {@link #periodValue} but a day still
+         * being restated is left out of a flow. A level is its latest reading at or before {@code to}; a
+         * window-unique count is the stored one for a window of that length ending on {@code to}.
+         */
+        Double valueOver(Metric metric, LocalDate from, LocalDate to) {
+            return switch (metric.agg()) {
+                case SUM -> {
+                    TreeMap<LocalDate, Double> series = daily.get(metric.key());
+                    if (series == null || to.isBefore(from)) {
+                        yield null;
+                    }
+                    Set<LocalDate> restating = provisional.getOrDefault(metric.key(), Set.of());
+                    double sum = 0;
+                    boolean any = false;
+                    for (Map.Entry<LocalDate, Double> e : series.subMap(from, true, to, true).entrySet()) {
+                        if (!restating.contains(e.getKey())) {
+                            sum += e.getValue();
+                            any = true;
+                        }
+                    }
+                    yield any ? sum : null;
+                }
+                case LEVEL -> levelAt(metric, to);
+                case DERIVED -> ratio(valueOver(component(metric.numerator()), from, to),
+                        valueOver(component(metric.denominator()), from, to));
                 case WINDOW_UNIQUE -> windowUniqueValue(metric, from, to);
             };
         }
@@ -1241,11 +1553,17 @@ public class MarketingOverviewQueryService {
         return numerator / denominator;
     }
 
+    /**
+     * @param partial the channel's settled data ends before a fixed window's last day: its flows cover fewer days
+     *                than the previous window, so they carry no comparison with it
+     */
     private MetricView metricView(Context ctx, MetricCatalog.Channel channel, ChannelData data, Metric metric,
-                                  Window flowWindow) {
+                                  Window flowWindow, boolean partial) {
         // A level is a snapshot, not a flow: its value is the latest snapshot at or before today whatever the
-        // flow window, and its previous is the snapshot one window earlier than that.
-        LocalDate asOf = metric.agg() == Aggregation.LEVEL ? data.latestDay(metric, ctx.today) : null;
+        // flow window (in a fixed window, at or before its last day), and its previous is the snapshot one window
+        // earlier than that.
+        LocalDate asOf = metric.agg() == Aggregation.LEVEL
+                ? data.latestDay(metric, ctx.fixed() ? ctx.fixedTo : ctx.today) : null;
         Window w = asOf != null ? windowEnding(ctx, asOf) : flowWindow;
         Double value = data.periodValue(metric, w.from(), w.to());
         Double previous = data.periodValue(metric, w.previousFrom(), w.previousTo());
@@ -1256,7 +1574,9 @@ public class MarketingOverviewQueryService {
         boolean partialPrevious = previous != null && metric.agg() != Aggregation.LEVEL
                 && metric.agg() != Aggregation.WINDOW_UNIQUE
                 && firstDay != null && firstDay.isAfter(w.previousFrom());
-        if (partialPrevious) {
+        boolean flowShorterThanPrevious = partial && (metric.agg() == Aggregation.SUM
+                || metric.agg() == Aggregation.DERIVED);
+        if (partialPrevious || flowShorterThanPrevious) {
             previous = null;
         }
         Double change = value != null && previous != null ? value - previous : null;
@@ -1267,6 +1587,7 @@ public class MarketingOverviewQueryService {
         // draw them differently. Totals and changes above use complete days only.
         int provisionalDays = 0;
         LocalDate seriesEnd = metric.agg() == Aggregation.LEVEL ? w.to()
+                : ctx.fixed() ? ctx.fixedTo
                 : (w.to().isAfter(ctx.yesterday) ? w.to() : ctx.yesterday);
         for (LocalDate day = w.from(); !day.isAfter(seriesEnd); day = day.plusDays(1)) {
             Double dayValue = data.dayValue(metric, day);
@@ -1469,8 +1790,9 @@ public class MarketingOverviewQueryService {
         return DAY_LABEL.format(day);
     }
 
+    /** @param shortened a fixed window the funnel's days stop short of: a flow has fewer days than its previous window */
     private FunnelStageView funnelStage(MetricCatalog.FunnelStage stage, ChannelBuild build, Window w,
-                                        boolean lagging) {
+                                        boolean lagging, boolean shortened) {
         Optional<MetricView> shown = build == null ? Optional.empty() : build.metric(stage.metric());
         Optional<Metric> catalogMetric = build == null ? Optional.empty() : build.channel.metric(stage.metric());
         if (build == null || build.data == null) {
@@ -1500,6 +1822,9 @@ public class MarketingOverviewQueryService {
         if (previous != null && metric.agg() != Aggregation.LEVEL && metric.agg() != Aggregation.WINDOW_UNIQUE
                 && firstDay != null && firstDay.isAfter(w.previousFrom())) {
             previous = null; // only partly covered by history: no comparison
+        }
+        if (shortened && (metric.agg() == Aggregation.SUM || metric.agg() == Aggregation.DERIVED)) {
+            previous = null; // fewer days than the previous window: no comparison
         }
         if (value == null && previous == null) {
             // connected, with data, just none in these days: say so rather than telling them to connect
