@@ -123,6 +123,15 @@ public class VerificationLedgerService {
         return ledger(projectId, windowRaw, LocalDate.now(ZoneOffset.UTC), OffsetDateTime.now());
     }
 
+    /**
+     * The ledger over a snapshot the caller already built for the same window, so a caller that has one (the
+     * marketing report) does not pay for a second pass over the data.
+     */
+    @Transactional(readOnly = true)
+    public Ledger ledger(String projectId, Snapshot snapshot, OffsetDateTime now) {
+        return compute(snapshot, latestReads(projectId), now);
+    }
+
     /** Package-visible so a test can pin "today" and "now". */
     Ledger ledger(String projectId, String windowRaw, LocalDate today, OffsetDateTime now) {
         Snapshot snapshot = overviewService.snapshot(projectId, windowRaw, ROLLING_WINDOWS, today, now);

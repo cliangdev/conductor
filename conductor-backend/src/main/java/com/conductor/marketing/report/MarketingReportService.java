@@ -397,7 +397,7 @@ public class MarketingReportService {
                 benchmarks, log.changes(), adsCoverage(channels), log.markers(),
                 definitions(channels, headline, scorecard, acquisition, benchmarks, overrides, store), store,
                 payback(channels, acquisition), exclusions(channels), productReads.asoKeywords(),
-                verification(projectId, ledgerWindow));
+                verification(projectId, ledgerWindow, snap, now));
     }
 
     // ---- sources and headline ----------------------------------------------------------------------
@@ -1223,11 +1223,12 @@ public class MarketingReportService {
      * The ledger's tally for the same window, so a reader sees how much of the report is verified. Null when the
      * ledger has no metric to check (nothing connected) or serves no window like this one.
      */
-    private Verification verification(String projectId, String ledgerWindow) {
+    private Verification verification(String projectId, String ledgerWindow, Snapshot snap, OffsetDateTime now) {
         if (ledgerWindow == null) {
             return null;
         }
-        VerificationLedgerService.Ledger ledger = ledgerService.ledger(projectId, ledgerWindow);
+        // the report's own snapshot covers the same window, so the ledger reuses it instead of reading everything again
+        VerificationLedgerService.Ledger ledger = ledgerService.ledger(projectId, snap, now);
         if (ledger.rows().isEmpty()) {
             return null;
         }
