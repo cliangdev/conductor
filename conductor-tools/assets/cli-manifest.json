@@ -1044,6 +1044,31 @@
       "requiredParams": []
     },
     {
+      "name": "tag_message",
+      "description": "Tag a keyword, product page, Post, creative or paywall headline with the message it makes, so the promise ledger can join it to installs, intent picks, trial rate and D7. A target carries one message; tagging it again moves it.",
+      "category": "marketing",
+      "requiredParams": [
+        "message",
+        "targetKind",
+        "targetRef"
+      ]
+    },
+    {
+      "name": "untag_message",
+      "description": "Remove the message from a target. Safe to repeat.",
+      "category": "marketing",
+      "requiredParams": [
+        "targetKind",
+        "targetRef"
+      ]
+    },
+    {
+      "name": "list_promises",
+      "description": "The promise ledger: per message, installs, intent mix, trial rate and D7 with 95% ranges and n, flagged as a small sample under 20. A figure with no data is null, never 0.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
       "name": "submit_review",
       "description": "Record an approve / request_changes verdict on a Post as this API key's user (an assigned REVIEWER). Approval schedules the Post.",
       "category": "marketing",

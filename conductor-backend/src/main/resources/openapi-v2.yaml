@@ -32,6 +32,8 @@ tags:
     description: What a creator (the CREATORS workflow) has produced - its posts, campaign-link downloads and offer-code redemptions
   - name: marketing-links
     description: Tracked App Store campaign links for Posts, bios, creators and email, and the downloads they bring
+  - name: marketing-promises
+    description: The promise ledger - the message each keyword, product page, Post, creative and paywall headline makes, joined to installs, intent picks, trial rate and day-7 retention
   - name: work-items
     description: Work Item management endpoints (canonical successor to v1 issues)
   - name: work-item-tree
@@ -5438,6 +5440,221 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/promises:
+    get:
+      tags:
+        - marketing-promises
+      summary: The promise ledger - what each message brings, from install to day-7 retention
+      description: >-
+        One entry per message (alphabetical). A message is what a target promises: tag Apple Ads keywords,
+        custom product pages, Posts, creatives and paywall headlines with it (`/marketing/message-tags`).
+        `installs` adds Apple Ads tap installs of the tagged keywords, Apple Ads tap installs of the ads whose
+        current state points at a tagged product page, and first-time downloads of the tracked links of the tagged
+        Posts, over the window's settled days; creative and paywall-headline tags only label the message. It is
+        absent when no tagged target has a row, never 0, and `installsNote` says what is missing, what is below
+        Apple's reporting threshold, and that the parts can overlap or measure different things. The outcomes come
+        from the product backend's `message:<tag>` rows (product-metrics contract v3, matched case-insensitively
+        to the message): `intentMix` is each `intent_<pick>` metric's share of all picks, `trialRate` is
+        trial_started over first_open and `d7` is retained_d7 over matured_d7 (only opens that reached day 7 can
+        have retained). A rate carries `n` (its denominator), a 95% Wilson range `low`..`high` and `smallN` (true
+        under 20). A rate or mix with no data is absent, never 0; a numerator above its denominator is
+        inconsistent, so no rate is shown and `outcomesNote` says why. The message's `smallN` is true when any
+        rate it shows, or its intent mix, rests on fewer than 20 observations. The window defaults to the last 28
+        settled days: it ends on the latest settled day of the Apple Ads, App Store and product feeds (yesterday
+        when there is none). Days are UTC. Any project member can read.
+      operationId: getMarketingPromises
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: "First day, inclusive (UTC). With only `to`, 27 days before it."
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: "Last day, inclusive (UTC). With only `from`, the default end day."
+      responses:
+        "200":
+          description: The promises
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromiseLedgerResponse"
+        "400":
+          description: from is after to, or the window is longer than 366 days
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/message-tags:
+    get:
+      tags:
+        - marketing-promises
+      summary: List the message tags, by message
+      description: Every tag of the workspace, ordered by message, then kind, then target. Any project member can read.
+      operationId: listMarketingMessageTags
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The tags
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagListResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags:
+        - marketing-promises
+      summary: Tag a target with the message it makes
+      description: >-
+        Idempotent upsert by target (`targetKind` + `targetRef`). A target carries one message, so tagging it again
+        moves it to the new message and replaces its label (a PUT that omits `label` clears it). The message is
+        stored trimmed, lower-cased and with its whitespace collapsed. `targetRef` is the creative id (CREATIVE),
+        the custom product page id (PRODUCT_PAGE), the Apple Ads keyword id (KEYWORD), the headline text
+        (PAYWALL_HEADLINE) or the Post's Work Item id (POST). A POST or CREATIVE must belong to the project; a
+        keyword or product page is not checked, because the Apple Ads feed may not have synced it yet. Requires
+        ADMIN or CREATOR.
+      operationId: setMarketingMessageTag
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageTagRequest"
+      responses:
+        "200":
+          description: The stored tag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTag"
+        "400":
+          description: A missing or malformed message, targetKind, targetRef or label (the message lists the allowed values)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The Post or creative is not one of this project's
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - marketing-promises
+      summary: Remove the message from a target
+      description: "Idempotent: untagging a target that has no tag is a no-op. Requires ADMIN or CREATOR."
+      operationId: deleteMarketingMessageTag
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: targetKind
+          in: query
+          required: true
+          schema:
+            type: string
+          description: CREATIVE, PRODUCT_PAGE, KEYWORD, PAYWALL_HEADLINE or POST.
+        - name: targetRef
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The id (or, for a paywall headline, the text) the tag was made with.
+      responses:
+        "204":
+          description: Removed, or there was no tag
+        "400":
+          description: Unknown targetKind or a blank targetRef
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
           content:
             application/json:
               schema:
@@ -11666,6 +11883,96 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/LinkFamilyPerformance"
+
+    MessageTagRequest:
+      type: object
+      required: [message, targetKind, targetRef]
+      properties:
+        message: {type: string, maxLength: 120, description: "The message the target makes, a short tag such as save-from-tiktok. Stored trimmed and lower-cased."}
+        targetKind: {type: string, description: "CREATIVE, PRODUCT_PAGE, KEYWORD, PAYWALL_HEADLINE or POST (case-insensitive)."}
+        targetRef: {type: string, maxLength: 200, description: "The creative id, product page id, keyword id, paywall headline text or Post Work Item id."}
+        label: {type: string, maxLength: 200, description: "A human name for the target, for example the keyword text."}
+
+    MessageTag:
+      type: object
+      required: [id, message, targetKind, targetRef, createdAt]
+      properties:
+        id: {type: string}
+        message: {type: string}
+        targetKind: {type: string, description: "CREATIVE, PRODUCT_PAGE, KEYWORD, PAYWALL_HEADLINE or POST."}
+        targetRef: {type: string}
+        label: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+
+    MessageTagListResponse:
+      type: object
+      required: [tags]
+      properties:
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageTag"
+
+    PromiseRate:
+      type: object
+      description: A rate over a count of observations, with its 95% Wilson score range.
+      required: [value, n, low, high, smallN]
+      properties:
+        value: {type: number, format: double, description: "A fraction (0.25 is 25%)."}
+        n: {type: integer, format: int64, description: "The observations the rate rests on: its denominator."}
+        low: {type: number, format: double, description: "Lower end of the 95% range, a fraction."}
+        high: {type: number, format: double, description: "Upper end of the 95% range, a fraction."}
+        smallN: {type: boolean, description: "True when n is under 20: read the range, not the value."}
+
+    PromiseIntentShare:
+      type: object
+      required: [pick, count, share]
+      properties:
+        pick: {type: string, description: "The answer people picked: the intent_<pick> metric's suffix."}
+        count: {type: integer, format: int64}
+        share: {type: number, format: double, description: "This pick's share of all picks, a fraction."}
+
+    Promise:
+      type: object
+      required: [message, targets, smallN]
+      properties:
+        message: {type: string}
+        targets:
+          type: object
+          additionalProperties: {type: integer}
+          description: How many targets of each kind carry the message.
+        installs: {type: integer, format: int64, nullable: true, description: "Absent (never 0) when no tagged target has a row in the window."}
+        installsNote: {type: string, nullable: true, description: "What is missing, below Apple's reporting threshold, overlapping or measured differently."}
+        intentMix:
+          type: array
+          nullable: true
+          description: Absent when the product backend sent no intent_<pick> rows at the message. Largest first.
+          items:
+            $ref: "#/components/schemas/PromiseIntentShare"
+        intentN: {type: integer, format: int64, nullable: true, description: "The picks the intent mix rests on."}
+        trialRate:
+          nullable: true
+          description: trial_started / first_open at the message; absent without both.
+          allOf:
+            - $ref: "#/components/schemas/PromiseRate"
+        d7:
+          nullable: true
+          description: retained_d7 / matured_d7 at the message; absent without both.
+          allOf:
+            - $ref: "#/components/schemas/PromiseRate"
+        smallN: {type: boolean, description: "True when a rate shown here, or the intent mix, rests on fewer than 20 observations."}
+        outcomesNote: {type: string, nullable: true, description: "Why a rate is not shown although its numerator is reported."}
+
+    PromiseLedgerResponse:
+      type: object
+      required: [from, to, promises]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        promises:
+          type: array
+          items:
+            $ref: "#/components/schemas/Promise"
 
     OverviewMetricDefinition:
       type: object
