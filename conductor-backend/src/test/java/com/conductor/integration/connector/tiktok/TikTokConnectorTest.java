@@ -5,10 +5,20 @@ import com.conductor.integration.ActionResult;
 import com.conductor.integration.ActionSpec;
 import com.conductor.integration.AuthType;
 import com.conductor.integration.ConnectionContext;
+import com.conductor.integration.ConnectorRegistry;
 import com.conductor.integration.IntegrationToolSpec;
 import com.conductor.integration.OAuth2Connector;
 import com.conductor.integration.connector.tiktok.TikTokClient.CreatorInfo;
 import com.conductor.integration.connector.tiktok.TikTokConnector.TikTokAuthorization;
+import com.conductor.repository.IntegrationOAuthStateRepository;
+import com.conductor.service.ConnectionDisconnectService;
+import com.conductor.service.ConnectionHealthService;
+import com.conductor.service.ConnectionService;
+import com.conductor.service.ConnectorAppCredentialService;
+import com.conductor.service.ConnectorAppCredentialService.CredentialSource;
+import com.conductor.service.ConnectorAppCredentialService.ResolvedAppCredentials;
+import com.conductor.service.OAuthFlowService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -16,10 +26,13 @@ import org.springframework.web.util.UriComponentsBuilder;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -97,6 +110,73 @@ class TikTokConnectorTest {
         assertThat(connector.scopeDelimiter()).isEqualTo(",");
         assertThat(String.join(connector.scopeDelimiter(), connector.oauthScopes()))
                 .isEqualTo("user.info.basic,video.publish,video.upload,video.list");
+    }
+
+    // --- [auto] user.info.stats is requested only when the server flag is on ---
+
+    private static final String BASE_AUTHORIZE_URL_PREFIX = "https://www.tiktok.com/v2/auth/authorize/"
+            + "?client_key=client-key-123"
+            + "&redirect_uri=https://conductor.example/api/v1/oauth/callback"
+            + "&response_type=code"
+            + "&scope=user.info.basic,video.publish,video.upload,video.list";
+
+    private static String authorizeUrlFor(TikTokConnector tiktok) {
+        ConnectorRegistry registry = mock(ConnectorRegistry.class);
+        when(registry.findOAuth2("tiktok")).thenReturn(Optional.of(tiktok));
+        ConnectorAppCredentialService credentials = mock(ConnectorAppCredentialService.class);
+        when(credentials.resolve(eq("proj"), any(OAuth2Connector.class))).thenReturn(new ResolvedAppCredentials(
+                "tiktok", CredentialSource.DEPLOYMENT, "client-key-123", "secret", List.of()));
+        OAuthFlowService flow = new OAuthFlowService(mock(IntegrationOAuthStateRepository.class),
+                mock(ConnectionService.class), registry, credentials, new ObjectMapper(),
+                mock(ConnectionHealthService.class), mock(ConnectionDisconnectService.class));
+        return flow.buildAuthorizationUrl("proj", "tiktok", "https://conductor.example/api/v1/oauth/callback");
+    }
+
+    @Test
+    void statsFlagOff_scopesAreExactlyTheApprovedFour() {
+        assertThat(connector.oauthScopes())
+                .containsExactly("user.info.basic", "video.publish", "video.upload", "video.list");
+        assertThat(new TikTokConnector(client, null, false).oauthScopes())
+                .containsExactly("user.info.basic", "video.publish", "video.upload", "video.list");
+        assertThat(new TikTokConnector().oauthScopes()).doesNotContain("user.info.stats");
+    }
+
+    @Test
+    void statsFlagOff_authorizeUrlIsByteForByteWhatItWasBeforeTheFlagExisted() {
+        String url = authorizeUrlFor(new TikTokConnector(client, null, false));
+
+        assertThat(url).startsWith(BASE_AUTHORIZE_URL_PREFIX + "&state=");
+        assertThat(url).doesNotContain("user.info.stats");
+        assertThat(url.substring(0, url.indexOf("&state="))).isEqualTo(BASE_AUTHORIZE_URL_PREFIX);
+    }
+
+    @Test
+    void statsFlagOn_scopeListAddsUserInfoStatsAfterTheApprovedFour() {
+        TikTokConnector enabled = new TikTokConnector(client, null, true);
+
+        assertThat(enabled.oauthScopes())
+                .containsExactly("user.info.basic", "video.publish", "video.upload", "video.list", "user.info.stats");
+        assertThat(String.join(enabled.scopeDelimiter(), enabled.oauthScopes()))
+                .isEqualTo("user.info.basic,video.publish,video.upload,video.list,user.info.stats");
+    }
+
+    @Test
+    void statsFlagOn_authorizeUrlCarriesTheStatsScope() {
+        String url = authorizeUrlFor(new TikTokConnector(client, null, true));
+
+        assertThat(url).startsWith(BASE_AUTHORIZE_URL_PREFIX + ",user.info.stats&state=");
+    }
+
+    @Test
+    void statsFlag_isDeclaredOffInApplicationProperties() throws Exception {
+        java.util.Properties main = new java.util.Properties();
+        try (java.io.InputStream in = java.nio.file.Files.newInputStream(
+                java.nio.file.Path.of("src/main/resources/application.properties"))) {
+            main.load(in);
+        }
+
+        assertThat(main.getProperty("conductor.integrations.tiktok.stats-scope-enabled"))
+                .matches("false|\\$\\{[A-Z_]+:false}");
     }
 
     @Test
