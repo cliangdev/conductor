@@ -32,9 +32,11 @@ import java.util.zip.GZIPInputStream;
  *       vendor.</li>
  *   <li>Columns are found by header name, never by position; a missing required column, or a {@code Units} value
  *       that is not a number, fails loudly. A silently wrong count is worse than no count.</li>
- *   <li>A 404 means Apple has no report for that day (not published yet, or no sales at all): the day was not read
- *       and the result is empty. It is never turned into a zero. A report that exists but has no row of ours is a
- *       read day with zero first-time downloads.</li>
+ *   <li>A 404 means Apple has no report for that day: not published yet, or no sales at all. On a recent day it
+ *       is "not read" and the result is empty, never a zero. On a settled day (at least three days old in
+ *       Apple's Pacific report time) Apple would have published by now, so it is a read day with zero units, as
+ *       Rexipe's reader counts it. A report that exists but has no row of ours is a read day with zero first-time
+ *       downloads.</li>
  *   <li>Every other HTTP failure is left to the caller.</li>
  * </ul>
  */
@@ -100,10 +102,13 @@ public class AppStoreSalesClient {
     }
 
     /**
-     * The app's units for {@code day}, or empty when the day was not read (404, no body, or a file with no content
-     * at all). {@code vendorNumber} must already be digits only.
+     * The app's units for {@code day}, or empty when the day was not read (no body, a file with no content at all,
+     * or a 404 on a day Apple may still publish). Apple answers 404 both before it publishes a day and for a day
+     * with no sales at all, so on a {@code settled} day (one Apple has had time to publish, as Rexipe's reader
+     * judges it) a 404 is a read day with zero units. {@code vendorNumber} must already be digits only.
      */
-    public Optional<SalesDay> fetchDay(String token, String vendorNumber, String appId, LocalDate day) {
+    public Optional<SalesDay> fetchDay(String token, String vendorNumber, String appId, LocalDate day,
+                                       boolean settled) {
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(token);
         headers.setAccept(List.of(GZIP_TSV));
@@ -113,7 +118,7 @@ public class AppStoreSalesClient {
                     byte[].class).getBody();
         } catch (HttpClientErrorException e) {
             if (e.getStatusCode().value() == 404) {
-                return Optional.empty();
+                return settled ? Optional.of(new SalesDay(Map.of())) : Optional.empty();
             }
             throw e;
         }

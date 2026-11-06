@@ -94,7 +94,7 @@ class AppStoreSalesClientTest {
                 .andExpect(header("Accept", "application/a-gzip"))
                 .andRespond(withSuccess(gzip(tsv(row(APP, "1F", "1"))), MediaType.parseMediaType("application/a-gzip")));
 
-        Optional<SalesDay> day = client.fetchDay("jwt-token", VENDOR, APP, DAY);
+        Optional<SalesDay> day = client.fetchDay("jwt-token", VENDOR, APP, DAY, false);
 
         server.verify();
         assertThat(day).isPresent();
@@ -117,7 +117,7 @@ class AppStoreSalesClientTest {
                 row(OTHER_APP, "1F", "999"),
                 row(OTHER_APP, "7", "999")));
 
-        SalesDay day = client.fetchDay("jwt-token", VENDOR, APP, DAY).orElseThrow();
+        SalesDay day = client.fetchDay("jwt-token", VENDOR, APP, DAY, false).orElseThrow();
 
         assertThat(day.firstTimeDownloads()).isEqualTo(30);
         assertThat(day.unitsByType()).containsEntry(ProductType.FIRST_TIME_DOWNLOAD, 30L)
@@ -131,7 +131,7 @@ class AppStoreSalesClientTest {
     void aReportWithNoRowsForThisAppIsAReadDayWithZeroFirstTimeDownloads() {
         respondWith(tsv(row(OTHER_APP, "1F", "7"), row(APP, "7", "2")));
 
-        SalesDay day = client.fetchDay("jwt-token", VENDOR, APP, DAY).orElseThrow();
+        SalesDay day = client.fetchDay("jwt-token", VENDOR, APP, DAY, false).orElseThrow();
 
         assertThat(day.firstTimeDownloads()).isZero();
     }
@@ -140,14 +140,14 @@ class AppStoreSalesClientTest {
     void aHeaderOnlyReportIsAReadDayWithZeroFirstTimeDownloads() {
         respondWith(tsv());
 
-        assertThat(client.fetchDay("jwt-token", VENDOR, APP, DAY).orElseThrow().firstTimeDownloads()).isZero();
+        assertThat(client.fetchDay("jwt-token", VENDOR, APP, DAY, false).orElseThrow().firstTimeDownloads()).isZero();
     }
 
     @Test
     void anEmptyFileIsNotARecognisableReportSoTheDayIsNotRead() {
         respondWith("");
 
-        assertThat(client.fetchDay("jwt-token", VENDOR, APP, DAY)).isEmpty();
+        assertThat(client.fetchDay("jwt-token", VENDOR, APP, DAY, false)).isEmpty();
     }
 
     @Test
@@ -160,14 +160,14 @@ class AppStoreSalesClientTest {
                 + "2\t" + APP + "\t1\n";
         respondWith(reordered);
 
-        assertThat(client.fetchDay("jwt-token", VENDOR, APP, DAY).orElseThrow().firstTimeDownloads()).isEqualTo(7);
+        assertThat(client.fetchDay("jwt-token", VENDOR, APP, DAY, false).orElseThrow().firstTimeDownloads()).isEqualTo(7);
     }
 
     @Test
     void aMissingRequiredColumnFailsLoudlyNamingIt() {
         respondWith("Apple Identifier\tProduct Type Identifier\n" + APP + "\t1F\n");
 
-        assertThatThrownBy(() -> client.fetchDay("jwt-token", VENDOR, APP, DAY))
+        assertThatThrownBy(() -> client.fetchDay("jwt-token", VENDOR, APP, DAY, false))
                 .isInstanceOf(AppStoreSalesClient.SalesReportException.class)
                 .hasMessageContaining("Units");
     }
@@ -176,7 +176,7 @@ class AppStoreSalesClientTest {
     void aUnitsValueThatIsNotANumberFailsLoudlyInsteadOfCountingAsZero() {
         respondWith(tsv(row(APP, "1F", "lots")));
 
-        assertThatThrownBy(() -> client.fetchDay("jwt-token", VENDOR, APP, DAY))
+        assertThatThrownBy(() -> client.fetchDay("jwt-token", VENDOR, APP, DAY, false))
                 .isInstanceOf(AppStoreSalesClient.SalesReportException.class)
                 .hasMessageContaining("Units");
     }
@@ -189,21 +189,31 @@ class AppStoreSalesClientTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .body("{\"errors\":[{\"title\":\"The request expected results but none were found\"}]}"));
 
-        assertThat(client.fetchDay("jwt-token", VENDOR, APP, DAY)).isEmpty();
+        assertThat(client.fetchDay("jwt-token", VENDOR, APP, DAY, false)).isEmpty();
+    }
+
+    @Test
+    void aNotFoundSettledDayIsAReadDayWithNoSales() {
+        server.expect(once(), requestTo(URL)).andRespond(withStatus(HttpStatus.NOT_FOUND)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"errors\":[{\"title\":\"The request expected results but none were found\"}]}"));
+
+        assertThat(client.fetchDay("jwt-token", VENDOR, APP, DAY, true)).hasValueSatisfying(
+                day -> assertThat(day.firstTimeDownloads()).isZero());
     }
 
     @Test
     void anOkResponseWithNoBodyIsNotRead() {
         server.expect(once(), requestTo(URL)).andRespond(withSuccess());
 
-        assertThat(client.fetchDay("jwt-token", VENDOR, APP, DAY)).isEmpty();
+        assertThat(client.fetchDay("jwt-token", VENDOR, APP, DAY, false)).isEmpty();
     }
 
     @Test
     void anyOtherHttpFailureIsLeftToTheCaller() {
         server.expect(once(), requestTo(URL)).andRespond(withStatus(HttpStatus.FORBIDDEN));
 
-        assertThatThrownBy(() -> client.fetchDay("jwt-token", VENDOR, APP, DAY))
+        assertThatThrownBy(() -> client.fetchDay("jwt-token", VENDOR, APP, DAY, false))
                 .isInstanceOf(HttpClientErrorException.class);
     }
 

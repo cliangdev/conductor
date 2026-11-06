@@ -80,6 +80,8 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     static final int CONTRACT_VERSION = 2;
     /** Apple dates its Sales reports in Pacific time; a day is not published before that day has ended there. */
     private static final ZoneId SALES_REPORT_ZONE = ZoneId.of("America/Los_Angeles");
+    /** A Sales report day this many days old (Pacific) is published if it ever will be: a 404 then means no sales. */
+    static final int SALES_SETTLED_DAYS = 3;
     private static final Pattern NUMERIC = Pattern.compile("\\d+");
     static final String APP_ID_MESSAGE = "The App Apple ID must be numbers only, e.g. 1234567890 "
             + "(App Store Connect → the app → App Information)";
@@ -418,11 +420,14 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
             log.warn("App Store Connect vendor number for app {} is not numbers only; Sales Reports skipped", appId);
             return List.of();
         }
-        LocalDate newest = LocalDate.now(clock.withZone(SALES_REPORT_ZONE)).minusDays(1);
+        LocalDate today = LocalDate.now(clock.withZone(SALES_REPORT_ZONE));
+        LocalDate newest = today.minusDays(1);
+        LocalDate settledThrough = today.minusDays(SALES_SETTLED_DAYS);
         List<ChannelMetricPoint> points = new ArrayList<>();
         for (LocalDate day = from; !day.isAfter(to) && !day.isAfter(newest); day = day.plusDays(1)) {
             try {
-                Optional<AppStoreSalesClient.SalesDay> report = salesClient.fetchDay(token, vendorNumber, appId, day);
+                Optional<AppStoreSalesClient.SalesDay> report = salesClient.fetchDay(token, vendorNumber, appId, day,
+                        !day.isAfter(settledThrough));
                 if (report.isPresent()) {
                     points.add(ChannelMetricPoint.total(DOWNLOADS_OF_RECORD, day, report.get().firstTimeDownloads()));
                     points.add(ChannelMetricPoint.total(SALES_REPORT_DAYS, day, 1));

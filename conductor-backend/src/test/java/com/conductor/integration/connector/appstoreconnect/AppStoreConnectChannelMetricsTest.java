@@ -596,13 +596,36 @@ class AppStoreConnectChannelMetricsTest {
 
         server.verify();
         Map<String, Double> m = byKey(salesPoints(points));
+        // 2026-10-02 is long settled, so Apple's 404 there means a day with no sales: a covered day reading 0
         assertThat(m).containsOnly(
                 Map.entry("downloads_of_record||2026-10-01", 30.0),
                 Map.entry("sales_report_days||2026-10-01", 1.0),
+                Map.entry("downloads_of_record||2026-10-02", 0.0),
+                Map.entry("sales_report_days||2026-10-02", 1.0),
                 Map.entry("downloads_of_record||2026-10-03", 0.0),
                 Map.entry("sales_report_days||2026-10-03", 1.0));
-        // the 404 day writes nothing for sales: not 0, not a covered day
-        assertThat(points).filteredOn(p -> p.day().equals(d2)).isEmpty();
+    }
+
+    @Test
+    void aNotFoundRecentDayWritesNothingBecauseAppleMayStillPublishIt() {
+        // 2026-11-06 03:00 UTC is 2026-11-05 in Pacific: 11-04 is one day old, so its 404 is "not published yet"
+        RestTemplate restTemplate = new RestTemplate();
+        server = MockRestServiceServer.bindTo(restTemplate).ignoreExpectOrder(true).build();
+        AppStoreConnectTokenService tokens = new AppStoreConnectTokenService() {
+            @Override public String token(String connectionId, Credentials creds) { return "jwt-token"; }
+        };
+        connector = new AppStoreConnectConnector(restTemplate, tokens,
+                Clock.fixed(Instant.parse("2026-11-06T03:00:00Z"), ZoneOffset.UTC));
+        expectEmptyAnalytics();
+        LocalDate recent = LocalDate.of(2026, 11, 4);
+        server.expect(once(), requestTo(salesUrl(recent))).andRespond(withStatus(HttpStatus.NOT_FOUND)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"errors\":[{\"title\":\"The request expected results but none were found\"}]}"));
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(null, "94514742"), recent, recent);
+
+        server.verify();
+        assertThat(salesPoints(points)).isEmpty();
     }
 
     @Test
