@@ -1,7 +1,9 @@
 package com.conductor.marketing.report;
 
+import com.conductor.entity.ChannelMetricDaily;
 import com.conductor.entity.WorkItem;
 import com.conductor.integration.MetricChannel;
+import com.conductor.marketing.links.TrackedLinkService;
 import com.conductor.marketing.overview.MarketingOverviewQueryService;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.ChannelView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.DimensionRowView;
@@ -13,6 +15,8 @@ import com.conductor.marketing.overview.MarketingOverviewQueryService.Snapshot;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.SnapshotChannel;
 import com.conductor.marketing.overview.MetricCatalog;
 import com.conductor.marketing.overview.MetricCatalog.Definition;
+import com.conductor.marketing.verification.VerificationLedgerService;
+import com.conductor.repository.ChannelMetricDailyRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -30,6 +34,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -51,6 +56,11 @@ import java.util.stream.Collectors;
  * <p><b>Benchmarks</b> are judged only against a metric with the same definition ({@link BenchmarkComparability}):
  * when the metric a benchmark names counts something else, another metric of the same channel with the matching
  * definition is used instead and named in {@code comparedMetricRef}.
+ *
+ * <p><b>Channel quality</b> comes from the product-metrics contract v3 (see {@code docs/marketing-report.md}): cost
+ * per outcome on keyword rows, payback by channel, the App Review exclusion, the EMAIL and SHARES rows, tracked-link
+ * families and ASO keywords. Every figure is read, never defaulted: a key the feed did not send is null (the row or
+ * section is omitted), and only a value the feed reported as 0 reads 0.
  */
 @Service
 public class MarketingReportService {
@@ -73,7 +83,40 @@ public class MarketingReportService {
     static final String NO_SHARED_DAYS_NOTE = "No day in this window has both App Store search downloads and Apple "
             + "Ads first-time downloads settled yet.";
     static final String CONVERSION_SESSIONS_LABEL = "Sessions with an App Store tap";
+    /** Most ASO keywords the report lists, best organic rank first. */
+    static final int MAX_ASO_KEYWORDS = 50;
+    static final String APP_REVIEW_EXCLUSION = "app_review_installs";
+    static final String NO_ACTIVATIONS_NOTE = "no activations yet";
+    static final String NO_RETAINED_NOTE = "no week-2 retained installs yet";
+    static final String NO_TRIALS_NOTE = "no trials yet";
+    static final String PAYBACK_BASIS = "Proceeds after Apple's commission for the people who first opened in the "
+            + "window, counted over the contract's 12-month cohort horizon (a recent cohort stays low until it has "
+            + "had the time), divided by the channel's spend in the same window.";
+    static final String EMAIL_DEFINITION = "Lifecycle emails sent, clicks in them and free trials kept after one, as "
+            + "the product backend counts them.";
+    static final String SHARES_DEFINITION = "Share links created in the app, views of the shared pages and installs "
+            + "that came from a share link, as the product backend counts them.";
+    static final String LINK_DEFINITION = "First-time downloads Apple attributes to this family's campaign links "
+            + "(App Store Connect campaign report). Apple leaves out a link under its privacy threshold, so a family "
+            + "with no reported row has no figure, not 0.";
+    static final String LINKS_NOT_MEASURABLE_NOTE = "App Store Connect is not connected, so these links' downloads "
+            + "cannot be read";
     private static final String SEARCH_SOURCE = MetricCatalog.STORE_SOURCE_PREFIX + "APP_STORE_SEARCH";
+    private static final String PRODUCT_CHANNEL = MetricChannel.PRODUCT.name();
+    private static final String EMAIL_ROW = "email";
+    private static final String SHARES_ROW = "shares";
+    private static final String LINK_FAMILY_PREFIX = "link_family:";
+    private static final String CHANNEL_DIMENSION = "channel:";
+    private static final String ASO_DIMENSION = "aso:";
+    /** The rolling windows the verification ledger serves; a report window outside them gets no summary. */
+    private static final Set<Integer> LEDGER_ROLLING_DAYS = Set.of(7, 28, 90);
+    /** Per acquisition row: the product feed's source names (lowercase letters and digits only) that are that channel. */
+    private static final Map<String, Set<String>> PAYBACK_SOURCES = Map.of(
+            "apple_ads", Set.of("applesearchads", "appleads", "asa"));
+    private static final Map<String, List<String>> CHANNEL_ROW_METRICS = Map.of(
+            EMAIL_ROW, List.of("email_sends", "email_clicks", "email_trials_saved"),
+            SHARES_ROW, List.of("share_links_created", "share_views", "share_installs"));
+    private static final List<String> ASO_METRICS = List.of("aso_rank", "aso_popularity");
     private static final String METRIC_NOT_IN_REPORT = "metric not in the report";
     private static final String DEFINITION_MISSING = "definition missing";
     /** Apple Ads reports whole UTC days everywhere except search terms, which only exist in the org's time zone. */
@@ -90,7 +133,9 @@ public class MarketingReportService {
             "store_other", List.of("STORE.downloads"),
             "apple_ads", List.of("ADS.impressions", "ADS.taps", "ADS.installs", "ADS.spend", "ADS.view_installs"),
             "search_engine", List.of("SEARCH.impressions", "SEARCH.clicks"),
-            "social", List.of("SOCIAL.followers", "SOCIAL.website_clicks", "SOCIAL.likes"));
+            "social", List.of("SOCIAL.followers", "SOCIAL.website_clicks", "SOCIAL.likes"),
+            EMAIL_ROW, List.of("PRODUCT.email_sends", "PRODUCT.email_clicks", "PRODUCT.email_trials_saved"),
+            SHARES_ROW, List.of("PRODUCT.share_links_created", "PRODUCT.share_views", "PRODUCT.share_installs"));
 
     private static final TypeReference<Map<String, Object>> MAP = new TypeReference<>() { };
 
@@ -120,11 +165,24 @@ public class MarketingReportService {
     /**
      * {@code viewThroughInstalls}: Apple Ads installs with no tap, never added to {@code installs} (null when not
      * reported). {@code likes}: the Social row's total account likes (null when no platform reports them).
-     * {@code derivation}: set on the organic search row when it was computed.
+     * {@code derivation}: set on the organic search row when it was computed. {@code installsLabel}: what the
+     * {@code installs} figure counts when it is not installs (the Email row's "Trials saved"), else null.
+     * {@code definitionLine}: one plain sentence saying what the row's figures are, set on the Email, Shares and
+     * tracked-link rows, else null.
      */
     public record AcquisitionRow(String key, String label, String status, Double reach, String reachLabel,
                                  Double actions, String actionsLabel, Double installs, Double cost, boolean derived,
-                                 String note, Double viewThroughInstalls, Double likes, Derivation derivation) {}
+                                 String note, Double viewThroughInstalls, Double likes, Derivation derivation,
+                                 String installsLabel, String definitionLine) {
+
+        /** A row before the installs label and the definition line existed. */
+        public AcquisitionRow(String key, String label, String status, Double reach, String reachLabel,
+                              Double actions, String actionsLabel, Double installs, Double cost, boolean derived,
+                              String note, Double viewThroughInstalls, Double likes, Derivation derivation) {
+            this(key, label, status, reach, reachLabel, actions, actionsLabel, installs, cost, derived, note,
+                    viewThroughInstalls, likes, derivation, null, null);
+        }
+    }
 
     /** How much of the window a figure covers: {@code daysCovered} of {@code daysInWindow}. */
     public record Coverage(int daysCovered, int daysInWindow) {}
@@ -146,11 +204,29 @@ public class MarketingReportService {
     /**
      * {@code installs} and {@code cpi}: Apple's tap installs (new downloads plus redownloads) and spend per tap
      * install, as on the campaign rows. {@code newDownloads}: first-time downloads from taps, a subset of installs.
+     *
+     * <p>{@code trials}, {@code activations} and {@code retainedW2} are the product feed's counts for the keyword
+     * (null when the feed sent none: unknown, not zero). Each {@code costPer...} is the keyword's {@code spend} over
+     * that count, null when the spend or the count is null or the count is 0; {@code qualityNote} says "No
+     * activations yet" (and the like) for a count the feed reported as 0, else null.
      */
     public record Keyword(String keywordId, String text, String adGroup, String campaign, String status,
                           String matchType, Double bid, Double impressions, Double taps, Double tapRate,
                           Double installs, Double installRate, Double spend, Double cpi, Double trials,
-                          Double activations, boolean judgeable, Double newDownloads) {}
+                          Double activations, boolean judgeable, Double newDownloads, Double retainedW2,
+                          Double costPerActivatedInstall, Double costPerRetainedW2Install, Double costPerTrial,
+                          String qualityNote) {
+
+        /** A keyword row before the retention and cost-per-outcome fields existed. */
+        public Keyword(String keywordId, String text, String adGroup, String campaign, String status,
+                       String matchType, Double bid, Double impressions, Double taps, Double tapRate,
+                       Double installs, Double installRate, Double spend, Double cpi, Double trials,
+                       Double activations, boolean judgeable, Double newDownloads) {
+            this(keywordId, text, adGroup, campaign, status, matchType, bid, impressions, taps, tapRate, installs,
+                    installRate, spend, cpi, trials, activations, judgeable, newDownloads, null, null, null, null,
+                    null);
+        }
+    }
 
     public record Ad(String adGroup, String adId, String name, String creativeType, String productPageId,
                      String status, Double impressions, Double taps, Double installs, Double installRate,
@@ -189,11 +265,53 @@ public class MarketingReportService {
      */
     public record Store(Double downloadsOfRecord, Double analyticsDownloads, Coverage coverage) {}
 
+    /**
+     * One acquisition channel's payback: {@code spend} and the cohort {@code proceedsNet12m} (the product feed's
+     * {@code proceeds_net} at the channel's {@code source:} rows) with {@code ratio} = proceeds / spend. Proceeds and
+     * ratio are null when the feed sent no proceeds for the channel's source, or the spend is 0; {@code note} then
+     * says so.
+     */
+    public record PaybackRow(String channel, String label, Double spend, Double proceedsNet12m, Double ratio,
+                             String note) {}
+
+    /**
+     * Payback per paid acquisition channel and in total. {@code total} sums the channels' spend and proceeds; its
+     * ratio is null unless every channel has proceeds. {@code basis} states the 12-month cohort horizon.
+     */
+    public record Payback(List<PaybackRow> channels, PaybackRow total, String basis) {}
+
+    /** What a figure leaves out: {@code value} is the count, {@code note} the feed's own wording or null. */
+    public record Exclusion(String key, String label, Double value, String note) {}
+
+    /**
+     * One tracked App Store keyword: the latest organic {@code rank} (1 is first) and {@code popularity} at or before
+     * the window's end. {@code previousRank} is the rank at the previous window's end and {@code rankChange} is
+     * {@code rank - previousRank}, so a negative change is an improvement. Both are null when there is no earlier
+     * reading, or no new reading since it.
+     */
+    public record AsoKeyword(String keyword, Double rank, Double popularity, Double rankChange, Double previousRank) {}
+
+    /** The verification ledger's tally for the report window: how many metrics are in each state. */
+    public record Verification(int unchecked, int mismatched, int staleReads, int both) {}
+
     public record Report(Window window, OffsetDateTime generatedAt, List<Source> sources, List<Metric> headline,
                          List<AcquisitionRow> acquisition, Funnel funnel, List<Day> daily,
                          List<ScorecardRow> scorecard, List<Keyword> keywords, List<Ad> ads,
                          List<Benchmark> benchmarks, Changes changes, List<AdsCoverage> adsCoverage,
-                         List<ChangeMarker> changeMarkers, Map<String, Definition> definitions, Store store) {
+                         List<ChangeMarker> changeMarkers, Map<String, Definition> definitions, Store store,
+                         Payback payback, List<Exclusion> exclusions, List<AsoKeyword> asoKeywords,
+                         Verification verification) {
+
+        /** The report before the channel-quality sections (payback, exclusions, ASO, verification) existed. */
+        public Report(Window window, OffsetDateTime generatedAt, List<Source> sources, List<Metric> headline,
+                      List<AcquisitionRow> acquisition, Funnel funnel, List<Day> daily,
+                      List<ScorecardRow> scorecard, List<Keyword> keywords, List<Ad> ads,
+                      List<Benchmark> benchmarks, Changes changes, List<AdsCoverage> adsCoverage,
+                      List<ChangeMarker> changeMarkers, Map<String, Definition> definitions, Store store) {
+            this(window, generatedAt, sources, headline, acquisition, funnel, daily, scorecard, keywords, ads,
+                    benchmarks, changes, adsCoverage, changeMarkers, definitions, store, null, List.of(), List.of(),
+                    null);
+        }
 
         /** The report before the coverage, marker, definition and store sections existed. */
         public Report(Window window, OffsetDateTime generatedAt, List<Source> sources, List<Metric> headline,
@@ -210,30 +328,53 @@ public class MarketingReportService {
     private final MarketingOverviewQueryService overviewService;
     private final MarketingBenchmarkRepository benchmarkRepository;
     private final WorkItemRepository workItemRepository;
+    private final ChannelMetricDailyRepository dailyRepository;
+    private final TrackedLinkService trackedLinkService;
+    private final VerificationLedgerService ledgerService;
     private final ObjectMapper objectMapper;
 
     public MarketingReportService(MarketingOverviewQueryService overviewService,
                                   MarketingBenchmarkRepository benchmarkRepository,
-                                  WorkItemRepository workItemRepository, ObjectMapper objectMapper) {
+                                  WorkItemRepository workItemRepository, ChannelMetricDailyRepository dailyRepository,
+                                  TrackedLinkService trackedLinkService, VerificationLedgerService ledgerService,
+                                  ObjectMapper objectMapper) {
         this.overviewService = overviewService;
         this.benchmarkRepository = benchmarkRepository;
         this.workItemRepository = workItemRepository;
+        this.dailyRepository = dailyRepository;
+        this.trackedLinkService = trackedLinkService;
+        this.ledgerService = ledgerService;
         this.objectMapper = objectMapper;
     }
 
     @Transactional(readOnly = true)
     public Report report(String projectId, String windowRaw) {
-        return assemble(projectId, overviewService.snapshot(projectId, windowRaw), LocalDate.now(ZoneOffset.UTC),
-                OffsetDateTime.now());
+        return assemble(projectId, overviewService.snapshot(projectId, windowRaw), ledgerWindow(windowRaw),
+                LocalDate.now(ZoneOffset.UTC), OffsetDateTime.now());
+    }
+
+    /** A blank window means the default for the ledger too; null is reserved for "the ledger serves no such window". */
+    private static String ledgerWindow(String windowRaw) {
+        return windowRaw == null ? "" : windowRaw;
     }
 
     /** Package-visible so a test can pin "today" and "now". */
     @Transactional(readOnly = true)
     Report report(String projectId, int days, LocalDate today, OffsetDateTime now) {
-        return assemble(projectId, overviewService.snapshot(projectId, days, today, now), today, now);
+        return assemble(projectId, overviewService.snapshot(projectId, days, today, now),
+                LEDGER_ROLLING_DAYS.contains(days) ? days + "d" : null, today, now);
     }
 
-    private Report assemble(String projectId, Snapshot snap, LocalDate today, OffsetDateTime now) {
+    /** Package-visible so a test can pin "today" and "now" for a window named as a request names it. */
+    @Transactional(readOnly = true)
+    Report report(String projectId, String windowRaw, LocalDate today, OffsetDateTime now) {
+        return assemble(projectId, overviewService.snapshot(projectId, windowRaw, today, now),
+                ledgerWindow(windowRaw), today, now);
+    }
+
+    /** {@code ledgerWindow}: the window as the verification ledger reads it, or null when it serves none like it. */
+    private Report assemble(String projectId, Snapshot snap, String ledgerWindow, LocalDate today,
+                            OffsetDateTime now) {
         Map<MetricChannel, SnapshotChannel> channels = snap.channels();
         LocalDate from = snap.overview().window().from();
         // null on a project with no data in any channel; nothing to clip then, and no value to judge
@@ -243,7 +384,10 @@ public class MarketingReportService {
 
         Store store = store(snap, windowDays);
         List<Metric> headline = headline(channels);
-        List<AcquisitionRow> acquisition = acquisition(snap, from, to);
+        ProductReads productReads = productReads(projectId, channels.get(MetricChannel.PRODUCT), from, to, windowDays);
+        List<AcquisitionRow> acquisition = new ArrayList<>(acquisition(snap, from, to));
+        acquisition.addAll(emailAndSharesRows(channels, productReads));
+        acquisition.addAll(linkFamilyRows(projectId, channels, from, to));
         List<ScorecardRow> scorecard = scorecard(channels);
         List<Benchmark> benchmarks = benchmarks(projectId, channels, today, windowDays);
         ChangeLog log = changeLog(projectId, from, end, today);
@@ -251,7 +395,9 @@ public class MarketingReportService {
         return new Report(new Window(from, to), now, sources(channels), headline, acquisition,
                 funnel(snap, overrides), daily(channels, from, end), scorecard, keywords(channels), ads(channels),
                 benchmarks, log.changes(), adsCoverage(channels), log.markers(),
-                definitions(channels, headline, scorecard, acquisition, benchmarks, overrides, store), store);
+                definitions(channels, headline, scorecard, acquisition, benchmarks, overrides, store), store,
+                payback(channels, acquisition), exclusions(channels), productReads.asoKeywords(),
+                verification(projectId, ledgerWindow));
     }
 
     // ---- sources and headline ----------------------------------------------------------------------
@@ -753,20 +899,49 @@ public class MarketingReportService {
         SnapshotChannel productChannel = channels.get(MetricChannel.PRODUCT);
         boolean hasTrial = productMetric(productChannel, "trial_started");
         boolean hasActivated = productMetric(productChannel, "activated");
+        boolean hasRetained = productMetric(productChannel, "retained_w2");
         List<Keyword> out = new ArrayList<>();
         for (DimensionRowView r : table.rows().stream().limit(MarketingOverviewQueryService.REPORT_KEYWORDS).toList()) {
             Map<String, Double> v = values(table, r);
             Map<String, Object> state = r.state();
             Map<String, Double> outcome = outcomes.get(r.key());
             Double taps = v.get("taps");
+            Double spend = v.get("spend");
+            Double trials = outcome == null || !hasTrial ? null : outcome.get("trial_started");
+            Double activations = outcome == null || !hasActivated ? null : outcome.get("activated");
+            Double retained = outcome == null || !hasRetained ? null : outcome.get("retained_w2");
             out.add(new Keyword(r.key(), r.label(), str(state, "adGroupName"), str(state, "campaignName"),
                     str(state, "status"), str(state, "matchType"), num(state, "bidAmount"), v.get("impressions"),
-                    taps, v.get("tap_through_rate"), v.get("installs"), v.get("install_rate"), v.get("spend"),
-                    v.get("cost_per_install"), outcome == null || !hasTrial ? null : outcome.get("trial_started"),
-                    outcome == null || !hasActivated ? null : outcome.get("activated"),
-                    taps != null && taps >= JUDGEABLE_TAPS, v.get("new_downloads")));
+                    taps, v.get("tap_through_rate"), v.get("installs"), v.get("install_rate"), spend,
+                    v.get("cost_per_install"), trials, activations, taps != null && taps >= JUDGEABLE_TAPS,
+                    v.get("new_downloads"), retained, costPer(spend, activations), costPer(spend, retained),
+                    costPer(spend, trials), qualityNote(activations, retained, trials)));
         }
         return out;
+    }
+
+    /** Spend per outcome: null unless both are known and the outcome count is above 0 (no division by nothing). */
+    private static Double costPer(Double spend, Double count) {
+        return spend == null || count == null || count <= 0 ? null : spend / count;
+    }
+
+    /** Names each outcome the feed reported as 0, so a null cost reads as "none yet" rather than "unknown"; else null. */
+    private static String qualityNote(Double activations, Double retained, Double trials) {
+        List<String> parts = new ArrayList<>();
+        if (activations != null && activations == 0) {
+            parts.add(NO_ACTIVATIONS_NOTE);
+        }
+        if (retained != null && retained == 0) {
+            parts.add(NO_RETAINED_NOTE);
+        }
+        if (trials != null && trials == 0) {
+            parts.add(NO_TRIALS_NOTE);
+        }
+        if (parts.isEmpty()) {
+            return null;
+        }
+        String note = String.join("; ", parts);
+        return Character.toUpperCase(note.charAt(0)) + note.substring(1);
     }
 
     private static List<Ad> ads(Map<MetricChannel, SnapshotChannel> channels) {
@@ -787,6 +962,277 @@ public class MarketingReportService {
                     v.get("installs"), v.get("install_rate"), v.get("spend"), v.get("cost_per_install")));
         }
         return out;
+    }
+
+    // ---- product feed: email, shares and ASO keywords ----------------------------------------------
+
+    /**
+     * What the report's one extra query read from the product feed: per metric, the window sum of each
+     * {@code channel:<name>} row, and the ASO keywords built from the {@code aso:<keyword>} rows. Both are empty when
+     * the feed declares none of those metrics, and then no query is made.
+     */
+    private record ProductReads(Map<String, Map<String, Double>> channelSums, List<AsoKeyword> asoKeywords) {
+        static final ProductReads NONE = new ProductReads(Map.of(), List.of());
+
+        Double channelSum(String metric, String channel) {
+            return channelSums.getOrDefault(metric, Map.of()).get(channel);
+        }
+    }
+
+    /**
+     * One query, whatever the number of keywords or channels: the feed's {@code channel:} and {@code aso:} rows for the
+     * metrics it declares. The snapshot holds the feed's day totals only, so these dimension rows are read here. The
+     * range reaches back one window (at least 28 days) before the window's start so a rank has a previous reading.
+     */
+    private ProductReads productReads(String projectId, SnapshotChannel product, LocalDate from, LocalDate to,
+                                      int windowDays) {
+        if (!connected(product) || to == null) {
+            return ProductReads.NONE;
+        }
+        Set<String> declared = product.catalog().metrics().stream().map(MetricCatalog.Metric::key)
+                .collect(Collectors.toSet());
+        List<String> wanted = new ArrayList<>();
+        CHANNEL_ROW_METRICS.values().forEach(wanted::addAll);
+        wanted.addAll(ASO_METRICS);
+        wanted.removeIf(key -> !declared.contains(key));
+        if (wanted.isEmpty()) {
+            return ProductReads.NONE;
+        }
+        Set<String> connectionIds = product.view().connections().stream()
+                .map(MarketingOverviewQueryService.ConnectionView::id).collect(Collectors.toSet());
+        LocalDate lookbackStart = from.minusDays(Math.max(windowDays, BENCHMARK_PERIOD_DAYS));
+        List<ChannelMetricDaily> rows = dailyRepository.findByProjectIdAndChannelAndMetricInAndDayBetween(projectId,
+                PRODUCT_CHANNEL, wanted, lookbackStart, to).stream()
+                .filter(r -> connectionIds.contains(r.getConnectionId())).toList();
+        return new ProductReads(channelSums(rows, from, to), asoKeywords(rows, from, to));
+    }
+
+    /** metric key -> channel name (lowercase) -> sum over the window of that metric's {@code channel:<name>} rows. */
+    private static Map<String, Map<String, Double>> channelSums(List<ChannelMetricDaily> rows, LocalDate from,
+                                                                LocalDate to) {
+        Map<String, Map<String, Double>> out = new HashMap<>();
+        for (ChannelMetricDaily r : rows) {
+            String dimension = r.getDimensionKey();
+            if (!dimension.startsWith(CHANNEL_DIMENSION) || r.getDay().isBefore(from) || r.getDay().isAfter(to)) {
+                continue;
+            }
+            String channel = dimension.substring(CHANNEL_DIMENSION.length()).trim().toLowerCase(Locale.ROOT);
+            out.computeIfAbsent(r.getMetric(), k -> new HashMap<>()).merge(channel, r.getValue().doubleValue(),
+                    Double::sum);
+        }
+        return out;
+    }
+
+    /**
+     * Rank and popularity are levels: each keyword's value is its latest reading at or before the window's end, and
+     * the previous rank is its latest reading at or before the previous window's end (the day before the window). A
+     * change needs a reading after the previous one: when the latest reading <em>is</em> the previous one, nothing
+     * has been read since, and the change is null, not 0. Best rank first, unranked last, at most
+     * {@link #MAX_ASO_KEYWORDS}.
+     */
+    private static List<AsoKeyword> asoKeywords(List<ChannelMetricDaily> rows, LocalDate from, LocalDate to) {
+        Map<String, TreeMap<LocalDate, Double>> ranks = new HashMap<>();
+        Map<String, TreeMap<LocalDate, Double>> popularity = new HashMap<>();
+        for (ChannelMetricDaily r : rows) {
+            String dimension = r.getDimensionKey();
+            if (!dimension.startsWith(ASO_DIMENSION) || r.getDay().isAfter(to)) {
+                continue;
+            }
+            Map<String, TreeMap<LocalDate, Double>> target = r.getMetric().equals("aso_rank") ? ranks
+                    : r.getMetric().equals("aso_popularity") ? popularity : null;
+            if (target != null) {
+                target.computeIfAbsent(dimension.substring(ASO_DIMENSION.length()), k -> new TreeMap<>())
+                        .put(r.getDay(), r.getValue().doubleValue());
+            }
+        }
+        Set<String> keywords = new TreeSet<>(ranks.keySet());
+        keywords.addAll(popularity.keySet());
+        List<AsoKeyword> out = new ArrayList<>();
+        for (String keyword : keywords) {
+            Map.Entry<LocalDate, Double> rank = latest(ranks.get(keyword), to);
+            Map.Entry<LocalDate, Double> previous = latest(ranks.get(keyword), from.minusDays(1));
+            Map.Entry<LocalDate, Double> reach = latest(popularity.get(keyword), to);
+            boolean read = rank != null && previous != null && rank.getKey().isAfter(previous.getKey());
+            out.add(new AsoKeyword(keyword, rank == null ? null : rank.getValue(),
+                    reach == null ? null : reach.getValue(), read ? rank.getValue() - previous.getValue() : null,
+                    read ? previous.getValue() : null));
+        }
+        out.sort(Comparator.comparing(AsoKeyword::rank, Comparator.nullsLast(Comparator.<Double>naturalOrder()))
+                .thenComparing(AsoKeyword::popularity, Comparator.nullsLast(Comparator.<Double>reverseOrder()))
+                .thenComparing(AsoKeyword::keyword));
+        return out.size() > MAX_ASO_KEYWORDS ? new ArrayList<>(out.subList(0, MAX_ASO_KEYWORDS)) : out;
+    }
+
+    private static Map.Entry<LocalDate, Double> latest(TreeMap<LocalDate, Double> series, LocalDate day) {
+        return series == null ? null : series.floorEntry(day);
+    }
+
+    /** A product figure: the feed's day total for the window, else the sum of its {@code channel:<name>} rows. */
+    private static Double productFigure(Map<MetricChannel, SnapshotChannel> channels, ProductReads reads,
+                                        String metric, String channelName) {
+        Double total = value(channels, MetricChannel.PRODUCT, metric);
+        return total != null ? total : reads.channelSum(metric, channelName);
+    }
+
+    private static String labelled(Double figure, String label) {
+        return figure == null ? null : label;
+    }
+
+    /**
+     * The Email and Shares rows. A row is omitted when none of its metrics has a value; a metric without one leaves its
+     * figure and its label null.
+     */
+    private static List<AcquisitionRow> emailAndSharesRows(Map<MetricChannel, SnapshotChannel> channels,
+                                                           ProductReads reads) {
+        SnapshotChannel product = channels.get(MetricChannel.PRODUCT);
+        if (!connected(product)) {
+            return List.of();
+        }
+        String status = product.view().status();
+        List<AcquisitionRow> out = new ArrayList<>();
+        Double sends = productFigure(channels, reads, "email_sends", EMAIL_ROW);
+        Double clicks = productFigure(channels, reads, "email_clicks", EMAIL_ROW);
+        Double saved = productFigure(channels, reads, "email_trials_saved", EMAIL_ROW);
+        if (sends != null || clicks != null || saved != null) {
+            out.add(new AcquisitionRow(EMAIL_ROW, "Email", status, sends, labelled(sends, "Emails sent"), clicks,
+                    labelled(clicks, "Clicks"), saved, null, false, null, null, null, null,
+                    labelled(saved, "Trials saved"), emailDefinition(channels)));
+        }
+        Double links = productFigure(channels, reads, "share_links_created", SHARES_ROW);
+        Double views = productFigure(channels, reads, "share_views", SHARES_ROW);
+        Double installs = productFigure(channels, reads, "share_installs", SHARES_ROW);
+        if (links != null || views != null || installs != null) {
+            out.add(new AcquisitionRow(SHARES_ROW, "Shares", status, links, labelled(links, "Links shared"), views,
+                    labelled(views, "Views"), installs, null, false, null, null, null, null,
+                    labelled(installs, "Installs"), SHARES_DEFINITION));
+        }
+        return out;
+    }
+
+    /** What the Email row counts; the feed states its own rule for "trials saved" in the metric's description. */
+    private static String emailDefinition(Map<MetricChannel, SnapshotChannel> channels) {
+        MetricView saved = metric(channels, MetricChannel.PRODUCT, "email_trials_saved");
+        String rule = saved == null || saved.description() == null || saved.description().isBlank() ? null
+                : saved.description().strip();
+        return EMAIL_DEFINITION + (rule == null ? "" : " Trials saved: " + rule);
+    }
+
+    // ---- tracked-link families ---------------------------------------------------------------------
+
+    /**
+     * One row per tracked-link family, from {@link TrackedLinkService#performance} over the report window. Downloads are
+     * null (never 0) with the "below Apple's reporting threshold" note when no token of the family has a row Apple
+     * reported; a project with no tracked links has no rows. Without a connected App Store the downloads cannot be
+     * read, and the row says so instead of blaming Apple's threshold.
+     */
+    private List<AcquisitionRow> linkFamilyRows(String projectId, Map<MetricChannel, SnapshotChannel> channels,
+                                                LocalDate from, LocalDate to) {
+        if (to == null) {
+            return List.of();
+        }
+        SnapshotChannel store = channels.get(MetricChannel.STORE);
+        boolean measurable = connected(store);
+        String status = store == null ? "NOT_CONNECTED" : store.view().status();
+        List<AcquisitionRow> out = new ArrayList<>();
+        for (TrackedLinkService.FamilyPerformance family : trackedLinkService.performance(projectId, from, to)
+                .families()) {
+            Double views = family.views() == null ? null : family.views().doubleValue();
+            Double downloads = !measurable || family.downloads() == null ? null : family.downloads().doubleValue();
+            out.add(new AcquisitionRow(LINK_FAMILY_PREFIX + family.family(),
+                    family.family() + " links (" + family.kind() + ")", status, views, labelled(views, "Post views"),
+                    null, null, downloads, null, false, measurable ? family.note() : LINKS_NOT_MEASURABLE_NOTE, null,
+                    null, null, "Downloads", LINK_DEFINITION));
+        }
+        return out;
+    }
+
+    // ---- payback, exclusions and verification ------------------------------------------------------
+
+    /**
+     * Payback for each paid acquisition row that has spend and a known source in the product feed (today Apple Ads, at
+     * {@code source:apple_search_ads}): the feed's {@code proceeds_net} over the window's cohorts divided by the row's
+     * spend. Null when the feed declares no {@code proceeds_net} or no row has spend. Proceeds are the contract's
+     * 12-month cohort figure, so a recent window reads low until its cohorts mature.
+     */
+    private static Payback payback(Map<MetricChannel, SnapshotChannel> channels, List<AcquisitionRow> acquisition) {
+        SnapshotChannel product = channels.get(MetricChannel.PRODUCT);
+        if (!connected(product) || !productMetric(product, "proceeds_net")) {
+            return null;
+        }
+        DimensionTable sources = table(product, "sources");
+        List<PaybackRow> rows = new ArrayList<>();
+        for (AcquisitionRow a : acquisition) {
+            Set<String> names = PAYBACK_SOURCES.get(a.key());
+            if (names == null || a.cost() == null) {
+                continue;
+            }
+            Double proceeds = sourceProceeds(sources, names);
+            rows.add(paybackRow(a.key(), a.label(), a.cost(), proceeds, proceeds == null
+                    ? "The product feed sent no proceeds for a source matching " + a.label() : null));
+        }
+        if (rows.isEmpty()) {
+            return null;
+        }
+        double spend = rows.stream().mapToDouble(PaybackRow::spend).sum();
+        Double proceeds = rows.stream().map(PaybackRow::proceedsNet12m).filter(Objects::nonNull)
+                .reduce(Double::sum).orElse(null);
+        boolean complete = rows.stream().allMatch(r -> r.proceedsNet12m() != null);
+        PaybackRow total = new PaybackRow("total", "All paid channels", spend, proceeds,
+                complete ? ratio(spend, proceeds) : null,
+                complete ? null : "At least one channel has no proceeds, so there is no total ratio");
+        return new Payback(rows, total, PAYBACK_BASIS);
+    }
+
+    private static PaybackRow paybackRow(String channel, String label, double spend, Double proceeds, String note) {
+        return new PaybackRow(channel, label, spend, proceeds, ratio(spend, proceeds), note);
+    }
+
+    /** Proceeds per unit of spend; null without proceeds or with no spend to divide by. */
+    private static Double ratio(double spend, Double proceeds) {
+        return proceeds == null || spend <= 0 ? null : proceeds / spend;
+    }
+
+    /** The window's {@code proceeds_net} at the {@code source:} rows whose name is one of {@code names}; null when none. */
+    private static Double sourceProceeds(DimensionTable sources, Set<String> names) {
+        if (sources == null) {
+            return null;
+        }
+        Double proceeds = null;
+        for (DimensionRowView r : sources.rows()) {
+            if (names.contains(r.key().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]", ""))) {
+                proceeds = sum(proceeds, values(sources, r).get("proceeds_net"));
+            }
+        }
+        return proceeds;
+    }
+
+    /** Likely App Review installs the feed left out of its other numbers; omitted unless the feed reports a count. */
+    private static List<Exclusion> exclusions(Map<MetricChannel, SnapshotChannel> channels) {
+        if (!connected(channels.get(MetricChannel.PRODUCT))) {
+            return List.of();
+        }
+        MetricView excluded = metric(channels, MetricChannel.PRODUCT, "app_review_installs_excluded");
+        if (excluded == null || excluded.value() == null) {
+            return List.of();
+        }
+        String note = excluded.definition() == null ? null : excluded.definition().exclusions();
+        return List.of(new Exclusion(APP_REVIEW_EXCLUSION, "Likely App Review installs", excluded.value(), note));
+    }
+
+    /**
+     * The ledger's tally for the same window, so a reader sees how much of the report is verified. Null when the
+     * ledger has no metric to check (nothing connected) or serves no window like this one.
+     */
+    private Verification verification(String projectId, String ledgerWindow) {
+        if (ledgerWindow == null) {
+            return null;
+        }
+        VerificationLedgerService.Ledger ledger = ledgerService.ledger(projectId, ledgerWindow);
+        if (ledger.rows().isEmpty()) {
+            return null;
+        }
+        VerificationLedgerService.Summary s = ledger.summary();
+        return new Verification(s.unchecked(), s.mismatched(), s.staleReads(), s.both());
     }
 
     // ---- ads coverage ------------------------------------------------------------------------------

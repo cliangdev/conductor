@@ -14,6 +14,7 @@ import {
   setMarketingBenchmark,
   deleteMarketingBenchmark,
   trimReportValue,
+  MAX_REPORT_ASO_KEYWORDS,
 } from '../mcp/tools/marketing-report.js'
 
 const config: Config = {
@@ -135,6 +136,88 @@ describe('getMarketingReport', () => {
     expect(out['changeMarkers'][0].changeId).toBe('w5')
     expect(out['changeMarkers'][19].changeId).toBe('w24')
     expect(out['totalRows']).toEqual({ adsCoverage: 23, changeMarkers: 25 })
+  })
+
+  it('keeps the channel-quality sections: keyword cost per outcome, payback, exclusions, email, links, ASO and verification', async () => {
+    mocked(apiGet).mockResolvedValue({
+      window: { from: '2026-09-29', to: '2026-10-26' },
+      keywords: [
+        {
+          keywordId: '11', text: 'rexipe', judgeable: true, spend: 17.51, activations: 2, retainedW2: 1, trials: 1,
+          costPerActivatedInstall: 8.755, costPerRetainedW2Install: 17.51, costPerTrial: 17.51, qualityNote: null,
+        },
+        {
+          keywordId: '12', text: 'meal planner', judgeable: false, spend: 5, activations: 0, retainedW2: 0, trials: null,
+          costPerActivatedInstall: null, qualityNote: 'No activations yet; no week-2 retained installs yet',
+        },
+      ],
+      acquisition: [
+        {
+          key: 'email', label: 'Email', status: 'LIVE', derived: false, reach: 400, reachLabel: 'Emails sent',
+          actions: 60, actionsLabel: 'Clicks', installs: 5, installsLabel: 'Trials saved', definitionLine: 'Lifecycle emails sent.',
+        },
+        {
+          key: 'link_family:creators', label: 'creators links (CREATOR)', status: 'LIVE', derived: false, installs: null,
+          installsLabel: 'Downloads', note: "below Apple's reporting threshold", definitionLine: 'First-time downloads.',
+        },
+      ],
+      payback: {
+        channels: [{ channel: 'apple_ads', label: 'Apple Ads', spend: 162.86, proceedsNet12m: 400, ratio: 2.45617, note: null }],
+        total: { channel: 'total', label: 'All paid channels', spend: 162.86, proceedsNet12m: 400, ratio: 2.45617 },
+        basis: 'Proceeds after Apple\'s commission, 12-month cohort horizon',
+      },
+      exclusions: [{ key: 'app_review_installs', label: 'Likely App Review installs', value: 7, note: null }],
+      asoKeywords: [{ keyword: 'rexipe', rank: 3, popularity: 40, rankChange: 0, previousRank: 3 }],
+      verification: { unchecked: 0, mismatched: 1, staleReads: 0, both: 0 },
+    })
+    const out = (await getMarketingReport(config, {})) as Record<string, any>
+    expect(out['keywords'][0]).toEqual({
+      keywordId: '11', text: 'rexipe', judgeable: true, spend: 17.51, activations: 2, retainedW2: 1, trials: 1,
+      costPerActivatedInstall: 8.755, costPerRetainedW2Install: 17.51, costPerTrial: 17.51,
+    })
+    // a reported zero is a value and stays; a null cost is dropped and its qualityNote says why
+    expect(out['keywords'][1]).toEqual({
+      keywordId: '12', text: 'meal planner', judgeable: false, spend: 5, activations: 0, retainedW2: 0,
+      qualityNote: 'No activations yet; no week-2 retained installs yet',
+    })
+    expect(out['acquisition'][0]).toMatchObject({ key: 'email', installsLabel: 'Trials saved', definitionLine: 'Lifecycle emails sent.' })
+    expect(out['acquisition'][1]).toEqual({
+      key: 'link_family:creators', label: 'creators links (CREATOR)', status: 'LIVE', derived: false,
+      installsLabel: 'Downloads', note: "below Apple's reporting threshold", definitionLine: 'First-time downloads.',
+    })
+    expect(out['payback'].channels[0]).toEqual({ channel: 'apple_ads', label: 'Apple Ads', spend: 162.86, proceedsNet12m: 400, ratio: 2.4562 })
+    expect(out['payback'].total.ratio).toBe(2.4562)
+    expect(out['payback'].basis).toMatch(/12-month/)
+    expect(out['exclusions']).toEqual([{ key: 'app_review_installs', label: 'Likely App Review installs', value: 7 }])
+    expect(out['asoKeywords']).toEqual([{ keyword: 'rexipe', rank: 3, popularity: 40, rankChange: 0, previousRank: 3 }])
+    // all-zero counts are real numbers, not absent
+    expect(out['verification']).toEqual({ unchecked: 0, mismatched: 1, staleReads: 0, both: 0 })
+  })
+
+  it('caps ASO keywords at 20 keeping the best ranks and reports the total', async () => {
+    mocked(apiGet).mockResolvedValue({
+      window: { from: '2026-09-29', to: '2026-10-26' },
+      asoKeywords: Array.from({ length: 50 }, (_, i) => ({ keyword: `kw ${i}`, rank: i + 1 })),
+    })
+    const out = (await getMarketingReport(config, {})) as Record<string, any>
+    expect(out['asoKeywords']).toHaveLength(MAX_REPORT_ASO_KEYWORDS)
+    expect(out['asoKeywords'][0]).toEqual({ keyword: 'kw 0', rank: 1 })
+    expect(out['asoKeywords'][19]).toEqual({ keyword: 'kw 19', rank: 20 })
+    expect(out['totalRows']).toEqual({ asoKeywords: 50 })
+  })
+
+  it('leaves the new sections out when the report has none: absent data is not a zero', async () => {
+    mocked(apiGet).mockResolvedValue({
+      window: { from: '2026-09-29', to: '2026-10-26' },
+      payback: null,
+      exclusions: [],
+      asoKeywords: [],
+      verification: null,
+    })
+    const out = (await getMarketingReport(config, {})) as Record<string, unknown>
+    for (const key of ['payback', 'exclusions', 'asoKeywords', 'verification', 'totalRows']) {
+      expect(out).not.toHaveProperty(key)
+    }
   })
 
   it('keeps empty coverage, markers and definitions as present keys so "none" never reads as missing', async () => {

@@ -11,20 +11,24 @@ Percent values are fractions (0.12 = 12%). A window is full UTC days ending at e
 | `window`, `generatedAt` | The overall range (the funnel's window) and when the report was built. |
 | `sources[]` | One entry per channel: connector, status, `dataCompleteThrough`, `lastFetchedAt`, and `timeZone` (the zone that decides which day a row belongs to; Apple Ads reports `UTC`, with `searchTermTimeZone` `ORTZ` because search-term days are the org's report zone). Null where the connector does not state one. |
 | `headline[]` | In-app metrics the feed ranked as headline, in order, then ads spend and cost per install. Each carries value, previous, target, `status`, `missPct`, `sampleSize`, `goodDirection` and its `definition`. |
-| `acquisition[]` | One row per source: reach, actions, installs, cost, `status` (the channel's). Unconnected channels are listed with their status and no numbers. See below for the Apple Ads, organic search, web and social rows. |
+| `acquisition[]` | One row per source: reach, actions, installs, cost, `status` (the channel's). Unconnected channels are listed with their status and no numbers. See below for the Apple Ads, organic search, web and social rows, and [Channel quality](#channel-quality-product-metrics-contract-v3) for the `email`, `shares` and `link_family:{family}` rows. |
 | `funnel` | `basis` (COHORT or EVENT) and `stages[]` with `dropPct` from the previous stage and one `biggestDrop`. Uses the in-app stages when a feed declares them, else the cross-channel funnel. A stage read from a better source carries `note` (and `coverage` for Sales Reports). |
 | `store` | `downloadsOfRecord` (Apple Sales Reports), `analyticsDownloads` (App Store Connect Analytics) and `coverage`. Null when App Store Connect is not connected. |
 | `daily[]` | Store impressions and ad spend per day, clipped to the report window (`window.from` to `window.to`). |
 | `scorecard[]` | Every metric that has a target or an area: value, target, `status`, `missPct`, `basis`, `sampleSize`, source, `definition`. |
-| `keywords[]` | Top 25 ads keywords by spend with bid, status, match type, tap `installs`, first-time `newDownloads` and in-app `trials` / `activations` joined by keyword id. `judgeable` needs at least 20 taps. |
+| `keywords[]` | Top 25 ads keywords by spend with bid, status, match type, tap `installs`, first-time `newDownloads` and in-app `trials` / `activations` / `retainedW2` joined by keyword id, with the cost per activated install, week-2 retained install and trial. `judgeable` needs at least 20 taps. |
 | `adsCoverage[]` | One row per Apple Ads campaign: how much of its spend the keyword and search-term rows account for. |
 | `ads[]` | Ad rows with creative type, product page, status and delivery. |
 | `benchmarks[]` | Stored benchmarks joined to the report's own value, judged only on a matching definition. |
 | `definitions` | One definition per metric the report mentions, keyed by `CHANNEL.key`. |
 | `changes` | `open` (PLANNED, LIVE), `dueForReview` (PLANNED or LIVE past `dueOn` with no verdict), `reviewedInWindow`, from Work Items on the `MARKETING_CHANGES` workflow. |
 | `changeMarkers[]` | The day each LIVE or REVIEWED change went live, for a chart to mark. |
+| `payback` | Cohort proceeds over spend per paid channel (Apple Ads today) and in total, on the contract's 12-month horizon. Null without a `proceeds_net` metric or any channel with spend. |
+| `exclusions[]` | What the numbers leave out: likely App Review installs, with the feed's own wording. Empty when the feed reports none. |
+| `asoKeywords[]` | Tracked App Store keywords: latest organic `rank`, `popularity` and the `rankChange` since the previous window's end. At most 50, best rank first (the MCP tool returns the best 20). |
+| `verification` | The verification ledger's tally for the same window: `unchecked`, `mismatched`, `staleReads`, `both`. Null when nothing is connected. |
 
-All of the sections after `acquisition` that are new (`store`, `adsCoverage`, `definitions`, `changeMarkers`, and the fields named below) are additive and optional: an older client that ignores them still reads every field it read before.
+All of the sections after `acquisition` that are new (`store`, `adsCoverage`, `definitions`, `changeMarkers`, `payback`, `exclusions`, `asoKeywords`, `verification` and the fields named below) are additive and optional: an older client that ignores them still reads every field it read before.
 
 ### Status bands
 
@@ -70,7 +74,63 @@ The `web_referrer` row's `actions`, and the funnel stage `web_conversion_clicks`
 
 ### In-app outcomes by keyword
 
-The in-app feed may send `keyword:{keywordId}:{text}` rows. The report joins its `trial_started` and `activated` sums to the ads keyword with the same id. A keyword with no in-app rows has `trials` and `activations` null (unknown), not zero.
+The in-app feed may send `keyword:{keywordId}:{text}` rows. The report joins its `trial_started`, `activated` and `retained_w2` sums to the ads keyword with the same id, as `trials`, `activations` and `retainedW2`. A keyword with no in-app rows has all three null (unknown), not zero; so does one whose feed does not declare the metric at all. See [Keyword quality](#keyword-quality) for the cost per outcome.
+
+## Channel quality (product-metrics contract v3)
+
+These sections read the keys the product backend sends under [contract v3](integrations-product-metrics.md#version-3). Each is additive and optional, and the one rule is the contract's: **a key the feed did not send is null (the figure, row or section is omitted), never 0.** A value the feed reported as 0 reads 0. Nothing here is stored: every figure is computed on read from the feed's rows.
+
+| Section | Source keys |
+|---|---|
+| `keywords[]` quality | `activated`, `retained_w2`, `trial_started` at `keyword:{id}:{text}`; the ads keyword's `spend` |
+| `payback` | `proceeds_net` at `source:{name}`; the acquisition row's `cost` (spend) |
+| `exclusions[]` | `app_review_installs_excluded` (window sum) and that metric's `exclusions` text |
+| `email` row | `email_sends`, `email_clicks`, `email_trials_saved`, totals or `channel:email` |
+| `shares` row | `share_links_created`, `share_views`, `share_installs`, totals or `channel:shares` |
+| `link_family:{family}` rows | Tracked links: `STORE campaign_downloads` at `ct:{token}` and the Posts' latest views |
+| `asoKeywords[]` | `aso_rank`, `aso_popularity` at `aso:{keyword}` |
+| `verification` | The verification ledger (see [Verification](#verification)) |
+
+The `aso:` and `channel:` rows are not in the overview's tables, so the report reads them with **one extra query** (the feed's `channel:` and `aso:` rows for the metrics it declares, from one window before the report window to its end). It is a single query whatever the number of keywords or channels, and it is skipped when the feed declares none of those metrics. `MarketingReportQueryCountTest` seeds both and checks one row costs the same as twenty.
+
+### Keyword quality
+
+On each `keywords[]` row, `activations`, `retainedW2` and `trials` are the feed's counts for the keyword (the window's cohorts), and:
+
+- `costPerActivatedInstall` = `spend / activations`
+- `costPerRetainedW2Install` = `spend / retainedW2`
+- `costPerTrial` = `spend / trials`
+
+Each cost is null when the spend or its count is null, and when the count is 0. A count the feed reported as 0 is named in `qualityNote` ("No activations yet", "No week-2 retained installs yet", "No trials yet", joined with `;`), so a null cost reads as "none yet" rather than "unknown". With spend 17.51, 2 activations, 1 retained and 1 trial the costs are 8.755, 17.51 and 17.51. The row is judged like the others: read `judgeable` (20 taps) before acting on a cost.
+
+### Payback
+
+`payback.channels[]` has one row per acquisition row that has spend and whose channel the feed names as a source: today Apple Ads, matched to the feed's `source:` row whose name reads `apple_search_ads`, `apple_ads` or `asa` (case and punctuation ignored). Each row is `{channel, label, spend, proceedsNet12m, ratio, note}`: `proceedsNet12m` is the feed's `proceeds_net` at that source summed over the window's cohorts and `ratio` is `proceedsNet12m / spend`.
+
+- **Horizon.** `proceeds_net` is the contract's figure: proceeds after Apple's commission, counted by cohort over a 12-month horizon and restated as a cohort matures. The ratio therefore compares the spend of the window with the proceeds its cohorts have earned *so far*; a recent window stays low until its cohorts have had the time. `payback.basis` says this in the payload.
+- A feed that declares `proceeds_net` but sent nothing for the channel's source gives the row `proceedsNet12m` and `ratio` null and a `note`. Spend of 0 gives a null ratio.
+- `payback.total` sums the listed channels' spend and proceeds. Its `ratio` is null unless every channel has proceeds, so a missing channel never inflates the total. Organic proceeds are not credited to paid spend.
+- No `proceeds_net` metric, or no channel with spend, means `payback` is null.
+
+### Exclusions
+
+`exclusions[]` is `[{key: "app_review_installs", label: "Likely App Review installs", value, note}]`. `value` is the window sum of `app_review_installs_excluded`, the installs the feed left out of its other numbers (7 in the reference window); `note` is that metric's definition `exclusions` text when the feed gave one. A metric with no value in the window gives no entry; a reported 0 gives `value` 0.
+
+### Email and shares
+
+The `email` row reads `email_sends` as `reach` ("Emails sent"), `email_clicks` as `actions` ("Clicks") and `email_trials_saved` as `installs` ("Trials saved", in `installsLabel`). The `shares` row reads `share_links_created` as `reach` ("Links shared"), `share_views` as `actions` ("Views") and `share_installs` as `installs`. Each figure is the feed's day total over the window; when a key has no total, the sum of its `channel:email` or `channel:shares` rows is used instead. A figure with neither is null and its label is null; a row with none of its three figures is omitted. Both rows carry a `definitionLine` and the matching `definitions` entries (`PRODUCT.email_sends`, ...); the Email line adds the feed's own rule for "trials saved" from that metric's description.
+
+### Tracked-link families
+
+One acquisition row per tracked-link family (`TrackedLinkService.performance` over the report window), `link_family:{family}`, labelled `"{family} links ({kind})"`. `installs` is the family's App Store campaign downloads (`installsLabel` "Downloads"); a POST family's `reach` is its Posts' latest views ("Post views"). Apple omits a link under its reporting threshold, so a family with no reported row has `installs` null and the note "below Apple's reporting threshold", never 0. Without a connected App Store the note says the downloads cannot be read instead. A workspace with no tracked links has no such rows.
+
+### ASO keywords
+
+`asoKeywords[]` lists each tracked keyword with `rank` and `popularity`, both *levels*: the latest reading at or before the window's last day. `previousRank` is the latest rank at or before the day before the window starts, and `rankChange = rank - previousRank`, so **a negative change is an improvement** (a lower rank is better). `rankChange` and `previousRank` are null when there is no earlier reading, or none since it (the same reading is never compared with itself). Best rank first, keywords with only a popularity last, at most 50.
+
+### Verification
+
+`verification` is the ledger's `summary` for the window the report was asked for: `unchecked` (no second source, never "verified"), `mismatched`, `staleReads` and `both`. It lets a reader of the report see how much of it is verified; the per-metric detail is the ledger itself. It is null when no channel is connected. It costs a second snapshot of the same window, because the ledger builds its own.
 
 ### Definitions
 

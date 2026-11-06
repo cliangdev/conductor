@@ -11957,6 +11957,77 @@ components:
             - $ref: "#/components/schemas/ReportStore"
           nullable: true
           description: Both store download figures. Null when App Store Connect is not connected.
+        payback:
+          allOf:
+            - $ref: "#/components/schemas/ReportPayback"
+          nullable: true
+          description: "Cohort proceeds over spend per paid acquisition channel (12-month horizon). Null when the product feed declares no proceeds_net or no channel has spend."
+        exclusions:
+          type: array
+          description: "What the report's numbers leave out (today: likely App Review installs). Empty when the product feed reports none."
+          items:
+            $ref: "#/components/schemas/ReportExclusion"
+        asoKeywords:
+          type: array
+          description: "Tracked App Store keywords with their latest organic rank and popularity, best rank first, at most 50. Empty when the product feed sends no aso_rank or aso_popularity."
+          items:
+            $ref: "#/components/schemas/ReportAsoKeyword"
+        verification:
+          allOf:
+            - $ref: "#/components/schemas/ReportVerification"
+          nullable: true
+          description: "The verification ledger's tally for the report window. Null when no channel is connected or the ledger serves no window like this one."
+
+    ReportPayback:
+      type: object
+      required: [channels, total, basis]
+      properties:
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportPaybackRow"
+        total:
+          $ref: "#/components/schemas/ReportPaybackRow"
+        basis: {type: string, description: "What the proceeds are: after Apple's commission, by cohort, over the contract's 12-month horizon."}
+
+    ReportPaybackRow:
+      type: object
+      required: [channel, label]
+      properties:
+        channel: {type: string, description: "The acquisition row's key (apple_ads), or total."}
+        label: {type: string}
+        spend: {type: number, format: double, nullable: true}
+        proceedsNet12m: {type: number, format: double, nullable: true, description: "The product feed's proceeds_net at the channel's source rows over the window's cohorts. Null when the feed sent none for the source."}
+        ratio: {type: number, format: double, nullable: true, description: "proceedsNet12m / spend. Null without proceeds or with no spend. A total's ratio is null unless every channel has proceeds."}
+        note: {type: string, nullable: true}
+
+    ReportExclusion:
+      type: object
+      required: [key, label]
+      properties:
+        key: {type: string, description: "app_review_installs."}
+        label: {type: string}
+        value: {type: number, format: double, nullable: true}
+        note: {type: string, nullable: true, description: "The feed's own wording for what the metric leaves out, when it gave one."}
+
+    ReportAsoKeyword:
+      type: object
+      required: [keyword]
+      properties:
+        keyword: {type: string}
+        rank: {type: number, format: double, nullable: true, description: "Latest organic App Store rank at or before the window's end; 1 is first, lower is better. Null when only popularity was reported."}
+        popularity: {type: number, format: double, nullable: true, description: "Latest search popularity score at or before the window's end."}
+        rankChange: {type: number, format: double, nullable: true, description: "rank minus previousRank, so negative is an improvement. Null when there is no reading at the previous window's end, or none since it."}
+        previousRank: {type: number, format: double, nullable: true, description: "The rank at the previous window's end (the day before the window), when rankChange is set."}
+
+    ReportVerification:
+      type: object
+      required: [unchecked, mismatched, staleReads, both]
+      properties:
+        unchecked: {type: integer, description: "Metrics with no second source: never verified."}
+        mismatched: {type: integer, description: "Metrics where a second source disagrees with the connector beyond the band."}
+        staleReads: {type: integer, description: "Metrics whose latest direct platform read is older than 7 days."}
+        both: {type: integer, description: "Metrics every available second source agrees with."}
 
     ReportWindow:
       type: object
@@ -12052,6 +12123,8 @@ components:
             - $ref: "#/components/schemas/ReportDerivation"
           nullable: true
           description: "Organic search row only: the days and the gross and paid figures behind installs and reach. Null when the row was not derived."
+        installsLabel: {type: string, nullable: true, description: "What the installs figure counts when it is not installs: the email row's 'Trials saved', a tracked-link family's 'Downloads'."}
+        definitionLine: {type: string, nullable: true, description: "One plain sentence saying what the row's figures are; set on the email, shares and tracked-link (link_family:{family}) rows."}
 
     ReportFunnel:
       type: object
@@ -12138,6 +12211,11 @@ components:
         activations: {type: number, format: double, nullable: true}
         judgeable: {type: boolean, description: "True with at least 20 taps; fewer is too early to judge."}
         newDownloads: {type: number, format: double, nullable: true, description: "First-time downloads from taps (Apple's tapNewDownloads), a subset of installs. Null when the feed has none."}
+        retainedW2: {type: number, format: double, nullable: true, description: "Installs from the keyword still active in week 2 (the product feed's retained_w2); null when the feed sent none."}
+        costPerActivatedInstall: {type: number, format: double, nullable: true, description: "spend / activations. Null without spend or with no activations (see qualityNote)."}
+        costPerRetainedW2Install: {type: number, format: double, nullable: true, description: "spend / retainedW2. Null without spend or with no week-2 retained installs."}
+        costPerTrial: {type: number, format: double, nullable: true, description: "spend / trials. Null without spend or with no trials."}
+        qualityNote: {type: string, nullable: true, description: "Says 'No activations yet' (and the like) for an outcome the feed reported as 0, so a null cost reads as none yet rather than unknown."}
 
     ReportAd:
       type: object

@@ -878,7 +878,7 @@
     },
     {
       "name": "get_marketing_report",
-      "description": "The whole-funnel marketing report in one payload: sources, headline metrics, acquisition by source, funnel with its biggest drop, daily chart data, scorecard, keywords, ads, benchmarks and changes. Window 7d or 28d.",
+      "description": "The whole-funnel marketing report in one payload: sources, headline metrics, acquisition by source, funnel with its biggest drop, daily chart data, scorecard, keywords with cost per outcome, payback, exclusions, ASO keywords, email, shares and tracked-link rows, a verification tally, ads, benchmarks and changes. Window 7d or 28d.",
       "category": "marketing",
       "requiredParams": []
     },

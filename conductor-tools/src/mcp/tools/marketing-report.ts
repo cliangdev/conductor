@@ -11,6 +11,8 @@ export const MAX_REPORT_KEYWORDS = 25
 export const MAX_REPORT_ADS = 20
 export const MAX_REPORT_ADS_COVERAGE = 20
 export const MAX_REPORT_CHANGE_MARKERS = 20
+/** The backend lists up to 50 ASO keywords, best organic rank first; an agent needs the best 20. */
+export const MAX_REPORT_ASO_KEYWORDS = 20
 
 type Json = unknown
 
@@ -45,6 +47,7 @@ interface ReportPayload extends Record<string, Json> {
   ads?: Json[]
   adsCoverage?: Json[]
   changeMarkers?: Json[]
+  asoKeywords?: Json[]
 }
 
 const ALWAYS_PRESENT = [
@@ -77,12 +80,15 @@ export async function getMarketingReport(
   const adsCoverage = report.adsCoverage ?? []
   // Markers arrive oldest first; when there are too many the newest are the ones worth marking.
   const changeMarkers = report.changeMarkers ?? []
+  // Arrive best organic rank first, so the head is the part to keep.
+  const asoKeywords = report.asoKeywords ?? []
   const trimmed = trimReportValue({
     ...report,
     keywords: keywords.slice(0, MAX_REPORT_KEYWORDS),
     ads: ads.slice(0, MAX_REPORT_ADS),
     adsCoverage: adsCoverage.slice(0, MAX_REPORT_ADS_COVERAGE),
     changeMarkers: changeMarkers.slice(-MAX_REPORT_CHANGE_MARKERS),
+    asoKeywords: asoKeywords.slice(0, MAX_REPORT_ASO_KEYWORDS),
   }) as Record<string, unknown>
   // An emptied section must still read as "none", not as a missing key.
   for (const k of ALWAYS_PRESENT) if (!(k in trimmed)) trimmed[k] = []
@@ -102,6 +108,7 @@ export async function getMarketingReport(
   if (ads.length > MAX_REPORT_ADS) totalRows['ads'] = ads.length
   if (adsCoverage.length > MAX_REPORT_ADS_COVERAGE) totalRows['adsCoverage'] = adsCoverage.length
   if (changeMarkers.length > MAX_REPORT_CHANGE_MARKERS) totalRows['changeMarkers'] = changeMarkers.length
+  if (asoKeywords.length > MAX_REPORT_ASO_KEYWORDS) totalRows['asoKeywords'] = asoKeywords.length
   return Object.keys(totalRows).length > 0 ? { ...trimmed, totalRows } : trimmed
 }
 
