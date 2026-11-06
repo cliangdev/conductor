@@ -13,13 +13,8 @@ import java.util.regex.Pattern;
  */
 public final class BenchmarkComparability {
 
-    /** The closed list of measure names a numerator or denominator may use (contract C2). */
-    public static final List<String> MEASURES = List.of(
-            "impressions", "unique_impressions", "page_views", "unique_page_views", "first_time_downloads",
-            "redownloads", "total_downloads", "downloads_of_record", "tap_installs", "tap_new_downloads",
-            "view_through_installs", "taps", "spend", "visitors", "sessions", "pageviews", "conversion_sessions",
-            "conversion_events", "clicks", "followers", "posts", "likes", "channel_views", "website_clicks",
-            "rating_count", "rating_avg", "position");
+    /** The closed list of measure names a numerator or denominator may use: the metric catalog's own vocabulary. */
+    public static final List<String> MEASURES = com.conductor.marketing.overview.MetricCatalog.MEASURES;
 
     /** The traffic sources a definition may be limited to; {@code ALL} is the default. */
     public static final List<String> SOURCE_TYPES = List.of(
