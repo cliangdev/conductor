@@ -837,6 +837,40 @@
       "requiredParams": []
     },
     {
+      "name": "get_budget_pacing",
+      "description": "Paid spend against the month's budget cap per paid channel: month-to-date spend, pace, projected month-end, compliance (a paid channel needs a stop rule), tripped stop rules and marginal cost per install.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "set_marketing_budget",
+      "description": "Set the paid budget cap for a month. Records the cap only; it changes nothing on an ad platform.",
+      "category": "marketing",
+      "requiredParams": [
+        "month",
+        "capAmount"
+      ]
+    },
+    {
+      "name": "set_stop_rule",
+      "description": "Add a stop rule for a paid channel (metric, comparator, threshold, minimum sample, window). Conductor evaluates and records it; a human applies any bid or budget change.",
+      "category": "marketing",
+      "requiredParams": [
+        "channel",
+        "metric",
+        "comparator",
+        "threshold"
+      ]
+    },
+    {
+      "name": "remove_stop_rule",
+      "description": "Remove a stop rule by id.",
+      "category": "marketing",
+      "requiredParams": [
+        "ruleId"
+      ]
+    },
+    {
       "name": "get_marketing_report",
       "description": "The whole-funnel marketing report in one payload: sources, headline metrics, acquisition by source, funnel with its biggest drop, daily chart data, scorecard, keywords, ads, benchmarks and changes. Window 7d or 28d.",
       "category": "marketing",
