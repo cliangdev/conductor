@@ -97,6 +97,9 @@ export interface SetBenchmarkParams {
   sourceUrl: string
   checkedOn: string
   notes?: string
+  numerator?: string
+  denominator?: string
+  sourceType?: string
 }
 
 export async function setMarketingBenchmark(config: Config, p: SetBenchmarkParams): Promise<Record<string, unknown>> {
@@ -116,6 +119,9 @@ export async function setMarketingBenchmark(config: Config, p: SetBenchmarkParam
     sourceUrl: p.sourceUrl,
     checkedOn: p.checkedOn,
     notes: p.notes,
+    numerator: p.numerator,
+    denominator: p.denominator,
+    sourceType: p.sourceType,
   }
   const saved = await apiPut<Record<string, unknown>>(
     `/api/v2/projects/${config.projectId}/marketing/benchmarks/${encodeURIComponent(p.metricRef)}`,

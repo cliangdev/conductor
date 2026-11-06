@@ -4057,7 +4057,10 @@ paths:
         Idempotent upsert. `metricRef` is `CHANNEL.metric` (for example `STORE.conversion_rate` or
         `ADS.tap_through_rate`), or `PRODUCT.<key>` for an in-app metric. A benchmark must name its source:
         `sourceName`, an http(s) `sourceUrl` and `checkedOn` (not in the future). Percent values are fractions
-        (0.03 = 3%). Requires ADMIN or CREATOR.
+        (0.03 = 3%). Optionally say what the benchmark measures with `numerator`, `denominator` and `sourceType`
+        (for example total_downloads / unique_impressions on APP_STORE_SEARCH): the report judges a benchmark only
+        against a metric with the same definition, and one without a definition reads "definition missing". This is a
+        full replace, so a PUT that omits the definition fields clears a stored definition. Requires ADMIN or CREATOR.
       operationId: setMarketingBenchmark
       security:
         - bearerAuth: []
@@ -4087,7 +4090,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/MarketingBenchmark"
         "400":
-          description: Unknown channel, invalid reference, URL or date, or a missing source
+          description: >-
+            Unknown channel, invalid reference, URL or date, a missing source, or an invalid definition (an unknown
+            measure or sourceType, or a denominator or sourceType without a numerator; the message lists the allowed values)
           content:
             application/json:
               schema:
@@ -9794,6 +9799,9 @@ components:
         sourceUrl: {type: string}
         checkedOn: {type: string, format: date}
         notes: {type: string, nullable: true}
+        numerator: {type: string, nullable: true, description: "What the benchmark counts: a measure name (e.g. total_downloads) or product:<key>. Null means the definition is missing and the benchmark is never judged."}
+        denominator: {type: string, nullable: true, description: "What the numerator is divided by, same vocabulary. Null for a count."}
+        sourceType: {type: string, nullable: true, description: "The traffic source the benchmark covers: ALL, APP_STORE_SEARCH, APP_STORE_BROWSE, APP_REFERRER, WEB_REFERRER, APP_CLIP, INSTITUTIONAL_PURCHASE or OTHER. Null means ALL."}
         updatedAt: {type: string, format: date-time}
 
     MarketingBenchmarkRequest:
@@ -9808,6 +9816,9 @@ components:
         sourceUrl: {type: string, maxLength: 2000}
         checkedOn: {type: string, format: date, description: "The day the source was read; not in the future."}
         notes: {type: string, maxLength: 2000}
+        numerator: {type: string, maxLength: 80, description: "A measure name (impressions, unique_impressions, page_views, unique_page_views, first_time_downloads, redownloads, total_downloads, downloads_of_record, tap_installs, tap_new_downloads, view_through_installs, taps, spend, visitors, sessions, pageviews, conversion_sessions, conversion_events, clicks, followers, posts, likes, channel_views, website_clicks, rating_count, rating_avg, position) or product:<key> (key lower-case letters, digits and underscores, starting with a letter, up to 64). Required when denominator or sourceType is given."}
+        denominator: {type: string, maxLength: 80, description: "Same vocabulary as numerator; omit for a count. Needs a numerator."}
+        sourceType: {type: string, maxLength: 32, description: "ALL (the default), APP_STORE_SEARCH, APP_STORE_BROWSE, APP_REFERRER, WEB_REFERRER, APP_CLIP, INSTITUTIONAL_PURCHASE or OTHER. Needs a numerator."}
 
     MarketingBenchmarkListResponse:
       type: object

@@ -1402,7 +1402,7 @@ export const TOOLS = [
   },
   {
     name: 'set_marketing_benchmark',
-    description: 'Record or replace the industry benchmark for one metric. The value must come from a source you read in this session, never from memory: sourceUrl (the page) and checkedOn (the day you read it) are required. metricRef is CHANNEL.metric (e.g. STORE.conversion_rate) or PRODUCT.<key>. A count or currency total (downloads, spend) is stated per 28 days and prorated to the report window; a rate or ratio is compared as stated. Requires the Editor role (or Admin). Verify with get_marketing_report (benchmarks).',
+    description: 'Record or replace the industry benchmark for one metric. The value must come from a source you read in this session, never from memory: sourceUrl (the page) and checkedOn (the day you read it) are required. metricRef is CHANNEL.metric (e.g. STORE.conversion_rate) or PRODUCT.<key>. A count or currency total (downloads, spend) is stated per 28 days and prorated to the report window; a rate or ratio is compared as stated. Say what it measures with numerator, denominator and sourceType: a benchmark is judged only against a metric with the same definition, and one without them shows as "definition missing". Each call replaces the whole benchmark, so repeat the definition when you update the value. Requires the Editor role (or Admin). Verify with get_marketing_report (benchmarks).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1415,6 +1415,9 @@ export const TOOLS = [
         sourceUrl: { type: 'string', description: 'http(s) URL of the page you read' },
         checkedOn: { type: 'string', description: 'YYYY-MM-DD, the day you read the source (not in the future)' },
         notes: { type: 'string', description: 'Caveats (optional)' },
+        numerator: { type: 'string', description: 'What the benchmark counts (optional): impressions, unique_impressions, page_views, unique_page_views, first_time_downloads, redownloads, total_downloads, downloads_of_record, tap_installs, tap_new_downloads, view_through_installs, taps, spend, visitors, sessions, pageviews, conversion_sessions, conversion_events, clicks, followers, posts, likes, channel_views, website_clicks, rating_count, rating_avg, position, or product:<key> for an in-app metric. AppFollow example: total_downloads' },
+        denominator: { type: 'string', description: 'What the numerator is divided by (optional; same names as numerator; omit for a count; needs numerator). AppFollow example: unique_impressions' },
+        sourceType: { type: 'string', description: 'The traffic source it covers (optional; needs numerator): ALL (default), APP_STORE_SEARCH, APP_STORE_BROWSE, APP_REFERRER, WEB_REFERRER, APP_CLIP, INSTITUTIONAL_PURCHASE or OTHER. AppFollow example: APP_STORE_SEARCH' },
       },
       required: ['metricRef', 'value', 'sourceName', 'sourceUrl', 'checkedOn'],
     },
@@ -2768,6 +2771,9 @@ export async function runMcpServer(): Promise<void> {
               sourceUrl: params['sourceUrl'] as string,
               checkedOn: params['checkedOn'] as string,
               notes: params['notes'] as string | undefined,
+              numerator: params['numerator'] as string | undefined,
+              denominator: params['denominator'] as string | undefined,
+              sourceType: params['sourceType'] as string | undefined,
             })
           )
         }
