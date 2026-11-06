@@ -74,6 +74,22 @@ export interface MarketingTarget {
   effectiveValue?: number | null
 }
 
+/** What a metric counts (openapi-v2 `OverviewMetricDefinition`); every field after `numerator` can be null. */
+export interface OverviewMetricDefinition {
+  /** One plain line naming the platform report or field the number comes from. */
+  source: string
+  /** A measure name from the API's closed list, or `product:<key>` for a metric a product backend declared. */
+  numerator: string
+  /** The measure divided by; null or absent for a plain count. */
+  denominator?: string | null
+  /** ALL or one traffic source type (APP_STORE_SEARCH ...); null or absent means ALL. */
+  sourceType?: string | null
+  /** One plain line naming what is left out; null when nothing is. */
+  exclusions?: string | null
+  /** The time zone that decides which day a row belongs to; null when the source does not say. */
+  timeZone?: string | null
+}
+
 export interface OverviewSeriesPoint {
   day: string
   value?: number | null
@@ -115,18 +131,24 @@ export interface OverviewMetric {
   headline?: number | null
   /** PRODUCT only: COHORT when each day counts the people who first opened that day. */
   basis?: MetricBasis
+  /** Where the number comes from and what it counts; absent from older servers. */
+  definition?: OverviewMetricDefinition | null
+  /** Set only when `value` is null because the stored data cannot answer (for example a unique-visitor window that is not stored). */
+  note?: string | null
   /** Days after the channel's data-complete day that the series still shows (excluded from the value). */
   provisionalDays?: number
   target?: MarketingTarget | null
   series: OverviewSeriesPoint[]
 }
 
-/** Set when a channel's status is MISMATCH: both figures cover the same settled days. */
+/** One second source that disagrees with the channel's own figure: both figures cover the same settled days. */
 export interface OverviewMismatch {
+  /** BACKEND: the product metrics feed's reference. PLATFORM: a direct platform read from the ledger. Absent means BACKEND. */
+  kind?: 'BACKEND' | 'PLATFORM'
   /** The channel metric compared, e.g. downloads or spend. */
   metric: string
   label: string
-  /** What the product metrics feed reports. */
+  /** What the second source reports: the product metrics feed (BACKEND) or the platform read (PLATFORM). */
   referenceValue: number
   /** What this channel's own connector reports. */
   channelValue: number
@@ -136,7 +158,7 @@ export interface OverviewMismatch {
   to: string
   /** Name of the connection(s) behind the channel's own figure, e.g. App Store Connect. */
   channelSource?: string
-  /** Name of the product metrics connection(s) that reported the reference figure. */
+  /** Name of the second source: the product metrics connection(s), or what the platform read was called (Apple Ads console). */
   referenceSource?: string
 }
 
@@ -148,7 +170,12 @@ export interface OverviewChannel {
   dataCompleteThrough?: string | null
   /** False when the channel's connection owns its targets (In-app): they cannot be set or cleared here. */
   targetsEditable?: boolean
+  /** The largest gap of `mismatches`, kept for older readers. */
   mismatch?: OverviewMismatch | null
+  /** Every second source that disagrees, largest gap first; absent from older servers (read `mismatch` then). */
+  mismatches?: OverviewMismatch[]
+  /** True only in a fixed window when this channel's settled data ends before the window's last day. */
+  partial?: boolean
   connections: OverviewConnection[]
   connectHint?: { /** Deprecated. */ connectorId?: string; connectors: { connectorId: string; name: string }[] } | null
   metrics: OverviewMetric[]
@@ -181,6 +208,17 @@ export interface OverviewDimension {
   rows: OverviewDimensionRow[]
 }
 
+/** A change that went live (GET …/marketing/report `changeMarkers`): a chart marks its day. */
+export interface OverviewChangeMarker {
+  /** The change's liveSince date (YYYY-MM-DD). */
+  day: string
+  changeId: string
+  displayId: string
+  title: string
+  /** LIVE or REVIEWED. */
+  status: string
+}
+
 export interface MarketingChannelDetailResponse {
   window: OverviewWindowRange
   channel: OverviewChannel
@@ -199,6 +237,24 @@ export function getMarketingChannel(projectId: string, token: string, channel: s
     `${base(projectId)}/channels/${encodeURIComponent(channel)}?window=${window}`,
     token,
   )
+}
+
+/** The report serves 7d and 28d only; the 90d detail window reads the 28d report (markers are not bounded below). */
+export function reportWindowFor(window: OverviewWindowValue): '7d' | '28d' {
+  return window === '7d' ? '7d' : '28d'
+}
+
+/** The days changes went live. Anything that is not a list of markers (an older server) reads as none. */
+export async function getMarketingChangeMarkers(
+  projectId: string,
+  token: string,
+  window: OverviewWindowValue,
+): Promise<OverviewChangeMarker[]> {
+  const report = await apiGet<{ changeMarkers?: OverviewChangeMarker[] | null } | null>(
+    `${base(projectId)}/report?window=${reportWindowFor(window)}`,
+    token,
+  )
+  return Array.isArray(report?.changeMarkers) ? report.changeMarkers : []
 }
 
 export function setMarketingTarget(

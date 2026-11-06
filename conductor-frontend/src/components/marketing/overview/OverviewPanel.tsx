@@ -5,7 +5,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { PlugIcon } from 'lucide-react'
+import { BookOpenIcon, PlugIcon, ShieldCheckIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -120,6 +120,24 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
           onValueChange={(v) => isOverviewWindow(v) && setRange(v)}
         />
         {dataThrough && <p className="text-xs text-muted-foreground">Data through {dataThrough}</p>}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <Link
+            prefetch={false}
+            href={`/app/projects/${projectId}/marketing/verification`}
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+          >
+            <ShieldCheckIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            Verification
+          </Link>
+          <Link
+            prefetch={false}
+            href={`/app/projects/${projectId}/marketing/definitions`}
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+          >
+            <BookOpenIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            Definitions
+          </Link>
+        </div>
       </div>
 
       {error && (
