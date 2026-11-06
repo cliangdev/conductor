@@ -1463,7 +1463,7 @@ export const TOOLS = [
   },
   {
     name: 'get_marketing_report',
-    description: 'The whole-funnel marketing report in one payload: sources, headline, acquisition, funnel, scorecard, keywords, ads, benchmarks and changes. Percent values are fractions. Read-only. Use get_marketing_insights for per-Post performance; set_marketing_benchmark to record an industry benchmark.',
+    description: 'The whole-funnel marketing report in one payload: sources, headline, acquisition (organic search net of Apple Ads over the same settled days, see derivation), funnel, store downloads of record, scorecard, keywords, adsCoverage, ads, benchmarks (judged only against a metric with the same definition), changes with changeMarkers, and definitions for every metric. Percent values are fractions. Read-only. Use get_marketing_insights for per-Post performance; set_marketing_benchmark to record an industry benchmark.',
     inputSchema: {
       type: 'object',
       properties: {

@@ -4262,12 +4262,17 @@ paths:
       summary: The marketing report in one call
       description: >-
         Everything a marketing report needs, assembled from the overview (no second set of numbers): health
-        headline metrics, acquisition by source (App Store organic search is store search downloads minus Apple
-        Ads installs, floored at 0, and flagged `derived`), the in-app funnel with its biggest drop, the daily
-        store impressions and ad spend, the scorecard of every metric that has a target or an area, the top 25
-        Apple Ads keywords by spend joined with in-app outcomes, ads, stored benchmarks against the report's
-        own values, and the marketing change log (Work Items on the MARKETING_CHANGES workflow). Windows are
-        full UTC days ending at each channel's `dataCompleteThrough`. Percent values are fractions (0.12 = 12%).
+        headline metrics, acquisition by source (App Store organic search is search first-time downloads minus
+        Apple Ads first-time downloads, and search impressions minus Apple Ads impressions, over the days both
+        have settled, floored at 0 and flagged `derived`; the row's `derivation` says which days), the in-app
+        funnel with its biggest drop (store downloads read Apple Sales Reports when present, with their
+        coverage), the daily store impressions and ad spend, the scorecard of every metric that has a target or
+        an area, the top 25 Apple Ads keywords by spend joined with in-app outcomes, per-campaign keyword and
+        search-term spend coverage, ads, stored benchmarks against the report's own values (judged only against
+        a metric with the same definition), the definition of every metric the report mentions, and the
+        marketing change log (Work Items on the MARKETING_CHANGES workflow) with the days changes went live.
+        Windows are full UTC days ending at each channel's `dataCompleteThrough`. Percent values are fractions
+        (0.12 = 12%).
       operationId: getMarketingReport
       security:
         - bearerAuth: []
@@ -10989,6 +10994,26 @@ components:
             $ref: "#/components/schemas/ReportBenchmark"
         changes:
           $ref: "#/components/schemas/ReportChanges"
+        adsCoverage:
+          type: array
+          description: One row per Apple Ads campaign, largest spend first. Empty when Apple Ads is not connected.
+          items:
+            $ref: "#/components/schemas/ReportAdsCoverage"
+        changeMarkers:
+          type: array
+          description: The day each LIVE or REVIEWED change went live (its liveSince field), oldest first, for a chart to mark.
+          items:
+            $ref: "#/components/schemas/ReportChangeMarker"
+        definitions:
+          type: object
+          description: "What each metric the report mentions counts, keyed by CHANNEL.key (for example ADS.installs): the headline and scorecard metrics, the metrics the acquisition rows read and the metric each benchmark was compared with."
+          additionalProperties:
+            $ref: "#/components/schemas/OverviewMetricDefinition"
+        store:
+          allOf:
+            - $ref: "#/components/schemas/ReportStore"
+          nullable: true
+          description: Both store download figures. Null when App Store Connect is not connected.
 
     ReportWindow:
       type: object
@@ -11006,6 +11031,8 @@ components:
         status: {type: string, description: "LIVE, STALE, MISMATCH, NOT_CONNECTED or COMING_SOON."}
         dataCompleteThrough: {type: string, format: date, nullable: true}
         lastFetchedAt: {type: string, format: date-time, nullable: true}
+        timeZone: {type: string, nullable: true, description: "The time zone that decides which day a row of this channel belongs to (Apple Ads: UTC). Null when the connector does not state one."}
+        searchTermTimeZone: {type: string, nullable: true, description: "Apple Ads only: search-term rows are days in the org's report time zone (ORTZ), which is not the zone of every other Apple Ads row."}
 
     ReportMetric:
       type: object
@@ -11022,6 +11049,43 @@ components:
         missPct: {type: number, format: double, nullable: true}
         sampleSize: {type: integer, format: int64, nullable: true}
         goodDirection: {type: string, enum: [UP, DOWN]}
+        definition:
+          allOf:
+            - $ref: "#/components/schemas/OverviewMetricDefinition"
+          nullable: true
+
+    ReportDerivation:
+      type: object
+      required: [from, to, days]
+      description: >-
+        Where an organic figure comes from: gross (the store's) and paid (Apple Ads') figures, each summed over the
+        same settled days before flooring at 0. The days need not be consecutive.
+      properties:
+        from: {type: string, format: date, description: First day both sources have settled.}
+        to: {type: string, format: date, description: Last day both sources have settled.}
+        days: {type: integer, description: How many days were summed.}
+        grossInstalls: {type: number, format: double, nullable: true, description: App Store search first-time downloads over those days.}
+        paidInstalls: {type: number, format: double, nullable: true, description: Apple Ads first-time downloads (tap new downloads) over those days.}
+        grossReach: {type: number, format: double, nullable: true, description: App Store search impressions over those days. Null when either source lacks impressions for some of them.}
+        paidReach: {type: number, format: double, nullable: true, description: Apple Ads impressions over those days.}
+
+    ReportCoverage:
+      type: object
+      required: [daysCovered, daysInWindow]
+      properties:
+        daysCovered: {type: integer, description: Days of the window the figure was read on.}
+        daysInWindow: {type: integer, description: Days in the window.}
+
+    ReportStore:
+      type: object
+      properties:
+        downloadsOfRecord: {type: number, format: double, nullable: true, description: "Apple Sales Reports first-time downloads for the window (never privacy-thresholded). Null when the connection has none."}
+        analyticsDownloads: {type: number, format: double, nullable: true, description: "App Store Connect Analytics first-time downloads for the window (privacy-thresholded); the source-type splits stay on these."}
+        coverage:
+          allOf:
+            - $ref: "#/components/schemas/ReportCoverage"
+          nullable: true
+          description: The days Sales Reports were read on. Null when there is no figure of record, or no day count was stored.
 
     ReportAcquisitionRow:
       type: object
@@ -11038,6 +11102,13 @@ components:
         cost: {type: number, format: double, nullable: true}
         derived: {type: boolean, description: "True when the installs are computed from two sources rather than read."}
         note: {type: string, nullable: true}
+        viewThroughInstalls: {type: number, format: double, nullable: true, description: "Apple Ads row only: installs with no tap. Never added to installs. Null when the feed reports none."}
+        likes: {type: number, format: double, nullable: true, description: "Social row only: total likes the connected accounts have received (TikTok). Null when none is reported."}
+        derivation:
+          allOf:
+            - $ref: "#/components/schemas/ReportDerivation"
+          nullable: true
+          description: "Organic search row only: the days and the gross and paid figures behind installs and reach. Null when the row was not derived."
 
     ReportFunnel:
       type: object
@@ -11058,6 +11129,12 @@ components:
         value: {type: number, format: double, nullable: true}
         dropPct: {type: number, format: double, nullable: true, description: "Share lost since the previous stage (0.25 = 25% fewer)."}
         biggestDrop: {type: boolean}
+        coverage:
+          allOf:
+            - $ref: "#/components/schemas/ReportCoverage"
+          nullable: true
+          description: "Set on a stage read from Apple Sales Reports (downloads of record): the days they were read on."
+        note: {type: string, nullable: true, description: "Where the stage's value comes from when it is not the overview's own metric (Sales Reports downloads; web sessions with an App Store tap)."}
 
     ReportDay:
       type: object
@@ -11084,6 +11161,10 @@ components:
         sampleSize: {type: integer, format: int64, nullable: true}
         source:
           $ref: "#/components/schemas/ReportScorecardSource"
+        definition:
+          allOf:
+            - $ref: "#/components/schemas/OverviewMetricDefinition"
+          nullable: true
 
     ReportScorecardSource:
       type: object
@@ -11106,13 +11187,14 @@ components:
         impressions: {type: number, format: double, nullable: true}
         taps: {type: number, format: double, nullable: true}
         tapRate: {type: number, format: double, nullable: true}
-        installs: {type: number, format: double, nullable: true}
-        installRate: {type: number, format: double, nullable: true}
+        installs: {type: number, format: double, nullable: true, description: "Apple's tap installs (tap new downloads plus tap redownloads), the same meaning as on the campaign rows. Before RE-99 this was first-time downloads."}
+        installRate: {type: number, format: double, nullable: true, description: "Tap installs per tap."}
         spend: {type: number, format: double, nullable: true}
-        cpi: {type: number, format: double, nullable: true}
+        cpi: {type: number, format: double, nullable: true, description: "Spend per tap install."}
         trials: {type: number, format: double, nullable: true, description: "In-app trial starts attributed to the keyword; null when the product feed has none."}
         activations: {type: number, format: double, nullable: true}
         judgeable: {type: boolean, description: "True with at least 20 taps; fewer is too early to judge."}
+        newDownloads: {type: number, format: double, nullable: true, description: "First-time downloads from taps (Apple's tapNewDownloads), a subset of installs. Null when the feed has none."}
 
     ReportAd:
       type: object
@@ -11147,8 +11229,49 @@ components:
         ratio: {type: number, format: double, nullable: true, description: "value / benchmark."}
         goodDirection: {type: string, enum: [UP, DOWN], nullable: true}
         sampleSize: {type: integer, format: int64, nullable: true}
-        judged: {type: boolean, description: "False when there is no value, or a rate rests on fewer than 20 observations."}
+        judged: {type: boolean, description: "False when there is no value, when the benchmark is not comparable to any metric of the channel (see comparable), or when a rate rests on fewer than 20 observations."}
         stale: {type: boolean, description: "True when checkedOn is more than 90 days old."}
+        numerator: {type: string, nullable: true, description: "The benchmark's own numerator; null when it has no definition."}
+        denominator: {type: string, nullable: true, description: "The benchmark's own denominator; null for a count or when it has no definition."}
+        sourceType: {type: string, nullable: true, description: "The benchmark's own traffic source; null means ALL."}
+        comparedMetricRef:
+          type: string
+          nullable: true
+          description: "CHANNEL.key of the metric value was read from: the metric the benchmark names, or another metric of the same channel whose definition matches the benchmark's."
+        metricDefinition:
+          allOf:
+            - $ref: "#/components/schemas/OverviewMetricDefinition"
+          nullable: true
+          description: The compared metric's definition.
+        comparable:
+          type: boolean
+          description: "True when the compared metric's numerator, denominator and source type equal the benchmark's. False when the benchmark has no definition or no metric of the channel matches; judged is then false."
+        reason:
+          type: string
+          nullable: true
+          description: "When comparable is false: \"definition missing\", or the two definitions named side by side. Null when comparable."
+
+    ReportAdsCoverage:
+      type: object
+      required: [campaignId, name, rows]
+      properties:
+        campaignId: {type: string}
+        name: {type: string}
+        spend: {type: number, format: double, nullable: true, description: "The campaign's spend over the window."}
+        keywordSpend: {type: number, format: double, nullable: true, description: "Spend of the keyword rows whose state names this campaign. 0 with rows 0 means no keyword row reached it."}
+        searchTermSpend: {type: number, format: double, nullable: true, description: "Spend of the search-term rows whose key starts with this campaign's id. Only the account's 50 largest search-term rows are read, so on a larger account this is a lower bound."}
+        keywordCoveragePct: {type: number, format: double, nullable: true, description: "keywordSpend / spend (0.98 = 98%). Null when the campaign has no spend."}
+        rows: {type: integer, description: Keyword rows plus search-term rows that belong to this campaign.}
+
+    ReportChangeMarker:
+      type: object
+      required: [day, changeId, displayId, title, status]
+      properties:
+        day: {type: string, format: date, description: The change's liveSince date.}
+        changeId: {type: string}
+        displayId: {type: string}
+        title: {type: string}
+        status: {type: string, description: LIVE or REVIEWED.}
 
     ReportChanges:
       type: object
@@ -11161,12 +11284,12 @@ components:
             $ref: "#/components/schemas/ReportChange"
         dueForReview:
           type: array
-          description: LIVE changes whose review date has passed.
+          description: PLANNED or LIVE changes whose review date has passed and that have no verdict yet.
           items:
             $ref: "#/components/schemas/ReportChange"
         reviewedInWindow:
           type: array
-          description: Changes moved to REVIEWED during the report window.
+          description: Changes that reached REVIEWED during the report window (by completion time, else last edit).
           items:
             $ref: "#/components/schemas/ReportChange"
 
