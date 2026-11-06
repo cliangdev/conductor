@@ -863,6 +863,58 @@
       ]
     },
     {
+      "name": "get_growth_signals",
+      "description": "Growth signals from public data: seasonal moments with overdue warnings, weekly ratings growth, recent reviews, competitor listing changes and keyword positions.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "set_marketing_moment",
+      "description": "Record a dated moment (e.g. Thanksgiving) and the surfaces that must change for it, each with a due date. A surface past due with no linked change warns.",
+      "category": "marketing",
+      "requiredParams": [
+        "key",
+        "name",
+        "date",
+        "surfaces"
+      ]
+    },
+    {
+      "name": "link_moment_change",
+      "description": "Link the marketing change Work Item that handled a moment surface, which clears its warning.",
+      "category": "marketing",
+      "requiredParams": [
+        "key",
+        "surfaceId",
+        "workItemId"
+      ]
+    },
+    {
+      "name": "add_competitor",
+      "description": "Watch a competitor app's public App Store listing, ratings, reviews and keyword positions each week.",
+      "category": "marketing",
+      "requiredParams": [
+        "appId",
+        "name"
+      ]
+    },
+    {
+      "name": "remove_competitor",
+      "description": "Stop watching a competitor app; its history is kept.",
+      "category": "marketing",
+      "requiredParams": [
+        "appId"
+      ]
+    },
+    {
+      "name": "set_tracked_keywords",
+      "description": "Replace the App Store keywords whose search position is recorded weekly for our app and each competitor.",
+      "category": "marketing",
+      "requiredParams": [
+        "keywords"
+      ]
+    },
+    {
       "name": "submit_review",
       "description": "Record an approve / request_changes verdict on a Post as this API key's user (an assigned REVIEWER). Approval schedules the Post.",
       "category": "marketing",
