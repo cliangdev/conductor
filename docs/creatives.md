@@ -209,6 +209,65 @@ names the route (`openai-api` or `codex`) and model; `model` and `quality` repor
   9:16 is 1.25x): check `placementFit`, and regenerate at the largest size in that aspect, use another
   photo or pick a framed layout.
 
+## Generating video
+
+`generate_creative_video` (local MCP tool) turns a prompt and, ideally, a first-frame still into a short
+MP4. Like image generation it runs on the person's machine and calls the model directly; it never runs on
+the backend. It is used only when the person asks for animation, motion or a video hook; the flow and
+checks are in the `conductor-marketing-create` skill (`references/direct.md`, "Video from a still").
+
+**Routes** (nothing runs until one is configured; the tool returns `VIDEO_ROUTE_NOT_CONFIGURED` with the commands):
+
+- **Vertex AI Veo 3.1:** `conductor config set-vertex-project <id>`, optional `set-vertex-region`
+  (`us-central1` is the only region today), and `gcloud auth login` or application-default credentials
+  (or env `CONDUCTOR_VERTEX_ACCESS_TOKEN`). Tiers: `lite`, `fast` (default), `standard`.
+- **Gemini API, Omni Flash:** `conductor config set-gemini-api-key <key>` (or env
+  `CONDUCTOR_GEMINI_API_KEY` / `GEMINI_API_KEY`). Veo on the Gemini API was shut down on 2026-10-22, hence Omni.
+  `tier` is ignored and reported.
+- `conductor config set-video-route vertex|gemini` picks one when both are set. Unset: Vertex if a project
+  is set, else Gemini if a key is set.
+
+**Cost gate and caps.** The tool estimates seconds x rate x count (conservative figures, labelled
+estimates). Without `confirmCost: true` it generates nothing and returns `VIDEO_COST_CONFIRMATION_REQUIRED`
+with `{estimateUsd, breakdown, spentTodayUsd, dailyCapUsd}`. Caps default to $2 per call
+(`VIDEO_COST_CAP_EXCEEDED`) and $5 per local day (`VIDEO_DAILY_CAP_EXCEEDED`); change them with
+`conductor config set-video-caps --per-call <usd> --daily <usd>`. Spend is recorded in
+`~/.conductor/video-spend.json` after a successful response; a safety-filtered result still counts when
+Google bills it, and so does any failure after Google accepted the job: a timeout, a job lost after three
+failed status checks in a row (the error names the operation), or a failed download. Those errors carry
+`billed: true`. `conductor doctor` reports the route and
+today's spend against the cap. The default per-second rates (`lite`, `fast`, `standard`, each also as
+`<tier>+audio`, plus `omni-720p` and `omni-1080p`) can be overridden with a partial `videoRates` map in
+`~/.conductor/config.json`, for example `"videoRates": {"fast+audio": 0.15}`.
+
+| Input | Notes |
+|---|---|
+| `prompt` | Required. Describe the action and, if wanted, the sound. |
+| `imagePath` | First frame. Strongly recommended: keeps the face, clothes and set. |
+| `lastFramePath` | Optional end frame; needs `imagePath`. |
+| `aspect` | `9:16` (default) or `16:9`. |
+| `durationSeconds` | 4, 6 or 8 (default 4) on Veo; 3 to 10 on Omni (asked for in the prompt, then measured). |
+| `resolution` | `1080p` (default) or `720p`. |
+| `tier` | `lite`, `fast` (default), `standard`. Vertex only. |
+| `generateAudio` | Default false. Native sound: ambience, SFX, short lip-synced lines. Raises cost. Omni always makes audio, so false strips it with ffmpeg (a warning if there is no ffmpeg). |
+| `count` | 1 or 2. |
+| `negativePrompt` | Vertex only; on Omni it is folded into the prompt as "Avoid: ...". |
+| `seed` | Optional. |
+| `confirmCost` | `true` after the person has seen the estimate. |
+
+**Output.** MP4s in `<projectRoot>/.conductor/generated/<timestamp>-<slug>/` (git-ignored, pruned after
+14 days), each with a `<file>.provenance.json` sidecar: `source`, `licence`, `aiGenerated: true`, `prompt`,
+`model`, `route`, `tier`, `resolution`, `generateAudio`, `estimatedCostUsd`, `sourceImagePath`,
+`lastFramePath`, `generatedAt`, `synthId: true`. The upload path reads it as it does for images. The result
+returns `files[] {path, width, height, durationSeconds, fps, hasAudio}`, `placementFit` (a 720p clip warns
+on 1080-wide placements), `estimatedCostUsd`, `spentTodayUsd`, `generator {route, model}` and, with ffmpeg
+present, an inline 4 fps contact sheet for the realism check. Use a clip as a MOTION `clipPath` or the
+opening of a CLIP; its sound is chosen with `audio.source` (`clip`, `mix`, `track`, `none`).
+
+**Limits.** 4/6/8 s on Veo, 3 to 10 s on Omni; 9:16 or 16:9. No 4K, extension or reference images yet.
+Veo 3.1 GA on Vertex lists retirement as "Nov 17, 2026 or later" with no replacement named. Output carries
+Google's SynthID watermark and counts as AI-generated for platform labels.
+
 ## Attach — "Use in Post"
 
 `POST .../creatives/{creativeId}/attach` links a `SUCCEEDED` render's frames to a Post as its own Assets (one per frame, same stored object, nothing copied) and

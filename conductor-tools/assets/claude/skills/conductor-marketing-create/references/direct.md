@@ -410,6 +410,53 @@ destination rewards video over an image.
 
 A reel or other vertical placement takes exactly one video, same as a CLIP.
 
+## Video from a still (generated clip)
+
+Only when the person asks for animation, motion, real movement or a video hook. Never offer it
+unprompted and never pick it yourself. A still with ffmpeg zoompan or shake looks fake; real motion
+needs `generate_creative_video`. Team mode is opt-in per run (`references/team-run.md`).
+
+1. **Still first.** Make the first frame with `generate_creative_image` and pass the realism check
+   (`references/realism-check.md`). A start still keeps the face, clothes and set steady. Optionally
+   make an end still and pass it as `lastFramePath` so the clip lands on a composed frame.
+2. **Say the cost, then call.** Before the first call state the number of clips, seconds, audio
+   on/off and the estimated cost. Call once without `confirmCost`: the tool returns
+   `VIDEO_COST_CONFIRMATION_REQUIRED` with the estimate. Show it, and call again with
+   `confirmCost: true` only after the person agrees.
+   - `VIDEO_ROUTE_NOT_CONFIGURED`: relay the setup commands and stop. Video is off until a route is set.
+   - `VIDEO_COST_CAP_EXCEEDED` or `VIDEO_DAILY_CAP_EXCEEDED`: say so plainly and mention
+     `conductor config set-video-caps`. Do not work around it (a shorter or cheaper call is the
+     person's choice).
+3. **Generate** with `generate_creative_video`: `imagePath` the still, `tier: "fast"` (default),
+   `resolution: "1080p"` (default; a 720p clip is a 1.5x upscale at 1080 wide, and `placementFit` warns).
+   `aspect` is `9:16` or `16:9`; `durationSeconds` 4, 6 or 8 (Omni 3 to 10). Describe the sound in the prompt.
+4. **Video realism check** before showing it (`references/realism-check.md`, "Video and audio"): the
+   4 fps contact sheet the tool returns, plus 100% crops of the face and hands at 2 or 3 timestamps
+   (extract frames with ffmpeg), and listen to the audio if there is any.
+5. **On fail**, retry at most twice, naming the failed tells in the prompt. After two failed Fast
+   takes, offer one `tier: "standard"` take with its cost; never run it automatically. If that
+   still fails, stop and say what looks generated.
+6. **Trim to the beat.** Hooks run about 2 to 4 s; a 4 s clip trimmed to about 3.4 s made a good hook.
+7. **Use it** as a MOTION background (`motion.background.source: "clip"` with `clipPath`, and
+   `motion.background.motion: "none"`: the clip already moves, and the default zoom would upscale it
+   and add a fake camera move) or the opening of a CLIP. Sound with `audio.source`: `clip` keeps the generated sound, `track` replaces it
+   with a library track, `none` mutes it; on a CLIP, `mix` also puts it under a library track (MOTION
+   has no `mix`).
+
+**Prompt for a person** (the first takes tend to overact, hence the acting line): handheld
+front-facing selfie; the start pose from the still; one clear action (for example "looks up from the
+phone, eyebrows lift, mouth opens slightly, palm-up hand"); "subtle, realistic acting, eyes stay
+their normal size, not exaggerated, not cartoonish"; "same person, clothes, set and light
+throughout"; "no text, no other people"; and "no talking" unless a spoken line is wanted.
+
+**Audio.** `generateAudio: true` makes native sound: ambience, SFX, short lip-synced lines. Audio
+raises the cost. A spoken line is at most about 8 words per 4 s, in quotes in the prompt, with no
+brand or product claim unless it passes the claims check, and the post needs captions for it. On the
+Gemini (Omni) route audio is always generated; with `generateAudio: false` the tool strips it.
+
+A generated clip is `aiGenerated: true` (its `.provenance.json` sidecar), so the AI label applies
+(`references/compliance-checklist.md`, section 2).
+
 ## Music
 
 Music works on a MOTION (`clip`, `track` or `none`), a CAROUSEL (`track`, which makes a slideshow video) and

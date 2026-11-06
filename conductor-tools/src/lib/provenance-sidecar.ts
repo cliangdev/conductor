@@ -13,6 +13,17 @@ export interface SidecarData extends SidecarProvenance {
   revisedPrompt?: string
   model?: string
   quality?: string
+  route?: string
+  tier?: string
+  resolution?: string
+  generateAudio?: boolean
+  estimatedCostUsd?: number
+  sourceImagePath?: string
+  lastFramePath?: string
+  generatedAt?: string
+  /** Google embeds SynthID in Veo and Omni output. */
+  synthId?: boolean
+  durationSeconds?: number
 }
 
 export const sidecarPath = (filePath: string): string => `${filePath}.provenance.json`

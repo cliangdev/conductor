@@ -49,12 +49,12 @@ function mp4(moovChildren: Buffer[], moovFirst = true): Buffer {
 describe('probeVideoBuffer', () => {
   it('reads duration from mvhd and dimensions from the video track', () => {
     const probe = probeVideoBuffer(mp4([mvhd(1000, 5250), trak(1080, 1920)]))
-    expect(probe).toEqual({ width: 1080, height: 1920, durationSeconds: 5.25 })
+    expect(probe).toMatchObject({ width: 1080, height: 1920, durationSeconds: 5.25 })
   })
 
   it('finds moov after mdat too (a file written without faststart)', () => {
     const probe = probeVideoBuffer(mp4([mvhd(600, 1800), trak(1920, 1080)], false))
-    expect(probe).toEqual({ width: 1920, height: 1080, durationSeconds: 3 })
+    expect(probe).toMatchObject({ width: 1920, height: 1080, durationSeconds: 3 })
   })
 
   it('applies a quarter-turn rotation matrix so portrait phone video reports portrait', () => {
@@ -74,7 +74,43 @@ describe('probeVideoBuffer', () => {
       width: null,
       height: null,
       durationSeconds: null,
+      fps: null,
+      hasAudio: false,
     })
-    expect(probeVideoBuffer(mp4([trak(640, 480)]))).toEqual({ width: 640, height: 480, durationSeconds: null })
+    expect(probeVideoBuffer(mp4([trak(640, 480)]))).toMatchObject({ width: 640, height: 480, durationSeconds: null })
+  })
+})
+
+describe('probeVideoBuffer fps and audio', () => {
+  function mdhd(timescale: number): Buffer {
+    return box('mdhd', u32(0), u32(0), u32(0), u32(timescale), u32(0), Buffer.alloc(4))
+  }
+  function stts(...entries: Array<[number, number]>): Buffer {
+    return box('stts', u32(0), u32(entries.length), ...entries.flatMap(([c, d]) => [u32(c), u32(d)]))
+  }
+  function trakWithTiming(width: number, height: number, handler: string, timescale: number, entries: Array<[number, number]>): Buffer {
+    return box('trak', tkhd(width, height), box('mdia', mdhd(timescale), hdlr(handler), box('minf', box('stbl', stts(...entries)))))
+  }
+
+  it('derives fps from mdhd and stts', () => {
+    const probe = probeVideoBuffer(mp4([mvhd(1000, 4000), trakWithTiming(1080, 1920, 'vide', 24000, [[96, 1000]])]))
+    expect(probe.fps).toBe(24)
+    expect(probe.hasAudio).toBe(false)
+  })
+
+  it('averages across several stts entries', () => {
+    const probe = probeVideoBuffer(mp4([mvhd(1000, 2000), trakWithTiming(720, 1280, 'vide', 600, [[30, 20], [30, 20]])]))
+    expect(probe.fps).toBe(30)
+  })
+
+  it('reports audio when there is a sound track', () => {
+    const probe = probeVideoBuffer(mp4([mvhd(1000, 2000), trakWithTiming(720, 1280, 'vide', 600, [[60, 20]]), trak(0, 0, 'soun')]))
+    expect(probe.hasAudio).toBe(true)
+    expect(probe.fps).toBe(30)
+    expect(probe.width).toBe(720)
+  })
+
+  it('leaves fps null when the track has no timing atoms', () => {
+    expect(probeVideoBuffer(mp4([mvhd(1000, 2000), trak(720, 1280)])).fps).toBeNull()
   })
 })

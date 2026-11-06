@@ -22,13 +22,18 @@ Each exists because of a known failure mode (sources are in `references/rubric.m
   writes reasoning before scores, compares finalists pairwise in both orders, and argues against its
   own leader.
 - **One gate.** The person is asked only at the final draft preview. Do not stop to ask which idea.
-  Two exceptions: S5b's disclosure question, asked only when disclosure cannot be inferred; and the
+  Exceptions: the video cost question at S5 (only in a run that asked for motion); S5b's disclosure question, asked only when disclosure cannot be inferred; and the
   pre-S0 question, at most one before S0, covering whatever choice exists: several kits and none
   named, which kit (SKILL.md "Brand kit first") and, if any kit has a slideshow style, native vs that
   look; a single kit that has a slideshow style, native vs the kit's look; nothing to choose, no
   question (`references/slideshow-formats.md`, "Style"). A resumed run reuses the `brandKitId` and
   `slideshowStyle` stored in `run.json`; the brand kit and the style source are separate answers.
 - **A run never creates a Post.** It ends at a committed Creative (or a shoot script).
+- **Video is opt-in per run.** Generated video (`generate_creative_video`) is used only when the request
+  asks for motion. The strategist may then tag an idea `RENDER (video)`; otherwise never. The art director
+  follows `references/direct.md`, "Video from a still". The clip must exist before the preview, so
+  this adds one question at S5: the estimate (clips, seconds, audio, cost); call with `confirmCost`
+  only after the person agrees. The S6 gate then shows what was spent beside the draft.
 - **Organic posts default to a slideshow.** A `RENDER` idea for an organic post (not an ad) is a
   native-looking slideshow built by `compose_slideshow` and posted as a CAROUSEL; see
   `references/slideshow-formats.md`. STILL and MOTION stay for ideas that really are one still, an

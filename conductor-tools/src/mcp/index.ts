@@ -127,6 +127,8 @@ const CREATIVE_TOOLS = [
 ] as const
 import { CodexConfirmationRequired } from '../lib/image-generation.js'
 import { generateCreativeImage, type GenerateCreativeImageParams } from './tools/creative-images.js'
+import { generateCreativeVideo } from './tools/creative-videos.js'
+import { VideoError, type VideoParams } from '../lib/video-common.js'
 import { composeSlideshowTool, type ComposeSlideshowParams } from './tools/slideshow.js'
 import { attachSlideshowSpec, type AttachSlideshowSpecParams } from './tools/slideshow-spec.js'
 import { updateCreativeSlideText, type UpdateCreativeSlideTextParams } from './tools/slideshow-text.js'
@@ -1764,6 +1766,28 @@ export const TOOLS = [
     },
   },
   {
+    name: 'generate_creative_video',
+    description: "Generate a short video clip from a still, on this machine's Google credentials (billed to the person). Use only when the person asked for motion or a video. It costs money: the first call returns VIDEO_COST_CONFIRMATION_REQUIRED with an estimate; tell the person, then call again with confirmCost: true. Routes: Veo 3.1 on Vertex AI (tier lite/fast/standard, 4/6/8 s) or Gemini Omni (3-10 s, always makes audio, which is stripped unless generateAudio), chosen by `conductor config`; with neither set it returns VIDEO_ROUTE_NOT_CONFIGURED with the setup commands. Per-call and daily caps apply. Returns local .mp4 paths (size, duration, fps, hasAudio), a 4 fps contact sheet, placementFit, cost and warnings, each file with a .provenance.json sidecar marking it AI-generated. Next: run the video realism check (retry at most twice), trim, then use the path as MOTION clipPath in preview_creative_draft or upload it as a CLIP.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prompt: { type: 'string', description: 'The motion, subject and any sound to hear' },
+        imagePath: { type: 'string', description: 'First-frame still (JPEG/PNG, up to 20 MB); strongly recommended' },
+        lastFramePath: { type: 'string', description: 'Optional end frame; needs imagePath' },
+        aspect: { type: 'string', enum: ['9:16', '16:9'], description: 'Default 9:16' },
+        durationSeconds: { type: 'number', description: 'Veo: 4, 6 or 8 (default 4). Omni: whole seconds 3-10' },
+        resolution: { type: 'string', enum: ['720p', '1080p'], description: 'Default 1080p' },
+        tier: { type: 'string', enum: ['lite', 'fast', 'standard'], description: 'Veo only, default fast; ignored on Omni' },
+        generateAudio: { type: 'boolean', description: 'Keep native sound, default false' },
+        count: { type: 'number', description: 'Clips, 1-2 (default 1)' },
+        negativePrompt: { type: 'string', description: 'What to avoid (folded into the prompt on Omni)' },
+        seed: { type: 'number', description: 'Veo only; whole number for repeatable takes' },
+        confirmCost: { type: 'boolean', description: 'Only after the person agreed to the estimate' },
+      },
+      required: ['prompt'],
+    },
+  },
+  {
     name: 'compose_slideshow',
     description: "Compose organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Native look by default; brandKitId applies that kit's slideshowStyle and style overrides on top. Slide types: photo, screen, notes, grid, stack, tier, week, receipt, placard, messages. Returns paths, checks, passed, the resolved `style` (spec.json keeps your input style and adds it as `resolvedStyle`) and the first slide as an image. If passed is false, fix and call again. Next: preview_creative_draft({kind: \"CAROUSEL\", slidePaths, slideStyle: style}); the spec.json beside the slides travels with the Creative at commit, which makes its text editable later. Nothing is sent to Conductor.",
     inputSchema: {
@@ -2970,6 +2994,26 @@ export async function runMcpServer(): Promise<void> {
               ],
               nextStep: 'Ask the person which they want. Only if they choose Codex, call again with useCodex: true.',
             })
+          }
+        }
+        case 'generate_creative_video': {
+          const progressToken = request.params._meta?.progressToken
+          let step = 0
+          const onProgress = progressToken === undefined
+            ? undefined
+            : (message: string) => {
+                step += 1
+                void extra.sendNotification({
+                  method: 'notifications/progress',
+                  params: { progressToken, progress: step, message },
+                }).catch(() => {})
+              }
+          try {
+            const { image, ...meta } = await generateCreativeVideo(params as unknown as VideoParams, { log: onProgress })
+            return image ? imageResponse(image, meta) : successResponse(meta)
+          } catch (err) {
+            if (!(err instanceof VideoError)) throw err
+            return errorResponse({ code: err.code, error: err.message, ...err.details })
           }
         }
         case 'compose_slideshow': {
