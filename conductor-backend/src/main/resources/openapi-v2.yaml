@@ -18,6 +18,8 @@ tags:
     description: What every marketing metric counts, where it comes from and what it excludes
   - name: marketing-report
     description: The one-call marketing report and the industry benchmarks it compares against
+  - name: marketing-growth-signals
+    description: Seasonal moments, the weekly ratings program and the competitor watch, from public data
   - name: marketing-changes
     description: Marketing change records (the MARKETING_CHANGES workflow), imported from an outside change log
   - name: work-items
@@ -4496,6 +4498,332 @@ paths:
           description: Removed
         "400":
           description: Invalid reference
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/growth-signals:
+    get:
+      tags:
+        - marketing-growth-signals
+      summary: Seasonal moments, ratings, reviews and the competitor watch in one call
+      description: >-
+        What the growth layer knows, from public data only. `moments` are the workspace's seasonal moments with
+        their surfaces: a surface whose due date has passed (UTC today is after `dueOn`) with no linked change
+        carries a `warning`, and the moment's `status` is `warning`; a moment within `leadDays` of its date with a
+        surface not yet overdue is `upcoming`. `ratings` holds the workspace's own app (`ours`, its App Store
+        Connect app) and each watched competitor with the latest and previous weekly snapshot and
+        `weeklyGrowth`, the rating-count change between them (null, never 0, until two snapshots of the same storefront exist).
+        `reviews` are the most recent public App Store reviews (10 for our app, 5 per competitor).
+        `competitorChanges` lists what changed on a competitor's listing between its last two snapshots (only
+        competitors that changed). `keywordPresence` gives, per tracked keyword, each app's 1-based App Store
+        search position in the latest snapshot; an app absent from the map or null was not among the first 50
+        results. `trackedKeywords` says which keywords are looked up: the PRODUCT feed's `aso:<keyword>` rows when it
+        has any, else the list set with `PUT .../tracked-keywords`. A value Apple did not return reads null.
+      operationId: getGrowthSignals
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The growth signals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthSignals"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/moments/{key}:
+    put:
+      tags:
+        - marketing-growth-signals
+      summary: Set a seasonal moment and the surfaces that must change for it
+      description: >-
+        Idempotent full replace of the moment at `key` (lower-case letters, digits, hyphens and underscores, for
+        example `thanksgiving-2026`). `surfaces` is the whole list (it may be empty): a surface already on the moment
+        (matched by name) keeps its linked change and takes the new `dueOn`, a new name is added, and a name left out
+        is removed. An omitted `leadDays` is 21. Requires ADMIN or CREATOR.
+      operationId: setMarketingMoment
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketingMomentRequest"
+      responses:
+        "200":
+          description: The stored moment, evaluated as of UTC today
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthMoment"
+        "400":
+          description: An invalid key, name, date, leadDays or surface list (duplicate names, more than 25 surfaces)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/moments/{key}/surfaces/{surfaceId}/change:
+    post:
+      tags:
+        - marketing-growth-signals
+      summary: Link the change that handled a moment's surface
+      description: >-
+        Records which marketing change handled the surface, which clears its warning. `workItemId` is a Work Item on
+        the MARKETING_CHANGES workflow in this project, by id or display id (for example `RE-12`); a Work Item of
+        another project or workflow is refused. Linking again replaces the earlier link. Requires ADMIN or CREATOR.
+      operationId: linkMarketingMomentChange
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: surfaceId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkMomentChangeRequest"
+      responses:
+        "200":
+          description: The moment with the change linked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthMoment"
+        "400":
+          description: The Work Item is not a MARKETING_CHANGES Work Item in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The moment or the surface does not exist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/competitors:
+    post:
+      tags:
+        - marketing-growth-signals
+      summary: Watch a competitor's App Store listing
+      description: >-
+        Starts the weekly snapshot, reviews and keyword positions for the app. `appId` is the numeric App Store id
+        (digits only). Idempotent per `appId`: adding an app already watched (or removed earlier) updates its name
+        and country and watches it again (200); a new one is 201. `country` is a two-letter App Store country and
+        defaults to the workspace's own. The workspace's own app cannot be a competitor. Requires ADMIN or CREATOR.
+      operationId: addMarketingCompetitor
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddGrowthCompetitorRequest"
+      responses:
+        "200":
+          description: The competitor was already known; it is watched again
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthCompetitor"
+        "201":
+          description: The competitor is now watched
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthCompetitor"
+        "400":
+          description: An app id that is not digits, a missing name, a country that is not two letters, or the workspace's own app
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - marketing-growth-signals
+      summary: Stop watching a competitor
+      description: >-
+        Idempotent: removing an app that is not watched is a no-op. Its stored snapshots and reviews are kept and
+        reappear if the app is added again. Requires ADMIN or CREATOR.
+      operationId: removeMarketingCompetitor
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: appId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The numeric App Store id of the competitor.
+      responses:
+        "204":
+          description: Removed
+        "400":
+          description: An app id that is not digits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/tracked-keywords:
+    put:
+      tags:
+        - marketing-growth-signals
+      summary: Replace the keywords whose App Store position is tracked
+      description: >-
+        Idempotent full replace of the project's keyword list (at most 25; an empty list clears it). Keywords are
+        trimmed, lower-cased and de-duplicated. The weekly job searches each keyword once in `country` (default: the
+        workspace's own) and records every watched app's position. The list is used only while the PRODUCT feed has no
+        `aso:<keyword>` rows; otherwise those keywords are tracked instead. Requires ADMIN or CREATOR.
+      operationId: setMarketingTrackedKeywords
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetTrackedKeywordsRequest"
+      responses:
+        "200":
+          description: The stored list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthTrackedKeywords"
+        "400":
+          description: More than 25 keywords, a blank or over-long keyword, or a country that is not two letters
           content:
             application/json:
               schema:
@@ -10408,6 +10736,215 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MarketingBenchmark"
+
+    GrowthSignals:
+      type: object
+      required: [moments, ratings, reviews, competitorChanges, keywordPresence, trackedKeywords]
+      properties:
+        moments:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthMoment"
+        ratings:
+          $ref: "#/components/schemas/GrowthRatings"
+        reviews:
+          $ref: "#/components/schemas/GrowthReviews"
+        competitorChanges:
+          type: array
+          description: Only competitors whose listing changed between their last two snapshots.
+          items:
+            $ref: "#/components/schemas/GrowthCompetitorChange"
+        keywordPresence:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthKeywordPresence"
+        trackedKeywords:
+          $ref: "#/components/schemas/GrowthTrackedKeywords"
+
+    GrowthMoment:
+      type: object
+      required: [key, name, date, leadDays, status, surfaces]
+      properties:
+        key: {type: string}
+        name: {type: string}
+        date: {type: string, format: date}
+        leadDays: {type: integer, description: "How many days before the date its surfaces start to count as upcoming."}
+        status: {type: string, description: "warning (a surface is past due with no change), upcoming (within leadDays of the date with a surface not yet overdue), scheduled, or past. Computed on read from UTC today."}
+        surfaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthSurface"
+
+    GrowthSurface:
+      type: object
+      required: [id, surface, dueOn]
+      properties:
+        id: {type: string}
+        surface: {type: string, description: "Where the change goes, e.g. App Store promotional text, TikTok post, Email."}
+        dueOn: {type: string, format: date}
+        changeWorkItemId: {type: string, nullable: true, description: "The MARKETING_CHANGES Work Item that handled the surface; null until one is linked."}
+        changeDisplayId: {type: string, nullable: true, description: "Display id of that Work Item, e.g. RE-12."}
+        warning: {type: string, nullable: true, description: "Present only when UTC today is after dueOn and no change is linked."}
+
+    GrowthRatings:
+      type: object
+      required: [competitors]
+      properties:
+        ours:
+          $ref: "#/components/schemas/GrowthAppRating"
+        competitors:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthAppRating"
+
+    GrowthAppRating:
+      type: object
+      required: [appId, country]
+      properties:
+        appId: {type: string}
+        name: {type: string, nullable: true}
+        country: {type: string, description: "The App Store country the app is read from."}
+        latest:
+          $ref: "#/components/schemas/GrowthSnapshot"
+        previous:
+          $ref: "#/components/schemas/GrowthSnapshot"
+        weeklyGrowth: {type: integer, format: int64, nullable: true, description: "Rating count in latest minus previous; null unless both snapshots are from the same storefront and have a rating count. Never 0 for missing data."}
+
+    GrowthSnapshot:
+      type: object
+      required: [capturedOn]
+      properties:
+        capturedOn: {type: string, format: date, description: "The Monday of the ISO week the snapshot stands for (UTC)."}
+        country: {type: string, nullable: true, description: "The App Store storefront the snapshot was read from. Snapshots of different storefronts are never compared, so weeklyGrowth and the competitor change list are empty across a country change."}
+        price: {type: number, format: double, nullable: true}
+        currency: {type: string, nullable: true}
+        ratingAvg: {type: number, format: double, nullable: true}
+        ratingCount: {type: integer, format: int64, nullable: true}
+        version: {type: string, nullable: true}
+        title: {type: string, nullable: true}
+        subtitle: {type: string, nullable: true}
+
+    GrowthReviews:
+      type: object
+      required: [ours, competitors]
+      properties:
+        ours:
+          type: array
+          description: The latest 10 reviews of our app.
+          items:
+            $ref: "#/components/schemas/GrowthReview"
+        competitors:
+          type: array
+          description: The latest 5 reviews of each watched competitor.
+          items:
+            $ref: "#/components/schemas/GrowthAppReviews"
+
+    GrowthAppReviews:
+      type: object
+      required: [appId, name, reviews]
+      properties:
+        appId: {type: string}
+        name: {type: string}
+        reviews:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthReview"
+
+    GrowthReview:
+      type: object
+      properties:
+        rating: {type: integer, nullable: true}
+        title: {type: string, nullable: true}
+        body: {type: string, nullable: true}
+        author: {type: string, nullable: true}
+        reviewedAt: {type: string, format: date-time, nullable: true}
+
+    GrowthCompetitorChange:
+      type: object
+      required: [appId, name, changes]
+      properties:
+        appId: {type: string}
+        name: {type: string}
+        changes:
+          type: array
+          description: "Plain lines such as \"price 0.99 -> 1.99\"; a field missing in either week is not compared."
+          items: {type: string}
+
+    GrowthKeywordPresence:
+      type: object
+      required: [keyword, competitors]
+      properties:
+        keyword: {type: string}
+        ours: {type: integer, nullable: true, description: "Our app's 1-based search position in the latest snapshot; null when it was not among the first 50 results or was not checked."}
+        competitors:
+          type: object
+          description: "Competitor appId to its 1-based search position in its latest snapshot; null when it was not among the first 50 results, and no entry when its latest snapshot did not check the keyword."
+          additionalProperties:
+            type: integer
+            nullable: true
+
+    GrowthTrackedKeywords:
+      type: object
+      required: [source, country, keywords]
+      properties:
+        source: {type: string, description: "PRODUCT_FEED (the feed's aso:<keyword> rows) or PROJECT_LIST (the list set with the PUT)."}
+        country: {type: string}
+        keywords:
+          type: array
+          items: {type: string}
+
+    MarketingMomentRequest:
+      type: object
+      required: [name, date, surfaces]
+      properties:
+        name: {type: string, maxLength: 200}
+        date: {type: string, format: date, description: "The day of the moment, e.g. 2026-11-26 for Thanksgiving."}
+        leadDays: {type: integer, minimum: 0, maximum: 365, description: "Default 21."}
+        surfaces:
+          type: array
+          maxItems: 25
+          items:
+            $ref: "#/components/schemas/MarketingMomentSurfaceRequest"
+
+    MarketingMomentSurfaceRequest:
+      type: object
+      required: [surface, dueOn]
+      properties:
+        surface: {type: string, maxLength: 120}
+        dueOn: {type: string, format: date}
+
+    LinkMomentChangeRequest:
+      type: object
+      required: [workItemId]
+      properties:
+        workItemId: {type: string, description: "A MARKETING_CHANGES Work Item of this project, by id or display id (RE-12)."}
+
+    AddGrowthCompetitorRequest:
+      type: object
+      required: [appId, name]
+      properties:
+        appId: {type: string, maxLength: 20, description: "Numeric App Store id, digits only."}
+        name: {type: string, maxLength: 200}
+        country: {type: string, maxLength: 2, description: "Two-letter App Store country; defaults to the workspace's own."}
+
+    GrowthCompetitor:
+      type: object
+      required: [appId, name, country, active]
+      properties:
+        appId: {type: string}
+        name: {type: string}
+        country: {type: string}
+        active: {type: boolean}
+
+    SetTrackedKeywordsRequest:
+      type: object
+      required: [keywords]
+      properties:
+        keywords:
+          type: array
+          maxItems: 25
+          items: {type: string, maxLength: 100}
+        country: {type: string, maxLength: 2, description: "Two-letter App Store country the keywords are searched in; defaults to the workspace's own."}
 
     MarketingReport:
       type: object

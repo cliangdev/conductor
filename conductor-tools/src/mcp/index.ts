@@ -82,6 +82,14 @@ import { getMarketingInsights } from './tools/insights.js'
 import { getBudgetPacing, setMarketingBudget, setStopRule, removeStopRule } from './tools/budget.js'
 import { getMarketingDefinitions } from './tools/marketing-definitions.js'
 import { getMarketingReport, setMarketingBenchmark, deleteMarketingBenchmark } from './tools/marketing-report.js'
+import {
+  getGrowthSignals,
+  setMarketingMoment,
+  linkMomentChange,
+  addCompetitor,
+  removeCompetitor,
+  setTrackedKeywords,
+} from './tools/growth-signals.js'
 import { importMarketingChanges } from './tools/marketing-changes.js'
 import {
   getBrandKit,
@@ -1495,6 +1503,84 @@ export const TOOLS = [
     },
   },
   {
+    name: 'get_growth_signals',
+    description: 'Growth signals from public data: seasonal moments with their surfaces and overdue warnings, the weekly ratings program (our app and each competitor: latest and previous snapshot, weeklyGrowth = rating-count change, null until two snapshots), recent reviews, what changed on competitor listings, and App Store keyword positions. Read-only. Change the inputs with set_marketing_moment, link_moment_change, add_competitor, remove_competitor and set_tracked_keywords.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'set_marketing_moment',
+    description: 'Record or replace a dated moment (for example Thanksgiving, 2026-11-26) and the surfaces that must change for it, each with a due date. A surface past its due date with no linked change shows a warning. surfaces is the whole list: a surface kept by name keeps its linked change, one left out is removed. Requires the Editor role (or Admin). Verify with get_growth_signals (moments).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Stable id: lower-case letters, digits, hyphens, underscores (e.g. thanksgiving-2026)' },
+        name: { type: 'string', description: 'Display name' },
+        date: { type: 'string', description: 'YYYY-MM-DD, the day of the moment' },
+        leadDays: { type: 'integer', description: 'Days ahead the moment counts as upcoming (default 21)' },
+        surfaces: {
+          type: 'array',
+          description: 'Where a change is needed and by when',
+          items: {
+            type: 'object',
+            properties: {
+              surface: { type: 'string', description: 'e.g. App Store promotional text, TikTok post, Email' },
+              dueOn: { type: 'string', description: 'YYYY-MM-DD, the day the change must be recorded by' },
+            },
+            required: ['surface', 'dueOn'],
+          },
+        },
+      },
+      required: ['key', 'name', 'date', 'surfaces'],
+    },
+  },
+  {
+    name: 'link_moment_change',
+    description: 'Record the marketing change (a MARKETING_CHANGES Work Item of this project) that handled a moment surface, which clears its warning. A Work Item of another project or workflow is refused. Requires the Editor role (or Admin). Verify with get_growth_signals (moments).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'The moment key' },
+        surfaceId: { type: 'string', description: 'The surface id from get_growth_signals' },
+        workItemId: { type: 'string', description: 'The change Work Item: its id or display id (e.g. RE-12)' },
+      },
+      required: ['key', 'surfaceId', 'workItemId'],
+    },
+  },
+  {
+    name: 'add_competitor',
+    description: 'Watch a competitor app: each week its public App Store listing, rating count, reviews and keyword positions are recorded. Idempotent per appId (re-adding updates the name and country). Requires the Editor role (or Admin). Verify with get_growth_signals (ratings.competitors); data appears after the next weekly run.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appId: { type: 'string', description: 'Numeric App Store id, digits only' },
+        name: { type: 'string', description: 'Display name' },
+        country: { type: 'string', description: 'Two-letter App Store country (default: our app\'s)' },
+      },
+      required: ['appId', 'name'],
+    },
+  },
+  {
+    name: 'remove_competitor',
+    description: 'Stop watching a competitor app (idempotent); its stored history is kept. Requires the Editor role (or Admin). Verify with get_growth_signals (ratings.competitors).',
+    inputSchema: {
+      type: 'object',
+      properties: { appId: { type: 'string', description: 'Numeric App Store id' } },
+      required: ['appId'],
+    },
+  },
+  {
+    name: 'set_tracked_keywords',
+    description: 'Replace the App Store keywords whose search position is recorded weekly for our app and each competitor (at most 25; an empty list clears it). Used only while the product feed has no aso:<keyword> rows; otherwise those keywords are tracked. Requires the Editor role (or Admin). Verify with get_growth_signals (trackedKeywords, keywordPresence).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        keywords: { type: 'array', items: { type: 'string' }, description: 'The full list of keywords' },
+        country: { type: 'string', description: 'Two-letter App Store country to search in (default: our app\'s)' },
+      },
+      required: ['keywords'],
+    },
+  },
+  {
     name: 'import_marketing_changes',
     description: 'Import a marketing change log from a local JSONL file (one record per line: id, date, type, title, status, changed, evidence[], hypothesis, baseline, control, live_since, review_on, outcome, verdict, lesson, stop_rules, stop_rules_note) as Changes on the MARKETING_CHANGES workflow, each in the status its record has. Reference records are skipped; an unknown status or verdict refuses that record and names it, never guessed. A bad line stops everything before anything is sent. Safe to run again: a record already imported (same source and id) is left alone. Requires the Editor role (or Admin). Verify with get_marketing_report (changes).',
     inputSchema: {
@@ -2886,6 +2972,49 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'delete_marketing_benchmark': {
           return successResponse(await deleteMarketingBenchmark(config, { metricRef: params['metricRef'] as string }))
+        }
+        case 'get_growth_signals': {
+          return successResponse(await getGrowthSignals(config))
+        }
+        case 'set_marketing_moment': {
+          return successResponse(
+            await setMarketingMoment(config, {
+              key: params['key'] as string,
+              name: params['name'] as string,
+              date: params['date'] as string,
+              leadDays: params['leadDays'] as number | undefined,
+              surfaces: params['surfaces'] as Array<{ surface: string; dueOn: string }>,
+            })
+          )
+        }
+        case 'link_moment_change': {
+          return successResponse(
+            await linkMomentChange(config, {
+              key: params['key'] as string,
+              surfaceId: params['surfaceId'] as string,
+              workItemId: params['workItemId'] as string,
+            })
+          )
+        }
+        case 'add_competitor': {
+          return successResponse(
+            await addCompetitor(config, {
+              appId: params['appId'] as string,
+              name: params['name'] as string,
+              country: params['country'] as string | undefined,
+            })
+          )
+        }
+        case 'remove_competitor': {
+          return successResponse(await removeCompetitor(config, { appId: params['appId'] as string }))
+        }
+        case 'set_tracked_keywords': {
+          return successResponse(
+            await setTrackedKeywords(config, {
+              keywords: params['keywords'] as string[],
+              country: params['country'] as string | undefined,
+            })
+          )
         }
         case 'import_marketing_changes': {
           return successResponse(
