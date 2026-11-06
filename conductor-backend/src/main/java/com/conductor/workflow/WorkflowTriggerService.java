@@ -208,9 +208,16 @@ public class WorkflowTriggerService {
         log.info("Upserted schedule for workflow {} with cron '{}'", workflow.getId(), cronExpression);
     }
 
+    /**
+     * Workflow YAML uses the 5-field cron (minute hour day month weekday, UTC) that docs/workflows.md documents and
+     * the validator enforces; Spring's {@link CronExpression} wants a leading seconds field, so a 5-field expression
+     * gets "0 " in front. Without it every documented schedule parsed to null and never fired.
+     */
     public java.time.OffsetDateTime computeNextRun(String cronExpression, ZonedDateTime from) {
         try {
-            CronExpression expr = CronExpression.parse(cronExpression);
+            String trimmed = cronExpression == null ? null : cronExpression.trim();
+            String spring = trimmed != null && trimmed.split("\\s+").length == 5 ? "0 " + trimmed : trimmed;
+            CronExpression expr = CronExpression.parse(spring);
             ZonedDateTime next = expr.next(from);
             return next != null ? next.toOffsetDateTime() : null;
         } catch (Exception e) {

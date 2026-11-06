@@ -157,4 +157,17 @@ class WorkflowTriggerServiceTest {
         assertThat(run.getStatus()).isEqualTo(WorkflowRunStatus.PENDING);
         verify(workflowRunRepository, never()).findByWorkflowIdAndStatusIn(any(), any());
     }
+
+    @Test
+    void aFiveFieldCronAsTheDocsWriteItComputesItsNextRun() {
+        java.time.ZonedDateTime sundayNoon = java.time.ZonedDateTime.parse("2026-11-08T12:00:00Z");
+
+        // "30 7 * * 1" is Monday 07:30 UTC; Spring alone rejects 5 fields, which left every schedule unfired
+        assertThat(service.computeNextRun("30 7 * * 1", sundayNoon))
+                .isEqualTo(java.time.OffsetDateTime.parse("2026-11-09T07:30:00Z"));
+        // a 6-field expression (seconds first) is still read as written
+        assertThat(service.computeNextRun("0 30 7 * * MON", sundayNoon))
+                .isEqualTo(java.time.OffsetDateTime.parse("2026-11-09T07:30:00Z"));
+        assertThat(service.computeNextRun("not a cron", sundayNoon)).isNull();
+    }
 }
