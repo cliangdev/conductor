@@ -9,6 +9,7 @@ import com.conductor.generated.v2.model.OverviewMetricDefinition;
 import com.conductor.generated.v2.model.ReportAcquisitionRow;
 import com.conductor.generated.v2.model.ReportAd;
 import com.conductor.generated.v2.model.ReportAdsCoverage;
+import com.conductor.generated.v2.model.ReportAsoKeyword;
 import com.conductor.generated.v2.model.ReportBenchmark;
 import com.conductor.generated.v2.model.ReportChange;
 import com.conductor.generated.v2.model.ReportChangeMarker;
@@ -16,14 +17,18 @@ import com.conductor.generated.v2.model.ReportChanges;
 import com.conductor.generated.v2.model.ReportCoverage;
 import com.conductor.generated.v2.model.ReportDay;
 import com.conductor.generated.v2.model.ReportDerivation;
+import com.conductor.generated.v2.model.ReportExclusion;
 import com.conductor.generated.v2.model.ReportFunnel;
 import com.conductor.generated.v2.model.ReportFunnelStage;
 import com.conductor.generated.v2.model.ReportKeyword;
 import com.conductor.generated.v2.model.ReportMetric;
+import com.conductor.generated.v2.model.ReportPayback;
+import com.conductor.generated.v2.model.ReportPaybackRow;
 import com.conductor.generated.v2.model.ReportScorecardRow;
 import com.conductor.generated.v2.model.ReportScorecardSource;
 import com.conductor.generated.v2.model.ReportSource;
 import com.conductor.generated.v2.model.ReportStore;
+import com.conductor.generated.v2.model.ReportVerification;
 import com.conductor.generated.v2.model.ReportWindow;
 import com.conductor.generated.v2.model.WorkItemAssignee;
 import com.conductor.marketing.overview.MetricCatalog;
@@ -121,7 +126,10 @@ public class MarketingReportController implements MarketingReportApi {
                         .adGroup(k.adGroup()).campaign(k.campaign()).status(k.status()).matchType(k.matchType())
                         .bid(k.bid()).impressions(k.impressions()).taps(k.taps()).tapRate(k.tapRate())
                         .installs(k.installs()).installRate(k.installRate()).spend(k.spend()).cpi(k.cpi())
-                        .trials(k.trials()).activations(k.activations()).newDownloads(k.newDownloads())).toList(),
+                        .trials(k.trials()).activations(k.activations()).newDownloads(k.newDownloads())
+                        .retainedW2(k.retainedW2()).costPerActivatedInstall(k.costPerActivatedInstall())
+                        .costPerRetainedW2Install(k.costPerRetainedW2Install()).costPerTrial(k.costPerTrial())
+                        .qualityNote(k.qualityNote())).toList(),
                 r.ads().stream().map(a -> new ReportAd(a.adId(), a.name()).adGroup(a.adGroup())
                         .creativeType(a.creativeType()).productPageId(a.productPageId()).status(a.status())
                         .impressions(a.impressions()).taps(a.taps()).installs(a.installs())
@@ -137,7 +145,27 @@ public class MarketingReportController implements MarketingReportApi {
                 .definitions(toDefinitions(r.definitions()))
                 .store(r.store() == null ? null : new ReportStore().downloadsOfRecord(r.store().downloadsOfRecord())
                         .analyticsDownloads(r.store().analyticsDownloads())
-                        .coverage(toCoverage(r.store().coverage())));
+                        .coverage(toCoverage(r.store().coverage())))
+                .payback(toPayback(r.payback()))
+                .exclusions(r.exclusions().stream().map(e -> new ReportExclusion(e.key(), e.label())
+                        .value(e.value()).note(e.note())).toList())
+                .asoKeywords(r.asoKeywords().stream().map(a -> new ReportAsoKeyword(a.keyword()).rank(a.rank())
+                        .popularity(a.popularity()).rankChange(a.rankChange()).previousRank(a.previousRank()))
+                        .toList())
+                .verification(r.verification() == null ? null
+                        : new ReportVerification(r.verification().unchecked(), r.verification().mismatched(),
+                                r.verification().staleReads(), r.verification().both()));
+    }
+
+    private static ReportPayback toPayback(MarketingReportService.Payback p) {
+        return p == null ? null
+                : new ReportPayback(p.channels().stream().map(MarketingReportController::toPaybackRow).toList(),
+                        toPaybackRow(p.total()), p.basis());
+    }
+
+    private static ReportPaybackRow toPaybackRow(MarketingReportService.PaybackRow r) {
+        return new ReportPaybackRow(r.channel(), r.label()).spend(r.spend()).proceedsNet12m(r.proceedsNet12m())
+                .ratio(r.ratio()).note(r.note());
     }
 
     private static ReportAcquisitionRow toAcquisitionRow(MarketingReportService.AcquisitionRow a) {
@@ -145,6 +173,7 @@ public class MarketingReportController implements MarketingReportApi {
                 .reach(a.reach()).reachLabel(a.reachLabel()).actions(a.actions())
                 .actionsLabel(a.actionsLabel()).installs(a.installs()).cost(a.cost()).note(a.note())
                 .viewThroughInstalls(a.viewThroughInstalls()).likes(a.likes())
+                .installsLabel(a.installsLabel()).definitionLine(a.definitionLine())
                 .derivation(a.derivation() == null ? null
                         : new ReportDerivation(a.derivation().from(), a.derivation().to(), a.derivation().days())
                                 .grossInstalls(a.derivation().grossInstalls())
