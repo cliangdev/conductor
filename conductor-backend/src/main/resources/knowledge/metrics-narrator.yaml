@@ -65,6 +65,9 @@ jobs:
             - The payload's "moversComparedTo" field means the dimension movers (top queries/pages/etc.)
               were computed over a different lookback window than the scalar metrics above them. If you
               mention a mover, don't imply it shares the same window as "this period"'s metrics.
+            - If the payload has "changesDueForReview", list those changes in one sentence (displayId and
+              title, the first few plus the count when there are many) as past their review date with no
+              verdict. Do not guess how they turned out.
             - You may offer AT MOST ONE plausible cause for the overall change, and only if it's
               genuinely suggested by the data. Mark it explicitly as a guess (e.g. "possibly related
               to...") -- you have no access to deploys, campaigns, or anything outside this JSON, so

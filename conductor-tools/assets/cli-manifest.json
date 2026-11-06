@@ -903,6 +903,14 @@
       ]
     },
     {
+      "name": "import_marketing_changes",
+      "description": "Import a marketing change log from a local JSONL file as Changes on the MARKETING_CHANGES workflow. Reference records are skipped, an unknown status or verdict refuses that record, and re-running skips what was already imported.",
+      "category": "marketing",
+      "requiredParams": [
+        "filePath"
+      ]
+    },
+    {
       "name": "submit_review",
       "description": "Record an approve / request_changes verdict on a Post as this API key's user (an assigned REVIEWER). Approval schedules the Post.",
       "category": "marketing",

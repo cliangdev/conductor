@@ -167,6 +167,43 @@ class MetricsDigestServiceTest {
     }
 
     @Test
+    void changesDueForReviewForceMaterialityEvenOnAnOtherwiseFlatPeriod() throws Exception {
+        ConnectorFeed feed = feed();
+        MetricsAggregator aggregator = new MetricsAggregator();
+        MetricsChangeDetector detector = new MetricsChangeDetector();
+        IngestSpec spec = metricSpec();
+
+        Map<String, Object> flatPayload = Map.of("trend", List.of(Map.of("date", "2026-07-20", "clicks", 4200)));
+        MetricsBaseline baseline = null;
+        for (int i = 0; i < 6; i++) {
+            MetricsSnapshot snapshot = aggregator.aggregate(flatPayload, spec, null);
+            ChangeDetectionResult result = detector.detect(snapshot, baseline, spec.digest(), "period-" + i, 0);
+            baseline = result.updatedBaseline();
+        }
+        feed.setLastStats(new ObjectMapper().convertValue(baseline, Map.class));
+        feed.setQuietPeriods(0);
+
+        when(digestRepository.findByFeedIdAndPeriodKey("feed-1", "period-final")).thenReturn(Optional.empty());
+        Map<String, Object> overdue = Map.of(
+                "label", "Changes past their review date with no verdict", "count", 1,
+                "changes", List.of(Map.of("displayId", "MK-3", "title", "New title", "status", "LIVE",
+                        "dueOn", "2026-10-20")));
+        IngestItem item = itemWithPeriodKey("period-final", Map.of(
+                "trend", List.of(Map.of("date", "2026-07-20", "clicks", 4200)),
+                "changesDueForReview", overdue));
+
+        service.record(feed, spec, item, null);
+
+        ArgumentCaptor<ConnectorFeedDigest> captor = ArgumentCaptor.forClass(ConnectorFeedDigest.class);
+        verify(digestRepository).save(captor.capture());
+        ConnectorFeedDigest saved = captor.getValue();
+        // An overdue review is an open action, not noise: the flat metric alone would have skipped this digest.
+        assertThat(saved.isMaterial()).isTrue();
+        assertThat(saved.getStatus()).isEqualTo(DigestStatus.PENDING);
+        assertThat(saved.getChangeReport()).containsEntry("changesDueForReview", overdue);
+    }
+
+    @Test
     void steadyRepeatedPeriod_isNonMaterialAndPersistsSkippedDigest() throws Exception {
         ConnectorFeed feed = feed();
         MetricsAggregator aggregator = new MetricsAggregator();

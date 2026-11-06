@@ -38,7 +38,7 @@ class WorkItemFieldsTest {
         assertThat(chart.fields()).extracting("key").containsExactly(
                 "hypothesis", "baseline", "control", "liveSince", "outcome", "verdict", "lesson", "evidence");
         assertThat(chart.field("verdict").orElseThrow().options())
-                .containsExactly("worked", "did_not_work", "inconclusive");
+                .containsExactly("worked", "did_not_work", "no_effect", "expected", "inconclusive");
         assertThat(chart.field("liveSince").orElseThrow().requiredIn()).containsExactly("LIVE", "REVIEWED");
     }
 
