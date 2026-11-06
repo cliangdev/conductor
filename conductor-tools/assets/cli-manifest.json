@@ -837,6 +837,12 @@
       "requiredParams": []
     },
     {
+      "name": "get_marketing_definitions",
+      "description": "What each marketing metric counts: source report or field, numerator and denominator, source type, exclusions and time zone. Optionally one channel.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
       "name": "get_marketing_report",
       "description": "The whole-funnel marketing report in one payload: sources, headline metrics, acquisition by source, funnel with its biggest drop, daily chart data, scorecard, keywords, ads, benchmarks and changes. Window 7d or 28d.",
       "category": "marketing",

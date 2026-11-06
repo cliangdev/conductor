@@ -79,6 +79,7 @@ import {
   type CreatePostParams,
 } from './tools/posts.js'
 import { getMarketingInsights } from './tools/insights.js'
+import { getMarketingDefinitions } from './tools/marketing-definitions.js'
 import { getMarketingReport, setMarketingBenchmark, deleteMarketingBenchmark } from './tools/marketing-report.js'
 import {
   getBrandKit,
@@ -1387,6 +1388,16 @@ export const TOOLS = [
         window: { type: 'string', enum: ['7d', '30d', '90d'], description: 'How far back to look (default 30d). Channels: 30d means 28 days; 90d only with `channel`' },
         platform: { type: 'string', description: 'Restrict posts to one platform, from the project\'s connected platforms (optional; needs "posts")' },
         channel: { type: 'string', enum: ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE', 'PRODUCT'], description: 'With "channels": add this channel\'s series and breakdown tables (optional)' },
+      },
+    },
+  },
+  {
+    name: 'get_marketing_definitions',
+    description: 'What each marketing metric counts: per metric (metricRef CHANNEL.key) its source report or field, numerator and denominator, source type (ALL or one App Store traffic source), what it excludes and the time zone of its days. Check it before comparing a metric with a benchmark or another source: two figures compare only when numerator, denominator and source type match. Read-only. Use get_marketing_report or get_marketing_insights for the numbers.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', enum: ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE', 'PRODUCT'], description: 'Only this channel\'s metrics (default all)' },
       },
     },
   },
@@ -2752,6 +2763,9 @@ export async function runMcpServer(): Promise<void> {
               channel: params['channel'] as string | undefined,
             })
           )
+        }
+        case 'get_marketing_definitions': {
+          return successResponse(await getMarketingDefinitions(config, { channel: params['channel'] as string | undefined }))
         }
         case 'get_marketing_report': {
           return successResponse(await getMarketingReport(config, { window: params['window'] as string | undefined }))
