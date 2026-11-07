@@ -77,10 +77,12 @@ public class WorkflowSeeder {
 
     /**
      * Inserts the MARKETING_CHANGES header (a log of marketing changes and their reviewed outcomes) + its
-     * v1 published snapshot for the project, unless one already exists. Runs in the caller's transaction.
+     * v1 published snapshot for the project, unless one already exists. Hidden from the sidebar: Changes are
+     * reached from the open-Changes card on Marketing Overview (or /marketing/changes) and written via MCP and
+     * the report skill. Runs in the caller's transaction.
      */
     public void seedMarketingChanges(Project project) {
-        seed(project, MARKETING_CHANGES_SLUG, marketingChangesDefinition);
+        seed(project, MARKETING_CHANGES_SLUG, marketingChangesDefinition, false);
     }
 
     /**
