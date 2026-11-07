@@ -1013,7 +1013,11 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
 
     // ---- RE-99 T3.1: definitions, window-unique visitors, per-source conversion, new metrics ------------
 
-    private static final String UNIQUE_NOTE = "Unique visitors are stored for 7, 28 and 90 days";
+    private static final String UNSUPPORTED_NOTE = "Unique visitors are only available for 7, 28 or 90-day windows.";
+
+    private static String notStoredNote(int days) {
+        return "No unique visitors count is stored for these " + days + " days yet.";
+    }
     private static final org.assertj.core.data.Offset<Double> TINY = org.assertj.core.data.Offset.offset(1e-9);
 
     private void putUnique(String web, int windowDays, LocalDate day, double value) {
@@ -1090,7 +1094,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         assertThat(sevenDay.value()).isNull();
         assertThat(sevenDay.previous()).isNull();
         assertThat(sevenDay.change()).isNull();
-        assertThat(sevenDay.note()).isEqualTo(UNIQUE_NOTE);
+        assertThat(sevenDay.note()).isEqualTo(notStoredNote(7));
         assertThat(sevenDay.series()).hasSize(7);         // the chart still draws the daily rows
         assertThat(sevenDay.series().get(0).value()).isEqualTo(3.0);
 
@@ -1099,7 +1103,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         putUnique(web, 90, day(14), 60);
         MetricView fortnight = metric(channel(service.overview(project.getId(), 14, TODAY, NOW), "WEB"), "visitors");
         assertThat(fortnight.value()).isNull();
-        assertThat(fortnight.note()).isEqualTo(UNIQUE_NOTE);
+        assertThat(fortnight.note()).isEqualTo(UNSUPPORTED_NOTE);
     }
 
     @Test
@@ -1366,7 +1370,7 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         OverviewMetric visitors = channel.getMetrics().stream().filter(m -> m.getMetric().equals("visitors"))
                 .findFirst().orElseThrow();
         assertThat(visitors.getValue()).isNull();
-        assertThat(visitors.getNote()).isEqualTo(UNIQUE_NOTE);
+        assertThat(visitors.getNote()).isEqualTo(notStoredNote(28));
         assertThat(visitors.getDefinition().getNumerator()).isEqualTo("visitors");
         assertThat(visitors.getDefinition().getSource()).startsWith("PostHog");
         assertThat(visitors.getDefinition().getExclusions()).contains("Internal-users cohort");
