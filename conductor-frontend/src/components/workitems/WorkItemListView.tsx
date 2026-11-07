@@ -49,6 +49,7 @@ import { WorkItemGridView } from '@/components/workitems/WorkItemGridView'
 import { WorkItemGroup } from '@/components/workitems/WorkItemGroup'
 import { OverviewPanel } from '@/components/overview/OverviewPanel'
 import { RoadmapPanel } from '@/components/roadmap/RoadmapPanel'
+import { WhatsWorkingPanel } from '@/components/marketing/insights/WhatsWorkingPanel'
 import { ListToolbar } from '@/components/workitems/ListToolbar'
 import { BulkActionBar } from '@/components/workitems/BulkActionBar'
 import { PostBulkActions } from '@/components/workitems/PostBulkActions'
@@ -64,8 +65,9 @@ import type {
 import type { MemberRole } from '@/types'
 import { can, memberRoles } from '@/lib/permissions'
 
-/** Non-list tabs on a PRD Workflow, selected through the same `?view=` param. */
-type PanelView = 'plans' | 'roadmap'
+/** Non-list tabs, selected through the same `?view=` param: Plans / Roadmap on a PRD Workflow,
+ *  What's working on a publishing (Posts) Workflow. */
+type PanelView = 'plans' | 'roadmap' | 'insights'
 
 type DisplayMode = 'list' | 'board' | 'calendar' | 'grid'
 
@@ -98,7 +100,7 @@ export function WorkItemListView({
   const mediaFilter = searchParams.get('mediaId')
   const viewParam = searchParams.get('view')
   const view: ListView = viewParam === 'done' || viewParam === 'all' ? viewParam : 'active'
-  const requestedPanel: PanelView | null = viewParam === 'plans' || viewParam === 'roadmap' ? viewParam : null
+  const requestedPanel: PanelView | null = viewParam === 'plans' || viewParam === 'roadmap' || viewParam === 'insights' ? viewParam : null
 
   // Display mode: list (default), board, or calendar. Priority: URL param > explicit localStorage >
   // workflow defaultView.
@@ -151,8 +153,11 @@ export function WorkItemListView({
 
   // Plans / Roadmap are views over the PRDs of a Workflow; without a PRD type the param is ignored.
   // Optimistic while the Workflow view is unknown, so a deep link does not flash the list first.
-  const hasPrdType = workflowView ? (workflowView.types ?? []).includes('PRD') : requestedPanel !== null
-  const panel: PanelView | null = hasPrdType ? requestedPanel : null
+  const hasPrdType = workflowView ? (workflowView.types ?? []).includes('PRD') : requestedPanel === 'plans' || requestedPanel === 'roadmap'
+  // What's working is a view over published Posts, so it needs a Workflow that declares publish targets.
+  const hasInsights = workflowView ? workflowDeclaresPublishTargets(workflowView) : requestedPanel === 'insights'
+  const panelAllowed = requestedPanel === 'insights' ? hasInsights : hasPrdType
+  const panel: PanelView | null = panelAllowed ? requestedPanel : null
 
   const independentReviewerStatuses = useMemo(
     () =>
@@ -375,6 +380,7 @@ export function WorkItemListView({
     { value: 'done', label: 'Done', count: counts.done },
     { value: 'all', label: 'All', count: counts.all },
     ...(hasPrdType ? [{ value: 'plans', label: 'Plans' }, { value: 'roadmap', label: 'Roadmap' }] : []),
+    ...(hasInsights ? [{ value: 'insights', label: "What's working" }] : []),
   ]
 
   // Breadcrumb trail: area (non-link) › this Workflow's pluralized noun (current page). The area is
@@ -484,6 +490,7 @@ export function WorkItemListView({
 
       {panel === 'plans' && <OverviewPanel projectId={projectId} />}
       {panel === 'roadmap' && <RoadmapPanel projectId={projectId} />}
+      {panel === 'insights' && <WhatsWorkingPanel projectId={projectId} />}
 
       {!panel && (<>
       {bulkResult && (
