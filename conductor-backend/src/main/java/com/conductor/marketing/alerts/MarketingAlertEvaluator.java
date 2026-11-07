@@ -215,7 +215,7 @@ public class MarketingAlertEvaluator {
 
     private Overview readOverview(String projectId) {
         try {
-            return overviewService.overview(projectId, MarketingAlertConditions.WINDOW);
+            return overviewService.overviewWithEveryMetric(projectId, MarketingAlertConditions.WINDOW);
         } catch (RuntimeException e) {
             log.warn("Marketing overview for project {} could not be read; mismatch, stale and off-track alerts"
                     + " are left as they are: {}", projectId, e.getMessage());

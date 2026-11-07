@@ -466,6 +466,25 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
+    void theAlertsViewListsEveryMetricSoATargetPastTheCardsFirstFewIsStillJudged() {
+        String web = connectFresh("posthog");
+        put(web, "posthog", "WEB", "sessions", day(10), 1);
+        put(web, "posthog", "WEB", "conversion_clicks", day(10), 2);
+        // the fifth Web metric: past the card's four
+        put(web, "posthog", "WEB", "conversion_sessions", day(10), 2);
+        service.setTarget(project.getId(), "WEB", "conversion_sessions", 50.0, null, user.getId());
+
+        java.util.List<String> card = channel(service.overview(project.getId(), "7d", TODAY, NOW), "WEB").metrics().stream()
+                .map(MetricView::metric).toList();
+        MetricView everyMetric = metric(channel(service.overviewWithEveryMetric(project.getId(), "7d", TODAY, NOW),
+                "WEB"), "conversion_sessions");
+
+        assertThat(card).hasSize(4).doesNotContain("conversion_sessions");
+        assertThat(everyMetric.target().value()).isEqualTo(50.0);
+        assertThat(everyMetric.status()).isEqualTo("OFF_TRACK");
+    }
+
+    @Test
     void funnelStagesAreOrderedAndUnavailableOnesCarryTheirReason() {
         String web = connectFresh("posthog");
         put(web, "posthog", "WEB", "visitors", day(10), 40);
