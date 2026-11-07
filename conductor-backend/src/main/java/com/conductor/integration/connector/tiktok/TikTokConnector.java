@@ -14,6 +14,7 @@ import com.conductor.integration.ConnectorSpec;
 import com.conductor.integration.FieldType;
 import com.conductor.integration.OAuth2Connector;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
@@ -88,8 +89,22 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector, Channe
      */
     static final Duration PUBLISH_TIMEOUT = Duration.ofMinutes(45);
 
+    /** Scopes Conductor's TikTok app was reviewed with; the consent request carries exactly these by default. */
+    private static final List<String> APPROVED_SCOPES =
+            List.of("user.info.basic", "video.publish", "video.upload", "video.list");
+
+    /**
+     * The scope behind follower, video and like counts. Requested only when the stats flag is on, because a
+     * scope the TikTok app is not approved for can make TikTok reject the whole consent request.
+     */
+    static final String STATS_SCOPE = "user.info.stats";
+
+    /** Shown on the stats feed when the flag is on but this connection's token does not carry {@link #STATS_SCOPE}. */
+    static final String RECONNECT_FOR_STATS = "Reconnect TikTok to share follower counts";
+
     private final TikTokClient client;
     private final TikTokPublishAction publishAction;
+    private final boolean statsScopeEnabled;
 
     public TikTokConnector() {
         this(new TikTokClient(), null);
@@ -100,13 +115,20 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector, Channe
     }
 
     @Autowired
-    public TikTokConnector(TikTokPublishAction publishAction) {
-        this(new TikTokClient(), publishAction);
+    public TikTokConnector(TikTokPublishAction publishAction,
+                           @Value("${conductor.integrations.tiktok.stats-scope-enabled:false}")
+                           boolean statsScopeEnabled) {
+        this(new TikTokClient(), publishAction, statsScopeEnabled);
     }
 
     TikTokConnector(TikTokClient client, TikTokPublishAction publishAction) {
+        this(client, publishAction, false);
+    }
+
+    TikTokConnector(TikTokClient client, TikTokPublishAction publishAction, boolean statsScopeEnabled) {
         this.client = client;
         this.publishAction = publishAction;
+        this.statsScopeEnabled = statsScopeEnabled;
     }
 
     /**
@@ -144,7 +166,14 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector, Channe
     public List<String> oauthScopes() {
         // video.list is what the post_metrics feed reads counters with; a connection made before it was
         // requested answers that read with a scope error until the creator reconnects.
-        return List.of("user.info.basic", "video.publish", "video.upload", "video.list");
+        // user.info.stats is added only behind the server flag: with it off this is the list the TikTok app
+        // was reviewed with, so the consent request is unchanged.
+        if (!statsScopeEnabled) {
+            return APPROVED_SCOPES;
+        }
+        List<String> scopes = new java.util.ArrayList<>(APPROVED_SCOPES);
+        scopes.add(STATS_SCOPE);
+        return List.copyOf(scopes);
     }
 
     @Override
@@ -359,12 +388,22 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector, Channe
     public boolean snapshot(String metric) { return true; }
 
     /**
-     * Follower and video totals for today. They need the {@code user.info.stats} scope, which
-     * {@link #oauthScopes()} does not request (it is not in the app-review submission), so tiktok.json declares
-     * no {@code channel_metrics} feed and this never runs on a schedule. Add the scope and the feed together.
+     * Follower, video and like totals for today. They need the {@code user.info.stats} scope, which
+     * {@link #oauthScopes()} requests only when the stats flag is on.
+     *
+     * <p>With the flag off this reads nothing and writes nothing: the feed stays quiet and the connection
+     * shows no message, because there is nothing for the creator to fix. With the flag on, the token's granted
+     * scopes are not persisted, so a connection made before the scope was requested is found out the only way
+     * available: TikTok's scope error on the user info call (or a reply with none of the three counts) means
+     * "not granted", and the feed reports {@link #RECONNECT_FOR_STATS} as setup required. That outcome touches
+     * only this feed, so publishing and the {@code post_metrics} feed carry on regardless. A count TikTok
+     * omits writes no point; it is never turned into zero.
      */
     @Override
     public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
+        if (!statsScopeEnabled) {
+            return List.of();
+        }
         String token = ctx == null ? null : ctx.accessToken();
         if (token == null || token.isBlank()) {
             throw ChannelMetricsSourceException.setupRequired("Reconnect TikTok to read account stats");
@@ -376,23 +415,31 @@ public class TikTokConnector implements OAuth2Connector, ActionConnector, Channe
             if (e.isTransient()) {
                 throw ChannelMetricsSourceException.degraded("TikTok account stats unavailable: " + e.getMessage());
             }
-            throw ChannelMetricsSourceException.setupRequired("TikTok did not return follower and video counts ("
-                    + e.code() + "). They need the user.info.stats scope, which Conductor's TikTok app does not "
-                    + "request yet");
+            if (isScopeError(e.code())) {
+                throw ChannelMetricsSourceException.setupRequired(RECONNECT_FOR_STATS);
+            }
+            throw ChannelMetricsSourceException.setupRequired(
+                    "TikTok refused the account stats read (" + e.code() + "): " + e.getMessage());
         } catch (org.springframework.web.client.RestClientException e) {
             throw ChannelMetricsSourceException.degraded("TikTok account stats unavailable: " + e.getMessage());
         }
         List<ChannelMetricPoint> points = new java.util.ArrayList<>();
-        if (stats.followerCount() != null) {
-            points.add(ChannelMetricPoint.of("followers", "tiktok", to, stats.followerCount()));
-        }
-        if (stats.videoCount() != null) {
-            points.add(ChannelMetricPoint.of("media_count", "tiktok", to, stats.videoCount()));
-        }
+        addIfReported(points, "followers", to, stats.followerCount());
+        addIfReported(points, "media_count", to, stats.videoCount());
+        addIfReported(points, "likes", to, stats.likesCount());
         if (points.isEmpty()) {
-            throw ChannelMetricsSourceException.setupRequired(
-                    "TikTok returned no follower or video counts; the user.info.stats scope is likely missing");
+            throw ChannelMetricsSourceException.setupRequired(RECONNECT_FOR_STATS);
         }
         return points;
+    }
+
+    private static boolean isScopeError(String code) {
+        return code != null && code.toLowerCase(java.util.Locale.ROOT).contains("scope");
+    }
+
+    private static void addIfReported(List<ChannelMetricPoint> points, String metric, LocalDate day, Long value) {
+        if (value != null) {
+            points.add(ChannelMetricPoint.of(metric, "tiktok", day, value));
+        }
     }
 }

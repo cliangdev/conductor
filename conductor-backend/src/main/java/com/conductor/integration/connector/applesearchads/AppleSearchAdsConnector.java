@@ -9,12 +9,14 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.function.BiConsumer;
 
 /**
  * Apple Search Ads (FETCH connector). Surfaces paid user-acquisition metrics — new downloads, spend,
@@ -24,6 +26,12 @@ import java.util.*;
  * {@link AppleAdsTokenService}, which this connector instantiates directly. To the rest of the framework
  * this is an ordinary {@code API_KEY} connector: the .p8 private key is stored as the encrypted secret
  * ({@code ctx.accessToken()}), and the other identifiers live in plaintext config.
+ *
+ * <p>As a {@link ChannelMetricsSource} it stores daily campaign, keyword, ad and search-term rows. Days are UTC
+ * for the campaign, keyword and ad reports and Apple's org time zone (ORTZ, the only zone the search-term
+ * report allows) for search terms. {@code installs} always means tap installs ({@code tapInstalls}: tap new
+ * downloads plus tap re-downloads) at every level; view-through installs are their own {@code view_installs}
+ * point and are never added to it.
  */
 @Component
 @Profile("!local")
@@ -211,13 +219,16 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
         );
     }
 
-    /** Keyword and ad reports are DAILY in UTC like the campaign rows, paged by {@code offset}. */
-    private Map<String, Object> breakdownReportBody(LocalDate start, LocalDate end, int offset) {
+    /**
+     * Keyword and ad reports are DAILY in UTC like the campaign rows; the search-term report is DAILY in ORTZ, the
+     * only zone Apple allows there. Paged by {@code offset}.
+     */
+    private Map<String, Object> breakdownReportBody(LocalDate start, LocalDate end, int offset, String timeZone) {
         return Map.of(
             "startTime", start.format(DATE),
             "endTime", end.format(DATE),
             "granularity", "DAILY",
-            "timeZone", "UTC",
+            "timeZone", timeZone,
             "selector", Map.of(
                 "orderBy", List.of(Map.of("field", "impressions", "sortOrder", "DESCENDING")),
                 "pagination", Map.of("offset", offset, "limit", REPORT_PAGE)
@@ -426,7 +437,17 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
 
     /** DAILY granularity is limited to a 90-day span per report request. */
     private static final int MAX_SPAN_DAYS = 90;
-    private static final String[] DAILY_METRICS = {"impressions", "taps", "installs"};
+
+    /** The metric contract this connector writes; a change makes the feed puller re-read the whole backfill window. */
+    static final int CONTRACT_VERSION = 2;
+    private static final String UTC = "UTC";
+    /** The org time zone: the only one Apple allows on the search-term report. */
+    private static final String ORTZ = "ORTZ";
+    /** The term of a search-term row Apple returns with no text (it suppresses low-volume terms). */
+    static final String LOW_VOLUME_TERM = "(low volume)";
+    /** What a search-term row stores; redownloads and view_installs are kept off it. */
+    private static final Set<String> SEARCH_TERM_METRICS =
+            Set.of("spend", "impressions", "taps", "installs", "new_downloads");
 
     @Override
     public MetricChannel channel() { return MetricChannel.ADS; }
@@ -440,15 +461,34 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
 
     /** Apple restates installs (attribution windows) for a few days. */
     @Override
-    public int trailingDays() { return 3; }
+    public int trailingDays() { return TRAILING_DAYS; }
+
+    /** How many recent days Apple may still restate; readers of a "no row" day wait this long past the last pull. */
+    public static final int TRAILING_DAYS = 3;
 
     /**
      * Per-day spend, impressions, taps and installs: totals across campaigns (empty dimension key), per
-     * campaign ({@code campaign:{id}:{name}}), per keyword ({@code keyword:{id}:{text}}) and per ad
-     * ({@code ad:{id}:{name}}); the id never contains a colon, so split on the second one. Totals sum the
-     * campaign rows only. A server error or auth failure on any report fails the whole pull. A 4xx on one
-     * campaign's keyword/ad report skips just that campaign and lists it in {@link ChannelMetricsPull#skippedCampaignIds()},
-     * so the store keeps that campaign's stored keywords and ads while still pruning the others.
+     * campaign ({@code campaign:{id}:{name}}), per keyword ({@code keyword:{id}:{text}}), per ad
+     * ({@code ad:{adGroupId}:{adId}:{name}}) and per search term ({@code searchterm:{campaignId}:{term}}); an id
+     * never contains a colon, so split on the second one. Totals sum the campaign rows only; keyword, ad and
+     * search-term rows never feed them.
+     *
+     * <p>{@code installs} is Apple's {@code tapInstalls} at every level (the legacy {@code installs} field, then
+     * the sum of the tap new downloads and re-downloads, only when it is absent). {@code new_downloads}
+     * ({@code tapNewDownloads}), {@code redownloads} ({@code tapRedownloads}) and {@code view_installs}
+     * ({@code viewInstalls}, search terms excepted) are separate points. Every metric is written only for a bucket
+     * that sends its field: an omitted field is unknown and gets no point, never 0 (a sent 0 is a point).
+     *
+     * <p>Days are UTC for the campaign, keyword and ad reports. The search-term report allows no zone but the org's
+     * (ORTZ), so its days follow Apple's org time zone and can differ from the other rows by up to a day. A term
+     * Apple returns with no text (low-volume terms are suppressed) is stored as {@code (low volume)}, and rows that
+     * share a term (or have none) add up into one point per day and metric.
+     *
+     * <p>A server error or auth failure on any report fails the whole pull. A 4xx on one campaign's keyword/ad
+     * report, or on its search-term report, skips just that campaign and lists it in
+     * {@link ChannelMetricsPull#skippedCampaignIds()}, so the store keeps that campaign's stored keywords and ads
+     * while still pruning the others. A search-term 4xx keeps the keywords and ads already read for that campaign.
+     * The pull reports {@link #CONTRACT_VERSION} so the feed puller re-reads history written under an older meaning.
      */
     @Override
     public List<ChannelMetricPoint> pullDaily(ConnectionContext ctx, LocalDate from, LocalDate to) {
@@ -475,8 +515,8 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
         }
         HttpHeaders headers = headers(token, orgId);
 
-        // date -> metric -> total
-        Map<LocalDate, Map<String, Double>> totals = new TreeMap<>();
+        // date -> metric -> total (campaign rows only)
+        Map<LocalDate, Map<String, BigDecimal>> totals = new TreeMap<>();
         List<ChannelMetricPoint> points = new ArrayList<>();
         List<DimensionState> states = new ArrayList<>();
         Set<String> skippedCampaigns = new java.util.LinkedHashSet<>();
@@ -510,21 +550,24 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
                     Map<String, Map<String, Object>> campaignStates = new LinkedHashMap<>();
                     for (LocalDate[] chunk : chunks) {
                         for (Map<String, Object> row : pagedReportRows(
-                                API_BASE + "/reports/campaigns/" + campaignId + "/keywords", chunk, headers)) {
+                                API_BASE + "/reports/campaigns/" + campaignId + "/keywords", chunk, headers, UTC)) {
                             collectKeywordRow(row, campaignPoints, campaignStates);
                         }
                         for (Map<String, Object> row : pagedReportRows(
-                                API_BASE + "/reports/campaigns/" + campaignId + "/ads", chunk, headers)) {
+                                API_BASE + "/reports/campaigns/" + campaignId + "/ads", chunk, headers, UTC)) {
                             collectAdRow(row, campaignPoints, campaignStates);
                         }
                     }
                     points.addAll(campaignPoints);
                     reportStates.putAll(campaignStates);
                 } catch (HttpClientErrorException e) {
-                    int status = e.getStatusCode().value();
-                    if (status == 401 || status == 403 || status == 429) throw e;
-                    log.warn("Apple Search Ads keyword/ad report skipped for campaign {}: {}", campaignId, status);
-                    skippedCampaigns.add(campaignId);
+                    skipCampaign(campaignId, "keyword/ad", e, skippedCampaigns);
+                }
+                if (skippedCampaigns.contains(campaignId)) continue;
+                try {
+                    points.addAll(searchTermPoints(campaignId, chunks, headers));
+                } catch (HttpClientErrorException e) {
+                    skipCampaign(campaignId, "search-term", e, skippedCampaigns);
                 }
             }
             if (withState && !to.isBefore(LocalDate.now(clock.withZone(ZoneOffset.UTC)))) {
@@ -550,8 +593,53 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
             throw ChannelMetricsSourceException.degraded("Apple Search Ads request failed: " + e.getMessage());
         }
         totals.forEach((day, byMetric) -> byMetric.forEach(
-                (metric, value) -> points.add(ChannelMetricPoint.total(metric, day, value))));
-        return new ChannelMetricsPull(points, null, null, null, Set.of(), states, null, skippedCampaigns);
+                (metric, value) -> points.add(new ChannelMetricPoint(metric, "", day, value))));
+        return new ChannelMetricsPull(points, null, null, null, Set.of(), states, CONTRACT_VERSION, skippedCampaigns);
+    }
+
+    /**
+     * A 4xx other than an auth failure or a rate limit is about this one campaign's report: remember it so the store
+     * keeps what it has stored for the campaign. Auth failures and rate limits fail the whole pull.
+     */
+    private void skipCampaign(String campaignId, String report, HttpClientErrorException e,
+                              Set<String> skippedCampaigns) {
+        int status = e.getStatusCode().value();
+        if (status == 401 || status == 403 || status == 429) throw e;
+        log.warn("Apple Search Ads {} report skipped for campaign {}: {}", report, campaignId, status);
+        skippedCampaigns.add(campaignId);
+    }
+
+    /**
+     * One campaign's daily search-term rows over every chunk, keyed {@code searchterm:{campaignId}:{term}}. Rows
+     * that share a term (the same query reached through several keywords or ad groups, or the no-text rows Apple
+     * returns for low-volume terms) add up, so each key has one point per day and metric.
+     */
+    private List<ChannelMetricPoint> searchTermPoints(String campaignId, List<LocalDate[]> chunks, HttpHeaders headers) {
+        // key -> day -> metric -> sum
+        Map<String, Map<LocalDate, Map<String, BigDecimal>>> byKey = new LinkedHashMap<>();
+        String url = API_BASE + "/reports/campaigns/" + campaignId + "/searchterms";
+        for (LocalDate[] chunk : chunks) {
+            for (Map<String, Object> row : pagedReportRows(url, chunk, headers, ORTZ)) {
+                Map<LocalDate, Map<String, BigDecimal>> days = byKey.computeIfAbsent(
+                        dimensionKey("searchterm", campaignId, searchTerm(row)), k -> new TreeMap<>());
+                eachBucket(row, (day, metrics) -> {
+                    Map<String, BigDecimal> sums = days.computeIfAbsent(day, d -> new LinkedHashMap<>());
+                    metrics.forEach((metric, value) -> {
+                        if (SEARCH_TERM_METRICS.contains(metric)) sums.merge(metric, value, BigDecimal::add);
+                    });
+                });
+            }
+        }
+        List<ChannelMetricPoint> out = new ArrayList<>();
+        byKey.forEach((key, days) -> days.forEach((day, sums) -> sums.forEach(
+                (metric, value) -> out.add(new ChannelMetricPoint(metric, key, day, value)))));
+        return out;
+    }
+
+    /** The row's search term; Apple suppresses low-volume terms by sending no text. */
+    private String searchTerm(Map<String, Object> row) {
+        String text = first(metadata(row), "searchTermText", "searchTerm");
+        return isBlank(text) ? LOW_VOLUME_TERM : text;
     }
 
     /** Longest dimension key we store (the state table's key column). */
@@ -565,12 +653,14 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
         return key.length() > MAX_KEY ? key.substring(0, MAX_KEY) : key;
     }
 
-    /** All rows of a keyword or ad report for one chunk, following {@code pagination.totalResults}. */
-    private List<Map<String, Object>> pagedReportRows(String url, LocalDate[] chunk, HttpHeaders headers) {
+    /** All rows of a keyword, ad or search-term report for one chunk, following {@code pagination.totalResults}. */
+    private List<Map<String, Object>> pagedReportRows(String url, LocalDate[] chunk, HttpHeaders headers,
+                                                      String timeZone) {
         List<Map<String, Object>> out = new ArrayList<>();
         int offset = 0;
         for (int page = 0; page < MAX_PAGES; page++) {
-            Map<String, Object> report = postReport(url, breakdownReportBody(chunk[0], chunk[1], offset), headers);
+            Map<String, Object> report = postReport(url,
+                    breakdownReportBody(chunk[0], chunk[1], offset, timeZone), headers);
             List<Map<String, Object>> rows = rows(report);
             out.addAll(rows);
             offset += rows.size();
@@ -642,25 +732,73 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
         }
     }
 
-    /** One keyword or ad report row to daily points; first-time installs are {@code tapNewDownloads}. */
-    @SuppressWarnings("unchecked")
+    /** One keyword or ad report row to daily points, with the same metrics and meanings as a campaign row. */
     private void addBreakdownPoints(Map<String, Object> row, String dimension, List<ChannelMetricPoint> points) {
+        eachBucket(row, (day, metrics) -> metrics.forEach(
+                (metric, value) -> points.add(new ChannelMetricPoint(metric, dimension, day, value))));
+    }
+
+    /** Calls {@code sink} with the day and present metrics of each daily bucket of a report row. */
+    @SuppressWarnings("unchecked")
+    private static void eachBucket(Map<String, Object> row, BiConsumer<LocalDate, Map<String, BigDecimal>> sink) {
         if (!(row.get("granularity") instanceof List<?> buckets)) return;
         for (Object b : buckets) {
             if (!(b instanceof Map<?, ?> raw)) continue;
             Map<String, Object> bucket = (Map<String, Object>) raw;
             LocalDate day = date(bucket.get("date"));
             if (day == null) continue;
-            points.add(ChannelMetricPoint.of("spend", dimension, day, money(bucket.get("localSpend"))));
-            points.add(ChannelMetricPoint.of("impressions", dimension, day, num(bucket.get("impressions"))));
-            points.add(ChannelMetricPoint.of("taps", dimension, day, num(bucket.get("taps"))));
-            Object firstTime = bucket.get("tapNewDownloads");
-            points.add(ChannelMetricPoint.of("installs", dimension, day,
-                    firstTime != null ? num(firstTime) : installs(bucket)));
-            if (bucket.get("tapRedownloads") != null) {
-                points.add(ChannelMetricPoint.of("redownloads", dimension, day, num(bucket.get("tapRedownloads"))));
+            sink.accept(day, bucketMetrics(bucket));
+        }
+    }
+
+    /**
+     * The stored metrics of one report bucket, only for the fields Apple sent: an omitted field is unknown and gets
+     * no entry (a sent 0 does). {@code installs} is tap installs; first-time ({@code new_downloads}), re-downloads
+     * and view-through installs ({@code view_installs}) are separate and never added into it.
+     */
+    private static Map<String, BigDecimal> bucketMetrics(Map<String, Object> bucket) {
+        BigDecimal newDownloads = decimal(bucket.get("tapNewDownloads"));
+        BigDecimal redownloads = decimal(bucket.get("tapRedownloads"));
+        Map<String, BigDecimal> out = new LinkedHashMap<>();
+        putIfPresent(out, "spend", decimal(bucket.get("localSpend")));
+        putIfPresent(out, "impressions", decimal(bucket.get("impressions")));
+        putIfPresent(out, "taps", decimal(bucket.get("taps")));
+        putIfPresent(out, "installs", tapInstalls(bucket, newDownloads, redownloads));
+        putIfPresent(out, "new_downloads", newDownloads);
+        putIfPresent(out, "redownloads", redownloads);
+        putIfPresent(out, "view_installs", decimal(bucket.get("viewInstalls")));
+        return out;
+    }
+
+    /**
+     * Tap installs: Apple's {@code tapInstalls}, else the legacy {@code installs} field, else the sum of the tap
+     * new downloads and re-downloads present (which is what {@code tapInstalls} is), else unknown (null).
+     */
+    private static BigDecimal tapInstalls(Map<String, Object> bucket, BigDecimal newDownloads, BigDecimal redownloads) {
+        BigDecimal reported = decimal(bucket.get("tapInstalls"));
+        if (reported == null) reported = decimal(bucket.get("installs"));
+        if (reported != null) return reported;
+        if (newDownloads == null && redownloads == null) return null;
+        return (newDownloads == null ? BigDecimal.ZERO : newDownloads)
+                .add(redownloads == null ? BigDecimal.ZERO : redownloads);
+    }
+
+    /** A number, a numeric string or a money object ({@code {amount, currency}}) as an exact decimal; null when absent. */
+    private static BigDecimal decimal(Object value) {
+        if (value instanceof Map<?, ?> m) return decimal(m.get("amount"));
+        if (value instanceof BigDecimal d) return d;
+        if (value instanceof Integer || value instanceof Long || value instanceof Short || value instanceof Byte) {
+            return BigDecimal.valueOf(((Number) value).longValue());
+        }
+        if (value instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
+        if (value instanceof String s && !s.isBlank()) {
+            try {
+                return new BigDecimal(s.trim());
+            } catch (NumberFormatException e) {
+                return null;
             }
         }
+        return null;
     }
 
     /** Apple reports the default-product-page pseudo-ad as id -1 and may give it no name. */
@@ -687,7 +825,7 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
         return o instanceof Map<?, ?> m ? (Map<String, Object>) m : Map.of();
     }
 
-    private static void putIfPresent(Map<String, Object> to, String key, Object value) {
+    private static <V> void putIfPresent(Map<String, V> to, String key, V value) {
         if (value != null) to.put(key, value);
     }
 
@@ -796,45 +934,31 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
     }
 
     /**
-     * Installs for one report bucket. Apple Ads API v5 replaced {@code installs} with {@code tapInstalls},
-     * {@code viewInstalls} and {@code totalInstalls}; tap installs are the installs (as the product backend
-     * counts them), so they win, and the legacy {@code installs} field is the fallback.
+     * Installs for one report bucket, for the legacy FETCH payload (0 when unknown). Apple Ads API v5 replaced
+     * {@code installs} with {@code tapInstalls}, {@code viewInstalls} and {@code totalInstalls}; tap installs are
+     * the installs (as the product backend counts them), see {@link #tapInstalls}.
      */
     private static double installs(Map<String, Object> bucket) {
-        Object tap = bucket.get("tapInstalls");
-        return num(tap != null ? tap : bucket.get("installs"));
+        BigDecimal installs = tapInstalls(bucket, decimal(bucket.get("tapNewDownloads")),
+                decimal(bucket.get("tapRedownloads")));
+        return installs == null ? 0 : installs.doubleValue();
     }
 
-    @SuppressWarnings("unchecked")
-    private void collect(Map<String, Object> report, Map<LocalDate, Map<String, Double>> totals,
+    /** Campaign rows to daily points; the totals add up these rows only. */
+    private void collect(Map<String, Object> report, Map<LocalDate, Map<String, BigDecimal>> totals,
                          List<ChannelMetricPoint> points) {
         for (Map<String, Object> row : rows(report)) {
             Map<String, Object> meta = metadata(row);
             String campaignId = str(meta.get("campaignId"));
             String name = str(meta.get("campaignName"));
             String dimension = "campaign:" + (campaignId == null ? "" : campaignId) + ":" + (name == null ? "" : name);
-            if (!(row.get("granularity") instanceof List<?> buckets)) continue;
-            for (Object b : buckets) {
-                if (!(b instanceof Map<?, ?> raw)) continue;
-                Map<String, Object> bucket = (Map<String, Object>) raw;
-                String date = str(bucket.get("date"));
-                if (isBlank(date)) continue;
-                LocalDate day;
-                try {
-                    day = LocalDate.parse(date.length() > 10 ? date.substring(0, 10) : date);
-                } catch (RuntimeException e) {
-                    continue;
-                }
-                Map<String, Double> dayTotals = totals.computeIfAbsent(day, d -> new LinkedHashMap<>());
-                double spend = money(bucket.get("localSpend"));
-                dayTotals.merge("spend", spend, Double::sum);
-                points.add(ChannelMetricPoint.of("spend", dimension, day, spend));
-                for (String metric : DAILY_METRICS) {
-                    double v = metric.equals("installs") ? installs(bucket) : num(bucket.get(metric));
-                    dayTotals.merge(metric, v, Double::sum);
-                    points.add(ChannelMetricPoint.of(metric, dimension, day, v));
-                }
-            }
+            eachBucket(row, (day, metrics) -> {
+                Map<String, BigDecimal> dayTotals = totals.computeIfAbsent(day, d -> new LinkedHashMap<>());
+                metrics.forEach((metric, value) -> {
+                    dayTotals.merge(metric, value, BigDecimal::add);
+                    points.add(new ChannelMetricPoint(metric, dimension, day, value));
+                });
+            });
         }
     }
 }

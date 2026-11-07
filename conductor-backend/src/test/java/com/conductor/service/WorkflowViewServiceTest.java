@@ -59,7 +59,7 @@ class WorkflowViewServiceTest {
         WorkflowFieldView verdict = view.getFields().stream()
                 .filter(f -> "verdict".equals(f.getKey())).findFirst().orElseThrow();
         assertThat(verdict.getType()).isEqualTo("enum");
-        assertThat(verdict.getOptions()).containsExactly("worked", "did_not_work", "inconclusive");
+        assertThat(verdict.getOptions()).containsExactly("worked", "did_not_work", "no_effect", "expected", "inconclusive");
         assertThat(verdict.getRequiredIn()).containsExactly("REVIEWED");
     }
 

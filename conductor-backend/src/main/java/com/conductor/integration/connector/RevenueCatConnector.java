@@ -8,7 +8,9 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
+import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
@@ -78,10 +80,9 @@ public class RevenueCatConnector implements FetchConnector {
             HttpEntity<Void> request = new HttpEntity<>(headers);
 
             // 1. Overview snapshot — failure here is fatal (surfaces credential problems).
-            String overviewUrl = BASE_URL + "/v2/projects/" + projectId
-                    + "/metrics/overview?currency=" + currency;
             ResponseEntity<Map> overviewResp = restTemplate.exchange(
-                    overviewUrl, HttpMethod.GET, request, Map.class);
+                    projectUri(projectId, Map.of("currency", currency), "metrics", "overview"),
+                    HttpMethod.GET, request, Map.class);
             Map<String, Object> overview = parseOverview(overviewResp.getBody());
 
             // Charts are best-effort: a single failing series degrades to empty, not a whole-fetch failure.
@@ -106,6 +107,9 @@ public class RevenueCatConnector implements FetchConnector {
             data.put("trialConversion", trialConversion);
             data.put("revenueSeries", revenue);
 
+            if (!overviewHasData(overview)) {
+                return ConnectorData.degraded(noDataMessage(projectId), data);
+            }
             return ConnectorData.healthy(data);
 
         } catch (HttpClientErrorException e) {
@@ -124,10 +128,25 @@ public class RevenueCatConnector implements FetchConnector {
         }
     }
 
+    /**
+     * Reads the overview from either of its shapes. The v2 API answers {@code {"metrics":[{"id","value"}]}} with
+     * money already in the reporting currency; the flat shape carries named fields with money in cents.
+     * A metric the response does not carry reads as 0 here, which {@link #overviewHasData} treats as "no data".
+     */
     @SuppressWarnings("unchecked")
     private Map<String, Object> parseOverview(Map body) {
         Map<String, Object> overview = new HashMap<>();
         if (body == null) return overview;
+
+        Map<String, Object> byId = metricsById(body);
+        if (!byId.isEmpty()) {
+            overview.put("activeTrials", longOrZero(byId.get("active_trials")));
+            overview.put("activeSubscriptions", longOrZero(byId.get("active_subscriptions")));
+            overview.put("mrr", doubleOrZero(byId.get("mrr")));
+            overview.put("revenueLast28Days", doubleOrZero(byId.get("revenue")));
+            overview.put("newCustomersLast28Days", longOrZero(byId.get("new_customers")));
+            return overview;
+        }
 
         overview.put("activeTrials", longOrZero(body.get("active_trials")));
         overview.put("activeSubscriptions", longOrZero(body.get("active_subscriptions")));
@@ -135,6 +154,39 @@ public class RevenueCatConnector implements FetchConnector {
         overview.put("revenueLast28Days", centsToDollars(body.get("revenue_last_28_days")));
         overview.put("newCustomersLast28Days", longOrZero(body.get("new_customers_last_28_days")));
         return overview;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> metricsById(Map body) {
+        Map<String, Object> byId = new HashMap<>();
+        if (!(body.get("metrics") instanceof List<?> metrics)) return byId;
+        for (Object item : metrics) {
+            if (item instanceof Map<?, ?> metric && metric.get("id") instanceof String id
+                    && metric.get("value") instanceof Number value) {
+                byId.put(id, value);
+            }
+        }
+        return byId;
+    }
+
+    /** True when at least one overview metric is a non-zero number; empty, missing and zero all count as no data. */
+    private static boolean overviewHasData(Map<String, Object> overview) {
+        return overview.values().stream()
+                .anyMatch(v -> v instanceof Number n && n.doubleValue() != 0.0);
+    }
+
+    private static String noDataMessage(Object projectId) {
+        return "RevenueCat returned no data for project " + projectId
+                + ". Check the project ID, or disconnect it if this app does not bill through RevenueCat.";
+    }
+
+    /** {@code /v2/projects/{projectId}/{tail...}} with the project id encoded as one path segment. */
+    private static URI projectUri(String projectId, Map<String, String> query, String... tail) {
+        UriComponentsBuilder builder = UriComponentsBuilder.fromUriString(BASE_URL)
+                .pathSegment("v2", "projects", projectId)
+                .pathSegment(tail);
+        query.forEach(builder::queryParam);
+        return builder.build().encode().toUri();
     }
 
     /**
@@ -146,8 +198,9 @@ public class RevenueCatConnector implements FetchConnector {
                                                        String chart, String resolution,
                                                        String startTime, String endTime, boolean cents) {
         try {
-            String url = BASE_URL + "/v2/projects/" + projectId + "/charts/" + chart
-                    + "?resolution=" + resolution + "&start_time=" + startTime + "&end_time=" + endTime;
+            URI url = projectUri(projectId,
+                    Map.of("resolution", resolution, "start_time", startTime, "end_time", endTime),
+                    "charts", chart);
             ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.GET, request, Map.class);
             Map body = resp.getBody();
             if (body == null) return List.of();
@@ -173,8 +226,9 @@ public class RevenueCatConnector implements FetchConnector {
     private List<Map<String, Object>> fetchTrialConversion(HttpEntity<Void> request, String projectId,
                                                            String startTime, String endTime) {
         try {
-            String url = BASE_URL + "/v2/projects/" + projectId + "/charts/trial_conversion"
-                    + "?resolution=week&start_time=" + startTime + "&end_time=" + endTime;
+            URI url = projectUri(projectId,
+                    Map.of("resolution", "week", "start_time", startTime, "end_time", endTime),
+                    "charts", "trial_conversion");
             ResponseEntity<Map> resp = restTemplate.exchange(url, HttpMethod.GET, request, Map.class);
             Map body = resp.getBody();
             if (body == null) return List.of();
@@ -214,6 +268,7 @@ public class RevenueCatConnector implements FetchConnector {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public ConnectorHealth checkHealth(ConnectionContext ctx) {
         try {
             Object projectIdObj = ctx.configValue("projectId");
@@ -223,9 +278,11 @@ public class RevenueCatConnector implements FetchConnector {
             headers.setBearerAuth(ctx.accessToken());
             HttpEntity<Void> request = new HttpEntity<>(headers);
 
-            String url = BASE_URL + "/v2/projects/" + projectIdObj + "/metrics/overview";
-            restTemplate.exchange(url, HttpMethod.GET, request, Map.class);
-            return ConnectorHealth.HEALTHY;
+            ResponseEntity<Map> overviewResp = restTemplate.exchange(
+                    projectUri(projectIdObj.toString(), Map.of(), "metrics", "overview"),
+                    HttpMethod.GET, request, Map.class);
+            return overviewHasData(parseOverview(overviewResp.getBody()))
+                    ? ConnectorHealth.HEALTHY : ConnectorHealth.DEGRADED;
         } catch (Exception e) {
             return ConnectorHealth.DEGRADED;
         }

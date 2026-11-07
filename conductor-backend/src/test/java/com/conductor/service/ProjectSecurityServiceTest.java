@@ -420,4 +420,57 @@ class ProjectSecurityServiceTest {
         memberWithRoles(MemberRole.CREATOR);
         service().requireEditor(PROJECT_ID, "user-1");
     }
+
+    // ── requireAdminUser ──────────────────────────────────────────────────────────────────────
+
+    @Test
+    void requireAdminUserReturnsTheUserWhenTheyAreAnAdmin() {
+        User user = authenticateUser();
+        memberWithRoles(MemberRole.ADMIN);
+
+        assertThat(service().requireAdminUser(PROJECT_ID)).isSameAs(user);
+    }
+
+    @Test
+    void requireAdminUserRefusesAMemberWithoutTheAdminRole() {
+        authenticateUser();
+        memberWithRoles(MemberRole.CREATOR, MemberRole.REVIEWER);
+
+        assertThatThrownBy(() -> service().requireAdminUser(PROJECT_ID))
+                .isInstanceOf(ForbiddenException.class).hasMessage("Requires the Admin role");
+    }
+
+    @Test
+    void requireAdminUserRefusesANonMember() {
+        authenticateUser();
+        when(projectMemberRepository.findByProjectIdAndUserId(PROJECT_ID, "user-1")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service().requireAdminUser(PROJECT_ID)).isInstanceOf(ForbiddenException.class);
+    }
+
+    @Test
+    void requireAdminUserRefusesProjectKeysAndRunTokensBecauseTheyHaveNoUser() {
+        authenticate(new ApiKeyAuthenticationToken(PROJECT_ID));
+        assertThatThrownBy(() -> service().requireAdminUser(PROJECT_ID)).isInstanceOf(ForbiddenException.class);
+
+        authenticate(new WorkflowRunAuthenticationToken(PROJECT_ID, "run-123456789"));
+        assertThatThrownBy(() -> service().requireAdminUser(PROJECT_ID)).isInstanceOf(ForbiddenException.class);
+
+        verify(projectMemberRepository, never()).findByProjectIdAndUserId(PROJECT_ID, "user-1");
+    }
+
+    @Test
+    void requireAdminUserAcceptsAnAdminsOwnUserApiKey() {
+        User user = new User();
+        user.setId("user-1");
+        authenticate(new com.conductor.security.UserApiKeyAuthenticationToken(user));
+        memberWithRoles(MemberRole.ADMIN);
+
+        assertThat(service().requireAdminUser(PROJECT_ID)).isSameAs(user);
+    }
+
+    @Test
+    void requireAdminUserRefusesAnUnauthenticatedCaller() {
+        assertThatThrownBy(() -> service().requireAdminUser(PROJECT_ID)).isInstanceOf(ForbiddenException.class);
+    }
 }

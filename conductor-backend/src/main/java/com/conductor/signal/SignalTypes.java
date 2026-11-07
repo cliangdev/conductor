@@ -29,6 +29,9 @@ public final class SignalTypes {
     public static final String CONDUCTOR_WORK_ITEM_AWAITING_MANUAL_PUBLISH =
             "conductor.work_item.awaiting_manual_publish";
 
+    /** A marketing alert (mismatch, stale channel, stop rule, off-track target); see {@code MarketingAlertEvaluator}. */
+    public static final String CONDUCTOR_MARKETING_ALERT = "conductor.marketing.alert";
+
     public static final String CONDUCTOR_WORKFLOW_AUTO_PAUSED = "conductor.workflow.auto_paused";
     public static final String CONDUCTOR_WORKFLOW_RUN_FAILED = "conductor.workflow.run_failed";
 

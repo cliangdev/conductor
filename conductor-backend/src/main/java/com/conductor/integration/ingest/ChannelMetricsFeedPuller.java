@@ -14,11 +14,13 @@ import com.conductor.integration.OAuthReauthRequiredException;
 import com.conductor.service.OAuthFlowService;
 import com.conductor.service.ConnectionHealthService;
 import com.conductor.service.ConnectionService;
+import com.conductor.marketing.alerts.ChannelMetricsPulledEvent;
 import com.conductor.marketing.overview.MarketingOverviewQueryService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -40,7 +42,9 @@ import java.time.ZoneOffset;
  * the cursor records the chunk's last day and the batch says {@code hasMore}, so the scheduler re-dues the
  * feed at once; the next pull resumes the day after (cursor {@code resumeFrom}) and moves on, until it reaches today. A
  * restatement window wider than a chunk is therefore walked over several pulls, each replacing only its own days.
- * A response that adds metric keys or changes contract version re-walks the whole backfill window.
+ * A response that adds metric keys, or any source whose reported contract version differs from the one in the
+ * cursor (a cursor with no version counts as different; a first-ever pull is already a backfill), re-walks the
+ * whole backfill window once.
  * The OAuth access token is refreshed first (Google tokens last an hour).
  */
 @Service
@@ -67,6 +71,8 @@ public class ChannelMetricsFeedPuller {
     private final OAuthFlowService oAuthFlowService;
     private final Clock clock;
     private final ConnectionHealthService connectionHealthService;
+    /** Null in plain unit tests, which then announce nothing. */
+    private final ApplicationEventPublisher eventPublisher;
 
     @org.springframework.beans.factory.annotation.Autowired
     public ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
@@ -76,9 +82,22 @@ public class ChannelMetricsFeedPuller {
                                     ChannelDimensionStateStore stateStore,
                                     ObjectMapper objectMapper,
                                     OAuthFlowService oAuthFlowService,
+                                    ConnectionHealthService connectionHealthService,
+                                    ApplicationEventPublisher eventPublisher) {
+        this(connectorRegistry, connectionService, store, definitionStore, stateStore, objectMapper, oAuthFlowService,
+                connectionHealthService, Clock.systemUTC(), eventPublisher);
+    }
+
+    public ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
+                                    ConnectionService connectionService,
+                                    ChannelMetricDailyStore store,
+                                    ChannelMetricDefinitionStore definitionStore,
+                                    ChannelDimensionStateStore stateStore,
+                                    ObjectMapper objectMapper,
+                                    OAuthFlowService oAuthFlowService,
                                     ConnectionHealthService connectionHealthService) {
         this(connectorRegistry, connectionService, store, definitionStore, stateStore, objectMapper, oAuthFlowService,
-                connectionHealthService, Clock.systemUTC());
+                connectionHealthService, Clock.systemUTC(), null);
     }
 
     ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
@@ -90,6 +109,21 @@ public class ChannelMetricsFeedPuller {
                              OAuthFlowService oAuthFlowService,
                              ConnectionHealthService connectionHealthService,
                              Clock clock) {
+        this(connectorRegistry, connectionService, store, definitionStore, stateStore, objectMapper, oAuthFlowService,
+                connectionHealthService, clock, null);
+    }
+
+    ChannelMetricsFeedPuller(ConnectorRegistry connectorRegistry,
+                             ConnectionService connectionService,
+                             ChannelMetricDailyStore store,
+                             ChannelMetricDefinitionStore definitionStore,
+                             ChannelDimensionStateStore stateStore,
+                             ObjectMapper objectMapper,
+                             OAuthFlowService oAuthFlowService,
+                             ConnectionHealthService connectionHealthService,
+                             Clock clock,
+                             ApplicationEventPublisher eventPublisher) {
+        this.eventPublisher = eventPublisher;
         this.connectionHealthService = connectionHealthService;
         this.connectorRegistry = connectorRegistry;
         this.connectionService = connectionService;
@@ -174,40 +208,87 @@ public class ChannelMetricsFeedPuller {
                 source.channel().name(), from, to, provisionalFrom, pulled.points(),
                 source.prunesMissingDimensions(), metric -> source.snapshot(metric) || pulledSnapshots.contains(metric),
                 pulled.skippedCampaignIds());
-        boolean rewalk = false;
+        boolean newKeys = false;
         if (pulled.definitions() != null) {
             java.util.Set<String> before = definitionStore.keys(connection.getId());
-            boolean newKeys = !before.isEmpty() && pulled.definitions().stream()
+            newKeys = !before.isEmpty() && pulled.definitions().stream()
                     .anyMatch(d -> !before.contains(d.metric()));
-            Integer previousVersion = parseInt(request.cursor(), CURSOR_CONTRACT_VERSION);
-            boolean versionChanged = lastDay != null && pulled.contractVersion() != null
-                    && !pulled.contractVersion().equals(previousVersion);
-            rewalk = newKeys || versionChanged;
             definitionStore.replace(connection.getProjectId(), connection.getId(), pulled.definitions());
         }
+        // Any source can bump its contract version, with or without metric definitions. The cursor stores the new
+        // version below, so the walk this schedules (resumeFrom) sees an unchanged version and never restarts.
+        Integer previousVersion = parseInt(request.cursor(), CURSOR_CONTRACT_VERSION);
+        boolean versionChanged = lastDay != null && pulled.contractVersion() != null
+                && !pulled.contractVersion().equals(previousVersion);
         if (!pulled.dimensionStates().isEmpty()) {
             stateStore.upsert(connection.getId(), pulled.dimensionStates());
         }
         log.info("Channel metrics feed {} upserted {} point(s) for {}..{}", feed.getId(), written, from, to);
         Integer hint = pulled.trailingDays() != null ? pulled.trailingDays() : previousHint;
-        Integer version = pulled.contractVersion() != null ? pulled.contractVersion()
-                : parseInt(request.cursor(), CURSOR_CONTRACT_VERSION);
+        Integer version = pulled.contractVersion() != null ? pulled.contractVersion() : previousVersion;
         LocalDate next = null;
-        if (rewalk) {
-            log.info("Channel metrics feed {} gained metrics or changed contract version; backfilling from {}",
-                    feed.getId(), floor);
+        if (newKeys || versionChanged) {
+            if (versionChanged) {
+                log.info("Channel metrics feed {} contract version changed from {} to {}; re-walking from {}",
+                        feed.getId(), previousVersion, pulled.contractVersion(), floor);
+            }
+            if (newKeys) {
+                log.info("Channel metrics feed {} gained metrics; re-walking from {}", feed.getId(), floor);
+            }
             next = floor;
         } else if (to.isBefore(today)) {
             next = to.plusDays(1);
         }
         if (next == null) {
             flagStall(connection, today);
+            announcePulled(connection, source);
         }
         String cursor = "{\"" + CURSOR_LAST_DAY + "\":\"" + to + "\""
                 + (next == null ? "" : ",\"" + CURSOR_RESUME_FROM + "\":\"" + next + "\"")
                 + (hint == null ? "" : ",\"" + CURSOR_TRAILING_DAYS + "\":" + hint)
                 + (version == null ? "" : ",\"" + CURSOR_CONTRACT_VERSION + "\":" + version) + "}";
         return new IngestBatch(java.util.List.of(), cursor, next != null, false, ConnectorHealth.HEALTHY, null);
+    }
+
+    /**
+     * The last day a pull of this feed read successfully, when its walk had finished: every day up to it (back to
+     * wherever the connection's data begins) was asked of the platform, so a day with no stored row in that span is a
+     * day the platform reported nothing for. Null when the cursor is absent or unreadable, has no {@code lastDay}, or
+     * is mid-walk ({@code resumeFrom} set: an unfinished backfill or re-walk), because then nothing is proven.
+     */
+    public static LocalDate walkCompletedThrough(String cursor, ObjectMapper objectMapper) {
+        if (cursor == null || cursor.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(cursor);
+            JsonNode resume = root.get(CURSOR_RESUME_FROM);
+            JsonNode last = root.get(CURSOR_LAST_DAY);
+            if ((resume != null && !resume.isNull()) || last == null || last.isNull()) {
+                return null;
+            }
+            return LocalDate.parse(last.asText());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Tells the marketing alert evaluator that this connection's days are stored. Sent only once the pull has
+     * reached today (an unfinished backfill or re-walk is half old, half new data and would read as a mismatch)
+     * and after {@link #flagStall} has written the connection's health. There is no transaction here, so the
+     * listener runs at once on this thread. Nothing it does may fail the pull.
+     */
+    private void announcePulled(Connection connection, ChannelMetricsSource source) {
+        if (eventPublisher == null) {
+            return;
+        }
+        try {
+            eventPublisher.publishEvent(new ChannelMetricsPulledEvent(connection.getProjectId(),
+                    source.channel().name(), connection.getId()));
+        } catch (RuntimeException e) {
+            log.warn("Marketing alerts after the pull of connection {} failed: {}", connection.getId(), e.getMessage());
+        }
     }
 
     /**

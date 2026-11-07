@@ -4,6 +4,9 @@ import com.conductor.integration.connector.marketing.MarketingInsightsFeedProvis
 import com.conductor.integration.ingest.ConnectorFeedScheduler;
 import com.conductor.knowledge.KnowledgeIngestScheduler;
 import com.conductor.knowledge.KnowledgeRetentionService;
+import com.conductor.marketing.aivisibility.AiVisibilityJob;
+import com.conductor.marketing.growth.GrowthSignalsJob;
+import com.conductor.marketing.switchback.SwitchbackSettleJob;
 import com.conductor.memory.MemoryMaintenanceScheduler;
 import com.conductor.service.ActionInvocationService;
 import com.conductor.service.DaemonEventService;
@@ -44,10 +47,14 @@ class ScheduledJobRegistryTest {
     private final PostPublishScheduler publish = mock(PostPublishScheduler.class);
     private final WorkflowExecutionEngine engine = mock(WorkflowExecutionEngine.class);
     private final WorkflowScheduler workflows = mock(WorkflowScheduler.class);
+    private final GrowthSignalsJob growthSignals = mock(GrowthSignalsJob.class);
+    private final AiVisibilityJob aiVisibility = mock(AiVisibilityJob.class);
+    private final SwitchbackSettleJob switchbackSettle = mock(SwitchbackSettleJob.class);
 
     private ScheduledJobRegistry registry() {
         return new ScheduledJobRegistry(marketing, feeds, ingest, retention, memory, actions, daemon, handoff,
-                confirm, outcomes, webhooks, publish, engine, workflows);
+                confirm, outcomes, webhooks, publish, engine, workflows, growthSignals, aiVisibility,
+                switchbackSettle);
     }
 
     @Test
@@ -57,7 +64,8 @@ class ScheduledJobRegistryTest {
                 "knowledge-retention-sweep", "memory-maintenance", "action-invocation-retry",
                 "daemon-event-purge", "native-handoff-sweep", "native-publish-confirmation-poll",
                 "publish-reconcile-stranded-targets", "webhook-retry", "post-publish-poll",
-                "workflow-stuck-run-cleanup", "workflow-local-pickup-timeout", "workflow-schedule-poll");
+                "workflow-stuck-run-cleanup", "workflow-local-pickup-timeout", "workflow-schedule-poll",
+                "marketing-growth-signals", "marketing-ai-visibility", "marketing-switchback-settle");
     }
 
     @Test
@@ -80,6 +88,9 @@ class ScheduledJobRegistryTest {
         verify(engine).cleanupStuckRuns();
         verify(workflows).timeoutLocalPickupRuns();
         verify(workflows).poll();
+        verify(growthSignals).run();
+        verify(aiVisibility).run();
+        verify(switchbackSettle).run();
     }
 
     @Test
@@ -109,7 +120,7 @@ class ScheduledJobRegistryTest {
             ScheduledTaskRegistrar registrar = new ScheduledTaskRegistrar();
             ctx.getBean(InAppScheduledJobs.class).configureTasks(registrar);
             assertThat(registrar.getFixedDelayTaskList()).hasSize(13);
-            assertThat(registrar.getCronTaskList()).hasSize(2);
+            assertThat(registrar.getCronTaskList()).hasSize(5);
             registrar.getFixedDelayTaskList().forEach(t -> t.getRunnable().run());
             verify(runner).run("connector-feed-poll");
         });

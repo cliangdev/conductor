@@ -4,22 +4,30 @@ import com.conductor.integration.ChannelMetricsSourceException;
 import com.conductor.integration.ConnectionContext;
 
 import java.net.URI;
+import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
  * The optional, user-typed connection settings of the PostHog connector, validated strictly. Nothing here
- * is ever concatenated into HogQL as raw text: the host is parsed as a URL, the event filter is split into
- * a property name and a literal that travel as query placeholders, and the conversion event is matched
- * against a whitelist pattern.
+ * is ever concatenated into HogQL as raw text except the internal-users cohort id: the host is parsed as a
+ * URL, the event filter is split into a property name and a literal, the conversion event is matched against
+ * a whitelist pattern, and the excluded path prefixes are matched against a whitelist pattern, all of which
+ * travel as query placeholders. HogQL only accepts a cohort as a literal ({@code NOT IN COHORT 339420}), so
+ * that one value is spliced, and is safe only because it is checked to be 1 to 12 ASCII digits first.
  *
- * @param host            base URL, no trailing slash
- * @param filterProperty  property name of the optional {@code property = 'value'} filter, or null
- * @param filterValue     literal of that filter, or null
- * @param conversionEvent event counted as {@code conversion_clicks}, or null when not configured
+ * @param host                base URL, no trailing slash
+ * @param filterProperty      property name of the optional {@code property = 'value'} filter, or null
+ * @param filterValue         literal of that filter, or null
+ * @param conversionEvent     event counted as {@code conversion_clicks}, or null when not configured
+ * @param internalCohortId    digits-only id of the cohort of team members left out of every number, or null
+ * @param excludePathPrefixes page paths (share pages) whose events are left out of every number; empty when
+ *                            none are configured, never holds a blank entry
  */
-record PostHogSettings(String host, String filterProperty, String filterValue, String conversionEvent) {
+record PostHogSettings(String host, String filterProperty, String filterValue, String conversionEvent,
+                       String internalCohortId, List<String> excludePathPrefixes) {
 
     static final String DEFAULT_HOST = "https://app.posthog.com";
     static final String US_CLOUD = "https://us.posthog.com";
@@ -29,6 +37,10 @@ record PostHogSettings(String host, String filterProperty, String filterValue, S
     static final Pattern EVENT_NAME = Pattern.compile("^" + NAME + "$");
     /** {@code property = 'literal'}: the literal may hold anything but quotes and backslashes. */
     static final Pattern FILTER = Pattern.compile("^\\s*(" + NAME + ")\\s*=\\s*'([^'\\\\\\r\\n]{0,200})'\\s*$");
+    /** The only text of the settings that is spliced into HogQL: a cohort id is digits and nothing else. */
+    static final Pattern COHORT_ID = Pattern.compile("^\\d{1,12}$");
+    static final Pattern PATH_PREFIX = Pattern.compile("^/[A-Za-z0-9/_.-]{0,100}$");
+    static final int MAX_PATH_PREFIXES = 10;
 
     static PostHogSettings from(ConnectionContext ctx) {
         String host = resolveHost(text(ctx, "host"));
@@ -49,7 +61,44 @@ record PostHogSettings(String host, String filterProperty, String filterValue, S
             throw ChannelMetricsSourceException.setupRequired(
                     "Conversion event may only contain letters, digits and _ $ . : - (max 100 characters)");
         }
-        return new PostHogSettings(host, filterProperty, filterValue, conversion);
+        return new PostHogSettings(host, filterProperty, filterValue, conversion,
+                cohortId(text(ctx, "internalCohortId")), pathPrefixes(text(ctx, "excludePathPrefixes")));
+    }
+
+    private static String cohortId(String raw) {
+        if (raw == null) return null;
+        if (!COHORT_ID.matcher(raw).matches()) {
+            throw ChannelMetricsSourceException.setupRequired(
+                    "Internal users cohort ID must be digits only, the number in the cohort's PostHog URL "
+                            + "(for example 339420)");
+        }
+        return raw;
+    }
+
+    /** Comma-separated, each entry trimmed; blank entries are dropped because an empty prefix matches every page. */
+    private static List<String> pathPrefixes(String raw) {
+        if (raw == null) return List.of();
+        List<String> prefixes = Arrays.stream(raw.split(",", -1))
+                .map(String::trim)
+                .filter(p -> !p.isEmpty())
+                .distinct()
+                .toList();
+        for (String prefix : prefixes) {
+            if (!PATH_PREFIX.matcher(prefix).matches()) {
+                throw ChannelMetricsSourceException.setupRequired(
+                        "Excluded page prefixes must be comma-separated paths that start with / and use only "
+                                + "letters, digits and / _ . - (max 100 characters each), for example /share, /s/");
+            }
+            if (prefix.equals("/")) {
+                throw ChannelMetricsSourceException.setupRequired(
+                        "An excluded page prefix of / would exclude every page; use a longer prefix such as /share");
+            }
+        }
+        if (prefixes.size() > MAX_PATH_PREFIXES) {
+            throw ChannelMetricsSourceException.setupRequired(
+                    "At most " + MAX_PATH_PREFIXES + " excluded page prefixes are allowed");
+        }
+        return prefixes;
     }
 
     /** Just the host of a connection, for the calls that need no other setting. */

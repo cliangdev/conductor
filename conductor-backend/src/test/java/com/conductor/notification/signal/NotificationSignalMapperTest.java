@@ -107,6 +107,7 @@ class NotificationSignalMapperTest {
                 SignalTypes.CONDUCTOR_WORKFLOW_RUN_FAILED,
                 SignalTypes.CONDUCTOR_WORK_ITEM_AWAITING_MANUAL_PUBLISH,
                 SignalTypes.CONDUCTOR_WORK_ITEM_AUTO_TRANSITION_BLOCKED,
+                SignalTypes.CONDUCTOR_MARKETING_ALERT,
                 SignalTypes.GITHUB_PULL_REQUEST);
     }
 

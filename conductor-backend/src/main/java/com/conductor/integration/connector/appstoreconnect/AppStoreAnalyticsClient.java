@@ -33,6 +33,9 @@ import java.util.zip.ZipInputStream;
  * Reads Apple's App Store Connect Analytics Reports API for one app: the app's ONGOING report request, the
  * two "Standard" reports, their DAILY instances and the TSV segments of each.
  *
+ * <p>It also reads the optional "App Downloads Detailed" report for its {@code Campaign} column (campaign-token
+ * downloads of tracked App Store links); that part is best effort and never fails the Standard reads.
+ *
  * <p>Apple publishes each report day some 1-2 days late, as one instance per processing run holding one or more
  * segments. Rules this client keeps:
  * <ul>
@@ -52,6 +55,11 @@ public class AppStoreAnalyticsClient {
     static final String API_BASE = "https://api.appstoreconnect.apple.com";
     static final String DISCOVERY_REPORT = "App Store Discovery and Engagement Standard";
     static final String DOWNLOADS_REPORT = "App Downloads Standard";
+    static final String DOWNLOADS_DETAILED_REPORT = "App Downloads Detailed";
+    /** Dimension key prefix of a campaign token. */
+    static final String CAMPAIGN_PREFIX = "ct:";
+    /** Longest dimension key stored (the channel dimension state key column). */
+    static final int MAX_DIMENSION_KEY = 190;
 
     static final String M_IMPRESSIONS = "impressions";
     static final String M_IMPRESSIONS_UNIQUE = "impressions_unique";
@@ -65,6 +73,8 @@ public class AppStoreAnalyticsClient {
     private static final List<String> DOWNLOADS_METRICS = List.of(M_DOWNLOADS, M_REDOWNLOADS);
     private static final List<String> DISCOVERY_COLUMNS = List.of("Date", "Event", "Source Type", "Counts", "Unique Counts");
     private static final List<String> DOWNLOADS_COLUMNS = List.of("Date", "Download Type", "Source Type", "Counts");
+    /** Campaign is read when present; without it a Detailed segment simply carries no campaign rows. */
+    private static final List<String> CAMPAIGN_REQUIRED_COLUMNS = List.of("Date", "Download Type", "Counts");
     private static final Set<String> KNOWN_SOURCES = Set.of("APP_STORE_SEARCH", "APP_STORE_BROWSE", "APP_REFERRER",
             "WEB_REFERRER", "APP_CLIP", "INSTITUTIONAL_PURCHASE", "UNAVAILABLE");
 
@@ -74,6 +84,13 @@ public class AppStoreAnalyticsClient {
      * zero rows, so the connector stores it as 0 instead of leaving a gap.
      */
     public record DayRows(Map<String, Map<String, Double>> bySource, Set<String> coveredMetrics) {}
+
+    /**
+     * Everything one pull reads: the Standard {@link DayRows} per report day, and the campaign-token first-time
+     * downloads per report day ({@code ct:{token}} dimension key -> downloads). A token Apple reports no row for
+     * on a day (it suppresses rows under its privacy threshold) is absent, never 0.
+     */
+    public record Fetched(Map<LocalDate, DayRows> days, Map<LocalDate, Map<String, Double>> campaignDownloads) {}
 
     /** The failure to read or understand Apple's reports (as opposed to an HTTP status failure). */
     public static class ReportException extends RuntimeException {
@@ -136,12 +153,22 @@ public class AppStoreAnalyticsClient {
     // -- the pull ------------------------------------------------------------------------------------
 
     /**
+     * The Standard reports for the days in {@code from..to} plus, best effort, the campaign-token downloads of the
+     * Detailed report. Standard failures throw; a Detailed report that is missing, not yet available, unreadable
+     * or failing is logged and yields no campaign downloads for this pull, never an error.
+     */
+    public Fetched fetch(String token, String appId, LocalDate from, LocalDate to) {
+        String requestId = findOrCreateOngoingRequest(token, appId);
+        Map<LocalDate, DayRows> days = standardDays(token, requestId, from, to);
+        return new Fetched(days, campaignDownloads(token, requestId, from, to));
+    }
+
+    /**
      * Per report day, the totals and per-source-type totals of the Discovery and Downloads reports for the days
      * in {@code from..to}. A day Apple has not published has no entry. Metrics a day's report does not carry are
      * simply absent from its rows.
      */
-    public Map<LocalDate, DayRows> fetchDays(String token, String appId, LocalDate from, LocalDate to) {
-        String requestId = findOrCreateOngoingRequest(token, appId);
+    private Map<LocalDate, DayRows> standardDays(String token, String requestId, LocalDate from, LocalDate to) {
         Map<LocalDate, Map<String, Map<String, Double>>> merged = new TreeMap<>();
         Map<LocalDate, Set<String>> covered = new TreeMap<>();
         collect(token, requestId, DISCOVERY_REPORT, DISCOVERY_COLUMNS, DISCOVERY_METRICS, from, to, merged, covered);
@@ -153,6 +180,48 @@ public class AppStoreAnalyticsClient {
             out.put(day, new DayRows(merged.getOrDefault(day, Map.of()), covered.getOrDefault(day, Set.of())));
         }
         return out;
+    }
+
+    // -- campaign tokens (App Downloads Detailed) ------------------------------------------------------
+
+    /**
+     * First-time downloads per report day and {@code ct:{token}} from the "App Downloads Detailed" report: the
+     * rows of every segment of an instance are summed and a later processing date replaces an earlier one for the
+     * same Date, like the Standard reports. Rows with no Campaign value count nothing. Never throws: a report
+     * Apple does not list yet is a quiet no-op, any other failure is logged and skips campaign points for this pull.
+     */
+    private Map<LocalDate, Map<String, Double>> campaignDownloads(String token, String requestId, LocalDate from,
+                                                                  LocalDate to) {
+        try {
+            Optional<String> reportId = findReportId(token, requestId, DOWNLOADS_DETAILED_REPORT);
+            if (reportId.isEmpty()) {
+                log.info("App Store Connect report '{}' not found under request {}; no campaign downloads yet",
+                        DOWNLOADS_DETAILED_REPORT, requestId);
+                return Map.of();
+            }
+            Map<LocalDate, Map<String, Double>> winners = new HashMap<>();
+            List<Instance> instances = listInstances(token, reportId.get(), from);
+            instances.sort(Comparator.comparing(Instance::processingDate,
+                    Comparator.nullsFirst(Comparator.naturalOrder())).thenComparing(Instance::id));
+            for (Instance instance : instances) {
+                Map<LocalDate, Map<String, Double>> perInstance = new HashMap<>();
+                for (byte[] segment : segments(token, instance.id())) {
+                    parseCampaignSegment(text(segment), perInstance);
+                }
+                winners.putAll(perInstance); // a later processing date replaces the whole day
+            }
+            Map<LocalDate, Map<String, Double>> out = new TreeMap<>();
+            winners.forEach((day, tokens) -> {
+                if (!day.isBefore(from) && !day.isAfter(to) && !tokens.isEmpty()) {
+                    out.put(day, tokens);
+                }
+            });
+            return out;
+        } catch (RuntimeException e) {
+            log.warn("App Store Connect '{}' could not be read; campaign downloads skipped for this pull: {}",
+                    DOWNLOADS_DETAILED_REPORT, e.getMessage());
+            return Map.of();
+        }
     }
 
     private void collect(String token, String requestId, String reportName, List<String> required,
@@ -243,11 +312,7 @@ public class AppStoreAnalyticsClient {
         if (lines.length == 0 || lines[0].isBlank()) {
             return;
         }
-        Map<String, Integer> index = new HashMap<>();
-        String[] header = lines[0].replace("\r", "").split("\t", -1);
-        for (int i = 0; i < header.length; i++) {
-            index.put(header[i].trim(), i);
-        }
+        Map<String, Integer> index = headerIndex(lines[0]);
         List<String> missing = required.stream().filter(c -> !index.containsKey(c)).toList();
         if (!missing.isEmpty()) {
             throw new ReportException("Apple's '" + reportName + "' report is missing the column(s) " + missing
@@ -282,6 +347,71 @@ public class AppStoreAnalyticsClient {
                 }
             }
         }
+    }
+
+    /**
+     * One App Downloads Detailed segment: first-time downloads per report Date and {@code ct:{token}}, summed over
+     * every other column (source, territory, device...). A segment missing Date, Download Type or Counts fails the
+     * Detailed read; one without a Campaign column carries no campaign rows. Rows with a blank Campaign or any
+     * other Download Type than a first-time download count nothing. A Date seen in any row marks that day as
+     * carried by this segment, so a later instance restating it replaces the earlier one.
+     */
+    private void parseCampaignSegment(String text, Map<LocalDate, Map<String, Double>> into) {
+        String[] lines = text.split("\n", -1);
+        if (lines.length == 0 || lines[0].isBlank()) {
+            return;
+        }
+        Map<String, Integer> index = headerIndex(lines[0]);
+        List<String> missing = CAMPAIGN_REQUIRED_COLUMNS.stream().filter(c -> !index.containsKey(c)).toList();
+        if (!missing.isEmpty()) {
+            throw new ReportException("Apple's '" + DOWNLOADS_DETAILED_REPORT + "' report is missing the column(s) "
+                    + missing + " (found " + index.keySet() + ")");
+        }
+        if (!index.containsKey("Campaign")) {
+            log.warn("Apple's '{}' segment has no Campaign column (found {}); no campaign downloads from it",
+                    DOWNLOADS_DETAILED_REPORT, index.keySet());
+            return;
+        }
+        for (int i = 1; i < lines.length; i++) {
+            if (lines[i].isBlank()) continue;
+            String[] f = lines[i].replace("\r", "").split("\t", -1);
+            LocalDate day = date(field(f, index, "Date"));
+            if (day == null) continue;
+            Map<String, Double> tokens = into.computeIfAbsent(day, d -> new HashMap<>());
+            String campaign = field(f, index, "Campaign");
+            if (campaign.isEmpty() || !"First-time download".equalsIgnoreCase(field(f, index, "Download Type"))) {
+                continue;
+            }
+            tokens.merge(campaignKey(campaign), count(field(f, index, "Counts")), Double::sum);
+        }
+    }
+
+    private static String campaignKey(String campaign) {
+        String key = CAMPAIGN_PREFIX + campaign;
+        return key.length() > MAX_DIMENSION_KEY ? key.substring(0, MAX_DIMENSION_KEY) : key;
+    }
+
+    /** A Counts cell that must be a number: an unreadable one is never turned into 0. */
+    private static double count(String raw) {
+        try {
+            double value = Double.parseDouble(raw);
+            if (Double.isFinite(value)) {
+                return value;
+            }
+        } catch (NumberFormatException e) {
+            // reported below
+        }
+        throw new ReportException("Apple's '" + DOWNLOADS_DETAILED_REPORT + "' report has a Counts value that is "
+                + "not a number: '" + raw + "'");
+    }
+
+    private static Map<String, Integer> headerIndex(String headerLine) {
+        Map<String, Integer> index = new HashMap<>();
+        String[] header = headerLine.replace("\r", "").split("\t", -1);
+        for (int i = 0; i < header.length; i++) {
+            index.put(header[i].trim(), i);
+        }
+        return index;
     }
 
     /** Upper-case, spaces and dashes to underscores; anything outside Apple's known set becomes OTHER. */

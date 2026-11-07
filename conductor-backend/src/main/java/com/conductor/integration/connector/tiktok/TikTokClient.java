@@ -502,16 +502,17 @@ public class TikTokClient {
         return result;
     }
 
-    /** The connected creator's account totals; either may be null when TikTok omits it. */
-    public record UserStats(Long followerCount, Long videoCount) {}
+    /** The connected creator's account totals; each may be null when TikTok omits it, and null is never read as zero. */
+    public record UserStats(Long followerCount, Long videoCount, Long likesCount) {}
 
     /**
-     * {@code GET /v2/user/info/?fields=follower_count,video_count}. Both fields need the
-     * {@code user.info.stats} scope, which Conductor does not request: without it TikTok answers with
+     * {@code GET /v2/user/info/?fields=follower_count,video_count,likes_count}. All three fields need the
+     * {@code user.info.stats} scope, which Conductor requests only when
+     * {@code conductor.integrations.tiktok.stats-scope-enabled} is on; without the grant TikTok answers with
      * {@code scope_not_authorized}, surfaced as a {@link TikTokApiException} the caller reports as setup required.
      */
     public UserStats queryUserStats(String accessToken) {
-        URI uri = URI.create(API_BASE + "/user/info/?fields=follower_count,video_count");
+        URI uri = URI.create(API_BASE + "/user/info/?fields=follower_count,video_count,likes_count");
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
         ResponseEntity<String> response = exchangeClassifying("user info", () ->
@@ -524,7 +525,8 @@ public class TikTokClient {
         }
         JsonNode user = root == null ? null : root.path("data").path("user");
         return new UserStats(user == null ? null : longOrNull(user, "follower_count"),
-                user == null ? null : longOrNull(user, "video_count"));
+                user == null ? null : longOrNull(user, "video_count"),
+                user == null ? null : longOrNull(user, "likes_count"));
     }
 
     private static Long longOrNull(JsonNode node, String field) {

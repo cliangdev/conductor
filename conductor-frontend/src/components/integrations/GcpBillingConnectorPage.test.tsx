@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ accessToken: 'test-token' }),
@@ -104,5 +104,77 @@ describe('GcpBillingConnectorPage app credential readiness', () => {
     const authorize = await screen.findByRole('button', { name: /connect with google/i })
     expect(authorize).toBeEnabled()
     expect(screen.queryByText('Platform app credentials')).not.toBeInTheDocument()
+  })
+})
+
+describe('GcpBillingConnectorPage expected project', () => {
+  const healthy = {
+    connectionId: 'c1',
+    connectorId: 'gcp-billing',
+    healthStatus: 'HEALTHY' as const,
+    data: { services: [], totalCost: 0, currency: 'USD' },
+    fetchedAt: '2026-10-25T00:00:00Z',
+    isStale: false,
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.mocked(api.fetchConnectionData).mockResolvedValue(healthy as never)
+    vi.mocked(api.patchConnection).mockResolvedValue({ id: 'c1' } as never)
+  })
+
+  it('shows the stored expected project and saves a new one through the config patch', async () => {
+    vi.mocked(api.listConnections).mockResolvedValue([{ id: 'c1', status: 'ACTIVE', config: { expectedProjectId: 'old-project' } }] as never)
+    renderPage(null)
+
+    const input = await screen.findByLabelText('Expected project')
+    expect(input).toHaveValue('old-project')
+    fireEvent.change(input, { target: { value: ' rexipe-prod ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save expected project' }))
+
+    await waitFor(() => expect(api.patchConnection).toHaveBeenCalled())
+    expect(api.patchConnection).toHaveBeenCalledWith('proj-1', 'gcp-billing', 'c1', { config: { expectedProjectId: 'rexipe-prod' } }, 'test-token')
+  })
+
+  it('sends an empty value when it is cleared, so the check is switched off', async () => {
+    vi.mocked(api.listConnections).mockResolvedValue([{ id: 'c1', status: 'ACTIVE', config: { expectedProjectId: 'old-project' } }] as never)
+    renderPage(null)
+    fireEvent.change(await screen.findByLabelText('Expected project'), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save expected project' }))
+    await waitFor(() => expect(api.patchConnection).toHaveBeenCalled())
+    expect(vi.mocked(api.patchConnection).mock.calls[0][3]).toEqual({ config: { expectedProjectId: '' } })
+  })
+
+  it('starts empty when the connection has none, and saves only when changed', async () => {
+    vi.mocked(api.listConnections).mockResolvedValue([{ id: 'c1', status: 'ACTIVE' }] as never)
+    renderPage(null)
+    const input = await screen.findByLabelText('Expected project')
+    expect(input).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Save expected project' })).toBeDisabled()
+  })
+
+  it('sends the expected project with the dataset when finishing setup, and leaves it out when blank', async () => {
+    vi.mocked(api.listConnections).mockResolvedValue([{ id: 'c1', status: 'NEEDS_SETUP' }] as never)
+    vi.mocked(api.fetchConnectionData).mockResolvedValue({ ...healthy, healthStatus: 'SETUP_REQUIRED', data: null } as never)
+    vi.mocked(api.apiGet).mockImplementation(((path: string) =>
+      Promise.resolve(path.includes('gcp-projects') ? { projects: [{ projectId: 'p-1', name: 'P' }] } : { datasets: [{ datasetId: 'billing', location: 'US' }] })) as never)
+    renderPage(null)
+
+    await screen.findByText('Almost there!')
+    const [projectSelect] = screen.getAllByRole('combobox')
+    await waitFor(() => expect(screen.getByRole('option', { name: 'P (p-1)' })).toBeInTheDocument())
+    fireEvent.change(projectSelect, { target: { value: 'p-1' } })
+    await waitFor(() => expect(screen.getByRole('option', { name: 'billing (US)' })).toBeInTheDocument())
+    fireEvent.change(screen.getAllByRole('combobox')[1], { target: { value: 'billing' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save & Connect' }))
+    await waitFor(() => expect(api.patchConnection).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(api.patchConnection).mock.calls[0][3]).toEqual({ config: { bqProjectId: 'p-1', bqDatasetName: 'billing' } })
+
+    fireEvent.change(screen.getByLabelText('Expected project'), { target: { value: 'rexipe-prod' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save & Connect' }))
+    await waitFor(() => expect(api.patchConnection).toHaveBeenCalledTimes(2))
+    expect(vi.mocked(api.patchConnection).mock.calls[1][3]).toEqual({
+      config: { bqProjectId: 'p-1', bqDatasetName: 'billing', expectedProjectId: 'rexipe-prod' },
+    })
   })
 })

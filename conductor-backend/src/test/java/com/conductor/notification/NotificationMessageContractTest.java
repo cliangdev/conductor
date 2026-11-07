@@ -109,6 +109,7 @@ class NotificationMessageContractTest {
                 "WORKFLOW_RUN_FAILED",
                 "POST_AWAITING_MANUAL",
                 "AUTO_TRANSITION_BLOCKED",
+                "MARKETING_ALERT",
                 "GITHUB_PULL_REQUEST"
         );
     }

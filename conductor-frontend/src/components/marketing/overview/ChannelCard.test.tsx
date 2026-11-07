@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { ChannelCard } from './ChannelCard'
-import { channel, comingSoonChannel, metric } from './test-fixtures'
+import { channel, comingSoonChannel, metric, mismatch } from './test-fixtures'
 
 function renderCard(ch = channel(), canEditTargets = true, onSetTarget = vi.fn()) {
   render(<ChannelCard projectId="proj-1" channel={ch} canEditTargets={canEditTargets} onSetTarget={onSetTarget} />)
@@ -44,6 +44,17 @@ describe('ChannelCard', () => {
     renderCard(comingSoonChannel())
     expect(screen.getByText('Coming soon')).toBeInTheDocument()
     expect(screen.getByText(/not available yet/)).toBeInTheDocument()
+  })
+
+  it('says why a metric has no value instead of showing a bare placeholder', () => {
+    const reason = 'Unique visitors are only available for 7, 28 or 90-day windows.'
+    renderCard(channel({ metrics: [metric({ metric: 'visitors', label: 'Visitors', value: null, note: reason })] }))
+    expect(screen.getByText(reason)).toBeInTheDocument()
+  })
+
+  it('shows no note on a metric that has a value', () => {
+    renderCard(channel({ metrics: [metric({ metric: 'visitors', label: 'Visitors', value: 49, note: 'stale note' })] }))
+    expect(screen.queryByText('stale note')).not.toBeInTheDocument()
   })
 
   it('colours a good change green and a bad change red', () => {
@@ -165,5 +176,24 @@ describe('ChannelCard', () => {
   it('shows no snapshot day for a summed metric', () => {
     renderCard()
     expect(screen.queryByText(/as of/)).not.toBeInTheDocument()
+  })
+  it('shows the largest mismatch and how many more there are', () => {
+    const backend = mismatch()
+    const platform = mismatch({ kind: 'PLATFORM', metric: 'spend', label: 'Spend', referenceSource: 'Apple Ads console', gapPct: 0.05 })
+    renderCard(channel({ status: 'MISMATCH', mismatch: backend, mismatches: [backend, platform] }))
+    expect(screen.getByText(/Downloads differ from Rexipe backend by 1.2% \(\+1 more\)/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Details' })).toHaveAttribute('href', '/app/projects/proj-1/marketing/overview/search#mismatch')
+  })
+
+  it('names a platform read that has no source name', () => {
+    const platform = mismatch({ kind: 'PLATFORM', referenceSource: undefined })
+    renderCard(channel({ status: 'MISMATCH', mismatch: platform, mismatches: [platform] }))
+    expect(screen.getByText(/Downloads differ from the platform read by 1.2%/)).toBeInTheDocument()
+  })
+
+  it('still shows the single mismatch from an older server', () => {
+    renderCard(channel({ status: 'MISMATCH', mismatch: mismatch() }))
+    expect(screen.getByText(/Downloads differ from Rexipe backend by 1.2%/)).toBeInTheDocument()
+    expect(screen.queryByText(/more\)/)).not.toBeInTheDocument()
   })
 })

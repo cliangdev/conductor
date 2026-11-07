@@ -15,6 +15,9 @@ It is multi-instance: connect it once per app.
 5. In Conductor open **Integrations → App Store Connect**, enter the Issuer ID, Key ID and Apple ID,
    paste the whole `.p8` file as the private key, and optionally set the ratings country (two letters,
    default `us`).
+6. Optional: set the **vendor number** (Payments and Financial Reports, Sales and Trends) to read Sales Reports
+   downloads of record, and the **provider token** (the number after `pt=` in a link from App Analytics →
+   Campaigns → Generate a Link) so Conductor can make App Store campaign links for Posts, bios, creators and email.
 
 **Role.** Creating the app's report request needs an **Admin** key. Reading reports once the request
 exists is allowed to roles that can read Analytics Reports. We could not confirm the exact minimum
@@ -31,11 +34,23 @@ key's role is too weak (403), when the key is wrong (401) and when the app id is
   "Standard" Apple returns an empty list and no error.
 - Stores each metric as a total and per source type (`source:APP_STORE_SEARCH`, `APP_STORE_BROWSE`,
   `APP_REFERRER`, `WEB_REFERRER`, `APP_CLIP`, `INSTITUTIONAL_PURCHASE`, `UNAVAILABLE`, `OTHER`).
-- Metrics: `impressions`, `impressions_unique`, `page_views`, `page_views_unique`, `downloads`,
-  `redownloads`, and the snapshots `rating_count`, `rating_avg` (today's value only, accumulating day
-  by day from the first pull).
+- Metrics: `impressions`, `impressions_unique`, `page_views`, `page_views_unique`, `downloads`
+  (first-time), `redownloads`, `total_downloads` (first-time plus redownloads, written only where both exist;
+  the numerator of Apple's per-source conversion rate), and the snapshots `rating_count`, `rating_avg`
+  (today's value only, accumulating day by day from the first pull).
 - A day's rows are the sum of all segments of the report instance. When several instances carry the
   same report date, the one with the latest processing date wins.
+- **Campaign tokens.** It also reads **App Downloads Detailed** from the same request and stores first-time
+  downloads per App Store campaign token as `campaign_downloads` with dimension `ct:{token}` (the `ct` of an
+  `apps.apple.com/...?pt=…&ct=…` link). Apple leaves out rows under its privacy threshold, so a token with no
+  row has no value, not zero. A missing or unreadable Detailed report never affects the Standard metrics.
+- **Downloads of record.** With the optional `vendorNumber` (Sales and Trends vendor number) set, it reads the
+  daily Sales Reports summary and stores `downloads_of_record` (first-time download units of this app, product
+  types 1, 1F and 1T) and `sales_report_days` (1 per day read, for coverage). Apple answers 404 both before it
+  publishes a day and for a day with no sales, so a 404 on a day at least three days old (Pacific, Apple's report
+  zone) counts as a covered day with zero downloads, and a recent 404 writes nothing. A Sales failure never fails
+  the Analytics part of a pull.
+- Reports contract version 3; a version change makes the feed re-read its 90-day history once.
 
 ## Gotchas
 

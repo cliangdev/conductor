@@ -24,6 +24,7 @@ import { WorkItemPropertiesPanel } from '@/components/workitems/WorkItemProperti
 import { MediaUploadPanel, type MediaAsset } from '@/components/workitems/MediaUploadPanel'
 import { WorkItemDescriptionCard } from '@/components/workitems/WorkItemDescriptionCard'
 import { WorkItemFieldsCard } from '@/components/workitems/WorkItemFieldsCard'
+import { CreatorResultsCard } from '@/components/marketing/creators/CreatorResultsCard'
 import { usePublishReadiness } from '@/components/marketing/publishReadiness'
 import { workflowDeclaresPublishTargets } from '@/components/marketing/destinations/publishState'
 import { usePostDestinations } from '@/components/marketing/destinations/usePostDestinations'
@@ -1454,6 +1455,15 @@ export function WorkItemDetailView({
                         // Whatever was missing may be filled now; the next refused move says so again if not.
                         setMissingFields([])
                       }}
+                    />
+                  )}
+                  {workflowSlug === 'CREATORS' && (
+                    <CreatorResultsCard
+                      projectId={projectId}
+                      workItemId={issueId}
+                      token={accessToken!}
+                      status={issue.status}
+                      fields={issue.fields}
                     />
                   )}
                   {(workflowView?.assetTypes?.length ?? 0) > 0 && (

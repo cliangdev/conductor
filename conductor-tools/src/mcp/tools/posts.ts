@@ -514,7 +514,25 @@ async function confirmation(
       : nextStep(item.status, preflight, extra.submitted, postId),
   }
   if (extra.reviewers && extra.reviewers.length > 0) result['reviewers'] = extra.reviewers
+  const trackedLink = await trackedLinkUrl(config, postId)
+  if (trackedLink) result['trackedLink'] = trackedLink
   return result
+}
+
+/**
+ * The Post's App Store campaign link, when it has one. Best effort: a backend that predates links, or any
+ * failure reading it, leaves the field out rather than failing the status read.
+ */
+async function trackedLinkUrl(config: Config, postId: string): Promise<string | undefined> {
+  try {
+    const page = await apiGet<{ links?: Array<{ url?: string }> }>(
+      `${V2_PROJECT(config)}/marketing/links?kind=POST&workItemId=${encodeURIComponent(postId)}&limit=1`,
+      config
+    )
+    return page.links?.[0]?.url
+  } catch {
+    return undefined
+  }
 }
 
 function firstLine(text: string): string {

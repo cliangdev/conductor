@@ -117,8 +117,8 @@ Change Work Item: `create_work_item` with `workflow` `MARKETING_CHANGES` (confir
 PRODUCT, CONTENT, BASELINE, OTHER), a `title`, `fields` `{hypothesis, baseline, evidence}` and `dueOn`
 as the review date. It starts PLANNED. Verify with `get_work_item`.
 
-For each change in `dueForReview`, offer to fill `outcome`, `verdict` (worked, did_not_work,
-inconclusive) and `lesson` with `update_work_item`, then move it to REVIEWED with `transition_work_item`
+For each change in `dueForReview`, offer to fill `outcome`, `verdict` (worked, did_not_work, no_effect,
+expected, inconclusive) and `lesson` with `update_work_item`, then move it to REVIEWED with `transition_work_item`
 (`get_available_transitions` first; that move may need a reviewer's approval, so report what happened).
 Use the person's wording for the verdict; propose, do not decide.
 

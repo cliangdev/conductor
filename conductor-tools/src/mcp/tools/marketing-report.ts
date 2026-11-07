@@ -9,6 +9,10 @@ import { apiGet, apiPut, apiDelete } from '../api.js'
 
 export const MAX_REPORT_KEYWORDS = 25
 export const MAX_REPORT_ADS = 20
+export const MAX_REPORT_ADS_COVERAGE = 20
+export const MAX_REPORT_CHANGE_MARKERS = 20
+/** The backend lists up to 50 ASO keywords, best organic rank first; an agent needs the best 20. */
+export const MAX_REPORT_ASO_KEYWORDS = 20
 
 type Json = unknown
 
@@ -41,29 +45,54 @@ export function trimReportValue(value: Json): Json {
 interface ReportPayload extends Record<string, Json> {
   keywords?: Json[]
   ads?: Json[]
+  adsCoverage?: Json[]
+  changeMarkers?: Json[]
+  asoKeywords?: Json[]
 }
 
-const ALWAYS_PRESENT = ['sources', 'headline', 'acquisition', 'daily', 'scorecard', 'keywords', 'ads', 'benchmarks']
+const ALWAYS_PRESENT = [
+  'sources',
+  'headline',
+  'acquisition',
+  'daily',
+  'scorecard',
+  'keywords',
+  'ads',
+  'benchmarks',
+  'adsCoverage',
+  'changeMarkers',
+]
 
 export async function getMarketingReport(
   config: Config,
   params: { window?: string }
 ): Promise<Record<string, unknown>> {
   const window = params.window ?? '28d'
-  if (window !== '7d' && window !== '28d') throw new Error(`Unknown window "${window}": use "7d" or "28d"`)
+  if (window !== '7d' && window !== '28d' && !/^\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}$/.test(window)) {
+    throw new Error(`Unknown window "${window}": use "7d", "28d" or a date range "YYYY-MM-DD..YYYY-MM-DD"`)
+  }
   const report = await apiGet<ReportPayload>(
     `/api/v2/projects/${config.projectId}/marketing/report?window=${window}`,
     config
   )
   const keywords = report.keywords ?? []
   const ads = report.ads ?? []
+  const adsCoverage = report.adsCoverage ?? []
+  // Markers arrive oldest first; when there are too many the newest are the ones worth marking.
+  const changeMarkers = report.changeMarkers ?? []
+  // Arrive best organic rank first, so the head is the part to keep.
+  const asoKeywords = report.asoKeywords ?? []
   const trimmed = trimReportValue({
     ...report,
     keywords: keywords.slice(0, MAX_REPORT_KEYWORDS),
     ads: ads.slice(0, MAX_REPORT_ADS),
+    adsCoverage: adsCoverage.slice(0, MAX_REPORT_ADS_COVERAGE),
+    changeMarkers: changeMarkers.slice(-MAX_REPORT_CHANGE_MARKERS),
+    asoKeywords: asoKeywords.slice(0, MAX_REPORT_ASO_KEYWORDS),
   }) as Record<string, unknown>
   // An emptied section must still read as "none", not as a missing key.
   for (const k of ALWAYS_PRESENT) if (!(k in trimmed)) trimmed[k] = []
+  if (!('definitions' in trimmed)) trimmed['definitions'] = {}
   // All three change buckets stay present even when empty: "nothing due" must not read as a missing key.
   const changes = (trimmed['changes'] ?? {}) as Record<string, unknown>
   trimmed['changes'] = {
@@ -74,8 +103,13 @@ export async function getMarketingReport(
   // window.to is null until a source has data; keep the key so "no data yet" is explicit.
   const w = report['window'] as { from?: string | null; to?: string | null } | undefined
   if (w) trimmed['window'] = { from: w.from ?? null, to: w.to ?? null }
-  // The backend already caps keywords at MAX_REPORT_KEYWORDS, so only ads can run past their cap here.
-  return ads.length > MAX_REPORT_ADS ? { ...trimmed, totalRows: { ads: ads.length } } : trimmed
+  // The backend already caps keywords at MAX_REPORT_KEYWORDS, so only the other lists can run past their cap here.
+  const totalRows: Record<string, number> = {}
+  if (ads.length > MAX_REPORT_ADS) totalRows['ads'] = ads.length
+  if (adsCoverage.length > MAX_REPORT_ADS_COVERAGE) totalRows['adsCoverage'] = adsCoverage.length
+  if (changeMarkers.length > MAX_REPORT_CHANGE_MARKERS) totalRows['changeMarkers'] = changeMarkers.length
+  if (asoKeywords.length > MAX_REPORT_ASO_KEYWORDS) totalRows['asoKeywords'] = asoKeywords.length
+  return Object.keys(totalRows).length > 0 ? { ...trimmed, totalRows } : trimmed
 }
 
 // the metric part mirrors the backend's METRIC_KEY ([A-Za-z0-9_.-]{1,64}, MarketingBenchmarkService)
@@ -97,6 +131,9 @@ export interface SetBenchmarkParams {
   sourceUrl: string
   checkedOn: string
   notes?: string
+  numerator?: string
+  denominator?: string
+  sourceType?: string
 }
 
 export async function setMarketingBenchmark(config: Config, p: SetBenchmarkParams): Promise<Record<string, unknown>> {
@@ -116,6 +153,9 @@ export async function setMarketingBenchmark(config: Config, p: SetBenchmarkParam
     sourceUrl: p.sourceUrl,
     checkedOn: p.checkedOn,
     notes: p.notes,
+    numerator: p.numerator,
+    denominator: p.denominator,
+    sourceType: p.sourceType,
   }
   const saved = await apiPut<Record<string, unknown>>(
     `/api/v2/projects/${config.projectId}/marketing/benchmarks/${encodeURIComponent(p.metricRef)}`,

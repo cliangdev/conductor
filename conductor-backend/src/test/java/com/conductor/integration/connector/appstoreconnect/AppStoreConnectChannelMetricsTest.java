@@ -1,6 +1,7 @@
 package com.conductor.integration.connector.appstoreconnect;
 
 import com.conductor.integration.ChannelMetricPoint;
+import com.conductor.integration.ChannelMetricsPull;
 import com.conductor.integration.ChannelMetricsSourceException;
 import com.conductor.integration.ConnectionContext;
 import com.conductor.integration.ConnectorHealth;
@@ -15,6 +16,8 @@ import org.springframework.web.client.RestTemplate;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.HashMap;
@@ -44,6 +47,8 @@ class AppStoreConnectChannelMetricsTest {
             + "App%20Store%20Discovery%20and%20Engagement%20Standard";
     private static final String DOWNLOADS_LOOKUP = API + "/v1/analyticsReportRequests/REQ1/reports?filter%5Bname%5D="
             + "App%20Downloads%20Standard";
+    private static final String DETAILED_LOOKUP = API + "/v1/analyticsReportRequests/REQ1/reports?filter%5Bname%5D="
+            + "App%20Downloads%20Detailed";
     private static final String DISCOVERY_INSTANCES = API
             + "/v1/analyticsReports/R1/instances?filter%5Bgranularity%5D=DAILY&limit=200";
     private static final String DOWNLOADS_INSTANCES = API
@@ -66,11 +71,16 @@ class AppStoreConnectChannelMetricsTest {
     }
 
     private static ConnectionContext ctx(String ratingsCountry) {
+        return ctx(ratingsCountry, null);
+    }
+
+    private static ConnectionContext ctx(String ratingsCountry, String vendorNumber) {
         Map<String, Object> config = new HashMap<>();
         config.put("issuerId", "ISSUER");
         config.put("keyId", "KEY123");
         config.put("appId", "12345");
         if (ratingsCountry != null) config.put("ratingsCountry", ratingsCountry);
+        if (vendorNumber != null) config.put("vendorNumber", vendorNumber);
         return new ConnectionContext("proj", "app-store-connect", "conn", "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----",
                 null, null, config, null);
     }
@@ -105,6 +115,8 @@ class AppStoreConnectChannelMetricsTest {
         expectJson(REQUESTS, "{\"data\":[{\"id\":\"REQ1\"}]}");
         expectJson(DISCOVERY_LOOKUP, "{\"data\":[{\"id\":\"R1\"}]}");
         expectJson(DOWNLOADS_LOOKUP, "{\"data\":[{\"id\":\"R2\"}]}");
+        // the optional Detailed report (campaign downloads, see AppStoreCampaignDownloadsTest) is not listed here
+        expectJson(DETAILED_LOOKUP, "{\"data\":[]}");
     }
 
     private static byte[] gzip(String text) {
@@ -155,7 +167,13 @@ class AppStoreConnectChannelMetricsTest {
         assertThat(connector.snapshot("downloads")).isFalse();
         assertThat(connector.getSpec().singleInstance()).isFalse();
         assertThat(connector.getSpec().fields()).extracting(f -> f.key())
-                .containsExactly("issuerId", "keyId", "appId", "ratingsCountry", "apiKey");
+                .containsExactly("issuerId", "keyId", "appId", "vendorNumber", "providerToken", "ratingsCountry", "apiKey");
+        assertThat(connector.getSpec().fields()).filteredOn(f -> f.key().equals("vendorNumber"))
+                .singleElement().satisfies(f -> {
+                    assertThat(f.required()).isFalse();
+                    assertThat(f.secret()).isFalse();
+                    assertThat(f.hint()).contains("Payments and Financial Reports");
+                });
     }
 
     // -- the pull ---------------------------------------------------------------------------------------
@@ -247,6 +265,7 @@ class AppStoreConnectChannelMetricsTest {
         expectJson(REQUESTS, "{\"data\":[{\"id\":\"REQ1\"}]}");
         expectJson(DISCOVERY_LOOKUP, "{\"data\":[]}");
         expectJson(DOWNLOADS_LOOKUP, "{\"data\":[]}");
+        expectJson(DETAILED_LOOKUP, "{\"data\":[]}");
 
         assertThat(connector.pullDaily(ctx(null), FROM, TO)).isEmpty();
 
@@ -356,6 +375,9 @@ class AppStoreConnectChannelMetricsTest {
                 .containsEntry("page_views_unique||2026-10-02", 0.0)
                 .containsEntry("downloads||2026-10-02", 3.0)
                 .containsEntry("redownloads||2026-10-02", 0.0);
+        // Both day totals exist, so the total exists; the search source has no redownloads row, so it has no total.
+        assertThat(m).containsEntry("total_downloads||2026-10-02", 3.0)
+                .doesNotContainKey("total_downloads|source:APP_STORE_SEARCH|2026-10-02");
         // Oct 1: a processed Discovery day with no rows -> zeros for all four Discovery metrics (and nothing else).
         assertThat(m).containsEntry("impressions||2026-10-01", 0.0)
                 .containsEntry("impressions_unique||2026-10-01", 0.0)
@@ -458,6 +480,272 @@ class AppStoreConnectChannelMetricsTest {
 
         assertThat(byKey(points)).containsEntry("impressions||" + today.minusDays(1), 5.0);
         assertThat(points).extracting(ChannelMetricPoint::metric).doesNotContain("rating_count", "rating_avg");
+    }
+
+    // -- total downloads ----------------------------------------------------------------------------------
+
+    @Test
+    void totalDownloadsIsFirstTimePlusRedownloadsPerSourceOnlyWhereBothInputsExist() {
+        expectRequestAndReports();
+        expectJson(DISCOVERY_INSTANCES, "{\"data\":[]}");
+        expectJson(DOWNLOADS_INSTANCES, "{\"data\":[{\"id\":\"D\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
+        expectSegmentList("D", "https://segments.example.com/d1");
+        expectSegment("https://segments.example.com/d1", gzip(
+                "Date\tDownload Type\tSource Type\tCounts\n"
+                        + "2026-10-02\tFirst-time download\tApp Store Search\t29\n"
+                        + "2026-10-02\tRedownload\tApp Store Search\t4\n"
+                        + "2026-10-02\tFirst-time download\tApp Store Browse\t1\n"
+                        + "2026-10-02\tRedownload\tApp Referrer\t2\n"
+                        // 2026-10-01 has first-time rows only and no processed instance that covers it
+                        + "2026-10-01\tFirst-time download\tApp Store Search\t9\n"));
+
+        Map<String, Double> m = byKey(connector.pullDaily(ctx(null), FROM, TO));
+
+        server.verify();
+        assertThat(m).containsEntry("downloads||2026-10-02", 30.0)
+                .containsEntry("redownloads||2026-10-02", 6.0)
+                .containsEntry("total_downloads||2026-10-02", 36.0)
+                .containsEntry("total_downloads|source:APP_STORE_SEARCH|2026-10-02", 33.0);
+        // a source with only one of the two inputs gets no total (absent means not reported, never 0)
+        assertThat(m).doesNotContainKey("total_downloads|source:APP_STORE_BROWSE|2026-10-02")
+                .doesNotContainKey("total_downloads|source:APP_REFERRER|2026-10-02");
+        // a day with first-time downloads but no redownloads input gets none at all
+        assertThat(m).containsEntry("downloads||2026-10-01", 9.0)
+                .doesNotContainKey("total_downloads||2026-10-01")
+                .doesNotContainKey("total_downloads|source:APP_STORE_SEARCH|2026-10-01");
+    }
+
+    @Test
+    void aDayWithNoDownloadsInputsWritesNoTotalDownloads() {
+        expectRequestAndReports();
+        expectJson(DISCOVERY_INSTANCES, "{\"data\":[{\"id\":\"A\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
+        expectSegmentList("A", "https://segments.example.com/a1");
+        expectSegment("https://segments.example.com/a1", gzip(
+                "Date\tEvent\tSource Type\tCounts\tUnique Counts\n2026-10-02\tImpression\tApp Store Search\t5\t4\n"));
+        expectJson(DOWNLOADS_INSTANCES, "{\"data\":[]}");
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(null), FROM, TO);
+
+        assertThat(points).extracting(ChannelMetricPoint::metric).doesNotContain("total_downloads");
+    }
+
+    // -- contract version ---------------------------------------------------------------------------------
+
+    @Test
+    void thePullReportsContractVersion3SoHistoryIsReWalkedOnce() {
+        expectRequestAndReports();
+        expectJson(DISCOVERY_INSTANCES, "{\"data\":[]}");
+        expectJson(DOWNLOADS_INSTANCES, "{\"data\":[{\"id\":\"D\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
+        expectSegmentList("D", "https://segments.example.com/d1");
+        expectSegment("https://segments.example.com/d1", gzip(
+                "Date\tDownload Type\tSource Type\tCounts\n2026-10-02\tFirst-time download\tApp Store Search\t3\n"));
+
+        ChannelMetricsPull pull = connector.pull(ctx(null), FROM, TO);
+
+        assertThat(pull.contractVersion()).isEqualTo(3);
+        assertThat(byKey(pull.points())).containsEntry("downloads||2026-10-02", 3.0);
+    }
+
+    // -- sales reports: downloads of record ---------------------------------------------------------------
+
+    private static final String SALES_BASE = API + "/v1/salesReports?filter%5Bfrequency%5D=DAILY"
+            + "&filter%5BreportType%5D=SALES&filter%5BreportSubType%5D=SUMMARY&filter%5BvendorNumber%5D=94514742"
+            + "&filter%5BreportDate%5D=";
+    private static final String SALES_VERSION = "&filter%5Bversion%5D=1_1";
+    private static final String SALES_HEADER = "Provider\tSKU\tVersion\tProduct Type Identifier\tUnits\tCountry Code\t"
+            + "Apple Identifier\n";
+
+    private static String salesUrl(LocalDate day) {
+        return SALES_BASE + day + SALES_VERSION;
+    }
+
+    private static String salesRow(String appleId, String productType, int units) {
+        return "Apple\tSKU1\t1.160\t" + productType + "\t" + units + "\tUS\t" + appleId + "\n";
+    }
+
+    private void expectSalesReport(LocalDate day, String body) {
+        server.expect(once(), requestTo(salesUrl(day))).andExpect(method(HttpMethod.GET))
+                .andExpect(header("Authorization", "Bearer jwt-token"))
+                .andRespond(withSuccess(gzip(body), MediaType.parseMediaType("application/a-gzip")));
+    }
+
+    private void expectEmptyAnalytics() {
+        expectRequestAndReports();
+        expectJson(DISCOVERY_INSTANCES, "{\"data\":[]}");
+        expectJson(DOWNLOADS_INSTANCES, "{\"data\":[]}");
+    }
+
+    private static List<ChannelMetricPoint> salesPoints(List<ChannelMetricPoint> points) {
+        return points.stream()
+                .filter(p -> p.metric().equals("downloads_of_record") || p.metric().equals("sales_report_days"))
+                .toList();
+    }
+
+    @Test
+    void storesDownloadsOfRecordAndCoverageDaysFromSalesReportsForThisAppOnly() {
+        expectEmptyAnalytics();
+        LocalDate d1 = LocalDate.of(2026, 10, 1);
+        LocalDate d2 = d1.plusDays(1);
+        LocalDate d3 = d1.plusDays(2);
+        expectSalesReport(d1, SALES_HEADER
+                + salesRow("12345", "1F", 20) + salesRow("12345", "1", 4) + salesRow("12345", "1T", 6)
+                + salesRow("12345", "7", 50) + salesRow("12345", "3", 2) + salesRow("12345", "IAY", 3)
+                + salesRow("99999", "1F", 999) + salesRow("99999", "7", 999));
+        server.expect(once(), requestTo(salesUrl(d2))).andRespond(withStatus(HttpStatus.NOT_FOUND)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"errors\":[{\"title\":\"The request expected results but none were found\"}]}"));
+        // a report that exists but has no first-time downloads of ours is a read day with a reported zero
+        expectSalesReport(d3, SALES_HEADER + salesRow("12345", "7", 5) + salesRow("99999", "1F", 7));
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(null, " 94514742 "), d1, d3);
+
+        server.verify();
+        Map<String, Double> m = byKey(salesPoints(points));
+        // 2026-10-02 is long settled, so Apple's 404 there means a day with no sales: a covered day reading 0
+        assertThat(m).containsOnly(
+                Map.entry("downloads_of_record||2026-10-01", 30.0),
+                Map.entry("sales_report_days||2026-10-01", 1.0),
+                Map.entry("downloads_of_record||2026-10-02", 0.0),
+                Map.entry("sales_report_days||2026-10-02", 1.0),
+                Map.entry("downloads_of_record||2026-10-03", 0.0),
+                Map.entry("sales_report_days||2026-10-03", 1.0));
+    }
+
+    @Test
+    void aNotFoundRecentDayWritesNothingBecauseAppleMayStillPublishIt() {
+        // 2026-11-06 03:00 UTC is 2026-11-05 in Pacific: 11-04 is one day old, so its 404 is "not published yet"
+        RestTemplate restTemplate = new RestTemplate();
+        server = MockRestServiceServer.bindTo(restTemplate).ignoreExpectOrder(true).build();
+        AppStoreConnectTokenService tokens = new AppStoreConnectTokenService() {
+            @Override public String token(String connectionId, Credentials creds) { return "jwt-token"; }
+        };
+        connector = new AppStoreConnectConnector(restTemplate, tokens,
+                Clock.fixed(Instant.parse("2026-11-06T03:00:00Z"), ZoneOffset.UTC));
+        expectEmptyAnalytics();
+        LocalDate recent = LocalDate.of(2026, 11, 4);
+        server.expect(once(), requestTo(salesUrl(recent))).andRespond(withStatus(HttpStatus.NOT_FOUND)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body("{\"errors\":[{\"title\":\"The request expected results but none were found\"}]}"));
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(null, "94514742"), recent, recent);
+
+        server.verify();
+        assertThat(salesPoints(points)).isEmpty();
+    }
+
+    @Test
+    void salesNumbersSitBesideTheAnalyticsDownloadsWithoutChangingThem() {
+        expectRequestAndReports();
+        expectJson(DISCOVERY_INSTANCES, "{\"data\":[]}");
+        expectJson(DOWNLOADS_INSTANCES, "{\"data\":[{\"id\":\"D\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
+        expectSegmentList("D", "https://segments.example.com/d1");
+        expectSegment("https://segments.example.com/d1", gzip(
+                "Date\tDownload Type\tSource Type\tCounts\n"
+                        + "2026-10-02\tFirst-time download\tApp Store Search\t29\n"
+                        + "2026-10-02\tRedownload\tApp Store Search\t4\n"));
+        expectSalesReport(LocalDate.of(2026, 10, 1), SALES_HEADER + salesRow("12345", "1F", 2));
+        expectSalesReport(LocalDate.of(2026, 10, 2), SALES_HEADER + salesRow("12345", "1F", 30));
+
+        Map<String, Double> m = byKey(connector.pullDaily(ctx(null, "94514742"), FROM, TO));
+
+        server.verify();
+        assertThat(m).containsEntry("downloads||2026-10-02", 29.0)
+                .containsEntry("total_downloads|source:APP_STORE_SEARCH|2026-10-02", 33.0)
+                .containsEntry("downloads_of_record||2026-10-02", 30.0)
+                .containsEntry("sales_report_days||2026-10-02", 1.0)
+                .containsEntry("downloads_of_record||2026-10-01", 2.0);
+    }
+
+    @Test
+    void withoutAVendorNumberNoSalesRequestIsMadeAndNoSalesPointIsWritten() {
+        // no expectation for any salesReports URL: a request would fail the test
+        for (String vendor : new String[] {null, "", "   "}) {
+            server.reset();
+            expectEmptyAnalytics();
+
+            List<ChannelMetricPoint> points = connector.pullDaily(ctx(null, vendor), FROM, TO);
+
+            server.verify();
+            assertThat(salesPoints(points)).as("vendorNumber=[" + vendor + "]").isEmpty();
+        }
+    }
+
+    @Test
+    void aVendorNumberThatIsNotNumericIsNeverSentToAppleAndNeverFailsThePull() {
+        expectEmptyAnalytics();
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(null, "94514742&x=1"), FROM, TO);
+
+        server.verify();
+        assertThat(salesPoints(points)).isEmpty();
+        assertThat(connector.verifyCredentials(ctx(null, "abc")))
+                .hasValueSatisfying(m -> assertThat(m).contains("vendor number").contains("numbers only"));
+    }
+
+    @Test
+    void aSalesFailureIsSkippedAndDoesNotFailTheAnalyticsPart() {
+        expectRequestAndReports();
+        expectJson(DISCOVERY_INSTANCES, "{\"data\":[{\"id\":\"A\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
+        expectSegmentList("A", "https://segments.example.com/a1");
+        expectSegment("https://segments.example.com/a1", gzip(
+                "Date\tEvent\tSource Type\tCounts\tUnique Counts\n2026-10-02\tImpression\tApp Store Search\t5\t4\n"));
+        expectJson(DOWNLOADS_INSTANCES, "{\"data\":[]}");
+        // the key's role cannot read Sales: the first request is refused and no further day is tried
+        server.expect(once(), requestTo(salesUrl(FROM))).andRespond(withStatus(HttpStatus.FORBIDDEN));
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(null, "94514742"), FROM, TO);
+
+        server.verify();
+        assertThat(byKey(points)).containsEntry("impressions||2026-10-02", 5.0);
+        assertThat(salesPoints(points)).isEmpty();
+    }
+
+    @Test
+    void aSalesFailureMidWindowKeepsTheDaysAlreadyReadAndStopsAskingForMore() {
+        expectEmptyAnalytics();
+        expectSalesReport(FROM, SALES_HEADER + salesRow("12345", "1F", 3));
+        server.expect(once(), requestTo(salesUrl(TO))).andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(null, "94514742"), FROM, TO.plusDays(1));
+
+        server.verify();
+        assertThat(byKey(salesPoints(points))).containsOnly(
+                Map.entry("downloads_of_record||2026-10-01", 3.0),
+                Map.entry("sales_report_days||2026-10-01", 1.0));
+    }
+
+    @Test
+    void anUnreadableSalesReportIsSkippedAndDoesNotFailTheAnalyticsPart() {
+        expectEmptyAnalytics();
+        expectSalesReport(FROM, "Provider\tSKU\nApple\tSKU1\n"); // no Units / Apple Identifier columns
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(null, "94514742"), FROM, FROM);
+
+        server.verify();
+        assertThat(salesPoints(points)).isEmpty();
+    }
+
+    @Test
+    void salesAreNotRequestedForADayAppleCannotHavePublishedYet() {
+        // 2026-11-06 03:00 UTC is 2026-11-05 19:00 in Pacific, Apple's report-date zone: the newest report day is 11-04
+        RestTemplate restTemplate = new RestTemplate();
+        server = MockRestServiceServer.bindTo(restTemplate).ignoreExpectOrder(true).build();
+        AppStoreConnectTokenService tokens = new AppStoreConnectTokenService() {
+            @Override public String token(String connectionId, Credentials creds) { return "jwt-token"; }
+        };
+        connector = new AppStoreConnectConnector(restTemplate, tokens,
+                Clock.fixed(Instant.parse("2026-11-06T03:00:00Z"), ZoneOffset.UTC));
+        expectEmptyAnalytics();
+        expectSalesReport(LocalDate.of(2026, 11, 3), SALES_HEADER + salesRow("12345", "1F", 1));
+        expectSalesReport(LocalDate.of(2026, 11, 4), SALES_HEADER + salesRow("12345", "1F", 2));
+        // 11-05 (Pacific today) has no expectation: asking for it would fail the test
+
+        List<ChannelMetricPoint> points = connector.pullDaily(ctx(null, "94514742"),
+                LocalDate.of(2026, 11, 3), LocalDate.of(2026, 11, 5));
+
+        server.verify();
+        assertThat(salesPoints(points)).extracting(ChannelMetricPoint::day)
+                .containsOnly(LocalDate.of(2026, 11, 3), LocalDate.of(2026, 11, 4));
     }
 
     // -- health -----------------------------------------------------------------------------------------

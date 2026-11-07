@@ -12,7 +12,8 @@ import { ChannelStatusPill } from './ChannelStatusPill'
 import { MetricFlags } from './MetricFlags'
 import { Sparkline } from './Sparkline'
 import { TargetNote } from './TargetNote'
-import { formatMetricValue, mismatchCardLine, shortDate } from './format'
+import { formatMetricValue, shortDate } from './format'
+import { mismatchCardText } from './MismatchNotice'
 import type { ChannelKey, OverviewChannel, OverviewMetric } from './types'
 
 const HEADLINE_COUNT = 4
@@ -49,6 +50,7 @@ function MetricRow({
           <Sparkline series={metric.series} label={metric.label} />
         </div>
       </div>
+      {metric.value == null && metric.note && <p className="text-xs text-muted-foreground">{metric.note}</p>}
       <ChangeLine metric={metric} />
       {showFlags && <MetricFlags metric={metric} />}
       <TargetNote
@@ -78,6 +80,7 @@ export function ChannelCard({
   const live = channel.status === 'LIVE' || channel.status === 'STALE' || channel.status === 'MISMATCH'
   const metrics = channel.metrics.slice(0, HEADLINE_COUNT)
   const connectors = channel.connectHint?.connectors ?? []
+  const mismatchLine = mismatchCardText(channel)
 
   return (
     <section
@@ -101,9 +104,9 @@ export function ChannelCard({
           {channel.status === 'STALE' && channel.dataCompleteThrough && (
             <p className="mb-3 text-xs text-muted-foreground">No new data since {shortDate(channel.dataCompleteThrough)}</p>
           )}
-          {channel.status === 'MISMATCH' && channel.mismatch && (
+          {channel.status === 'MISMATCH' && mismatchLine && (
             <p className="mb-3 text-xs text-status-failed">
-              {mismatchCardLine(channel.mismatch)}
+              {mismatchLine}
               {' · '}
               <Link prefetch={false}
                 href={`${detailHref}#mismatch`}

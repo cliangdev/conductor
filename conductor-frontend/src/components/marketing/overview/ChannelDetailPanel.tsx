@@ -18,12 +18,13 @@ import { timeAgo } from "@/lib/format";
 import { usePersistedStateAfterMount } from "@/lib/persisted";
 import { findPostsNavEntry, useSidebarWorkNav, workItemDetailPath } from "@/lib/workflows";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { definitionLine } from "@/components/marketing/definitions/definitionLine";
 import { InsightsPostList } from "@/components/marketing/insights/InsightsPostList";
 import type { InsightsPost } from "@/components/marketing/insights/types";
 import { ChangeLine } from "./ChangeLine";
 import { ChannelStatusPill } from "./ChannelStatusPill";
 import { DimensionTable } from "./DimensionTable";
-import { MetricChart } from "./MetricChart";
+import { MetricChart, changeMarkerLabel, type ChartMarker } from "./MetricChart";
 import { MetricFlags } from "./MetricFlags";
 import { MismatchNotice } from "./MismatchNotice";
 import { StageChart } from "./StageChart";
@@ -33,11 +34,13 @@ import { dataThroughLabel, formatMetricValue, shortDate } from "./format";
 import { useTargetEditor } from "./useTargetEditor";
 import {
   DETAIL_WINDOWS,
+  getMarketingChangeMarkers,
   getMarketingChannel,
   isChannelKey,
   type ChannelKey,
   type MarketingChannelDetailResponse,
   type MarketingTarget,
+  type OverviewChangeMarker,
   type OverviewWindowValue,
 } from "./types";
 
@@ -97,6 +100,30 @@ export function ChannelDetailPanel({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Change markers are a decoration read from the report, separately from the channel so a slow or failed
+  // report never holds the charts back. A failure is said, not shown as "no changes".
+  const [changes, setChanges] = useState<OverviewChangeMarker[]>([]);
+  const [changesFailed, setChangesFailed] = useState(false);
+  useEffect(() => {
+    if (!accessToken || !known || !rangeReady) return;
+    let current = true;
+    setChangesFailed(false);
+    getMarketingChangeMarkers(projectId, accessToken, range)
+      .then((markers) => current && setChanges(markers))
+      .catch(() => {
+        if (!current) return;
+        setChanges([]);
+        setChangesFailed(true);
+      });
+    return () => {
+      current = false;
+    };
+  }, [projectId, accessToken, known, range, rangeReady]);
+  const chartMarkers = useMemo<ChartMarker[]>(
+    () => changes.map((c) => ({ day: c.day, label: changeMarkerLabel(c) })),
+    [changes],
+  );
 
   const patchTarget = useCallback(
     (channel: ChannelKey, metric: string, target: MarketingTarget | null) => {
@@ -258,7 +285,7 @@ export function ChannelDetailPanel({
               )}
             </div>
 
-            <MismatchNotice channel={channel} />
+            <MismatchNotice channel={channel} projectId={projectId} />
 
             {channel.channel === "PRODUCT" && (
               <StageChart metrics={channel.metrics} />
@@ -298,6 +325,10 @@ export function ChannelDetailPanel({
                 }
               />
             ) : (
+              <>
+              {changesFailed && (
+                <p className="text-xs text-muted-foreground">Change markers could not be loaded.</p>
+              )}
               <div className="grid gap-4 lg:grid-cols-2">
                 {channel.metrics.map((m) => (
                   <section
@@ -313,6 +344,11 @@ export function ChannelDetailPanel({
                         {m.description && (
                           <p className="text-xs text-muted-foreground">{m.description}</p>
                         )}
+                        {m.definition && (
+                          <p className="text-xs text-muted-foreground">
+                            {definitionLine(m.definition)}
+                          </p>
+                        )}
                         <p className="text-2xl font-semibold tabular-nums text-foreground">
                           {formatMetricValue(m.value, m.unit)}
                         {m.asOf && (
@@ -320,6 +356,9 @@ export function ChannelDetailPanel({
                         )}
                       </p>
                         <ChangeLine metric={m} />
+                        {m.note && (
+                          <p className="text-xs text-muted-foreground">{m.note}</p>
+                        )}
                       </div>
                       <div className="flex flex-col items-end gap-1">
                         {channel.channel === "PRODUCT" && <MetricFlags metric={m} />}
@@ -334,10 +373,11 @@ export function ChannelDetailPanel({
                         />
                       </div>
                     </div>
-                    <MetricChart metric={m} />
+                    <MetricChart metric={m} markers={chartMarkers} />
                   </section>
                 ))}
               </div>
+              </>
             )}
 
             {data.dimensions.length > 0 && (

@@ -66,6 +66,7 @@ public class ChannelMetricDefinitionStore {
             row.setDescription(d.description());
             row.setHeadline(d.headline());
             row.setWatchBandPct(d.watchBandPct());
+            row.setExclusions(d.exclusions());
             repository.save(row);
         }
     }

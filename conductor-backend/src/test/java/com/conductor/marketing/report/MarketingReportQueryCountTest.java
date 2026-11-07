@@ -4,6 +4,8 @@ import com.conductor.entity.MemberRole;
 import com.conductor.entity.ProjectMember;
 import com.conductor.integration.ingest.ChannelDimensionStateStore;
 import com.conductor.integration.ingest.ConnectorFeedRepository;
+import com.conductor.marketing.links.TrackedLink;
+import com.conductor.marketing.links.TrackedLinkRepository;
 import com.conductor.observability.RequestStats;
 import com.conductor.repository.ChannelMetricDailyRepository;
 import com.conductor.repository.ChannelMetricDefinitionRepository;
@@ -28,8 +30,8 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Query-count-constant-in-N test for {@code GET /marketing/report}: the keyword, ad, benchmark and change-log
- * sections must cost the same number of queries for one row as for twenty.
+ * Query-count-constant-in-N test for {@code GET /marketing/report}: the keyword, ad, benchmark, change-log, ASO-keyword,
+ * email-row and tracked-link-family sections must cost the same number of queries for one row as for twenty.
  */
 class MarketingReportQueryCountTest extends AbstractNoneWebIntegrationTest {
 
@@ -44,6 +46,7 @@ class MarketingReportQueryCountTest extends AbstractNoneWebIntegrationTest {
     @Autowired private ChannelMetricDefinitionRepository definitionRepository;
     @Autowired private ChannelDimensionStateStore stateStore;
     @Autowired private WorkItemRepository workItemRepository;
+    @Autowired private TrackedLinkRepository linkRepository;
     @Autowired private org.springframework.transaction.PlatformTransactionManager transactionManager;
 
     @AfterEach
@@ -70,7 +73,10 @@ class MarketingReportQueryCountTest extends AbstractNoneWebIntegrationTest {
                 .executeWithoutResult(status -> seed(f, n));
         service.report(f.project.getId(), "7d"); // warm
         try (RequestStats.Scope scope = RequestStats.start()) {
-            service.report(f.project.getId(), "7d");
+            MarketingReportService.Report report = service.report(f.project.getId(), "7d");
+            assertThat(report.asoKeywords()).as("the ASO section is exercised").hasSize(n);
+            assertThat(report.acquisition().stream().filter(r -> r.key().startsWith("link_family:")).count())
+                    .as("the link-family rows are exercised").isEqualTo(n);
             return scope.stats().dbQueries();
         }
     }
@@ -82,11 +88,23 @@ class MarketingReportQueryCountTest extends AbstractNoneWebIntegrationTest {
         String product = f.connect("product-metrics", now.minusHours(1));
         f.define(product, "trial_started", "SUM", "COUNT", 1, null, null);
         f.define(product, "activated", "SUM", "COUNT", 2, null, null);
+        f.define(product, "aso_rank", "LEVEL", "POSITION", null, null, null);
+        f.define(product, "email_sends", "SUM", "COUNT", null, null, null);
         LocalDate day = LocalDate.now(ZoneOffset.UTC).minusDays(3);
         f.put(store, "app-store-connect", "STORE", "downloads", "", day, 10);
         f.put(store, "app-store-connect", "STORE", "downloads", "source:APP_STORE_SEARCH", day, 10);
         f.put(ads, "apple-search-ads", "ADS", "installs", "", day, 2);
+        f.put(product, "product-metrics", "PRODUCT", "email_sends", "channel:email", day, 5);
         for (int i = 0; i < n; i++) {
+            f.put(product, "product-metrics", "PRODUCT", "aso_rank", "aso:keyword " + i, day, 1 + i);
+            f.put(store, "app-store-connect", "STORE", "campaign_downloads", "ct:token-" + i, day, 6);
+            TrackedLink link = new TrackedLink();
+            link.setProjectId(f.project.getId());
+            link.setKind("BIO");
+            link.setFamily("family-" + i);
+            link.setToken("token-" + i);
+            link.setUrl("https://apps.apple.com/app/apple-store/id1?pt=1&ct=token-" + i);
+            linkRepository.save(link);
             String keyword = "keyword:" + i + ":term " + i;
             f.put(ads, "apple-search-ads", "ADS", "spend", keyword, day, 1 + i);
             f.put(ads, "apple-search-ads", "ADS", "taps", keyword, day, 25);

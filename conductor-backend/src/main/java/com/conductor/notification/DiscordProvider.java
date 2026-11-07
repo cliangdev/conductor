@@ -54,6 +54,17 @@ public class DiscordProvider implements NotificationProvider {
         };
     }
 
+    /**
+     * A resolved alert is green (good news), a stale channel yellow (something to look into), and a mismatch, a
+     * tripped stop rule or an off-track target red (something to act on).
+     */
+    private static int colorForAlert(String kind, String status) {
+        if ("RESOLVED".equals(status)) {
+            return COLOR_GREEN;
+        }
+        return "STALE".equals(kind) ? COLOR_YELLOW : COLOR_RED;
+    }
+
     /** Humanize an UPPER_SNAKE status id for display when no explicit label is provided. */
     static String humanize(String statusId) {
         if (statusId == null || statusId.isBlank()) return "";
@@ -312,6 +323,13 @@ public class DiscordProvider implements NotificationProvider {
                 description = desc.toString();
                 link = meta.getOrDefault("runUrl", link);
                 color = COLOR_RED;
+            }
+            case MARKETING_ALERT -> {
+                title = meta.getOrDefault("title", event.getEventType().getDescription());
+                // "description" is what the settings page's "send a test" puts in its synthetic event.
+                description = meta.getOrDefault("text", meta.getOrDefault("description", ""));
+                link = frontendUrl + "/app/projects/" + projectId + "/marketing/overview";
+                color = colorForAlert(meta.get("alertKind"), meta.get("alertStatus"));
             }
             default -> {
                 title = event.getEventType().getDescription();

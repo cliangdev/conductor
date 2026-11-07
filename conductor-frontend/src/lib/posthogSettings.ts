@@ -9,6 +9,10 @@ export interface PostHogFormValues {
   customHost: string
   eventFilter: string
   conversionEvent: string
+  /** Digits of the PostHog cohort of team members to leave out of every number; blank means none. */
+  internalCohortId: string
+  /** Comma-separated page paths to leave out (share pages); blank means none. */
+  excludePathPrefixes: string
 }
 
 export const EMPTY_POSTHOG_FORM: PostHogFormValues = {
@@ -17,10 +21,20 @@ export const EMPTY_POSTHOG_FORM: PostHogFormValues = {
   customHost: '',
   eventFilter: '',
   conversionEvent: '',
+  internalCohortId: '',
+  excludePathPrefixes: '',
 }
 
 const FILTER = /^\s*[A-Za-z0-9_$.:-]{1,100}\s*=\s*'[^'\\\r\n]{0,200}'\s*$/
 const EVENT_NAME = /^[A-Za-z0-9_$.:-]{1,100}$/
+const COHORT_ID = /^\d{1,12}$/
+const PATH_PREFIX = /^\/[A-Za-z0-9/_.-]{0,100}$/
+const MAX_PATH_PREFIXES = 10
+
+/** The typed prefixes as the backend reads them: split on commas, trimmed, blanks dropped, repeats counted once. */
+export function parsePathPrefixes(text: string): string[] {
+  return [...new Set(text.split(',').map((p) => p.trim()).filter(Boolean))]
+}
 
 /** The stored `host` setting for a form: absent for US cloud (the default), `eu`, or the typed URL. */
 export function hostForRegion(region: PostHogRegion, customHost: string): string {
@@ -44,6 +58,8 @@ export function formFromConfig(config: Record<string, unknown> | null | undefine
     ...regionFromHost(c.host),
     eventFilter: str('eventFilter'),
     conversionEvent: str('conversionEvent'),
+    internalCohortId: str('internalCohortId'),
+    excludePathPrefixes: str('excludePathPrefixes'),
   }
 }
 
@@ -57,6 +73,15 @@ export function validatePostHogForm(v: PostHogFormValues): string | null {
   if (v.conversionEvent.trim() && !EVENT_NAME.test(v.conversionEvent.trim())) {
     return 'Conversion event may only contain letters, digits and _ $ . : -'
   }
+  if (v.internalCohortId.trim() && !COHORT_ID.test(v.internalCohortId.trim())) {
+    return "Internal users cohort ID must be digits only, the number in the cohort's PostHog URL"
+  }
+  const prefixes = parsePathPrefixes(v.excludePathPrefixes)
+  if (prefixes.some((p) => !PATH_PREFIX.test(p))) {
+    return 'Excluded page prefixes must be comma-separated paths that start with / and use only letters, digits and / _ . - (max 100 characters each), for example /share, /s/'
+  }
+  if (prefixes.includes('/')) return 'An excluded page prefix of / would exclude every page; use a longer prefix such as /share'
+  if (prefixes.length > MAX_PATH_PREFIXES) return `At most ${MAX_PATH_PREFIXES} excluded page prefixes are allowed`
   return null
 }
 
@@ -67,6 +92,9 @@ export function buildPostHogConfig(v: PostHogFormValues): Record<string, string>
   if (host) config.host = host
   if (v.eventFilter.trim()) config.eventFilter = v.eventFilter.trim()
   if (v.conversionEvent.trim()) config.conversionEvent = v.conversionEvent.trim()
+  if (v.internalCohortId.trim()) config.internalCohortId = v.internalCohortId.trim()
+  const prefixes = parsePathPrefixes(v.excludePathPrefixes)
+  if (prefixes.length > 0) config.excludePathPrefixes = prefixes.join(', ')
   return config
 }
 
@@ -77,6 +105,8 @@ export function buildPostHogConfigPatch(v: PostHogFormValues): Record<string, st
     host: hostForRegion(v.region, v.customHost),
     eventFilter: v.eventFilter.trim(),
     conversionEvent: v.conversionEvent.trim(),
+    internalCohortId: v.internalCohortId.trim(),
+    excludePathPrefixes: parsePathPrefixes(v.excludePathPrefixes).join(', '),
   }
 }
 

@@ -224,6 +224,15 @@ interface OverviewMetric {
   basis?: string | null
   description?: string | null
   headline?: number | null
+  note?: string | null
+  definition?: {
+    source: string
+    numerator: string
+    denominator?: string | null
+    sourceType?: string | null
+    exclusions?: string | null
+    timeZone?: string | null
+  } | null
   target?: {
     value: number
     direction: string
@@ -371,6 +380,10 @@ function trimMetric(
     headline: m.headline,
     // COHORT: each day counts the people who first opened that day, followed to now (EVENT is the default).
     basis: m.basis === 'COHORT' ? m.basis : null,
+    // What the number counts (source, numerator, denominator, source type, exclusions, time zone), and, on a null
+    // value, why the stored data cannot answer (e.g. unique visitors exist only for 7, 28 and 90 days).
+    definition: m.definition ? omitNulls({ ...m.definition }) : null,
+    note: m.note,
     series: withSeries ? bucketSeries(m.series ?? [], m.unit) : null,
   })
 }
@@ -391,7 +404,8 @@ function trimChannel(c: OverviewChannel, withSeries: boolean): Record<string, un
     status: c.status,
     dataCompleteThrough: c.dataCompleteThrough,
     connect: c.status === 'NOT_CONNECTED' ? c.connectHint?.connectors?.map((x) => x.name).join(', ') || null : null,
-    // MISMATCH: a connector's own figure and the product backend's reference disagree by more than 1%.
+    // MISMATCH: a connector's own figure and a second source (the product backend's reference or a direct platform
+    // read) differ outside the band: 1 unit for counts under 50, else 2%. get_verification_ledger lists every one.
     mismatch: c.mismatch
       ? omitNulls({
           metric: c.mismatch.metric,

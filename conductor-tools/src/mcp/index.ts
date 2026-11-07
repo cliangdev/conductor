@@ -79,7 +79,25 @@ import {
   type CreatePostParams,
 } from './tools/posts.js'
 import { getMarketingInsights } from './tools/insights.js'
+import { getBudgetPacing, setMarketingBudget, setStopRule, removeStopRule } from './tools/budget.js'
+import { getMarketingDefinitions } from './tools/marketing-definitions.js'
 import { getMarketingReport, setMarketingBenchmark, deleteMarketingBenchmark } from './tools/marketing-report.js'
+import { getVerificationLedger, recordPlatformRead } from './tools/verification.js'
+import { proposeMarketingChange, installWeeklyGrowthWorkflow, type ProposalSignal } from './tools/proposals.js'
+import {
+  getGrowthSignals,
+  setMarketingMoment,
+  linkMomentChange,
+  addCompetitor,
+  removeCompetitor,
+  setTrackedKeywords,
+} from './tools/growth-signals.js'
+import { getAiVisibility, setAiQuestions, runAiVisibilityCheck } from './tools/ai-visibility.js'
+import { createSwitchbackTest, startSwitchbackTest, getSwitchbackTest, listSwitchbackTests } from './tools/switchback.js'
+import { importMarketingChanges } from './tools/marketing-changes.js'
+import { getCreatorResults } from './tools/creators.js'
+import { createTrackedLink, listTrackedLinks } from './tools/links.js'
+import { tagMessage, untagMessage, listPromises } from './tools/promises.js'
 import {
   getBrandKit,
   updateBrandKit,
@@ -1395,18 +1413,78 @@ export const TOOLS = [
     },
   },
   {
-    name: 'get_marketing_report',
-    description: 'The whole-funnel marketing report in one payload: sources, headline, acquisition, funnel, scorecard, keywords, ads, benchmarks and changes. Percent values are fractions. Read-only. Use get_marketing_insights for per-Post performance; set_marketing_benchmark to record an industry benchmark.',
+    name: 'get_budget_pacing',
+    description: 'Paid spend against the month\'s budget cap, per paid channel (any channel with a spend metric; Apple Ads is one). Returns the cap (null when none is set: then there is no pace), settled month-to-date spend (provisionalSpend is kept apart and never counted), pacePct against a straight-line expectation (1.0 = on pace), projected month-end spend, the last 7 days, and per channel: compliance (spend with no active stop rule is non-compliant), each stop rule with its observed value and state (TRIPPED, BELOW_MIN_SAMPLE, NO_DATA, OK), and marginal cost per install (last 7 settled days vs the prior 7 vs month-to-date; cpiNote "no installs" when a window has none). Read-only. Conductor only proposes and records: a tripped rule is a prompt for a human to change the bid or budget in the ad platform (or Rexipe\'s gated tool). Set the cap with set_marketing_budget and rules with set_stop_rule.',
     inputSchema: {
       type: 'object',
       properties: {
-        window: { type: 'string', enum: ['7d', '28d'], description: 'Report window (default 28d)' },
+        month: { type: 'string', description: 'YYYY-MM, UTC (default: the current month)' },
+      },
+    },
+  },
+  {
+    name: 'set_marketing_budget',
+    description: 'Set or replace the paid budget cap for a month (idempotent per month). capAmount must be above 0; to have no cap, set none. Spend is summed as the ad platform reports it, so give the cap in that account\'s currency. Records the cap only; it does not change any ad platform. Requires the Editor role (or Admin). Verify with get_budget_pacing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        month: { type: 'string', description: 'YYYY-MM, UTC' },
+        capAmount: { type: 'number', description: 'The month\'s cap, above 0' },
+        currency: { type: 'string', description: 'Three-letter code (default USD)' },
+      },
+      required: ['month', 'capAmount'],
+    },
+  },
+  {
+    name: 'set_stop_rule',
+    description: 'Add a stop rule for a paid channel: it trips when `metric` is above (GT) or below (LT) `threshold` over the last `windowDays` settled days, once the window holds at least `minSample` taps. A rule below its minSample never trips, so set one for any rate or cost per install. A paid channel with spend needs at least one active rule or get_budget_pacing flags it non-compliant. Rates are fractions (0.05 = 5%). scope narrows it to one campaign or keyword by id. Conductor only evaluates and records: a tripped rule is a prompt for a human to change the bid or budget in the ad platform (or Rexipe\'s gated tool), never an action taken here. Requires the Editor role (or Admin). Verify with get_budget_pacing; remove with remove_stop_rule.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'The channel, e.g. ADS' },
+        metric: { type: 'string', enum: ['cost_per_install', 'spend', 'installs', 'taps', 'tap_through_rate', 'install_rate'], description: 'What to watch. tap_through_rate = taps / impressions; install_rate = installs / taps' },
+        comparator: { type: 'string', enum: ['GT', 'LT'], description: 'GT trips above the threshold, LT below' },
+        threshold: { type: 'number', description: 'In the metric\'s own unit, 0 or more' },
+        minSample: { type: 'number', description: 'Taps the window must hold before the rule can trip (default 0 = none)' },
+        windowDays: { type: 'number', description: 'Settled days to read, 1 to 90 (default 7)' },
+        scope: { type: 'string', description: 'channel (default), campaign:<id> or keyword:<id>' },
+        note: { type: 'string', description: 'What a human should consider when it trips (optional)' },
+      },
+      required: ['channel', 'metric', 'comparator', 'threshold'],
+    },
+  },
+  {
+    name: 'remove_stop_rule',
+    description: 'Remove a stop rule by id (it stays on record but stops being evaluated). Removing the last active rule of a paid channel makes it non-compliant again. Requires the Editor role (or Admin). Find ruleId in get_budget_pacing (channels[].rules); verify there afterwards.',
+    inputSchema: {
+      type: 'object',
+      properties: { ruleId: { type: 'string', description: 'The rule id from get_budget_pacing or set_stop_rule' } },
+      required: ['ruleId'],
+    },
+  },
+  {
+    name: 'get_marketing_definitions',
+    description: 'What each marketing metric counts: per metric (metricRef CHANNEL.key) its source report or field, numerator and denominator, source type (ALL or one App Store traffic source), what it excludes and the time zone of its days. Check it before comparing a metric with a benchmark or another source: two figures compare only when numerator, denominator and source type match. Read-only. Use get_marketing_report or get_marketing_insights for the numbers.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', enum: ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE', 'PRODUCT'], description: 'Only this channel\'s metrics (default all)' },
+      },
+    },
+  },
+  {
+    name: 'get_marketing_report',
+    description: 'The whole-funnel marketing report in one payload: sources, headline, acquisition (organic search net of Apple Ads over the same settled days, see derivation), funnel, store downloads of record, scorecard, keywords (with cost per activated install, week-2 retained install and trial), payback (cohort proceeds over spend per paid channel, 12-month horizon), exclusions (likely App Review installs), asoKeywords (organic rank and popularity, best 20), email, shares and link_family acquisition rows, a verification tally, adsCoverage, ads, benchmarks (judged only against a metric with the same definition), changes with changeMarkers, and definitions for every metric. A figure the source did not send is absent or null, never 0. Percent values are fractions. Read-only. Use get_marketing_insights for per-Post performance; set_marketing_benchmark to record an industry benchmark.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        window: { type: 'string', description: 'Report window: "7d", "28d" (default) or a fixed range "YYYY-MM-DD..YYYY-MM-DD" (at most 92 days, ending yesterday or earlier), e.g. to check a past window against platform numbers' },
       },
     },
   },
   {
     name: 'set_marketing_benchmark',
-    description: 'Record or replace the industry benchmark for one metric. The value must come from a source you read in this session, never from memory: sourceUrl (the page) and checkedOn (the day you read it) are required. metricRef is CHANNEL.metric (e.g. STORE.conversion_rate) or PRODUCT.<key>. A count or currency total (downloads, spend) is stated per 28 days and prorated to the report window; a rate or ratio is compared as stated. Requires the Editor role (or Admin). Verify with get_marketing_report (benchmarks).',
+    description: 'Record or replace the industry benchmark for one metric. The value must come from a source you read in this session, never from memory: sourceUrl (the page) and checkedOn (the day you read it) are required. metricRef is CHANNEL.metric (e.g. STORE.conversion_rate) or PRODUCT.<key>. A count or currency total (downloads, spend) is stated per 28 days and prorated to the report window; a rate or ratio is compared as stated. Say what it measures with numerator, denominator and sourceType: a benchmark is judged only against a metric with the same definition, and one without them shows as "definition missing". Each call replaces the whole benchmark, so repeat the definition when you update the value. Requires the Editor role (or Admin). Verify with get_marketing_report (benchmarks).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1419,6 +1497,9 @@ export const TOOLS = [
         sourceUrl: { type: 'string', description: 'http(s) URL of the page you read' },
         checkedOn: { type: 'string', description: 'YYYY-MM-DD, the day you read the source (not in the future)' },
         notes: { type: 'string', description: 'Caveats (optional)' },
+        numerator: { type: 'string', description: 'What the benchmark counts (optional): impressions, unique_impressions, page_views, unique_page_views, first_time_downloads, redownloads, total_downloads, downloads_of_record, tap_installs, tap_new_downloads, view_through_installs, taps, spend, visitors, sessions, pageviews, conversion_sessions, conversion_events, clicks, followers, posts, likes, channel_views, website_clicks, rating_count, rating_avg, position, or product:<key> for an in-app metric. AppFollow example: total_downloads' },
+        denominator: { type: 'string', description: 'What the numerator is divided by (optional; same names as numerator; omit for a count; needs numerator). AppFollow example: unique_impressions' },
+        sourceType: { type: 'string', description: 'The traffic source it covers (optional; needs numerator): ALL (default), APP_STORE_SEARCH, APP_STORE_BROWSE, APP_REFERRER, WEB_REFERRER, APP_CLIP, INSTITUTIONAL_PURCHASE or OTHER. AppFollow example: APP_STORE_SEARCH' },
       },
       required: ['metricRef', 'value', 'sourceName', 'sourceUrl', 'checkedOn'],
     },
@@ -1430,6 +1511,318 @@ export const TOOLS = [
       type: 'object',
       properties: { metricRef: { type: 'string', description: 'CHANNEL.metric or PRODUCT.<key>' } },
       required: ['metricRef'],
+    },
+  },
+  {
+    name: 'get_verification_ledger',
+    description: 'Which marketing numbers to trust: per metric (CHANNEL.key) Conductor\'s value, the product backend\'s value over the settled days both have, the latest direct platform read and a verdict. BOTH: every second source agrees. CONNECTOR: trust the connector (a read agrees with it, or only the backend disagrees). BACKEND: backend and read agree, the connector does not. PLATFORM: the read disagrees with every other source. UNCHECKED: no second source, never verified. `mismatch` means a second source disagrees; `stale` means the read is over 7 days old; `over` is set when a row covers other days than the window. Cite a number only when its verdict is not UNCHECKED and it has no mismatch. Read-only. Use record_platform_read to log a direct read.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        window: { type: 'string', description: '7d, 28d (default), 90d, or a range of whole days YYYY-MM-DD..YYYY-MM-DD ending yesterday or earlier (at most 92 days)' },
+        channel: { type: 'string', enum: ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE', 'PRODUCT'], description: 'Only this channel\'s rows (default all)' },
+        onlyProblems: { type: 'boolean', description: 'Only rows that are UNCHECKED, have a mismatch or have a stale read (default false)' },
+      },
+    },
+  },
+  {
+    name: 'record_platform_read',
+    description: 'Log a direct read: what the platform\'s own UI or API shows for one metric over an exact day range. Look at the platform for that range; never copy Conductor\'s number. from and to are whole days, to yesterday or earlier, at most 92 days apart (a level such as followers is read on `to`; unique visitors need a range of 7, 28 or 90 days). Append-only: a newer read supersedes this one, nothing is edited or deleted. Returns the metric\'s row with its verdict. Requires the Editor role (or Admin). Always call get_verification_ledger after to verify.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', enum: ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE', 'PRODUCT'], description: 'The channel the metric belongs to' },
+        metric: { type: 'string', description: 'Metric key within the channel, e.g. installs (ADS), clicks (SEARCH), downloads (STORE); a sum, a level or visitors, not a ratio' },
+        from: { type: 'string', description: 'First day the platform figure covers, YYYY-MM-DD' },
+        to: { type: 'string', description: 'Last day the platform figure covers, YYYY-MM-DD (yesterday or earlier)' },
+        value: { type: 'number', description: 'The platform\'s figure for those days (zero or more)' },
+        sourceName: { type: 'string', description: 'Where you read it, e.g. Apple Ads console or Search Console UI' },
+        note: { type: 'string', description: 'Caveats, e.g. the filter or time zone the platform used (optional)' },
+      },
+      required: ['channel', 'metric', 'from', 'to', 'value', 'sourceName'],
+    },
+  },
+  {
+    name: 'propose_marketing_change',
+    description: 'Propose one marketing change, backed by exactly two signals on two different metrics, as a PLANNED change with a review date. It refuses a signal whose metric get_verification_ledger does not verify (UNCHECKED, a MISMATCH or no row; it names the metric and verdict), a value that is not the ledger\'s figure for that window, and more than 3 a week per workspace (ISO week, UTC). A human approves every change: it stays PLANNED and moving it to LIVE is a human step this tool cannot take. It changes nothing on an ad platform. Requires the Editor role (or Admin). Verify with get_work_item (workItemId) or get_marketing_report (changes).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'Short name of the change (at most 255 characters)' },
+        type: { type: 'string', description: 'A type of the workspace\'s MARKETING_CHANGES workflow (LISTING, ADS, PRICING, PRODUCT, CONTENT, BASELINE or OTHER by default)' },
+        hypothesis: { type: 'string', description: 'What to change and what you expect it to do' },
+        reviewOn: { type: 'string', description: 'YYYY-MM-DD, the day to review the result; after today' },
+        signals: {
+          type: 'array',
+          minItems: 2,
+          maxItems: 2,
+          description: 'The evidence: two figures on two different metrics, each verified by the ledger for its window',
+          items: {
+            type: 'object',
+            properties: {
+              metricRef: { type: 'string', description: 'CHANNEL.metric as in get_verification_ledger, e.g. ADS.installs' },
+              window: { type: 'string', description: '7d, 28d, 90d or YYYY-MM-DD..YYYY-MM-DD: the window the figure is for' },
+              value: { type: 'number', description: 'The ledger\'s figure for that metric over that window' },
+              note: { type: 'string', description: 'What the figure shows (optional)' },
+            },
+            required: ['metricRef', 'window', 'value'],
+          },
+        },
+        runId: { type: 'string', description: 'The workflow run making the proposal (optional)' },
+      },
+      required: ['title', 'type', 'hypothesis', 'reviewOn', 'signals'],
+    },
+  },
+  {
+    name: 'install_weekly_growth_workflow',
+    description: 'Install the "Weekly growth review" workflow from Conductor\'s template: every Monday 07:30 UTC a Claude Code step reads the report, the verification ledger and the budget, and proposes at most 3 changes with propose_marketing_change. It is created disabled, so nothing runs until a person enables it, and its Claude Code step needs a runtime target. Safe to repeat: an existing workflow with that name is returned unchanged. Requires the Admin role. Verify with get_workflow (workflowId).',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'get_growth_signals',
+    description: 'Growth signals from public data: seasonal moments with their surfaces and overdue warnings, the weekly ratings program (our app and each competitor: latest and previous snapshot, weeklyGrowth = rating-count change, null until two snapshots), recent reviews, what changed on competitor listings, and App Store keyword positions. Read-only. Change the inputs with set_marketing_moment, link_moment_change, add_competitor, remove_competitor and set_tracked_keywords.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'set_marketing_moment',
+    description: 'Record or replace a dated moment (for example Thanksgiving, 2026-11-26) and the surfaces that must change for it, each with a due date. A surface past its due date with no linked change shows a warning. surfaces is the whole list: a surface kept by name keeps its linked change, one left out is removed. Requires the Editor role (or Admin). Verify with get_growth_signals (moments).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Stable id: lower-case letters, digits, hyphens, underscores (e.g. thanksgiving-2026)' },
+        name: { type: 'string', description: 'Display name' },
+        date: { type: 'string', description: 'YYYY-MM-DD, the day of the moment' },
+        leadDays: { type: 'integer', description: 'Days ahead the moment counts as upcoming (default 21)' },
+        surfaces: {
+          type: 'array',
+          description: 'Where a change is needed and by when',
+          items: {
+            type: 'object',
+            properties: {
+              surface: { type: 'string', description: 'e.g. App Store promotional text, TikTok post, Email' },
+              dueOn: { type: 'string', description: 'YYYY-MM-DD, the day the change must be recorded by' },
+            },
+            required: ['surface', 'dueOn'],
+          },
+        },
+      },
+      required: ['key', 'name', 'date', 'surfaces'],
+    },
+  },
+  {
+    name: 'link_moment_change',
+    description: 'Record the marketing change (a MARKETING_CHANGES Work Item of this project) that handled a moment surface, which clears its warning. A Work Item of another project or workflow is refused. Requires the Editor role (or Admin). Verify with get_growth_signals (moments).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'The moment key' },
+        surfaceId: { type: 'string', description: 'The surface id from get_growth_signals' },
+        workItemId: { type: 'string', description: 'The change Work Item: its id or display id (e.g. RE-12)' },
+      },
+      required: ['key', 'surfaceId', 'workItemId'],
+    },
+  },
+  {
+    name: 'add_competitor',
+    description: 'Watch a competitor app: each week its public App Store listing, rating count, reviews and keyword positions are recorded. Idempotent per appId (re-adding updates the name and country). Requires the Editor role (or Admin). Verify with get_growth_signals (ratings.competitors); data appears after the next weekly run.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        appId: { type: 'string', description: 'Numeric App Store id, digits only' },
+        name: { type: 'string', description: 'Display name' },
+        country: { type: 'string', description: 'Two-letter App Store country (default: our app\'s)' },
+      },
+      required: ['appId', 'name'],
+    },
+  },
+  {
+    name: 'remove_competitor',
+    description: 'Stop watching a competitor app (idempotent); its stored history is kept. Requires the Editor role (or Admin). Verify with get_growth_signals (ratings.competitors).',
+    inputSchema: {
+      type: 'object',
+      properties: { appId: { type: 'string', description: 'Numeric App Store id' } },
+      required: ['appId'],
+    },
+  },
+  {
+    name: 'set_tracked_keywords',
+    description: 'Replace the App Store keywords whose search position is recorded weekly for our app and each competitor (at most 25; an empty list clears it). Used only while the product feed has no aso:<keyword> rows; otherwise those keywords are tracked. Requires the Editor role (or Admin). Verify with get_growth_signals (trackedKeywords, keywordPresence).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        keywords: { type: 'array', items: { type: 'string' }, description: 'The full list of keywords' },
+        country: { type: 'string', description: 'Two-letter App Store country to search in (default: our app\'s)' },
+      },
+      required: ['keywords'],
+    },
+  },
+  {
+    name: 'get_ai_visibility',
+    description: 'Whether AI assistants name the brand when asked a fixed set of questions, checked weekly: per question and assistant the latest answer (named or not, list rank, excerpt) and a weekly trend. An assistant the workspace has no provider key for is listed under skipped and has no readings; it is never shown as not named. Read-only. Change the questions with set_ai_questions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        weeks: { type: 'integer', description: 'ISO weeks back to read, 1-52 (default 8)' },
+      },
+    },
+  },
+  {
+    name: 'set_ai_questions',
+    description: 'Replace the questions put to the AI assistants each week (at most 20; an empty list switches all off; dropped questions keep their history), and optionally the brand terms that count as naming the brand (default: the workspace name; an empty list goes back to it). Requires the Editor role (or Admin). Verify with get_ai_visibility.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        questions: { type: 'array', items: { type: 'string' }, description: 'The full list of questions, e.g. "best app to save recipes from TikTok"' },
+        brandTerms: { type: 'array', items: { type: 'string' }, description: 'Words that count as naming the brand, whole word in any case with an optional plural s (omit to leave unchanged)' },
+      },
+      required: ['questions'],
+    },
+  },
+  {
+    name: 'run_ai_visibility_check',
+    description: 'Run this week\'s AI-assistant checks now instead of waiting for Monday. Spends the workspace\'s own AI provider keys (at most 20 calls a week) and needs the Admin role. Safe to repeat: a question and assistant already read this week is not asked again. Returns what was recorded, skipped (no credential, weekly limit) and failed. Call get_ai_visibility after to read the results.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'create_switchback_test',
+    description: 'Declare a weekly on/off test of one Apple Ads keyword to see whether paid adds installs or only relabels organic ones. Give weeks, or startWeek (a Monday) with weekCount (2-12, alternating, first week ON). The rule and minimum n are fixed up front (defaults: total installs up by at least 1 a week, organic down by at most 20%, 20 search downloads). Creates a draft; call start_switchback_test to freeze it. A person switches the keyword in the ad platform or through Rexipe\'s gated tool; Conductor never does. Requires the Editor role (or Admin). Verify with get_switchback_test.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'A label for the test' },
+        keywordId: { type: 'string', description: 'The Apple Ads keyword id' },
+        keywordText: { type: 'string', description: 'The keyword text' },
+        weeks: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              weekStart: { type: 'string', description: 'A Monday, yyyy-MM-dd (UTC)' },
+              on: { type: 'boolean', description: 'true = keyword on that week, false = off' },
+            },
+            required: ['weekStart', 'on'],
+          },
+          description: 'Consecutive Mondays with at least one on and one off week (omit when using startWeek and weekCount)',
+        },
+        startWeek: { type: 'string', description: 'First Monday, yyyy-MM-dd; use with weekCount instead of weeks' },
+        weekCount: { type: 'integer', description: 'How many weeks, 2-12; used with startWeek' },
+        minN: { type: 'integer', description: 'Fewest first-time search downloads across all weeks a verdict may rest on (default 20)' },
+        minLift: { type: 'number', description: 'Extra total first-time installs a week paid must add (default 1)' },
+        maxCannibalisationPct: { type: 'number', description: 'Most the on-week organic mean may fall, in percent (default 20)' },
+      },
+      required: ['name', 'keywordId', 'keywordText'],
+    },
+  },
+  {
+    name: 'start_switchback_test',
+    description: 'Start a drafted switchback test: from now its weeks and rule cannot change (edits are refused). The first week must not have begun. The test then settles itself once its last week has ended and the daily data is settled, recording the verdict as a reviewed change; no polling needed. Requires the Editor role (or Admin). Verify with get_switchback_test, which also says which state the keyword should be in this week.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The test id' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'get_switchback_test',
+    description: 'One switchback test: its plan, the rule, which state (ON, OFF or not running) the keyword should be in this week, what it is waiting for when its last week has ended but data is not settled, and once settled the verdict, per-week figures, n reached and the change Work Item that records it. Read-only.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string', description: 'The test id' } },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'list_switchback_tests',
+    description: 'The workspace\'s switchback tests, newest first, with status, this week\'s state and any verdict. Read-only. Read one with get_switchback_test.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'import_marketing_changes',
+    description: 'Import a marketing change log from a local JSONL file (one record per line: id, date, type, title, status, changed, evidence[], hypothesis, baseline, control, live_since, review_on, outcome, verdict, lesson, stop_rules, stop_rules_note) as Changes on the MARKETING_CHANGES workflow, each in the status its record has. Reference records are skipped; an unknown status or verdict refuses that record and names it, never guessed. A bad line stops everything before anything is sent. Safe to run again: a record already imported (same source and id) is left alone. Requires the Editor role (or Admin). Verify with get_marketing_report (changes).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filePath: { type: 'string', description: 'Absolute path to the .jsonl file on this machine' },
+        source: { type: 'string', description: 'Names the log the records come from (default "rexipe"); a record id is unique within its source' },
+      },
+      required: ['filePath'],
+    },
+  },
+  {
+    name: 'get_creator_results',
+    description: 'What one creator (a Work Item on the CREATORS workflow) has produced: its posts with views, the downloads of its campaign links, and the redemptions of its offer code over a window of settled days (default the 28 days ending yesterday). An unknown figure is null with a note (Apple omits links under its reporting threshold; the product backend may not send redemptions), never 0. Read-only. Fill in the creator\'s fields with update_work_item.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        creatorId: { type: 'string', description: 'The creator Work Item: its id or display id (e.g. RE-12)' },
+        from: { type: 'string', description: 'First day, YYYY-MM-DD (default 27 days before to)' },
+        to: { type: 'string', description: 'Last day, YYYY-MM-DD, yesterday or earlier (default yesterday); at most 92 days from from' },
+      },
+      required: ['creatorId'],
+    },
+  },
+  {
+    name: 'create_tracked_link',
+    description: 'Create an App Store campaign link (pt/ct) for a bio, creator, email or any other place, and return its url. Every new Post already gets one automatically, so use this for the rest. token is the ct (lowercase letters, digits, dashes, at most 40); family groups tokens so their downloads add up past Apple\'s reporting threshold (about 5 per token). One kind per family. Needs an App Store Connect connection with its provider token set. Requires the Editor role (or Admin). Verify with list_tracked_links.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['POST', 'BIO', 'CREATOR', 'EMAIL', 'OTHER'], description: 'What the link is for. POST needs workItemId' },
+        family: { type: 'string', description: 'The group the token rolls up into, e.g. creators (lowercase letters, digits, dashes, at most 64)' },
+        token: { type: 'string', description: 'The campaign token (ct)' },
+        label: { type: 'string', description: 'What the link is for, at most 200 characters (optional)' },
+        workItemId: { type: 'string', description: 'The Work Item it belongs to, e.g. the creator (optional; required for POST)' },
+      },
+      required: ['kind', 'family', 'token'],
+    },
+  },
+  {
+    name: 'list_tracked_links',
+    description: 'List tracked App Store links, newest first, with their urls. withPerformance adds per family: tokens, first-time downloads over the last 28 settled days and, for Post links, views. A family Apple reported nothing for has downloads null and belowThreshold true ("below Apple\'s reporting threshold"), which is not 0. Read-only. Create more with create_tracked_link; a Post\'s own link is also in get_post_status.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: ['POST', 'BIO', 'CREATOR', 'EMAIL', 'OTHER'], description: 'Only this kind (optional)' },
+        workItemId: { type: 'string', description: 'Only the links of this Work Item (optional)' },
+        withPerformance: { type: 'boolean', description: 'Add downloads and views per family (default false)' },
+      },
+    },
+  },
+  {
+    name: 'tag_message',
+    description: 'Tag a target with the message it makes (a short tag such as save-from-tiktok): an Apple Ads keyword, a custom product page, a Post, a creative or a paywall headline. list_promises then joins the message to installs, intent picks, trial rate and D7. A target carries one message: tagging it again moves it and replaces its label. targetRef is the keyword id, product page id, Post id or creative id, or the headline text for a paywall headline. Requires the Editor role (or Admin). Verify with list_promises.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: { type: 'string', description: 'The message, at most 120 characters (stored lower-case). Match the product feed\'s message:<tag> value to see outcomes' },
+        targetKind: { type: 'string', enum: ['CREATIVE', 'PRODUCT_PAGE', 'KEYWORD', 'PAYWALL_HEADLINE', 'POST'], description: 'What is being tagged' },
+        targetRef: { type: 'string', description: 'The target\'s id, or the headline text for PAYWALL_HEADLINE' },
+        label: { type: 'string', description: 'A human name for the target, at most 200 characters (optional)' },
+      },
+      required: ['message', 'targetKind', 'targetRef'],
+    },
+  },
+  {
+    name: 'untag_message',
+    description: 'Remove the message from a target. Safe to repeat: untagging a target with no tag changes nothing. Requires the Editor role (or Admin). Verify with list_promises.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        targetKind: { type: 'string', enum: ['CREATIVE', 'PRODUCT_PAGE', 'KEYWORD', 'PAYWALL_HEADLINE', 'POST'], description: 'What was tagged' },
+        targetRef: { type: 'string', description: 'The id (or headline text) the tag was made with' },
+      },
+      required: ['targetKind', 'targetRef'],
+    },
+  },
+  {
+    name: 'list_promises',
+    description: 'The promise ledger: per message, the tagged targets by kind, installs (Apple Ads tap installs of tagged keywords and product pages plus first-time downloads of tagged Posts\' links), intent mix, trial rate and D7, each rate with its 95% range and n, flagged "small sample" under n=20. A figure with no data is null, never 0. Default window: the last 28 settled days. Read-only. Tag targets with tag_message.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'First day, YYYY-MM-DD (default 27 days before to)' },
+        to: { type: 'string', description: 'Last day, YYYY-MM-DD (default the latest settled day)' },
+      },
     },
   },
   {
@@ -2783,6 +3176,38 @@ export async function runMcpServer(): Promise<void> {
             })
           )
         }
+        case 'get_budget_pacing': {
+          return successResponse(await getBudgetPacing(config, { month: params['month'] as string | undefined }))
+        }
+        case 'set_marketing_budget': {
+          return successResponse(
+            await setMarketingBudget(config, {
+              month: params['month'] as string,
+              capAmount: params['capAmount'] as number,
+              currency: params['currency'] as string | undefined,
+            })
+          )
+        }
+        case 'set_stop_rule': {
+          return successResponse(
+            await setStopRule(config, {
+              channel: params['channel'] as string,
+              metric: params['metric'] as string,
+              comparator: params['comparator'] as string,
+              threshold: params['threshold'] as number,
+              minSample: params['minSample'] as number | undefined,
+              windowDays: params['windowDays'] as number | undefined,
+              scope: params['scope'] as string | undefined,
+              note: params['note'] as string | undefined,
+            })
+          )
+        }
+        case 'remove_stop_rule': {
+          return successResponse(await removeStopRule(config, { ruleId: params['ruleId'] as string }))
+        }
+        case 'get_marketing_definitions': {
+          return successResponse(await getMarketingDefinitions(config, { channel: params['channel'] as string | undefined }))
+        }
         case 'get_marketing_report': {
           return successResponse(await getMarketingReport(config, { window: params['window'] as string | undefined }))
         }
@@ -2798,11 +3223,195 @@ export async function runMcpServer(): Promise<void> {
               sourceUrl: params['sourceUrl'] as string,
               checkedOn: params['checkedOn'] as string,
               notes: params['notes'] as string | undefined,
+              numerator: params['numerator'] as string | undefined,
+              denominator: params['denominator'] as string | undefined,
+              sourceType: params['sourceType'] as string | undefined,
             })
           )
         }
         case 'delete_marketing_benchmark': {
           return successResponse(await deleteMarketingBenchmark(config, { metricRef: params['metricRef'] as string }))
+        }
+        case 'get_verification_ledger': {
+          return successResponse(
+            await getVerificationLedger(config, {
+              window: params['window'] as string | undefined,
+              channel: params['channel'] as string | undefined,
+              onlyProblems: params['onlyProblems'] as boolean | undefined,
+            })
+          )
+        }
+        case 'record_platform_read': {
+          return successResponse(
+            await recordPlatformRead(config, {
+              channel: params['channel'] as string,
+              metric: params['metric'] as string,
+              from: params['from'] as string,
+              to: params['to'] as string,
+              value: params['value'] as number,
+              sourceName: params['sourceName'] as string,
+              note: params['note'] as string | undefined,
+            })
+          )
+        }
+        case 'propose_marketing_change': {
+          return successResponse(
+            await proposeMarketingChange(config, {
+              title: params['title'] as string,
+              type: params['type'] as string,
+              hypothesis: params['hypothesis'] as string,
+              reviewOn: params['reviewOn'] as string,
+              signals: params['signals'] as ProposalSignal[],
+              runId: params['runId'] as string | undefined,
+            })
+          )
+        }
+        case 'install_weekly_growth_workflow': {
+          return successResponse(await installWeeklyGrowthWorkflow(config))
+        }
+        case 'get_growth_signals': {
+          return successResponse(await getGrowthSignals(config))
+        }
+        case 'set_marketing_moment': {
+          return successResponse(
+            await setMarketingMoment(config, {
+              key: params['key'] as string,
+              name: params['name'] as string,
+              date: params['date'] as string,
+              leadDays: params['leadDays'] as number | undefined,
+              surfaces: params['surfaces'] as Array<{ surface: string; dueOn: string }>,
+            })
+          )
+        }
+        case 'link_moment_change': {
+          return successResponse(
+            await linkMomentChange(config, {
+              key: params['key'] as string,
+              surfaceId: params['surfaceId'] as string,
+              workItemId: params['workItemId'] as string,
+            })
+          )
+        }
+        case 'add_competitor': {
+          return successResponse(
+            await addCompetitor(config, {
+              appId: params['appId'] as string,
+              name: params['name'] as string,
+              country: params['country'] as string | undefined,
+            })
+          )
+        }
+        case 'remove_competitor': {
+          return successResponse(await removeCompetitor(config, { appId: params['appId'] as string }))
+        }
+        case 'set_tracked_keywords': {
+          return successResponse(
+            await setTrackedKeywords(config, {
+              keywords: params['keywords'] as string[],
+              country: params['country'] as string | undefined,
+            })
+          )
+        }
+        case 'get_ai_visibility': {
+          return successResponse(await getAiVisibility(config, { weeks: params['weeks'] as number | undefined }))
+        }
+        case 'set_ai_questions': {
+          return successResponse(
+            await setAiQuestions(config, {
+              questions: params['questions'] as string[],
+              brandTerms: params['brandTerms'] as string[] | undefined,
+            })
+          )
+        }
+        case 'run_ai_visibility_check': {
+          return successResponse(await runAiVisibilityCheck(config))
+        }
+        case 'create_switchback_test': {
+          return successResponse(
+            await createSwitchbackTest(config, {
+              name: params['name'] as string,
+              keywordId: params['keywordId'] as string,
+              keywordText: params['keywordText'] as string,
+              weeks: params['weeks'] as Array<{ weekStart: string; on: boolean }> | undefined,
+              startWeek: params['startWeek'] as string | undefined,
+              weekCount: params['weekCount'] as number | undefined,
+              minN: params['minN'] as number | undefined,
+              minLift: params['minLift'] as number | undefined,
+              maxCannibalisationPct: params['maxCannibalisationPct'] as number | undefined,
+            })
+          )
+        }
+        case 'start_switchback_test': {
+          return successResponse(await startSwitchbackTest(config, { id: params['id'] as string }))
+        }
+        case 'get_switchback_test': {
+          return successResponse(await getSwitchbackTest(config, { id: params['id'] as string }))
+        }
+        case 'list_switchback_tests': {
+          return successResponse(await listSwitchbackTests(config))
+        }
+        case 'import_marketing_changes': {
+          return successResponse(
+            await importMarketingChanges(config, {
+              filePath: params['filePath'] as string,
+              source: params['source'] as string | undefined,
+            })
+          )
+        }
+        case 'get_creator_results': {
+          return successResponse(
+            await getCreatorResults(config, {
+              creatorId: params['creatorId'] as string,
+              from: params['from'] as string | undefined,
+              to: params['to'] as string | undefined,
+            })
+          )
+        }
+        case 'create_tracked_link': {
+          return successResponse(
+            await createTrackedLink(config, {
+              kind: params['kind'] as string,
+              family: params['family'] as string,
+              token: params['token'] as string,
+              label: params['label'] as string | undefined,
+              workItemId: params['workItemId'] as string | undefined,
+            })
+          )
+        }
+        case 'list_tracked_links': {
+          return successResponse(
+            await listTrackedLinks(config, {
+              kind: params['kind'] as string | undefined,
+              workItemId: params['workItemId'] as string | undefined,
+              withPerformance: params['withPerformance'] as boolean | undefined,
+            })
+          )
+        }
+        case 'tag_message': {
+          return successResponse(
+            await tagMessage(config, {
+              message: params['message'] as string,
+              targetKind: params['targetKind'] as string,
+              targetRef: params['targetRef'] as string,
+              label: params['label'] as string | undefined,
+            })
+          )
+        }
+        case 'untag_message': {
+          return successResponse(
+            await untagMessage(config, {
+              targetKind: params['targetKind'] as string,
+              targetRef: params['targetRef'] as string,
+            })
+          )
+        }
+        case 'list_promises': {
+          return successResponse(
+            await listPromises(config, {
+              from: params['from'] as string | undefined,
+              to: params['to'] as string | undefined,
+            })
+          )
         }
         case 'get_post_analytics': {
           return successResponse(

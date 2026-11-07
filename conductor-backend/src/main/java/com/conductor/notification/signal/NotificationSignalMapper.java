@@ -69,6 +69,7 @@ public class NotificationSignalMapper {
             case AUTO_TRANSITION_BLOCKED -> SignalTypes.CONDUCTOR_WORK_ITEM_AUTO_TRANSITION_BLOCKED;
             case WORKFLOW_AUTO_PAUSED -> SignalTypes.CONDUCTOR_WORKFLOW_AUTO_PAUSED;
             case WORKFLOW_RUN_FAILED -> SignalTypes.CONDUCTOR_WORKFLOW_RUN_FAILED;
+            case MARKETING_ALERT -> SignalTypes.CONDUCTOR_MARKETING_ALERT;
             case GITHUB_PULL_REQUEST -> SignalTypes.GITHUB_PULL_REQUEST;
         };
     }

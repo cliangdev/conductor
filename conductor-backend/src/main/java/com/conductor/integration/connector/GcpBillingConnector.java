@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -23,6 +24,23 @@ import java.util.Map;
 public class GcpBillingConnector implements FetchConnector, OAuth2Connector {
 
     private static final Logger log = LoggerFactory.getLogger(GcpBillingConnector.class);
+    private static final String BILLING_EXPORT_TABLE_PREFIX = "gcp_billing_export";
+
+    /** Builds the BigQuery client for one call; a seam so tests can script BigQuery without a network. */
+    @FunctionalInterface
+    interface BigQueryFactory {
+        BigQuery create(String accessToken, String projectId);
+    }
+
+    private final BigQueryFactory bigQueryFactory;
+
+    public GcpBillingConnector() {
+        this(GcpBillingConnector::liveBigQuery);
+    }
+
+    GcpBillingConnector(BigQueryFactory bigQueryFactory) {
+        this.bigQueryFactory = bigQueryFactory;
+    }
 
     @Override
     public String getId() { return "gcp-billing"; }
@@ -48,7 +66,10 @@ public class GcpBillingConnector implements FetchConnector, OAuth2Connector {
             ConnectorConfigField.userInput("bqDatasetName", "BigQuery Dataset",
                 "Dataset containing gcp_billing_export tables", FieldType.SELECT, true),
             ConnectorConfigField.userInput("selectedProjectIds", "Projects to include",
-                "Limit costs to these GCP projects (optional)", FieldType.MULTISELECT, false)
+                "Limit costs to these GCP projects (optional)", FieldType.MULTISELECT, false),
+            ConnectorConfigField.userInput("expectedProjectId", "Expected GCP project",
+                "The Google Cloud project whose costs this export should contain, e.g. rexipe-prod",
+                FieldType.STRING, false)
         ));
     }
 
@@ -110,17 +131,7 @@ public class GcpBillingConnector implements FetchConnector, OAuth2Connector {
                 ? (List<String>) config.get("selectedProjectIds") : List.of();
 
         try {
-            // Pass a null expiry: IntegrationFetchService already hands us a freshly-refreshed token
-            // (the BigQuery call runs in seconds), and a bare GoogleCredentials.create(AccessToken)
-            // cannot refresh. A past expiry makes the BigQuery client attempt a refresh and throw
-            // "OAuth2Credentials instance does not support refreshing the access token".
-            GoogleCredentials creds = GoogleCredentials.create(
-                    new AccessToken(ctx.accessToken(), null));
-            BigQuery bigquery = BigQueryOptions.newBuilder()
-                    .setProjectId(bqProjectId)
-                    .setCredentials(creds)
-                    .build()
-                    .getService();
+            BigQuery bigquery = bigQueryFactory.create(ctx.accessToken(), bqProjectId);
 
             double totalCost = 0;
             String currency = "USD";
@@ -156,6 +167,13 @@ public class GcpBillingConnector implements FetchConnector, OAuth2Connector {
                     "currency", currency,
                     "previousPeriodCost", previousPeriodCost,
                     "momDeltaPct", momDeltaPct);
+
+            String expectedProjectId = expectedProjectId(config);
+            if (expectedProjectId != null
+                    && !hasCostRows(bigquery, bqProjectId, bqDatasetName, expectedProjectId)) {
+                return ConnectorData.degraded("The billing export has no costs for project " + expectedProjectId
+                        + " in the last 30 days. Check which BigQuery dataset this connection reads.", data);
+            }
             return ConnectorData.healthy(data);
 
         } catch (BigQueryException e) {
@@ -172,6 +190,57 @@ public class GcpBillingConnector implements FetchConnector, OAuth2Connector {
             log.warn("GCP Billing fetch failed: {}", e.getMessage());
             return ConnectorData.degraded("Failed to fetch data: " + e.getMessage(), Map.of());
         }
+    }
+
+    /** The project the export is expected to cover; blank means the user did not opt in, so no check runs. */
+    private static String expectedProjectId(Map<String, Object> config) {
+        Object value = config != null ? config.get("expectedProjectId") : null;
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.toString().trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /** Whether the export holds any row for {@code expectedProjectId} in the last 30 days; the id is a bound parameter. */
+    private boolean hasCostRows(BigQuery bigquery, String bqProjectId, String bqDatasetName,
+                                String expectedProjectId) throws InterruptedException {
+        String sql = "SELECT COUNT(*) AS row_count "
+                + "FROM `" + bqProjectId + "." + bqDatasetName + ".gcp_billing_export_v1_*` "
+                + "WHERE project.id = @expectedProjectId "
+                + "AND DATE(usage_start_time) >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)";
+        QueryJobConfiguration query = QueryJobConfiguration.newBuilder(sql)
+                .setUseLegacySql(false)
+                .addNamedParameter("expectedProjectId", QueryParameterValue.string(expectedProjectId))
+                .build();
+        Iterator<FieldValueList> rows = bigquery.query(query).iterateAll().iterator();
+        if (!rows.hasNext()) {
+            return false;
+        }
+        FieldValue rowCount = rows.next().get("row_count");
+        return !rowCount.isNull() && rowCount.getLongValue() > 0;
+    }
+
+    private static boolean hasBillingExportTable(BigQuery bigquery, String bqProjectId, String bqDatasetName) {
+        for (Table table : bigquery.listTables(DatasetId.of(bqProjectId, bqDatasetName)).iterateAll()) {
+            if (table.getTableId().getTable().startsWith(BILLING_EXPORT_TABLE_PREFIX)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static BigQuery liveBigQuery(String accessToken, String projectId) {
+        // Pass a null expiry: IntegrationFetchService already hands us a freshly-refreshed token
+        // (the BigQuery call runs in seconds), and a bare GoogleCredentials.create(AccessToken)
+        // cannot refresh. A past expiry makes the BigQuery client attempt a refresh and throw
+        // "OAuth2Credentials instance does not support refreshing the access token".
+        GoogleCredentials creds = GoogleCredentials.create(new AccessToken(accessToken, null));
+        return BigQueryOptions.newBuilder()
+                .setProjectId(projectId)
+                .setCredentials(creds)
+                .build()
+                .getService();
     }
 
     private TableResult runCostQuery(BigQuery bigquery, String bqProjectId, String bqDatasetName,
@@ -209,20 +278,19 @@ public class GcpBillingConnector implements FetchConnector, OAuth2Connector {
         if (bqProjectIdObj == null || bqProjectIdObj.toString().isBlank()) {
             return ConnectorHealth.SETUP_REQUIRED;
         }
+        String bqProjectId = bqProjectIdObj.toString();
         try {
-            // Pass a null expiry: IntegrationFetchService already hands us a freshly-refreshed token
-            // (the BigQuery call runs in seconds), and a bare GoogleCredentials.create(AccessToken)
-            // cannot refresh. A past expiry makes the BigQuery client attempt a refresh and throw
-            // "OAuth2Credentials instance does not support refreshing the access token".
-            GoogleCredentials creds = GoogleCredentials.create(
-                    new AccessToken(ctx.accessToken(), null));
-            BigQuery bigquery = BigQueryOptions.newBuilder()
-                    .setProjectId(bqProjectIdObj.toString())
-                    .setCredentials(creds)
-                    .build()
-                    .getService();
-            bigquery.listDatasets(bqProjectIdObj.toString());
-            return ConnectorHealth.HEALTHY;
+            BigQuery bigquery = bigQueryFactory.create(ctx.accessToken(), bqProjectId);
+            bigquery.listDatasets(bqProjectId);
+            if (expectedProjectId(config) == null) {
+                return ConnectorHealth.HEALTHY;
+            }
+            Object datasetObj = config.get("bqDatasetName");
+            if (datasetObj == null || datasetObj.toString().isBlank()) {
+                return ConnectorHealth.SETUP_REQUIRED;
+            }
+            return hasBillingExportTable(bigquery, bqProjectId, datasetObj.toString())
+                    ? ConnectorHealth.HEALTHY : ConnectorHealth.DEGRADED;
         } catch (Exception e) {
             return ConnectorHealth.DEGRADED;
         }

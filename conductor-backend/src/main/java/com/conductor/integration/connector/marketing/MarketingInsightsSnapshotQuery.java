@@ -5,6 +5,7 @@ import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.WorkItem;
 import com.conductor.repository.PostPublishTargetMetricRepository;
 import com.conductor.repository.PostPublishTargetRepository;
+import com.conductor.repository.WorkItemRepository;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -30,20 +31,30 @@ import java.util.Map;
  * daily deltas. A destination that fired in the window but has never reported an available snapshot
  * (still pending, or every pull came back unavailable) is simply absent from the metric totals, same
  * as {@link PostPublishTargetMetricRepository#findLatestAvailableForTargets}'s own contract.
+ *
+ * <p>The payload also carries the marketing changes whose review date has passed with no verdict
+ * ({@code changesDueForReview}), so the weekly digest can name them. They are read live, not from the
+ * trailing window: a change is due for as long as nobody has recorded its verdict.
  */
 @Component
 public class MarketingInsightsSnapshotQuery {
 
     private static final int WINDOW_DAYS = 7;
     private static final int TOP_POSTS_LIMIT = 10;
+    private static final int DUE_CHANGES_LIMIT = 20;
+    private static final String CHANGES_WORKFLOW = "MARKETING_CHANGES";
+    static final String DUE_CHANGES_LABEL = "Changes past their review date with no verdict";
 
     private final PostPublishTargetRepository targetRepository;
     private final PostPublishTargetMetricRepository metricRepository;
+    private final WorkItemRepository workItemRepository;
 
     public MarketingInsightsSnapshotQuery(PostPublishTargetRepository targetRepository,
-                                          PostPublishTargetMetricRepository metricRepository) {
+                                          PostPublishTargetMetricRepository metricRepository,
+                                          WorkItemRepository workItemRepository) {
         this.targetRepository = targetRepository;
         this.metricRepository = metricRepository;
+        this.workItemRepository = workItemRepository;
     }
 
     /** The trailing 7 full UTC days, half-open, ending at the start of today (UTC). */
@@ -70,7 +81,53 @@ public class MarketingInsightsSnapshotQuery {
             }
         }
 
-        return build(targets, latestByTarget, window[0], window[1]);
+        Map<String, Object> payload = build(targets, latestByTarget, window[0], window[1]);
+        Map<String, Object> dueChanges = changesDueForReview(projectId, now);
+        if (dueChanges != null) {
+            payload.put("changesDueForReview", dueChanges);
+        }
+        return payload;
+    }
+
+    /**
+     * The project's MARKETING_CHANGES items still PLANNED or LIVE whose review date is before today (UTC) and
+     * that have no verdict, oldest review date first, capped at {@value #DUE_CHANGES_LIMIT} with the full
+     * {@code count}. Null when there are none, so a quiet project's payload is unchanged. A reviewed change
+     * is never listed, and neither is one with no review date: it is not due until somebody says when.
+     */
+    private Map<String, Object> changesDueForReview(String projectId, Instant now) {
+        LocalDate today = now.atZone(ZoneOffset.UTC).toLocalDate();
+        // An empty reviewed window (since == until): only the open statuses come back.
+        OffsetDateTime never = Instant.EPOCH.atOffset(ZoneOffset.UTC);
+        List<WorkItem> due = workItemRepository
+                .findChangeLog(projectId, CHANGES_WORKFLOW, List.of("PLANNED", "LIVE"), "REVIEWED", never, never)
+                .stream()
+                .filter(item -> item.getDueOn() != null && item.getDueOn().isBefore(today))
+                .filter(item -> !hasVerdict(item))
+                .sorted(Comparator.comparing(WorkItem::getDueOn).thenComparing(WorkItem::getSequenceNumber))
+                .toList();
+        if (due.isEmpty()) {
+            return null;
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (WorkItem item : due.stream().limit(DUE_CHANGES_LIMIT).toList()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("displayId", item.getProject().getKey() + "-" + item.getSequenceNumber());
+            row.put("title", item.getTitle());
+            row.put("status", item.getCurrentStatus());
+            row.put("dueOn", item.getDueOn().toString());
+            rows.add(row);
+        }
+        Map<String, Object> section = new LinkedHashMap<>();
+        section.put("label", DUE_CHANGES_LABEL);
+        section.put("count", due.size());
+        section.put("changes", rows);
+        return section;
+    }
+
+    private static boolean hasVerdict(WorkItem item) {
+        return item.getFields() != null && item.getFields().hasNonNull("verdict")
+                && !item.getFields().get("verdict").asText().isBlank();
     }
 
     private Map<String, Object> build(List<PostPublishTarget> targets,

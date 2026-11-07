@@ -70,6 +70,31 @@ export function PostHogSettingsFields({
           placeholder="signup_completed"
         />
       </div>
+      <div>
+        <Label htmlFor={`${idPrefix}-cohort`}>Internal users cohort ID (optional)</Label>
+        <Input
+          id={`${idPrefix}-cohort`}
+          inputMode="numeric"
+          value={values.internalCohortId}
+          onChange={(e) => set('internalCohortId', e.target.value)}
+          placeholder="339420"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Leaves your team out of every web number. Digits only: the number in the cohort&apos;s PostHog URL.
+        </p>
+      </div>
+      <div>
+        <Label htmlFor={`${idPrefix}-exclude`}>Excluded page prefixes (optional)</Label>
+        <Input
+          id={`${idPrefix}-exclude`}
+          value={values.excludePathPrefixes}
+          onChange={(e) => set('excludePathPrefixes', e.target.value)}
+          placeholder="/share, /s/"
+        />
+        <p className="mt-1 text-xs text-muted-foreground">
+          Comma-separated paths, each starting with /. Pages under them (such as share pages) are not counted.
+        </p>
+      </div>
     </>
   );
 }

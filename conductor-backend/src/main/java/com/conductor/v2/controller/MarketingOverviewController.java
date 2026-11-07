@@ -14,10 +14,12 @@ import com.conductor.generated.v2.model.OverviewDimensionColumn;
 import com.conductor.generated.v2.model.OverviewDimensionRow;
 import com.conductor.generated.v2.model.OverviewFunnelStage;
 import com.conductor.generated.v2.model.OverviewMetric;
+import com.conductor.generated.v2.model.OverviewMetricDefinition;
 import com.conductor.generated.v2.model.OverviewMismatch;
 import com.conductor.generated.v2.model.OverviewSeriesPoint;
 import com.conductor.generated.v2.model.OverviewWindow;
 import com.conductor.marketing.overview.MarketingOverviewQueryService;
+import com.conductor.marketing.overview.MetricCatalog;
 import com.conductor.service.ProjectSecurityService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.RestController;
@@ -108,11 +110,11 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                         .toList(),
                 c.metrics().stream().map(MarketingOverviewController::toMetric).toList())
                 .lastFetchedAt(c.lastFetchedAt())
-                .targetsEditable(c.targetsEditable());
+                .targetsEditable(c.targetsEditable())
+                .mismatches(c.mismatches().stream().map(MarketingOverviewController::toMismatch).toList())
+                .partial(c.partial());
         if (c.mismatch() != null) {
-            MarketingOverviewQueryService.MismatchView m = c.mismatch();
-            channel.mismatch(new OverviewMismatch(m.metric(), m.label(), m.referenceValue(), m.channelValue(),
-                    m.gapPct(), m.from(), m.to()).channelSource(m.channelSource()).referenceSource(m.referenceSource()));
+            channel.mismatch(toMismatch(c.mismatch()));
         }
         if (c.connectHint() != null) {
             channel.connectHint(new OverviewConnectHint(c.connectHint().connectorId(),
@@ -120,6 +122,14 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                             .map(k -> new OverviewConnectorRef(k.connectorId(), k.name())).toList()));
         }
         return channel;
+    }
+
+    private static OverviewMismatch toMismatch(MarketingOverviewQueryService.MismatchView m) {
+        return new OverviewMismatch(m.metric(), m.label(), m.referenceValue(), m.channelValue(), m.gapPct(), m.from(),
+                m.to())
+                .channelSource(m.channelSource())
+                .referenceSource(m.referenceSource())
+                .kind(m.kind() == null ? null : OverviewMismatch.KindEnum.valueOf(m.kind()));
     }
 
     private static OverviewMetric toMetric(MarketingOverviewQueryService.MetricView m) {
@@ -143,7 +153,17 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                 .area(m.area() == null ? null : OverviewMetric.AreaEnum.valueOf(m.area()))
                 .description(m.description())
                 .headline(m.headline())
-                .basis(m.basis() == null ? null : OverviewMetric.BasisEnum.valueOf(m.basis()));
+                .basis(m.basis() == null ? null : OverviewMetric.BasisEnum.valueOf(m.basis()))
+                .definition(toDefinition(m.definition()))
+                .note(m.note());
+    }
+
+    static OverviewMetricDefinition toDefinition(MetricCatalog.Definition d) {
+        return d == null ? null : new OverviewMetricDefinition(d.source(), d.numerator())
+                .denominator(d.denominator())
+                .sourceType(d.sourceType())
+                .exclusions(d.exclusions())
+                .timeZone(d.timeZone());
     }
 
     private static MarketingTarget toTarget(MarketingOverviewQueryService.TargetView t) {

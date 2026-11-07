@@ -79,6 +79,10 @@ public class ChannelMetricDefinitionRow {
     @Column(name = "watch_band_pct")
     private BigDecimal watchBandPct;
 
+    /** What the value leaves out, one plain line (contract v3). Null when the feed does not say. See V186_1. */
+    @Column(name = "exclusions")
+    private String exclusions;
+
     @Column(name = "updated_at", nullable = false)
     private OffsetDateTime updatedAt;
 
@@ -128,5 +132,7 @@ public class ChannelMetricDefinitionRow {
     public void setHeadline(Integer headline) { this.headline = headline; }
     public BigDecimal getWatchBandPct() { return watchBandPct; }
     public void setWatchBandPct(BigDecimal watchBandPct) { this.watchBandPct = watchBandPct; }
+    public String getExclusions() { return exclusions; }
+    public void setExclusions(String exclusions) { this.exclusions = exclusions; }
     public OffsetDateTime getUpdatedAt() { return updatedAt; }
 }

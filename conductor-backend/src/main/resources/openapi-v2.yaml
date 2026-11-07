@@ -12,8 +12,30 @@ servers:
 tags:
   - name: marketing-overview
     description: Daily channel metrics, funnel and targets
+  - name: marketing-budget
+    description: The monthly paid budget, its pacing across paid channels, and the stop rules that guard each channel
+  - name: marketing-definitions
+    description: What every marketing metric counts, where it comes from and what it excludes
   - name: marketing-report
     description: The one-call marketing report and the industry benchmarks it compares against
+  - name: marketing-verification
+    description: The verification ledger - per metric, Conductor's value, the backend's, a direct platform read and which to trust
+  - name: marketing-growth-signals
+    description: Seasonal moments, the weekly ratings program and the competitor watch, from public data
+  - name: marketing-ai-visibility
+    description: Weekly checks of whether AI assistants name the brand for a fixed set of questions
+  - name: marketing-changes
+    description: Marketing change records (the MARKETING_CHANGES workflow), imported from an outside change log
+  - name: marketing-switchback
+    description: Weekly on/off incrementality tests of one Apple Ads keyword, which settle themselves into a change record
+  - name: marketing-proposals
+    description: Weekly growth proposals backed by ledger-verified evidence, and the workflow that makes them
+  - name: marketing-creators
+    description: What a creator (the CREATORS workflow) has produced - its posts, campaign-link downloads and offer-code redemptions
+  - name: marketing-links
+    description: Tracked App Store campaign links for Posts, bios, creators and email, and the downloads they bring
+  - name: marketing-promises
+    description: The promise ledger - the message each keyword, product page, Post, creative and paywall headline makes, joined to installs, intent picks, trial rate and day-7 retention
   - name: work-items
     description: Work Item management endpoints (canonical successor to v1 issues)
   - name: work-item-tree
@@ -3107,7 +3129,10 @@ paths:
           schema:
             type: string
             default: 28d
-          description: 7d or 28d (default).
+          description: >-
+            7d or 28d (default), or a fixed range of whole days `YYYY-MM-DD..YYYY-MM-DD` (first day not after the
+            last, last day yesterday or earlier, at most 92 days). In a fixed window every channel uses exactly
+            those days; one whose settled data ends earlier is `partial`.
       responses:
         "200":
           description: The overview
@@ -3116,7 +3141,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/MarketingOverviewResponse"
         "400":
-          description: Unknown window
+          description: Unknown or invalid window (a fixed range must run first day to last day, end yesterday or earlier and span at most 92 days)
           content:
             application/json:
               schema:
@@ -3165,7 +3190,9 @@ paths:
           schema:
             type: string
             default: 28d
-          description: 7d, 28d (default) or 90d.
+          description: >-
+            7d, 28d (default) or 90d, or a fixed range of whole days `YYYY-MM-DD..YYYY-MM-DD` (first day not
+            after the last, last day yesterday or earlier, at most 92 days). A fixed window returns no `topPosts`.
       responses:
         "200":
           description: The channel
@@ -3174,7 +3201,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/MarketingChannelDetailResponse"
         "400":
-          description: Unknown channel or window
+          description: Unknown channel, or an unknown or invalid window
           content:
             application/json:
               schema:
@@ -3307,6 +3334,46 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/definitions:
+    get:
+      tags:
+        - marketing-definitions
+      summary: What every marketing metric counts
+      description: >-
+        One definition per visible metric of every channel (WEB, SEARCH, SOCIAL, STORE, ADS and the workspace's
+        PRODUCT metrics): the source report or field, the numerator and denominator in a fixed vocabulary of
+        measures, the traffic source type, what is excluded and the time zone that decides a row's day. Optional
+        metrics are listed whether or not data exists yet. Read-only; any project member.
+      operationId: getMarketingDefinitions
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The definitions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingDefinitionsResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
           content:
             application/json:
               schema:
@@ -3957,6 +4024,256 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/marketing/budget:
+    get:
+      tags:
+        - marketing-budget
+      summary: Month-to-date paid spend against the monthly cap, per paid channel
+      description: >-
+        Paces the month's paid budget across the paid channels (any channel with a `spend` metric; today Apple Ads,
+        channel ADS). Computed on read from settled days only: provisional days (the source may still restate them)
+        are reported apart as `provisionalSpend` and never count toward month-to-date spend, a cost per install or a
+        stop rule. `capAmount`, `expectedSpend` and `pacePct` are null when the month has no cap (never a cap of 0).
+        Pace is straight line: `pacePct = mtdSpend / (capAmount * daysElapsed / daysInMonth)`, 1.0 = on pace, and
+        `projectedSpend = mtdSpend / daysElapsed * daysInMonth`. Each channel carries `compliant` (a paid channel
+        with no active stop rule is non-compliant, reason "no stop rule"), every active rule with its observed value
+        and whether it is tripped, and the marginal cost per install (last 7 settled days, the 7 before, and
+        month-to-date). A rule below its `minSample` never trips. Days are UTC. Conductor only proposes and records:
+        a bid or budget change is made by a human in the ad platform.
+      operationId: getMarketingBudget
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: month
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "YYYY-MM (UTC). Defaults to the current UTC month."
+      responses:
+        "200":
+          description: The pacing view
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BudgetPacing"
+        "400":
+          description: month is not YYYY-MM
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/budget/{month}:
+    put:
+      tags:
+        - marketing-budget
+      summary: Set the paid budget cap for a month
+      description: >-
+        Idempotent upsert of the month's cap (YYYY-MM, UTC). `capAmount` must be greater than 0: a month with no
+        cap simply has none (pacing reads null), a cap of 0 is refused. `currency` is a three-letter code and
+        defaults to USD; spend is summed as the ad platform reports it, so keep the cap in the account currency.
+        Requires ADMIN or CREATOR.
+      operationId: setMarketingBudget
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: month
+          in: path
+          required: true
+          schema:
+            type: string
+          description: "YYYY-MM (UTC)"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BudgetCapRequest"
+      responses:
+        "200":
+          description: The stored cap
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingBudgetCap"
+        "400":
+          description: month is not YYYY-MM, or capAmount is missing, not above 0 or too large, or currency is not a three-letter code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/stop-rules:
+    get:
+      tags:
+        - marketing-budget
+      summary: List the project's active stop rules
+      description: Active rules only, oldest first. A removed rule stays on record but is not listed.
+      operationId: listMarketingStopRules
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The active rules
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopRuleListResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - marketing-budget
+      summary: Add a stop rule for a paid channel
+      description: >-
+        A stop rule reads "when `metric` is above (GT) or below (LT) `threshold` over the last `windowDays` settled
+        days at `scope`, once the window holds at least `minSample` taps". A paid channel with spend needs at least
+        one active rule or it shows as non-compliant. Rules are evaluated, never enforced: tripping one means a
+        human should look at the bid or budget in the ad platform. Requires ADMIN or CREATOR.
+      operationId: createMarketingStopRule
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StopRuleRequest"
+      responses:
+        "201":
+          description: The stored rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StopRule"
+        "400":
+          description: >-
+            Unknown channel, scope, metric or comparator, a missing or negative threshold, a negative minSample,
+            windowDays outside 1-90, or a note over 500 characters (the message lists the allowed values)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/stop-rules/{ruleId}:
+    delete:
+      tags:
+        - marketing-budget
+      summary: Remove a stop rule
+      description: >-
+        Soft removal (the rule is marked inactive and kept on record). Idempotent: removing a rule that is already
+        removed succeeds. Requires ADMIN or CREATOR.
+      operationId: deleteMarketingStopRule
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: ruleId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Removed
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such rule in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/marketing/report:
     get:
       tags:
@@ -3964,12 +4281,17 @@ paths:
       summary: The marketing report in one call
       description: >-
         Everything a marketing report needs, assembled from the overview (no second set of numbers): health
-        headline metrics, acquisition by source (App Store organic search is store search downloads minus Apple
-        Ads installs, floored at 0, and flagged `derived`), the in-app funnel with its biggest drop, the daily
-        store impressions and ad spend, the scorecard of every metric that has a target or an area, the top 25
-        Apple Ads keywords by spend joined with in-app outcomes, ads, stored benchmarks against the report's
-        own values, and the marketing change log (Work Items on the MARKETING_CHANGES workflow). Windows are
-        full UTC days ending at each channel's `dataCompleteThrough`. Percent values are fractions (0.12 = 12%).
+        headline metrics, acquisition by source (App Store organic search is search first-time downloads minus
+        Apple Ads first-time downloads, and search impressions minus Apple Ads impressions, over the days both
+        have settled, floored at 0 and flagged `derived`; the row's `derivation` says which days), the in-app
+        funnel with its biggest drop (store downloads read Apple Sales Reports when present, with their
+        coverage), the daily store impressions and ad spend, the scorecard of every metric that has a target or
+        an area, the top 25 Apple Ads keywords by spend joined with in-app outcomes, per-campaign keyword and
+        search-term spend coverage, ads, stored benchmarks against the report's own values (judged only against
+        a metric with the same definition), the definition of every metric the report mentions, and the
+        marketing change log (Work Items on the MARKETING_CHANGES workflow) with the days changes went live.
+        Windows are full UTC days ending at each channel's `dataCompleteThrough`. Percent values are fractions
+        (0.12 = 12%).
       operationId: getMarketingReport
       security:
         - bearerAuth: []
@@ -4008,6 +4330,604 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/changes/import:
+    post:
+      tags:
+        - marketing-changes
+      summary: Import change records into the MARKETING_CHANGES workflow
+      description: >-
+        Imports an outside change log (up to 500 records per call) as Work Items on the project's
+        MARKETING_CHANGES workflow, each created directly in the status its record has (planned -> PLANNED,
+        live -> LIVE, reviewed -> REVIEWED, abandoned or stopped -> ABANDONED). Transition gates and the
+        required-fields check are skipped, since the record already happened; the type and the verdict must still
+        be valid for the workflow. A `reference` record is skipped, not imported. A verdict is mapped, never
+        coerced: worked, hurt (did_not_work), no effect (no_effect), expected... (expected) and inconclusive;
+        any other verdict refuses that record. When the original wording differs from the mapped option the
+        outcome ends with an `Original verdict:` line. A date such as `2026-09-01 (approved ...)` fills liveSince or
+        dueOn from its leading date and keeps the full text in the description. Idempotent on (source, record id):
+        a record already imported from the same source is reported in `alreadyImported` and left untouched. A
+        refused record never blocks the others. Requires ADMIN or CREATOR.
+      operationId: importMarketingChanges
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketingChangesImportRequest"
+      responses:
+        "200":
+          description: What was created, skipped, refused or already there
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingChangesImportResponse"
+        "400":
+          description: No records, more than 500 records, or an invalid source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The project has no MARKETING_CHANGES workflow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/switchback-tests:
+    get:
+      tags:
+        - marketing-switchback
+      summary: List the project's switchback tests, newest first
+      description: >-
+        Every test in every status, each with the state its keyword should be in this week (`currentWeek`) and,
+        once settled, its result. Any project member may read.
+      operationId: listSwitchbackTests
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The tests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTestList"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - marketing-switchback
+      summary: Declare a switchback test (a draft)
+      description: >-
+        Declares the plan of an on/off test of one Apple Ads keyword: 2 to 12 consecutive weeks (each a Monday, UTC)
+        with the keyword on or off in each, at least one of each; the decision rule (default: paid is incremental when
+        the on-week mean of total first-time installs beats the off-week mean by at least 1 and the on-week mean of
+        organic search first-time downloads does not fall by more than 20 percent); and `minN`, the fewest
+        first-time App Store search downloads across all weeks a verdict may rest on (default 20). The test is a
+        DRAFT until started and can be edited until then. Conductor never switches the keyword: a person applies
+        each week's state in the ad platform or through a gated tool, and the test settles itself afterwards.
+        Requires ADMIN or CREATOR.
+      operationId: createSwitchbackTest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSwitchbackTestRequest"
+      responses:
+        "201":
+          description: The draft test
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTest"
+        "400":
+          description: Blank or over-long name, keywordId or keywordText; weeks that are not 2 to 12 consecutive Mondays with at least one on and one off; an unknown rule metric, a negative minLift, a maxCannibalisationPct outside 0-100, or a minN below 1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/switchback-tests/{testId}:
+    get:
+      tags:
+        - marketing-switchback
+      summary: Read one switchback test
+      description: >-
+        The plan, the decision rule (with its sentence), `currentWeek` (ON, OFF or "not running": the state the
+        keyword should be in today, UTC) and, once the test has settled, the verdict and the per-week result with
+        the n reached. A running test whose last week has ended but whose data is not settled yet reports what it is
+        `waitingFor`. A test never settles on provisional days.
+      operationId: getSwitchbackTest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: testId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The test
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTest"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such test in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      tags:
+        - marketing-switchback
+      summary: Edit a draft switchback test
+      description: >-
+        Changes a DRAFT test's name, keyword, weeks, decision rule or minN; a field left out is unchanged. Once a test
+        is RUNNING (and after it settles or is cancelled) its weeks and rule are fixed and every edit is refused with
+        409. Requires ADMIN or CREATOR.
+      operationId: updateSwitchbackTest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: testId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSwitchbackTestRequest"
+      responses:
+        "200":
+          description: The edited draft
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTest"
+        "400":
+          description: The same checks as creating a test
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such test in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The test is no longer a draft, so its weeks and rule are fixed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/switchback-tests/{testId}/start:
+    post:
+      tags:
+        - marketing-switchback
+      summary: Start a switchback test
+      description: >-
+        DRAFT to RUNNING. From now on the weeks and the decision rule cannot change. The first week must not have
+        begun (its Monday must be today or later, UTC), and no other running test of the same keyword may cover any
+        of the same weeks. Refused with 409 otherwise. Requires ADMIN or CREATOR.
+      operationId: startSwitchbackTest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: testId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The running test
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTest"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such test in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Not a draft, the first week has already begun, or another running test of this keyword overlaps its weeks
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/switchback-tests/{testId}/cancel:
+    post:
+      tags:
+        - marketing-switchback
+      summary: Cancel a switchback test
+      description: >-
+        DRAFT or RUNNING to CANCELLED; no verdict is recorded and no change is written. Cancelling a cancelled test
+        changes nothing. A test that has settled cannot be cancelled. Requires ADMIN or CREATOR.
+      operationId: cancelSwitchbackTest
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: testId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The cancelled test
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwitchbackTest"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such test in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The test has already settled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/creators/{workItemId}/results:
+    get:
+      tags:
+        - marketing-creators
+      summary: What one creator has produced
+      description: >-
+        A creator (a Work Item on the CREATORS workflow) and what it has produced: its posts with their views,
+        the downloads of its campaign links, and the redemptions of its offer code. `workItemId` is the Work
+        Item's id or its display id (e.g. RE-12). Posts are the Post Work Items whose parent is the creator or that
+        carry the tag `creator:<handle>`; `views` is the sum of each published destination's latest snapshot, and
+        null while none has reported (not 0). Link downloads are the settled `campaign_downloads` of the creator's
+        CREATOR tracked links (and the `linkToken` field), and offer redemptions the settled `offer_redemptions` at
+        `offer:<code>` from the product backend, both over the window. Apple omits campaign rows under its reporting
+        threshold and a product backend may not send redemptions at all, so an unknown figure is null with a note,
+        never 0. The window is `from`..`to` inclusive, full UTC days, default the 28 days ending yesterday, at most
+        92 days, ending yesterday or earlier; only settled days count.
+      operationId: getCreatorResults
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: path
+          required: true
+          description: The creator's Work Item id, or its display id (e.g. RE-12).
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          description: First day of the window (yyyy-MM-dd). Default 27 days before `to`.
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          description: Last day of the window (yyyy-MM-dd), yesterday or earlier. Default yesterday (UTC).
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: The creator's results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreatorResults"
+        "400":
+          description: A window that is reversed, longer than 92 days or ends after yesterday
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such Work Item in this project, or it is not on the CREATORS workflow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/proposals:
+    post:
+      tags:
+        - marketing-proposals
+      summary: Propose a marketing change, backed by two verified signals
+      description: >-
+        Creates a PLANNED Work Item on the MARKETING_CHANGES workflow: the title, type and hypothesis, a review date
+        (`dueOn`) and the two signals as evidence bullets. It records a proposal only. Nothing is applied to an ad
+        platform, and a person must approve it (mark it live, or abandon it). Exactly two signals with different
+        `metricRef`s are required. Each signal must cite a metric that the verification ledger has verified for its
+        window (a second source confirmed it and none disagrees): a metric that is UNCHECKED, has a MISMATCH or has no
+        ledger row is refused with 422, naming the metric and its verdict. The stated `value` must match the ledger's
+        figure for that window. At most 3 proposals are accepted per workspace per ISO week (Monday to Sunday, UTC); a
+        fourth is refused with 409. A proposal Work Item that is deleted frees its slot. Requires ADMIN or CREATOR (a
+        project key or run token from a workflow also passes).
+      operationId: proposeMarketingChange
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketingProposalRequest"
+      responses:
+        "201":
+          description: The PLANNED change was created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingProposalResponse"
+        "400":
+          description: >-
+            Invalid input: a missing title or hypothesis, an unknown type, a review date that is not after today,
+            a number of signals other than two, the same metric twice, or an unreadable window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The project has no MARKETING_CHANGES workflow
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: The workspace already has 3 proposals this ISO week
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: >-
+            A signal's evidence is refused: its metric is UNCHECKED, has a MISMATCH, has no ledger row, has no value
+            in the window, or the stated value differs from the ledger's. The reason names every refused metric
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/weekly-growth/install:
+    post:
+      tags:
+        - marketing-proposals
+      summary: Install the weekly growth workflow, disabled
+      description: >-
+        Creates the "Weekly growth review" workflow from Conductor's template: a Monday 07:30 UTC schedule and one
+        Claude Code step that reads the report, the verification ledger and the budget, and proposes at most 3
+        changes with `proposeMarketingChange`. It is created DISABLED, so nothing runs until a person enables it.
+        Idempotent: when the workspace already has a workflow with that name it is returned unchanged (200, `created`
+        false) and the template is not applied again. The workflow's Claude Code step needs a runtime target. Requires
+        ADMIN, and a person (a project key or run token cannot install workflows).
+      operationId: installWeeklyGrowthWorkflow
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The workflow was already installed; it is returned unchanged
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeeklyGrowthInstallResponse"
+        "201":
+          description: The workflow was created, disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WeeklyGrowthInstallResponse"
+        "400":
+          description: The workspace is at its workflow limit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN
           content:
             application/json:
               schema:
@@ -4057,7 +4977,10 @@ paths:
         Idempotent upsert. `metricRef` is `CHANNEL.metric` (for example `STORE.conversion_rate` or
         `ADS.tap_through_rate`), or `PRODUCT.<key>` for an in-app metric. A benchmark must name its source:
         `sourceName`, an http(s) `sourceUrl` and `checkedOn` (not in the future). Percent values are fractions
-        (0.03 = 3%). Requires ADMIN or CREATOR.
+        (0.03 = 3%). Optionally say what the benchmark measures with `numerator`, `denominator` and `sourceType`
+        (for example total_downloads / unique_impressions on APP_STORE_SEARCH): the report judges a benchmark only
+        against a metric with the same definition, and one without a definition reads "definition missing". This is a
+        full replace, so a PUT that omits the definition fields clears a stored definition. Requires ADMIN or CREATOR.
       operationId: setMarketingBenchmark
       security:
         - bearerAuth: []
@@ -4087,7 +5010,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/MarketingBenchmark"
         "400":
-          description: Unknown channel, invalid reference, URL or date, or a missing source
+          description: >-
+            Unknown channel, invalid reference, URL or date, a missing source, or an invalid definition (an unknown
+            measure or sourceType, or a denominator or sourceType without a numerator; the message lists the allowed values)
           content:
             application/json:
               schema:
@@ -4142,6 +5067,1125 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/growth-signals:
+    get:
+      tags:
+        - marketing-growth-signals
+      summary: Seasonal moments, ratings, reviews and the competitor watch in one call
+      description: >-
+        What the growth layer knows, from public data only. `moments` are the workspace's seasonal moments with
+        their surfaces: a surface whose due date has passed (UTC today is after `dueOn`) with no linked change
+        carries a `warning`, and the moment's `status` is `warning`; a moment within `leadDays` of its date with a
+        surface not yet overdue is `upcoming`. `ratings` holds the workspace's own app (`ours`, its App Store
+        Connect app) and each watched competitor with the latest and previous weekly snapshot and
+        `weeklyGrowth`, the rating-count change between them (null, never 0, until two snapshots of the same storefront exist).
+        `reviews` are the most recent public App Store reviews (10 for our app, 5 per competitor).
+        `competitorChanges` lists what changed on a competitor's listing between its last two snapshots (only
+        competitors that changed). `keywordPresence` gives, per tracked keyword, each app's 1-based App Store
+        search position in the latest snapshot; an app absent from the map or null was not among the first 50
+        results. `trackedKeywords` says which keywords are looked up: the PRODUCT feed's `aso:<keyword>` rows when it
+        has any, else the list set with `PUT .../tracked-keywords`. A value Apple did not return reads null.
+      operationId: getGrowthSignals
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The growth signals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthSignals"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/moments/{key}:
+    put:
+      tags:
+        - marketing-growth-signals
+      summary: Set a seasonal moment and the surfaces that must change for it
+      description: >-
+        Idempotent full replace of the moment at `key` (lower-case letters, digits, hyphens and underscores, for
+        example `thanksgiving-2026`). `surfaces` is the whole list (it may be empty): a surface already on the moment
+        (matched by name) keeps its linked change and takes the new `dueOn`, a new name is added, and a name left out
+        is removed. An omitted `leadDays` is 21. Requires ADMIN or CREATOR.
+      operationId: setMarketingMoment
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketingMomentRequest"
+      responses:
+        "200":
+          description: The stored moment, evaluated as of UTC today
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthMoment"
+        "400":
+          description: An invalid key, name, date, leadDays or surface list (duplicate names, more than 25 surfaces)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/moments/{key}/surfaces/{surfaceId}/change:
+    post:
+      tags:
+        - marketing-growth-signals
+      summary: Link the change that handled a moment's surface
+      description: >-
+        Records which marketing change handled the surface, which clears its warning. `workItemId` is a Work Item on
+        the MARKETING_CHANGES workflow in this project, by id or display id (for example `RE-12`); a Work Item of
+        another project or workflow is refused. Linking again replaces the earlier link. Requires ADMIN or CREATOR.
+      operationId: linkMarketingMomentChange
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: surfaceId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkMomentChangeRequest"
+      responses:
+        "200":
+          description: The moment with the change linked
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthMoment"
+        "400":
+          description: The Work Item is not a MARKETING_CHANGES Work Item in this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The moment or the surface does not exist
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/competitors:
+    post:
+      tags:
+        - marketing-growth-signals
+      summary: Watch a competitor's App Store listing
+      description: >-
+        Starts the weekly snapshot, reviews and keyword positions for the app. `appId` is the numeric App Store id
+        (digits only). Idempotent per `appId`: adding an app already watched (or removed earlier) updates its name
+        and country and watches it again (200); a new one is 201. `country` is a two-letter App Store country and
+        defaults to the workspace's own. The workspace's own app cannot be a competitor. Requires ADMIN or CREATOR.
+      operationId: addMarketingCompetitor
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddGrowthCompetitorRequest"
+      responses:
+        "200":
+          description: The competitor was already known; it is watched again
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthCompetitor"
+        "201":
+          description: The competitor is now watched
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthCompetitor"
+        "400":
+          description: An app id that is not digits, a missing name, a country that is not two letters, or the workspace's own app
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - marketing-growth-signals
+      summary: Stop watching a competitor
+      description: >-
+        Idempotent: removing an app that is not watched is a no-op. Its stored snapshots and reviews are kept and
+        reappear if the app is added again. Requires ADMIN or CREATOR.
+      operationId: removeMarketingCompetitor
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: appId
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The numeric App Store id of the competitor.
+      responses:
+        "204":
+          description: Removed
+        "400":
+          description: An app id that is not digits
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/tracked-keywords:
+    put:
+      tags:
+        - marketing-growth-signals
+      summary: Replace the keywords whose App Store position is tracked
+      description: >-
+        Idempotent full replace of the project's keyword list (at most 25; an empty list clears it). Keywords are
+        trimmed, lower-cased and de-duplicated. The weekly job searches each keyword once in `country` (default: the
+        workspace's own) and records every watched app's position. The list is used only while the PRODUCT feed has no
+        `aso:<keyword>` rows; otherwise those keywords are tracked instead. Requires ADMIN or CREATOR.
+      operationId: setMarketingTrackedKeywords
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetTrackedKeywordsRequest"
+      responses:
+        "200":
+          description: The stored list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GrowthTrackedKeywords"
+        "400":
+          description: More than 25 keywords, a blank or over-long keyword, or a country that is not two letters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/verification:
+    get:
+      tags:
+        - marketing-verification
+      summary: The verification ledger
+      description: >-
+        One row per metric of every connected channel that can be checked (derived ratios are left out): Conductor's
+        value for the window, the product backend's value over the settled days both have (when a pair exists),
+        the latest direct platform read with Conductor's own figure over that read's days, and which to trust.
+        `verdict` is BOTH (every second source available agrees), CONNECTOR (trust the connector: a platform read
+        agrees with it, or the backend disagrees and no read exists yet), BACKEND (backend and platform read agree,
+        the connector does not), PLATFORM (the platform read disagrees with every other source) or UNCHECKED (no
+        second source at all; never verified). `mismatch` is true when any second source that could be compared
+        disagrees with Conductor. A read recorded more than 7 days ago is `readStale`. Only settled days are
+        compared. Computed on read; the only stored data is the reads themselves.
+      operationId: getMarketingVerification
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: window
+          in: query
+          required: false
+          schema:
+            type: string
+            default: 28d
+          description: >-
+            7d, 28d (default) or 90d, or a fixed range of whole days `YYYY-MM-DD..YYYY-MM-DD` (first day not after
+            the last, last day yesterday or earlier, at most 92 days).
+      responses:
+        "200":
+          description: The ledger
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingVerificationLedger"
+        "400":
+          description: Unknown or invalid window
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/verification/reads:
+    get:
+      tags:
+        - marketing-verification
+      summary: The platform reads recorded for a metric, newest first
+      description: >-
+        The append-only history of direct platform reads, newest first. Filter by `channel` and `metric`. Reads
+        are never updated or deleted, so this is the audit trail behind every verdict.
+      operationId: listMarketingPlatformReads
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: channel
+          in: query
+          required: false
+          schema:
+            type: string
+          description: WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT (case-insensitive).
+        - name: metric
+          in: query
+          required: false
+          schema:
+            type: string
+          description: The metric key within the channel, e.g. installs.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: The reads
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingPlatformReadList"
+        "400":
+          description: Unknown channel
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - marketing-verification
+      summary: Record a direct platform read
+      description: >-
+        Records what the platform's own UI or API showed for one metric over an explicit range of whole days
+        (`from` to `to`, `to` yesterday or earlier, at most 92 days). The read is append-only: it is never
+        updated or deleted, and a newer read supersedes it in the ledger. Conductor's value, the backend's value
+        and the verdict at the time of recording are stored with it. Returns the recomputed ledger row for exactly
+        the read's days. Requires ADMIN or CREATOR. Not idempotent: each call adds a read.
+      operationId: recordMarketingPlatformRead
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketingPlatformReadRequest"
+      responses:
+        "201":
+          description: Recorded; the recomputed ledger row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VerificationRow"
+        "400":
+          description: Unknown channel or metric, a metric that cannot be read directly, an invalid range, a negative value, or a distinct count (WEB visitors) read over a window that is not 7, 28 or 90 days (the error names the supported lengths)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/links:
+    get:
+      tags:
+        - marketing-links
+      summary: List the project's tracked links, newest first
+      description: >-
+        A tracked link is an App Store campaign link (`pt` provider token, `ct` campaign token) that tells Apple
+        which Post, bio, creator or email a first-time download came from. Every new Post in a publishing Workflow
+        gets one automatically (kind POST, family `posts`) once the project's App Store Connect connection has an
+        app id and a provider token. `url` is stored as it was handed out. Filter by `kind` (POST, BIO, CREATOR,
+        EMAIL or OTHER) or by the Work Item the link belongs to. Any project member can read.
+      operationId: listTrackedLinks
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: kind
+          in: query
+          required: false
+          schema:
+            type: string
+          description: "POST, BIO, CREATOR, EMAIL or OTHER. Omit for every kind."
+        - name: workItemId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Only the links that belong to this Work Item.
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: "How many links to return, 1 to 1000. Default 200. `total` always counts every match."
+      responses:
+        "200":
+          description: The links
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackedLinkListResponse"
+        "400":
+          description: kind is not one of the five kinds, or limit is out of range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      tags:
+        - marketing-links
+      summary: Create a tracked link for a bio, creator, email or Post
+      description: >-
+        Builds `https://apps.apple.com/app/apple-store/id{appId}?pt={providerToken}&ct={token}` from the project's
+        App Store Connect connection. `token` (the `ct`) is lowercase letters, digits and dashes, starting with a
+        letter or digit, at most 40 characters. `family` (lowercase letters, digits and dashes, at most 64) is how
+        tokens roll up: Apple drops downloads below about 5 per token, so one family can show downloads where each
+        token alone would show none. A family holds one kind of link, and the family `posts` is reserved for POST
+        links. A POST link needs `workItemId` and a Post has at most one. Requires ADMIN or CREATOR. Answers 409 when
+        the project has no App Store Connect connection or the connection has no provider token (App Store Connect →
+        App Analytics → Campaigns → Generate a Link), when the token is taken, when the family holds another kind of
+        link, or when the Post already has a link.
+      operationId: createTrackedLink
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTrackedLinkRequest"
+      responses:
+        "201":
+          description: The new link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackedLink"
+        "400":
+          description: kind, family or token is missing or malformed, a POST link has no workItemId, or the family `posts` was used for another kind
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: workItemId is not a Work Item of this project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: No App Store Connect connection or provider token, the token is taken, the family holds another kind of link, or the Post already has a link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/links/performance:
+    get:
+      tags:
+        - marketing-links
+      summary: Downloads and views per link family
+      description: >-
+        Per family: how many tokens it has, first-time downloads Apple attributed to those tokens over the window
+        (the App Downloads Detailed report, settled days only), and for POST links the latest views of the linked
+        Posts' destinations. Apple omits a token's downloads below its privacy threshold (about 5), so a family with
+        no row in the window is never read as 0: `downloads` is null, `belowThreshold` is true and `note` says
+        "below Apple's reporting threshold". `views` is cumulative as of each destination's latest snapshot (not
+        limited to the window) and is null when no linked Post has reported views. The window defaults to the last
+        28 settled days: it ends on the latest settled App Store day (yesterday when there is none) and starts 27
+        days earlier. Days are UTC.
+      operationId: getTrackedLinkPerformance
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: "First day, inclusive (UTC). With only `to`, 27 days before it."
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: "Last day, inclusive (UTC). With only `from`, the default end day."
+      responses:
+        "200":
+          description: The families, ordered by family
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinkPerformanceResponse"
+        "400":
+          description: from is after to, or the window is longer than 366 days
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/promises:
+    get:
+      tags:
+        - marketing-promises
+      summary: The promise ledger - what each message brings, from install to day-7 retention
+      description: >-
+        One entry per message (alphabetical). A message is what a target promises: tag Apple Ads keywords,
+        custom product pages, Posts, creatives and paywall headlines with it (`/marketing/message-tags`).
+        `installs` adds Apple Ads tap installs of the tagged keywords, Apple Ads tap installs of the ads whose
+        current state points at a tagged product page, and first-time downloads of the tracked links of the tagged
+        Posts, over the window's settled days; creative and paywall-headline tags only label the message. It is
+        absent when no tagged target has a row, never 0, and `installsNote` says what is missing, what is below
+        Apple's reporting threshold, and that the parts can overlap or measure different things. The outcomes come
+        from the product backend's `message:<tag>` rows (product-metrics contract v3, matched case-insensitively
+        to the message): `intentMix` is each `intent_<pick>` metric's share of all picks, `trialRate` is
+        trial_started over first_open and `d7` is retained_d7 over matured_d7 (only opens that reached day 7 can
+        have retained). A rate carries `n` (its denominator), a 95% Wilson range `low`..`high` and `smallN` (true
+        under 20). A rate or mix with no data is absent, never 0; a numerator above its denominator is
+        inconsistent, so no rate is shown and `outcomesNote` says why. The message's `smallN` is true when any
+        rate it shows, or its intent mix, rests on fewer than 20 observations. The window defaults to the last 28
+        settled days: it ends on the latest settled day of the Apple Ads, App Store and product feeds (yesterday
+        when there is none). Days are UTC. Any project member can read.
+      operationId: getMarketingPromises
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: "First day, inclusive (UTC). With only `to`, 27 days before it."
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: "Last day, inclusive (UTC). With only `from`, the default end day."
+      responses:
+        "200":
+          description: The promises
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PromiseLedgerResponse"
+        "400":
+          description: from is after to, or the window is longer than 366 days
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/message-tags:
+    get:
+      tags:
+        - marketing-promises
+      summary: List the message tags, by message
+      description: Every tag of the workspace, ordered by message, then kind, then target. Any project member can read.
+      operationId: listMarketingMessageTags
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The tags
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTagListResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      tags:
+        - marketing-promises
+      summary: Tag a target with the message it makes
+      description: >-
+        Idempotent upsert by target (`targetKind` + `targetRef`). A target carries one message, so tagging it again
+        moves it to the new message and replaces its label (a PUT that omits `label` clears it). The message is
+        stored trimmed, lower-cased and with its whitespace collapsed. `targetRef` is the creative id (CREATIVE),
+        the custom product page id (PRODUCT_PAGE), the Apple Ads keyword id (KEYWORD), the headline text
+        (PAYWALL_HEADLINE) or the Post's Work Item id (POST). A POST or CREATIVE must belong to the project; a
+        keyword or product page is not checked, because the Apple Ads feed may not have synced it yet. Requires
+        ADMIN or CREATOR.
+      operationId: setMarketingMessageTag
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MessageTagRequest"
+      responses:
+        "200":
+          description: The stored tag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessageTag"
+        "400":
+          description: A missing or malformed message, targetKind, targetRef or label (the message lists the allowed values)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: The Post or creative is not one of this project's
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      tags:
+        - marketing-promises
+      summary: Remove the message from a target
+      description: "Idempotent: untagging a target that has no tag is a no-op. Requires ADMIN or CREATOR."
+      operationId: deleteMarketingMessageTag
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: targetKind
+          in: query
+          required: true
+          schema:
+            type: string
+          description: CREATIVE, PRODUCT_PAGE, KEYWORD, PAYWALL_HEADLINE or POST.
+        - name: targetRef
+          in: query
+          required: true
+          schema:
+            type: string
+          description: The id (or, for a paywall headline, the text) the tag was made with.
+      responses:
+        "204":
+          description: Removed, or there was no tag
+        "400":
+          description: Unknown targetKind or a blank targetRef
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/ai-visibility:
+    get:
+      tags:
+        - marketing-ai-visibility
+      summary: Whether AI assistants name the brand, per question and assistant, with a weekly trend
+      description: >-
+        Once a week (Monday 07:00 UTC) each active question is put to each AI assistant the workspace holds a
+        provider key for (Settings, AI Providers), and whether the answer names the brand is recorded. A brand term
+        counts when it appears as a whole word in any case, with an optional plural "s" ("Rexipe", "REXIPES" and
+        "rexipe.io" count; "rexipeapp" does not). `brandTerms` are the terms in force (the workspace name until set).
+        `questions` lists the active questions, plus dropped ones that still have readings in the window. Per
+        assistant, `latest` is its newest reading in the window (`rankInAnswer` is the 1-based position of the first
+        list item naming the brand when the answer was a numbered or bulleted list, else null; `excerpt` is about 200
+        characters either side of the first mention, or the start of the answer when not named) and `trend` is one
+        point per week read, oldest first. A week with no reading is absent from the trend, never `named: false`:
+        an assistant with no credential, an error or a skipped question leaves no reading. `skipped` lists the
+        assistants the workspace has no credential for.
+      operationId: getAiVisibility
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: weeks
+          in: query
+          required: false
+          description: How many ISO weeks back to read, including this one (1 to 52).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 52
+            default: 8
+      responses:
+        "200":
+          description: The AI-assistant visibility readings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiVisibility"
+        "400":
+          description: weeks is outside 1 to 52
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Caller is not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/ai-visibility/questions:
+    put:
+      tags:
+        - marketing-ai-visibility
+      summary: Replace the questions put to the AI assistants each week
+      description: >-
+        Idempotent full replace of the active question set (at most 20; an empty list switches every question
+        off). Questions are trimmed, whitespace-collapsed and de-duplicated ignoring case. A listed question is
+        active (one dropped earlier is reactivated with its history), a question left out becomes inactive and its
+        history stays readable. The response lists every question of the workspace, the listed ones first in the
+        order given. Requires ADMIN or CREATOR.
+      operationId: setAiVisibilityQuestions
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAiQuestionsRequest"
+      responses:
+        "200":
+          description: Every question of the workspace after the replace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiQuestionList"
+        "400":
+          description: A blank question, one over 400 characters, or more than 20 questions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/ai-visibility/brand-terms:
+    put:
+      tags:
+        - marketing-ai-visibility
+      summary: Replace the words that count as naming the brand
+      description: >-
+        Idempotent full replace of the brand terms (at most 10, each up to 80 characters). Terms are trimmed and
+        de-duplicated ignoring case. An empty list goes back to the default, the workspace name. Applies to the
+        next check; stored readings are not re-judged. Requires ADMIN or CREATOR.
+      operationId: setAiVisibilityBrandTerms
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetAiBrandTermsRequest"
+      responses:
+        "200":
+          description: The brand terms now in force
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiBrandTerms"
+        "400":
+          description: More than 10 terms, or a term over 80 characters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/ai-visibility/run:
+    post:
+      tags:
+        - marketing-ai-visibility
+      summary: Run this week's AI-visibility checks now
+      description: >-
+        Runs the checks the weekly job would run, for this workspace and this ISO week (Monday, UTC), and waits for
+        them. Idempotent: a question and assistant already read this week is not asked again, so a repeat makes no
+        calls; a check that failed earlier is retried. At most 20 assistant calls are made per workspace per week.
+        `skipped` reports assistants with no credential and checks held back by that limit; `errors` reports
+        provider failures. Neither writes a reading, so neither can appear as "not named". Requires ADMIN.
+      operationId: runAiVisibilityCheck
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: What the run recorded, found already recorded, skipped and could not do
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiVisibilityRunResult"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN
           content:
             application/json:
               schema:
@@ -9614,13 +11658,13 @@ components:
         dataCompleteThrough:
           type: string
           format: date
-          description: The channel's window ends here, the latest day with non-provisional data across its connections (never later than yesterday; yesterday when there is none).
+          description: The channel's window ends here, the latest day with non-provisional data across its connections (never later than yesterday; yesterday when there is none). In a fixed window it is never later than the window's last day.
         channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT."}
         label: {type: string}
         status:
           type: string
           enum: [LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH]
-          description: MISMATCH means the product metrics feed's reference figure (store downloads, ad spend) disagrees with this channel's own connector by more than 1%; see `mismatch`. STALE also covers a feed that keeps running while this channel's data ends more than 7 days before the freshest channel's; such a channel no longer holds the funnel window back and its funnel stages are unavailable ("No Web data since Sep 10").
+          description: MISMATCH means a second source disagrees with this channel's own connector - the product metrics feed's reference figure (ad spend and installs, store downloads and downloads of record) or a direct platform read - outside the band of 1 unit for counts under 50 and 2% above that and for money; see `mismatches`. STALE also covers a feed that keeps running while this channel's data ends more than 7 days before the freshest channel's; such a channel no longer holds the funnel window back and its funnel stages are unavailable ("No Web data since Sep 10").
         lastFetchedAt: {type: string, format: date-time, nullable: true}
         targetsEditable:
           type: boolean
@@ -9629,6 +11673,15 @@ components:
           allOf:
             - $ref: "#/components/schemas/OverviewMismatch"
           nullable: true
+          description: The entry of `mismatches` with the largest relative gap (a BACKEND one when there is any), kept for clients that read one mismatch. New clients read `mismatches`.
+        mismatches:
+          type: array
+          description: Every second source that disagrees with this channel's own figure, largest gap first - the product backend's reference per pair (ADS spend and installs, STORE downloads and downloads of record) and any direct platform read that disagrees. Empty when none do. The channel is MISMATCH while this is not empty (a lagging channel stays STALE).
+          items:
+            $ref: "#/components/schemas/OverviewMismatch"
+        partial:
+          type: boolean
+          description: Set to true only in a fixed window, when this channel's settled data ends before the window's last day; its values then cover only the days up to `dataCompleteThrough` and its previous-window comparison is withheld.
         connections:
           type: array
           items:
@@ -9644,18 +11697,170 @@ components:
 
     OverviewMismatch:
       type: object
-      description: Set when status is MISMATCH. Both figures cover the same settled days, `from` to `to`.
+      description: >-
+        One second source that disagrees with the channel's own figure, over the same settled days `from` to `to`
+        (outside the band: 1 unit for counts under 50, 2% of the larger figure above that and for money).
       required: [metric, label, referenceValue, channelValue, gapPct, from, to]
       properties:
+        kind:
+          type: string
+          enum: [BACKEND, PLATFORM]
+          description: BACKEND when the second figure is the product metrics feed's reference; PLATFORM when it is a direct platform read recorded in the verification ledger. Absent means BACKEND.
         channelSource: {type: string, description: "Name of the connection(s) behind this channel's own figure, e.g. App Store Connect."}
-        referenceSource: {type: string, description: "Name of the product metrics connection(s) that reported the reference figure."}
+        referenceSource: {type: string, description: "Name of the source of the second figure: the product metrics connection(s) for BACKEND, or the name given to the direct read (for example Apple Ads console) for PLATFORM."}
         metric: {type: string, description: "The channel metric compared, e.g. downloads or spend."}
         label: {type: string}
-        referenceValue: {type: number, format: double, description: "What the product metrics feed reports."}
+        referenceValue: {type: number, format: double, description: "What the second source reports: the product metrics feed (BACKEND) or the platform read (PLATFORM)."}
         channelValue: {type: number, format: double, description: "What this channel's own connector reports."}
         gapPct: {type: number, format: double, description: "Absolute gap as a fraction of the larger figure (0.05 is 5%)."}
         from: {type: string, format: date}
         to: {type: string, format: date}
+
+    MarketingVerificationLedger:
+      type: object
+      required: [window, rows, summary]
+      properties:
+        window:
+          $ref: "#/components/schemas/VerificationWindow"
+        rows:
+          type: array
+          items:
+            $ref: "#/components/schemas/VerificationRow"
+        summary:
+          $ref: "#/components/schemas/VerificationSummary"
+
+    VerificationWindow:
+      type: object
+      description: The days the ledger was asked about. Each row says which days its own Conductor value covers (a channel's rolling window ends at its own last settled day).
+      required: [from]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date, nullable: true, description: "Null when no channel has data yet."}
+
+    VerificationRow:
+      type: object
+      required: [channel, metric, metricRef, label, unit, verdict, mismatch, readStale, trustNote]
+      properties:
+        channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT."}
+        metric: {type: string, description: "The metric key within the channel, e.g. installs."}
+        metricRef: {type: string, description: "CHANNEL.metric, e.g. ADS.installs."}
+        label: {type: string}
+        unit:
+          type: string
+          enum: [COUNT, CURRENCY, PERCENT, POSITION, RATING]
+        definition:
+          allOf:
+            - $ref: "#/components/schemas/OverviewMetricDefinition"
+          nullable: true
+        windowFrom: {type: string, format: date, nullable: true, description: "First day `conductorValue` covers."}
+        windowTo: {type: string, format: date, nullable: true, description: "Last day `conductorValue` covers."}
+        conductorValue: {type: number, format: double, nullable: true, description: "Conductor's value for the window; null when it has none (unknown, never 0)."}
+        backend:
+          allOf:
+            - $ref: "#/components/schemas/VerificationBackend"
+          nullable: true
+          description: Present when the product backend reports this metric over days Conductor also has settled.
+        platformRead:
+          allOf:
+            - $ref: "#/components/schemas/VerificationPlatformRead"
+          nullable: true
+          description: The latest direct platform read for this metric, if any.
+        verdict:
+          type: string
+          enum: [BOTH, CONNECTOR, BACKEND, PLATFORM, UNCHECKED]
+        mismatch: {type: boolean, description: "True when any second source that could be compared disagrees with Conductor's figure."}
+        readStale: {type: boolean, description: "True when the latest platform read was recorded more than 7 days ago."}
+        trustNote: {type: string, description: "One plain sentence saying which figure to trust and why."}
+
+    VerificationBackend:
+      type: object
+      required: [value, conductorValue, daysCompared, source, from, to, matches]
+      properties:
+        value: {type: number, format: double, description: "The product backend's sum over the days compared."}
+        conductorValue: {type: number, format: double, description: "Conductor's sum over the same days."}
+        daysCompared: {type: integer, description: "Settled days both sides have."}
+        source: {type: string, description: "Name of the product metrics connection(s)."}
+        from: {type: string, format: date, description: "First day compared."}
+        to: {type: string, format: date, description: "Last day compared."}
+        matches: {type: boolean}
+
+    VerificationPlatformRead:
+      type: object
+      required: [id, value, from, to, sourceName, recordedAt]
+      properties:
+        id: {type: string}
+        value: {type: number, format: double, description: "What the platform showed for the read's days."}
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        sourceName: {type: string, description: "Where it was read, e.g. Apple Ads console."}
+        note: {type: string, nullable: true}
+        recordedBy: {type: string, nullable: true, description: "User id of whoever recorded it."}
+        recordedAt: {type: string, format: date-time}
+        conductorValueOverReadDays:
+          type: number
+          format: double
+          nullable: true
+          description: "Conductor's own figure over exactly the read's days (a level: its value on the last day; unique visitors: the stored count for a window of that length ending on the last day). Null when it cannot be said: Conductor has not settled those days, or unique visitors were read over a length other than 7, 28 or 90 days."
+        matches:
+          type: boolean
+          nullable: true
+          description: "Whether the read agrees with Conductor's figure over its days; null when that cannot be compared."
+
+    VerificationSummary:
+      type: object
+      required: [both, connector, backend, platform, unchecked, mismatched, staleReads]
+      properties:
+        both: {type: integer}
+        connector: {type: integer}
+        backend: {type: integer}
+        platform: {type: integer}
+        unchecked: {type: integer}
+        mismatched: {type: integer, description: "Rows with `mismatch` true."}
+        staleReads: {type: integer, description: "Rows whose latest platform read is more than 7 days old."}
+
+    MarketingPlatformReadRequest:
+      type: object
+      required: [channel, metric, from, to, value, sourceName]
+      properties:
+        channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT (case-insensitive)."}
+        metric: {type: string, description: "The metric key within the channel, e.g. installs; a sum, a level or window-unique visitors (not a derived ratio)."}
+        from: {type: string, format: date, description: "First day of the range the platform showed."}
+        to: {type: string, format: date, description: "Last day of the range; yesterday or earlier. At most 92 days from `from`."}
+        value: {type: number, format: double, minimum: 0, description: "The platform's figure for those days."}
+        sourceName: {type: string, maxLength: 120, description: "Where it was read, e.g. Apple Ads console or Search Console UI."}
+        note: {type: string, maxLength: 500}
+
+    MarketingPlatformReadList:
+      type: object
+      required: [reads]
+      properties:
+        reads:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingPlatformReadEntry"
+
+    MarketingPlatformReadEntry:
+      type: object
+      description: One recorded read with what Conductor and the backend showed when it was recorded.
+      required: [id, channel, metric, from, to, value, sourceName, recordedAt]
+      properties:
+        id: {type: string}
+        channel: {type: string}
+        metric: {type: string}
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        value: {type: number, format: double}
+        sourceName: {type: string}
+        note: {type: string, nullable: true}
+        recordedBy: {type: string, nullable: true}
+        recordedAt: {type: string, format: date-time}
+        conductorValue: {type: number, format: double, nullable: true, description: "Conductor's figure over the read's days at the time of recording."}
+        backendValue: {type: number, format: double, nullable: true, description: "The product backend's figure over the same days at the time of recording, if it had one."}
+        verdict:
+          type: string
+          nullable: true
+          enum: [BOTH, CONNECTOR, BACKEND, PLATFORM, UNCHECKED]
+          description: The verdict at the time of recording.
 
     OverviewConnection:
       type: object
@@ -9759,6 +11964,15 @@ components:
           type: string
           enum: [EVENT, COHORT]
           description: PRODUCT only - COHORT when each day's value counts the people who first opened that day, followed to now.
+        definition:
+          allOf:
+            - $ref: "#/components/schemas/OverviewMetricDefinition"
+          nullable: true
+          description: Where the number comes from and what it counts. Set on every metric of every channel.
+        note:
+          type: string
+          nullable: true
+          description: Set only when `value` is null because the stored data cannot answer, for example a unique-visitor count asked for a window length that is not stored (7, 28 and 90 days are). The value is never rebuilt from daily counts.
         provisionalDays:
           type: integer
           description: Number of provisional days after the channel's dataCompleteThrough that appear at the end of the series. Values and changes exclude them.
@@ -9781,6 +11995,365 @@ components:
           type: boolean
           description: True for days the source may still restate, including every day after the channel's dataCompleteThrough. Draw them differently; they are not in the totals.
 
+    BudgetPacing:
+      type: object
+      required: [month, daysElapsed, daysInMonth, mtdSpend, provisionalSpend, daily, channels]
+      properties:
+        month: {type: string, description: "YYYY-MM (UTC)."}
+        capAmount: {type: number, format: double, nullable: true, description: "The month's cap. Null when none is set; never 0."}
+        currency: {type: string, nullable: true, description: "The cap's currency. Null when no cap is set."}
+        through: {type: string, format: date, nullable: true, description: "The latest settled day counted toward the month. Null before any settled spend."}
+        daysElapsed: {type: integer, description: "Days from the 1st through `through`; 0 before any settled spend."}
+        daysInMonth: {type: integer}
+        mtdSpend: {type: number, format: double, description: "Settled spend this month across paid channels, as the ad platforms report it."}
+        provisionalSpend: {type: number, format: double, description: "Spend on days the source may still restate. Not in mtdSpend, pace or the projection."}
+        expectedSpend: {type: number, format: double, nullable: true, description: "Straight-line spend to `through` (capAmount * daysElapsed / daysInMonth). Null without a cap or settled spend."}
+        pacePct: {type: number, format: double, nullable: true, description: "mtdSpend / expectedSpend as a fraction: 1.0 on pace, above 1 ahead of the cap. Null without a cap or settled spend."}
+        projectedSpend: {type: number, format: double, nullable: true, description: "mtdSpend / daysElapsed * daysInMonth. Null before any settled spend."}
+        daily:
+          type: array
+          description: Every day from the 1st to the last day with a spend row, across paid channels.
+          items:
+            $ref: "#/components/schemas/BudgetDay"
+        channels:
+          type: array
+          description: Paid channels, by name. A channel with an active rule is listed even before its first spend row of the month.
+          items:
+            $ref: "#/components/schemas/BudgetChannel"
+
+    BudgetDay:
+      type: object
+      required: [day, cumulativeSpend]
+      properties:
+        day: {type: string, format: date}
+        spend: {type: number, format: double, nullable: true, description: "Settled spend that day. Null when no settled row was reported (not 0)."}
+        provisionalSpend: {type: number, format: double, nullable: true, description: "Spend the source may still restate. Null when none. Draw it differently."}
+        cumulativeSpend: {type: number, format: double, description: "Settled spend from the 1st through this day; provisional days add nothing."}
+        expectedSpend: {type: number, format: double, nullable: true, description: "Straight-line cumulative cap to this day. Only on the cross-channel series, and null without a cap."}
+
+    BudgetChannel:
+      type: object
+      required: [channel, mtdSpend, provisionalSpend, compliant, daily, rules]
+      properties:
+        channel: {type: string, description: "ADS, SOCIAL, ..."}
+        through: {type: string, format: date, nullable: true, description: "The channel's latest settled spend day on or before the as-of day; it can precede the month. Null before any settled spend."}
+        mtdSpend: {type: number, format: double}
+        provisionalSpend: {type: number, format: double}
+        installs: {type: number, format: double, nullable: true, description: "Settled installs this month. Null when the channel reports none."}
+        cpi: {type: number, format: double, nullable: true, description: "Month-to-date cost per install. Null when installs are null or 0 (read as 'no installs')."}
+        compliant: {type: boolean, description: "False when the channel has spend and no active stop rule."}
+        complianceReason: {type: string, nullable: true, description: "'no stop rule' when not compliant."}
+        daily:
+          type: array
+          items:
+            $ref: "#/components/schemas/BudgetDay"
+        rules:
+          type: array
+          items:
+            $ref: "#/components/schemas/BudgetRuleEvaluation"
+        marginalCpi:
+          nullable: true
+          description: Null when the channel has no settled spend yet.
+          allOf:
+            - $ref: "#/components/schemas/BudgetMarginalCpi"
+
+    BudgetMarginalCpi:
+      type: object
+      required: [last7, prior7, monthToDate]
+      properties:
+        last7: {$ref: "#/components/schemas/BudgetCpiWindow"}
+        prior7: {$ref: "#/components/schemas/BudgetCpiWindow"}
+        monthToDate: {$ref: "#/components/schemas/BudgetCpiWindow"}
+
+    BudgetCpiWindow:
+      type: object
+      required: [from]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date, nullable: true}
+        spend: {type: number, format: double, nullable: true, description: "Settled spend in the window. Null when no row was reported."}
+        installs: {type: number, format: double, nullable: true, description: "Settled installs in the window. Null when no row was reported; 0 when reported zero."}
+        cpi: {type: number, format: double, nullable: true, description: "spend / installs. Null when installs are null or 0 (read as 'no installs')."}
+
+    BudgetRuleEvaluation:
+      type: object
+      required: [ruleId, channel, scope, metric, comparator, threshold, minSample, windowDays, tripped, belowMinSample]
+      properties:
+        ruleId: {type: string}
+        channel: {type: string}
+        scope: {type: string, description: "channel, campaign:<id> or keyword:<id>."}
+        metric: {type: string}
+        comparator: {type: string, description: "GT or LT."}
+        threshold: {type: number, format: double}
+        minSample: {type: integer}
+        windowDays: {type: integer}
+        note: {type: string, nullable: true}
+        windowFrom: {type: string, format: date, nullable: true, description: "First day of the settled window. Null when the channel has no settled data."}
+        windowTo: {type: string, format: date, nullable: true}
+        observed: {type: number, format: double, nullable: true, description: "The metric over the window. Null when it cannot be computed (no data, a zero denominator, or a cost per install with no installs)."}
+        sample: {type: number, format: double, nullable: true, description: "Taps in the window. Null when taps are not reported."}
+        tripped: {type: boolean, description: "The comparator holds and the sample reaches minSample. A cost per install above the threshold also holds when there is spend and zero installs."}
+        belowMinSample: {type: boolean, description: "minSample is above 0 and the window's taps are fewer (or not reported). Such a rule never trips."}
+        detail: {type: string, nullable: true, description: "Why the rule is not computed or not tripped, in words."}
+
+    MarketingBudgetCap:
+      type: object
+      required: [month, capAmount, currency, updatedAt]
+      properties:
+        month: {type: string}
+        capAmount: {type: number, format: double}
+        currency: {type: string}
+        updatedAt: {type: string, format: date-time}
+
+    BudgetCapRequest:
+      type: object
+      required: [capAmount]
+      properties:
+        capAmount: {type: number, format: double, description: "Greater than 0 and below 1,000,000,000,000; two decimals are kept."}
+        currency: {type: string, maxLength: 3, description: "Three-letter code. Defaults to USD."}
+
+    StopRule:
+      type: object
+      required: [id, channel, scope, metric, comparator, threshold, minSample, windowDays, createdAt]
+      properties:
+        id: {type: string}
+        channel: {type: string}
+        scope: {type: string, description: "channel, campaign:<id> or keyword:<id>."}
+        metric: {type: string, description: "cost_per_install, spend, installs, taps, tap_through_rate or install_rate."}
+        comparator: {type: string, description: "GT (above) or LT (below)."}
+        threshold: {type: number, format: double}
+        minSample: {type: integer}
+        windowDays: {type: integer}
+        note: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+
+    StopRuleRequest:
+      type: object
+      required: [channel, metric, comparator, threshold]
+      properties:
+        channel: {type: string, maxLength: 32, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT (case-insensitive). A paid channel is one with a spend metric."}
+        scope: {type: string, maxLength: 200, description: "channel (default: the channel's total rows), campaign:<id> or keyword:<id> (rows of that campaign or keyword; the id is matched whole)."}
+        metric: {type: string, maxLength: 64, description: "cost_per_install, spend, installs, taps, tap_through_rate (taps / impressions) or install_rate (installs / taps). Rates are fractions."}
+        comparator: {type: string, maxLength: 2, description: "GT (trips above the threshold) or LT (trips below)."}
+        threshold: {type: number, format: double, description: "0 or more, in the metric's own unit."}
+        minSample: {type: integer, description: "Taps the window must hold before the rule can trip. Default 0 (no minimum); set one for any rate or cost per install."}
+        windowDays: {type: integer, description: "Settled days the rule reads, 1 to 90. Default 7."}
+        note: {type: string, maxLength: 500, description: "What a human should consider when it trips."}
+
+    StopRuleListResponse:
+      type: object
+      required: [stopRules]
+      properties:
+        stopRules:
+          type: array
+          items:
+            $ref: "#/components/schemas/StopRule"
+
+    TrackedLink:
+      type: object
+      required: [id, kind, family, token, url, createdAt]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [POST, BIO, CREATOR, EMAIL, OTHER]}
+        family: {type: string, description: "The group tokens roll up into, e.g. posts."}
+        token: {type: string, description: "The campaign token (`ct`)."}
+        url: {type: string, description: "The App Store campaign link, as handed out when the link was made."}
+        workItemId: {type: string, nullable: true, description: "The Post (or creator) this link belongs to. Null once that Work Item is deleted, or for a link not tied to one."}
+        label: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+
+    TrackedLinkListResponse:
+      type: object
+      required: [links, total]
+      properties:
+        links:
+          type: array
+          items:
+            $ref: "#/components/schemas/TrackedLink"
+        total:
+          type: integer
+          format: int64
+          description: How many links match, which can exceed the number returned.
+
+    CreateTrackedLinkRequest:
+      type: object
+      required: [kind, family, token]
+      properties:
+        kind: {type: string, enum: [POST, BIO, CREATOR, EMAIL, OTHER]}
+        family: {type: string, description: "Lowercase letters, digits and dashes, starting with a letter or digit, at most 64 characters."}
+        token: {type: string, description: "Lowercase letters, digits and dashes, starting with a letter or digit, at most 40 characters."}
+        label: {type: string, description: "What the link is for, at most 200 characters."}
+        workItemId: {type: string, description: "The Work Item the link belongs to. Required for kind POST."}
+
+    LinkFamilyPerformance:
+      type: object
+      required: [family, kind, tokens, belowThreshold]
+      properties:
+        family: {type: string}
+        kind: {type: string, enum: [POST, BIO, CREATOR, EMAIL, OTHER]}
+        tokens: {type: integer, description: "How many links the family holds."}
+        downloads: {type: integer, format: int64, nullable: true, description: "First-time downloads over the window, settled days. Null (never 0) when no token of the family has a row in the window."}
+        belowThreshold: {type: boolean, description: "True when no token of the family has a row in the window: Apple reports nothing under its privacy threshold."}
+        note: {type: string, nullable: true, description: "The words \"below Apple's reporting threshold\" when belowThreshold."}
+        views: {type: integer, format: int64, nullable: true, description: "POST families only: the latest views of the linked Posts' destinations, cumulative. Null when none has reported views."}
+
+    LinkPerformanceResponse:
+      type: object
+      required: [from, to, families]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        families:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkFamilyPerformance"
+
+    MessageTagRequest:
+      type: object
+      required: [message, targetKind, targetRef]
+      properties:
+        message: {type: string, maxLength: 120, description: "The message the target makes, a short tag such as save-from-tiktok. Stored trimmed and lower-cased."}
+        targetKind: {type: string, description: "CREATIVE, PRODUCT_PAGE, KEYWORD, PAYWALL_HEADLINE or POST (case-insensitive)."}
+        targetRef: {type: string, maxLength: 200, description: "The creative id, product page id, keyword id, paywall headline text or Post Work Item id."}
+        label: {type: string, maxLength: 200, description: "A human name for the target, for example the keyword text."}
+
+    MessageTag:
+      type: object
+      required: [id, message, targetKind, targetRef, createdAt]
+      properties:
+        id: {type: string}
+        message: {type: string}
+        targetKind: {type: string, description: "CREATIVE, PRODUCT_PAGE, KEYWORD, PAYWALL_HEADLINE or POST."}
+        targetRef: {type: string}
+        label: {type: string, nullable: true}
+        createdAt: {type: string, format: date-time}
+
+    MessageTagListResponse:
+      type: object
+      required: [tags]
+      properties:
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/MessageTag"
+
+    PromiseRate:
+      type: object
+      description: A rate over a count of observations, with its 95% Wilson score range.
+      required: [value, n, low, high, smallN]
+      properties:
+        value: {type: number, format: double, description: "A fraction (0.25 is 25%)."}
+        n: {type: integer, format: int64, description: "The observations the rate rests on: its denominator."}
+        low: {type: number, format: double, description: "Lower end of the 95% range, a fraction."}
+        high: {type: number, format: double, description: "Upper end of the 95% range, a fraction."}
+        smallN: {type: boolean, description: "True when n is under 20: read the range, not the value."}
+
+    PromiseIntentShare:
+      type: object
+      required: [pick, count, share]
+      properties:
+        pick: {type: string, description: "The answer people picked: the intent_<pick> metric's suffix."}
+        count: {type: integer, format: int64}
+        share: {type: number, format: double, description: "This pick's share of all picks, a fraction."}
+
+    Promise:
+      type: object
+      required: [message, targets, smallN]
+      properties:
+        message: {type: string}
+        targets:
+          type: object
+          additionalProperties: {type: integer}
+          description: How many targets of each kind carry the message.
+        installs: {type: integer, format: int64, nullable: true, description: "Absent (never 0) when no tagged target has a row in the window."}
+        installsNote: {type: string, nullable: true, description: "What is missing, below Apple's reporting threshold, overlapping or measured differently."}
+        intentMix:
+          type: array
+          nullable: true
+          description: Absent when the product backend sent no intent_<pick> rows at the message. Largest first.
+          items:
+            $ref: "#/components/schemas/PromiseIntentShare"
+        intentN: {type: integer, format: int64, nullable: true, description: "The picks the intent mix rests on."}
+        trialRate:
+          nullable: true
+          description: trial_started / first_open at the message; absent without both.
+          allOf:
+            - $ref: "#/components/schemas/PromiseRate"
+        d7:
+          nullable: true
+          description: retained_d7 / matured_d7 at the message; absent without both.
+          allOf:
+            - $ref: "#/components/schemas/PromiseRate"
+        smallN: {type: boolean, description: "True when a rate shown here, or the intent mix, rests on fewer than 20 observations."}
+        outcomesNote: {type: string, nullable: true, description: "Why a rate is not shown although its numerator is reported."}
+
+    PromiseLedgerResponse:
+      type: object
+      required: [from, to, promises]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+        promises:
+          type: array
+          items:
+            $ref: "#/components/schemas/Promise"
+
+    OverviewMetricDefinition:
+      type: object
+      description: >-
+        What a metric counts. `numerator` and `denominator` are measure names from one closed list
+        (impressions, unique_impressions, page_views, unique_page_views, first_time_downloads, redownloads,
+        total_downloads, downloads_of_record, tap_installs, tap_new_downloads, view_through_installs, taps,
+        spend, visitors, sessions, pageviews, conversion_sessions, conversion_events, clicks, followers, posts,
+        likes, channel_views, website_clicks, rating_count, rating_avg, position), or `product:<key>` for a metric a
+        product backend declared. Two metrics compare only when numerator, denominator and sourceType all match.
+      required: [source, numerator]
+      properties:
+        source: {type: string, description: "One plain line naming the platform report or field the number comes from."}
+        numerator: {type: string, description: "The measure counted (the top of a ratio)."}
+        denominator:
+          type: string
+          nullable: true
+          description: The measure divided by; null for a plain count.
+        sourceType:
+          type: string
+          nullable: true
+          description: ALL, or one App Store traffic source type (APP_STORE_SEARCH, APP_STORE_BROWSE, APP_REFERRER, WEB_REFERRER ...). Null means ALL.
+        exclusions:
+          type: string
+          nullable: true
+          description: One plain line naming what is left out of the number; null when nothing is.
+        timeZone:
+          type: string
+          nullable: true
+          description: The time zone that decides which day a row belongs to; null when the source does not say.
+
+    MarketingDefinitionEntry:
+      type: object
+      required: [metricRef, channel, key, label, unit, aggregation, definition]
+      properties:
+        metricRef: {type: string, description: "CHANNEL.key, the reference a benchmark or target uses (for example ADS.installs)."}
+        channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT."}
+        key: {type: string}
+        label: {type: string}
+        unit:
+          type: string
+          enum: [COUNT, CURRENCY, PERCENT, POSITION, RATING]
+        aggregation:
+          type: string
+          description: "How daily values combine over a window: SUM, LEVEL, DERIVED or WINDOW_UNIQUE."
+        definition:
+          $ref: "#/components/schemas/OverviewMetricDefinition"
+
+    MarketingDefinitionsResponse:
+      type: object
+      required: [definitions]
+      properties:
+        definitions:
+          type: array
+          items:
+            $ref: "#/components/schemas/MarketingDefinitionEntry"
+
     MarketingBenchmark:
       type: object
       required: [metricRef, value, sourceName, sourceUrl, checkedOn, updatedAt]
@@ -9794,6 +12367,9 @@ components:
         sourceUrl: {type: string}
         checkedOn: {type: string, format: date}
         notes: {type: string, nullable: true}
+        numerator: {type: string, nullable: true, description: "What the benchmark counts: a measure name (e.g. total_downloads) or product:<key>. Null means the definition is missing and the benchmark is never judged."}
+        denominator: {type: string, nullable: true, description: "What the numerator is divided by, same vocabulary. Null for a count."}
+        sourceType: {type: string, nullable: true, description: "The traffic source the benchmark covers: ALL, APP_STORE_SEARCH, APP_STORE_BROWSE, APP_REFERRER, WEB_REFERRER, APP_CLIP, INSTITUTIONAL_PURCHASE or OTHER. Null means ALL."}
         updatedAt: {type: string, format: date-time}
 
     MarketingBenchmarkRequest:
@@ -9808,6 +12384,9 @@ components:
         sourceUrl: {type: string, maxLength: 2000}
         checkedOn: {type: string, format: date, description: "The day the source was read; not in the future."}
         notes: {type: string, maxLength: 2000}
+        numerator: {type: string, maxLength: 80, description: "A measure name (impressions, unique_impressions, page_views, unique_page_views, first_time_downloads, redownloads, total_downloads, downloads_of_record, tap_installs, tap_new_downloads, view_through_installs, taps, spend, visitors, sessions, pageviews, conversion_sessions, conversion_events, clicks, followers, posts, likes, channel_views, website_clicks, rating_count, rating_avg, position) or product:<key> (key lower-case letters, digits and underscores, starting with a letter, up to 64). Required when denominator or sourceType is given."}
+        denominator: {type: string, maxLength: 80, description: "Same vocabulary as numerator; omit for a count. Needs a numerator."}
+        sourceType: {type: string, maxLength: 32, description: "ALL (the default), APP_STORE_SEARCH, APP_STORE_BROWSE, APP_REFERRER, WEB_REFERRER, APP_CLIP, INSTITUTIONAL_PURCHASE or OTHER. Needs a numerator."}
 
     MarketingBenchmarkListResponse:
       type: object
@@ -9817,6 +12396,349 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/MarketingBenchmark"
+
+    GrowthSignals:
+      type: object
+      required: [moments, ratings, reviews, competitorChanges, keywordPresence, trackedKeywords]
+      properties:
+        moments:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthMoment"
+        ratings:
+          $ref: "#/components/schemas/GrowthRatings"
+        reviews:
+          $ref: "#/components/schemas/GrowthReviews"
+        competitorChanges:
+          type: array
+          description: Only competitors whose listing changed between their last two snapshots.
+          items:
+            $ref: "#/components/schemas/GrowthCompetitorChange"
+        keywordPresence:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthKeywordPresence"
+        trackedKeywords:
+          $ref: "#/components/schemas/GrowthTrackedKeywords"
+
+    GrowthMoment:
+      type: object
+      required: [key, name, date, leadDays, status, surfaces]
+      properties:
+        key: {type: string}
+        name: {type: string}
+        date: {type: string, format: date}
+        leadDays: {type: integer, description: "How many days before the date its surfaces start to count as upcoming."}
+        status: {type: string, description: "warning (a surface is past due with no change), upcoming (within leadDays of the date with a surface not yet overdue), scheduled, or past. Computed on read from UTC today."}
+        surfaces:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthSurface"
+
+    GrowthSurface:
+      type: object
+      required: [id, surface, dueOn]
+      properties:
+        id: {type: string}
+        surface: {type: string, description: "Where the change goes, e.g. App Store promotional text, TikTok post, Email."}
+        dueOn: {type: string, format: date}
+        changeWorkItemId: {type: string, nullable: true, description: "The MARKETING_CHANGES Work Item that handled the surface; null until one is linked."}
+        changeDisplayId: {type: string, nullable: true, description: "Display id of that Work Item, e.g. RE-12."}
+        warning: {type: string, nullable: true, description: "Present only when UTC today is after dueOn and no change is linked."}
+
+    GrowthRatings:
+      type: object
+      required: [competitors]
+      properties:
+        ours:
+          $ref: "#/components/schemas/GrowthAppRating"
+        competitors:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthAppRating"
+
+    GrowthAppRating:
+      type: object
+      required: [appId, country]
+      properties:
+        appId: {type: string}
+        name: {type: string, nullable: true}
+        country: {type: string, description: "The App Store country the app is read from."}
+        latest:
+          $ref: "#/components/schemas/GrowthSnapshot"
+        previous:
+          $ref: "#/components/schemas/GrowthSnapshot"
+        weeklyGrowth: {type: integer, format: int64, nullable: true, description: "Rating count in latest minus previous; null unless both snapshots are from the same storefront and have a rating count. Never 0 for missing data."}
+
+    GrowthSnapshot:
+      type: object
+      required: [capturedOn]
+      properties:
+        capturedOn: {type: string, format: date, description: "The Monday of the ISO week the snapshot stands for (UTC)."}
+        country: {type: string, nullable: true, description: "The App Store storefront the snapshot was read from. Snapshots of different storefronts are never compared, so weeklyGrowth and the competitor change list are empty across a country change."}
+        price: {type: number, format: double, nullable: true}
+        currency: {type: string, nullable: true}
+        ratingAvg: {type: number, format: double, nullable: true}
+        ratingCount: {type: integer, format: int64, nullable: true}
+        version: {type: string, nullable: true}
+        title: {type: string, nullable: true}
+        subtitle: {type: string, nullable: true}
+
+    GrowthReviews:
+      type: object
+      required: [ours, competitors]
+      properties:
+        ours:
+          type: array
+          description: The latest 10 reviews of our app.
+          items:
+            $ref: "#/components/schemas/GrowthReview"
+        competitors:
+          type: array
+          description: The latest 5 reviews of each watched competitor.
+          items:
+            $ref: "#/components/schemas/GrowthAppReviews"
+
+    GrowthAppReviews:
+      type: object
+      required: [appId, name, reviews]
+      properties:
+        appId: {type: string}
+        name: {type: string}
+        reviews:
+          type: array
+          items:
+            $ref: "#/components/schemas/GrowthReview"
+
+    GrowthReview:
+      type: object
+      properties:
+        rating: {type: integer, nullable: true}
+        title: {type: string, nullable: true}
+        body: {type: string, nullable: true}
+        author: {type: string, nullable: true}
+        reviewedAt: {type: string, format: date-time, nullable: true}
+
+    GrowthCompetitorChange:
+      type: object
+      required: [appId, name, changes]
+      properties:
+        appId: {type: string}
+        name: {type: string}
+        changes:
+          type: array
+          description: "Plain lines such as \"price 0.99 -> 1.99\"; a field missing in either week is not compared."
+          items: {type: string}
+
+    GrowthKeywordPresence:
+      type: object
+      required: [keyword, competitors]
+      properties:
+        keyword: {type: string}
+        ours: {type: integer, nullable: true, description: "Our app's 1-based search position in the latest snapshot; null when it was not among the first 50 results or was not checked."}
+        competitors:
+          type: object
+          description: "Competitor appId to its 1-based search position in its latest snapshot; null when it was not among the first 50 results, and no entry when its latest snapshot did not check the keyword."
+          additionalProperties:
+            type: integer
+            nullable: true
+
+    GrowthTrackedKeywords:
+      type: object
+      required: [source, country, keywords]
+      properties:
+        source: {type: string, description: "PRODUCT_FEED (the feed's aso:<keyword> rows) or PROJECT_LIST (the list set with the PUT)."}
+        country: {type: string}
+        keywords:
+          type: array
+          items: {type: string}
+
+    MarketingMomentRequest:
+      type: object
+      required: [name, date, surfaces]
+      properties:
+        name: {type: string, maxLength: 200}
+        date: {type: string, format: date, description: "The day of the moment, e.g. 2026-11-26 for Thanksgiving."}
+        leadDays: {type: integer, minimum: 0, maximum: 365, description: "Default 21."}
+        surfaces:
+          type: array
+          maxItems: 25
+          items:
+            $ref: "#/components/schemas/MarketingMomentSurfaceRequest"
+
+    MarketingMomentSurfaceRequest:
+      type: object
+      required: [surface, dueOn]
+      properties:
+        surface: {type: string, maxLength: 120}
+        dueOn: {type: string, format: date}
+
+    LinkMomentChangeRequest:
+      type: object
+      required: [workItemId]
+      properties:
+        workItemId: {type: string, description: "A MARKETING_CHANGES Work Item of this project, by id or display id (RE-12)."}
+
+    AddGrowthCompetitorRequest:
+      type: object
+      required: [appId, name]
+      properties:
+        appId: {type: string, maxLength: 20, description: "Numeric App Store id, digits only."}
+        name: {type: string, maxLength: 200}
+        country: {type: string, maxLength: 2, description: "Two-letter App Store country; defaults to the workspace's own."}
+
+    GrowthCompetitor:
+      type: object
+      required: [appId, name, country, active]
+      properties:
+        appId: {type: string}
+        name: {type: string}
+        country: {type: string}
+        active: {type: boolean}
+
+    SetTrackedKeywordsRequest:
+      type: object
+      required: [keywords]
+      properties:
+        keywords:
+          type: array
+          maxItems: 25
+          items: {type: string, maxLength: 100}
+        country: {type: string, maxLength: 2, description: "Two-letter App Store country the keywords are searched in; defaults to the workspace's own."}
+
+    AiVisibility:
+      type: object
+      required: [brandTerms, questions, skipped]
+      properties:
+        brandTerms:
+          type: array
+          items: {type: string}
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiVisibilityQuestion"
+        skipped:
+          type: array
+          description: Assistants the workspace has no credential for. Computed on read.
+          items:
+            $ref: "#/components/schemas/AiVisibilitySkipped"
+
+    AiVisibilityQuestion:
+      type: object
+      required: [id, question, active, assistants]
+      properties:
+        id: {type: string}
+        question: {type: string}
+        active: {type: boolean}
+        assistants:
+          type: array
+          description: Only assistants with at least one reading in the window.
+          items:
+            $ref: "#/components/schemas/AiVisibilityAssistant"
+
+    AiVisibilityAssistant:
+      type: object
+      required: [assistant, latest, trend]
+      properties:
+        assistant: {type: string, description: "The model provider id: claude, openai, ..."}
+        latest:
+          $ref: "#/components/schemas/AiVisibilityResult"
+        trend:
+          type: array
+          description: One point per week read, oldest first. A week with no reading is absent.
+          items:
+            $ref: "#/components/schemas/AiVisibilityTrendPoint"
+
+    AiVisibilityResult:
+      type: object
+      required: [weekStart, named]
+      properties:
+        weekStart: {type: string, format: date, description: "The Monday (UTC) of the ISO week read."}
+        named: {type: boolean}
+        rankInAnswer: {type: integer, nullable: true, description: "1-based position of the first list item naming the brand; null when not named or the answer was not a list."}
+        excerpt: {type: string, nullable: true}
+        model: {type: string, nullable: true, description: "The model asked; null when the provider chose its own."}
+
+    AiVisibilityTrendPoint:
+      type: object
+      required: [weekStart, named]
+      properties:
+        weekStart: {type: string, format: date}
+        named: {type: boolean}
+
+    AiVisibilitySkipped:
+      type: object
+      required: [assistant, reason]
+      properties:
+        assistant: {type: string}
+        reason: {type: string, description: "no credential, or the weekly limit of 20 checks reached."}
+
+    AiVisibilityFailure:
+      type: object
+      required: [assistant, reason]
+      properties:
+        assistant: {type: string}
+        question: {type: string, nullable: true, description: "Null when the failure is not about one question (a credential that could not be read)."}
+        reason: {type: string, description: "One line with any key removed."}
+
+    AiVisibilityRunResult:
+      type: object
+      required: [weekStart, recorded, alreadyRecorded, skipped, errors]
+      properties:
+        weekStart: {type: string, format: date}
+        recorded: {type: integer, description: "Readings written by this run."}
+        alreadyRecorded: {type: integer, description: "Question and assistant pairs already read this week; no call was made for them."}
+        skipped:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiVisibilitySkipped"
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiVisibilityFailure"
+
+    SetAiQuestionsRequest:
+      type: object
+      required: [questions]
+      properties:
+        questions:
+          type: array
+          maxItems: 20
+          items: {type: string, maxLength: 400}
+
+    AiQuestionList:
+      type: object
+      required: [questions]
+      properties:
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AiQuestion"
+
+    AiQuestion:
+      type: object
+      required: [id, question, active]
+      properties:
+        id: {type: string}
+        question: {type: string}
+        active: {type: boolean}
+
+    SetAiBrandTermsRequest:
+      type: object
+      required: [brandTerms]
+      properties:
+        brandTerms:
+          type: array
+          maxItems: 10
+          items: {type: string, maxLength: 80}
+
+    AiBrandTerms:
+      type: object
+      required: [brandTerms]
+      properties:
+        brandTerms:
+          type: array
+          items: {type: string}
 
     MarketingReport:
       type: object
@@ -9861,6 +12783,97 @@ components:
             $ref: "#/components/schemas/ReportBenchmark"
         changes:
           $ref: "#/components/schemas/ReportChanges"
+        adsCoverage:
+          type: array
+          description: One row per Apple Ads campaign, largest spend first. Empty when Apple Ads is not connected.
+          items:
+            $ref: "#/components/schemas/ReportAdsCoverage"
+        changeMarkers:
+          type: array
+          description: The day each LIVE or REVIEWED change went live (its liveSince field), oldest first, for a chart to mark.
+          items:
+            $ref: "#/components/schemas/ReportChangeMarker"
+        definitions:
+          type: object
+          description: "What each metric the report mentions counts, keyed by CHANNEL.key (for example ADS.installs): the headline and scorecard metrics, the metrics the acquisition rows read and the metric each benchmark was compared with."
+          additionalProperties:
+            $ref: "#/components/schemas/OverviewMetricDefinition"
+        store:
+          allOf:
+            - $ref: "#/components/schemas/ReportStore"
+          nullable: true
+          description: Both store download figures. Null when App Store Connect is not connected.
+        payback:
+          allOf:
+            - $ref: "#/components/schemas/ReportPayback"
+          nullable: true
+          description: "Cohort proceeds over spend per paid acquisition channel (12-month horizon). Null when the product feed declares no proceeds_net or no channel has spend."
+        exclusions:
+          type: array
+          description: "What the report's numbers leave out (today: likely App Review installs). Empty when the product feed reports none."
+          items:
+            $ref: "#/components/schemas/ReportExclusion"
+        asoKeywords:
+          type: array
+          description: "Tracked App Store keywords with their latest organic rank and popularity, best rank first, at most 50. Empty when the product feed sends no aso_rank or aso_popularity."
+          items:
+            $ref: "#/components/schemas/ReportAsoKeyword"
+        verification:
+          allOf:
+            - $ref: "#/components/schemas/ReportVerification"
+          nullable: true
+          description: "The verification ledger's tally for the report window. Null when no channel is connected or the ledger serves no window like this one."
+
+    ReportPayback:
+      type: object
+      required: [channels, total, basis]
+      properties:
+        channels:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReportPaybackRow"
+        total:
+          $ref: "#/components/schemas/ReportPaybackRow"
+        basis: {type: string, description: "What the proceeds are: after Apple's commission, by cohort, over the contract's 12-month horizon."}
+
+    ReportPaybackRow:
+      type: object
+      required: [channel, label]
+      properties:
+        channel: {type: string, description: "The acquisition row's key (apple_ads), or total."}
+        label: {type: string}
+        spend: {type: number, format: double, nullable: true}
+        proceedsNet12m: {type: number, format: double, nullable: true, description: "The product feed's proceeds_net at the channel's source rows over the window's cohorts. Null when the feed sent none for the source."}
+        ratio: {type: number, format: double, nullable: true, description: "proceedsNet12m / spend. Null without proceeds or with no spend. A total's ratio is null unless every channel has proceeds."}
+        note: {type: string, nullable: true}
+
+    ReportExclusion:
+      type: object
+      required: [key, label]
+      properties:
+        key: {type: string, description: "app_review_installs."}
+        label: {type: string}
+        value: {type: number, format: double, nullable: true}
+        note: {type: string, nullable: true, description: "The feed's own wording for what the metric leaves out, when it gave one."}
+
+    ReportAsoKeyword:
+      type: object
+      required: [keyword]
+      properties:
+        keyword: {type: string}
+        rank: {type: number, format: double, nullable: true, description: "Latest organic App Store rank at or before the window's end; 1 is first, lower is better. Null when only popularity was reported."}
+        popularity: {type: number, format: double, nullable: true, description: "Latest search popularity score at or before the window's end."}
+        rankChange: {type: number, format: double, nullable: true, description: "rank minus previousRank, so negative is an improvement. Null when there is no reading at the previous window's end, or none since it."}
+        previousRank: {type: number, format: double, nullable: true, description: "The rank at the previous window's end (the day before the window), when rankChange is set."}
+
+    ReportVerification:
+      type: object
+      required: [unchecked, mismatched, staleReads, both]
+      properties:
+        unchecked: {type: integer, description: "Metrics with no second source: never verified."}
+        mismatched: {type: integer, description: "Metrics where a second source disagrees with the connector beyond the band."}
+        staleReads: {type: integer, description: "Metrics whose latest direct platform read is older than 7 days."}
+        both: {type: integer, description: "Metrics every available second source agrees with."}
 
     ReportWindow:
       type: object
@@ -9878,6 +12891,8 @@ components:
         status: {type: string, description: "LIVE, STALE, MISMATCH, NOT_CONNECTED or COMING_SOON."}
         dataCompleteThrough: {type: string, format: date, nullable: true}
         lastFetchedAt: {type: string, format: date-time, nullable: true}
+        timeZone: {type: string, nullable: true, description: "The time zone that decides which day a row of this channel belongs to (Apple Ads: UTC). Null when the connector does not state one."}
+        searchTermTimeZone: {type: string, nullable: true, description: "Apple Ads only: search-term rows are days in the org's report time zone (ORTZ), which is not the zone of every other Apple Ads row."}
 
     ReportMetric:
       type: object
@@ -9894,6 +12909,43 @@ components:
         missPct: {type: number, format: double, nullable: true}
         sampleSize: {type: integer, format: int64, nullable: true}
         goodDirection: {type: string, enum: [UP, DOWN]}
+        definition:
+          allOf:
+            - $ref: "#/components/schemas/OverviewMetricDefinition"
+          nullable: true
+
+    ReportDerivation:
+      type: object
+      required: [from, to, days]
+      description: >-
+        Where an organic figure comes from: gross (the store's) and paid (Apple Ads') figures, each summed over the
+        same settled days before flooring at 0. The days need not be consecutive.
+      properties:
+        from: {type: string, format: date, description: First day both sources have settled.}
+        to: {type: string, format: date, description: Last day both sources have settled.}
+        days: {type: integer, description: How many days were summed.}
+        grossInstalls: {type: number, format: double, nullable: true, description: App Store search first-time downloads over those days.}
+        paidInstalls: {type: number, format: double, nullable: true, description: Apple Ads first-time downloads (tap new downloads) over those days.}
+        grossReach: {type: number, format: double, nullable: true, description: App Store search impressions over those days. Null when either source lacks impressions for some of them.}
+        paidReach: {type: number, format: double, nullable: true, description: Apple Ads impressions over those days.}
+
+    ReportCoverage:
+      type: object
+      required: [daysCovered, daysInWindow]
+      properties:
+        daysCovered: {type: integer, description: Days of the window the figure was read on.}
+        daysInWindow: {type: integer, description: Days in the window.}
+
+    ReportStore:
+      type: object
+      properties:
+        downloadsOfRecord: {type: number, format: double, nullable: true, description: "Apple Sales Reports first-time downloads for the window (never privacy-thresholded). Null when the connection has none."}
+        analyticsDownloads: {type: number, format: double, nullable: true, description: "App Store Connect Analytics first-time downloads for the window (privacy-thresholded); the source-type splits stay on these."}
+        coverage:
+          allOf:
+            - $ref: "#/components/schemas/ReportCoverage"
+          nullable: true
+          description: The days Sales Reports were read on. Null when there is no figure of record, or no day count was stored.
 
     ReportAcquisitionRow:
       type: object
@@ -9910,6 +12962,15 @@ components:
         cost: {type: number, format: double, nullable: true}
         derived: {type: boolean, description: "True when the installs are computed from two sources rather than read."}
         note: {type: string, nullable: true}
+        viewThroughInstalls: {type: number, format: double, nullable: true, description: "Apple Ads row only: installs with no tap. Never added to installs. Null when the feed reports none."}
+        likes: {type: number, format: double, nullable: true, description: "Social row only: total likes the connected accounts have received (TikTok). Null when none is reported."}
+        derivation:
+          allOf:
+            - $ref: "#/components/schemas/ReportDerivation"
+          nullable: true
+          description: "Organic search row only: the days and the gross and paid figures behind installs and reach. Null when the row was not derived."
+        installsLabel: {type: string, nullable: true, description: "What the installs figure counts when it is not installs: the email row's 'Trials saved', a tracked-link family's 'Downloads'."}
+        definitionLine: {type: string, nullable: true, description: "One plain sentence saying what the row's figures are; set on the email, shares and tracked-link (link_family:{family}) rows."}
 
     ReportFunnel:
       type: object
@@ -9930,6 +12991,12 @@ components:
         value: {type: number, format: double, nullable: true}
         dropPct: {type: number, format: double, nullable: true, description: "Share lost since the previous stage (0.25 = 25% fewer)."}
         biggestDrop: {type: boolean}
+        coverage:
+          allOf:
+            - $ref: "#/components/schemas/ReportCoverage"
+          nullable: true
+          description: "Set on a stage read from Apple Sales Reports (downloads of record): the days they were read on."
+        note: {type: string, nullable: true, description: "Where the stage's value comes from when it is not the overview's own metric (Sales Reports downloads; web sessions with an App Store tap)."}
 
     ReportDay:
       type: object
@@ -9956,6 +13023,10 @@ components:
         sampleSize: {type: integer, format: int64, nullable: true}
         source:
           $ref: "#/components/schemas/ReportScorecardSource"
+        definition:
+          allOf:
+            - $ref: "#/components/schemas/OverviewMetricDefinition"
+          nullable: true
 
     ReportScorecardSource:
       type: object
@@ -9978,13 +13049,19 @@ components:
         impressions: {type: number, format: double, nullable: true}
         taps: {type: number, format: double, nullable: true}
         tapRate: {type: number, format: double, nullable: true}
-        installs: {type: number, format: double, nullable: true}
-        installRate: {type: number, format: double, nullable: true}
+        installs: {type: number, format: double, nullable: true, description: "Apple's tap installs (tap new downloads plus tap redownloads), the same meaning as on the campaign rows. Before RE-99 this was first-time downloads."}
+        installRate: {type: number, format: double, nullable: true, description: "Tap installs per tap."}
         spend: {type: number, format: double, nullable: true}
-        cpi: {type: number, format: double, nullable: true}
+        cpi: {type: number, format: double, nullable: true, description: "Spend per tap install."}
         trials: {type: number, format: double, nullable: true, description: "In-app trial starts attributed to the keyword; null when the product feed has none."}
         activations: {type: number, format: double, nullable: true}
         judgeable: {type: boolean, description: "True with at least 20 taps; fewer is too early to judge."}
+        newDownloads: {type: number, format: double, nullable: true, description: "First-time downloads from taps (Apple's tapNewDownloads), a subset of installs. Null when the feed has none."}
+        retainedW2: {type: number, format: double, nullable: true, description: "Installs from the keyword still active in week 2 (the product feed's retained_w2); null when the feed sent none."}
+        costPerActivatedInstall: {type: number, format: double, nullable: true, description: "spend / activations. Null without spend or with no activations (see qualityNote)."}
+        costPerRetainedW2Install: {type: number, format: double, nullable: true, description: "spend / retainedW2. Null without spend or with no week-2 retained installs."}
+        costPerTrial: {type: number, format: double, nullable: true, description: "spend / trials. Null without spend or with no trials."}
+        qualityNote: {type: string, nullable: true, description: "Says 'No activations yet' (and the like) for an outcome the feed reported as 0, so a null cost reads as none yet rather than unknown."}
 
     ReportAd:
       type: object
@@ -10019,8 +13096,49 @@ components:
         ratio: {type: number, format: double, nullable: true, description: "value / benchmark."}
         goodDirection: {type: string, enum: [UP, DOWN], nullable: true}
         sampleSize: {type: integer, format: int64, nullable: true}
-        judged: {type: boolean, description: "False when there is no value, or a rate rests on fewer than 20 observations."}
+        judged: {type: boolean, description: "False when there is no value, when the benchmark is not comparable to any metric of the channel (see comparable), or when a rate rests on fewer than 20 observations."}
         stale: {type: boolean, description: "True when checkedOn is more than 90 days old."}
+        numerator: {type: string, nullable: true, description: "The benchmark's own numerator; null when it has no definition."}
+        denominator: {type: string, nullable: true, description: "The benchmark's own denominator; null for a count or when it has no definition."}
+        sourceType: {type: string, nullable: true, description: "The benchmark's own traffic source; null means ALL."}
+        comparedMetricRef:
+          type: string
+          nullable: true
+          description: "CHANNEL.key of the metric value was read from: the metric the benchmark names, or another metric of the same channel whose definition matches the benchmark's."
+        metricDefinition:
+          allOf:
+            - $ref: "#/components/schemas/OverviewMetricDefinition"
+          nullable: true
+          description: The compared metric's definition.
+        comparable:
+          type: boolean
+          description: "True when the compared metric's numerator, denominator and source type equal the benchmark's. False when the benchmark has no definition or no metric of the channel matches; judged is then false."
+        reason:
+          type: string
+          nullable: true
+          description: "When comparable is false: \"definition missing\", or the two definitions named side by side. Null when comparable."
+
+    ReportAdsCoverage:
+      type: object
+      required: [campaignId, name, rows]
+      properties:
+        campaignId: {type: string}
+        name: {type: string}
+        spend: {type: number, format: double, nullable: true, description: "The campaign's spend over the window."}
+        keywordSpend: {type: number, format: double, nullable: true, description: "Spend of the keyword rows whose state names this campaign. 0 with rows 0 means no keyword row reached it."}
+        searchTermSpend: {type: number, format: double, nullable: true, description: "Spend of the search-term rows whose key starts with this campaign's id. Only the account's 50 largest search-term rows are read, so on a larger account this is a lower bound."}
+        keywordCoveragePct: {type: number, format: double, nullable: true, description: "keywordSpend / spend (0.98 = 98%). Null when the campaign has no spend."}
+        rows: {type: integer, description: Keyword rows plus search-term rows that belong to this campaign.}
+
+    ReportChangeMarker:
+      type: object
+      required: [day, changeId, displayId, title, status]
+      properties:
+        day: {type: string, format: date, description: The change's liveSince date.}
+        changeId: {type: string}
+        displayId: {type: string}
+        title: {type: string}
+        status: {type: string, description: LIVE or REVIEWED.}
 
     ReportChanges:
       type: object
@@ -10033,12 +13151,12 @@ components:
             $ref: "#/components/schemas/ReportChange"
         dueForReview:
           type: array
-          description: LIVE changes whose review date has passed.
+          description: PLANNED or LIVE changes whose review date has passed and that have no verdict yet.
           items:
             $ref: "#/components/schemas/ReportChange"
         reviewedInWindow:
           type: array
-          description: Changes moved to REVIEWED during the report window.
+          description: Changes that reached REVIEWED during the report window (by completion time, else last edit).
           items:
             $ref: "#/components/schemas/ReportChange"
 
@@ -10060,6 +13178,360 @@ components:
           type: object
           additionalProperties: true
           nullable: true
+
+    MarketingChangesImportRequest:
+      type: object
+      required: [records]
+      properties:
+        source:
+          type: string
+          maxLength: 64
+          default: rexipe
+          description: "Names the change log the records come from. A record is idempotent on (source, id), so two logs may reuse an id."
+        records:
+          type: array
+          maxItems: 500
+          items:
+            $ref: "#/components/schemas/MarketingChangeRecord"
+
+    MarketingChangeRecord:
+      type: object
+      description: >-
+        One record of the outside change log, in that log's own shape (so live_since, review_on and stop_rules keep
+        their snake_case names). Every key is optional except that a record needs an `id` and a known `status`; a
+        missing key is the same as null.
+      properties:
+        id: {type: string, description: "The record's id in the source log; the idempotency key (at most 190 characters)."}
+        date: {type: string, nullable: true, description: "When the change was made, yyyy-MM-dd. Stands in for a missing or unreadable live_since on a live or reviewed record."}
+        type: {type: string, nullable: true, description: "seo, asa-change, asa-campaign, aso-visible, aso-keywords, cpp, ppo, release, onboarding, paywall or baseline; anything else is imported as OTHER."}
+        title: {type: string, nullable: true, description: "At most 255 characters."}
+        status: {type: string, description: "planned, live, reviewed, abandoned, stopped or reference (skipped). Any other value refuses the record."}
+        changed: {type: string, nullable: true, description: "What changed; becomes the description."}
+        evidence:
+          type: array
+          nullable: true
+          items: {type: string}
+        hypothesis: {type: string, nullable: true}
+        baseline: {type: string, nullable: true}
+        control: {type: string, nullable: true}
+        live_since: {type: string, nullable: true, description: "A leading yyyy-MM-dd fills liveSince; any further text is kept in the description."}
+        review_on: {type: string, nullable: true, description: "A leading yyyy-MM-dd fills the review date (dueOn); any further text is kept in the description."}
+        outcome: {type: string, nullable: true}
+        verdict: {type: string, nullable: true, description: "worked, hurt, no effect, expected..., or inconclusive. Anything else refuses the record."}
+        lesson: {type: string, nullable: true}
+        stop_rules: {type: string, nullable: true}
+        stop_rules_note: {type: string, nullable: true}
+
+    MarketingChangesImportResponse:
+      type: object
+      required: [created, alreadyImported, skipped, refused, items]
+      properties:
+        created: {type: integer, format: int32}
+        alreadyImported: {type: integer, format: int32, description: "Records whose (source, id) was imported before; left untouched."}
+        skipped:
+          type: array
+          description: Records that are not changes (reference records).
+          items:
+            $ref: "#/components/schemas/MarketingChangeImportNote"
+        refused:
+          type: array
+          description: Records that could not be imported, each with the reason. The rest of the request is unaffected.
+          items:
+            $ref: "#/components/schemas/MarketingChangeImportNote"
+        items:
+          type: array
+          description: The Work Items this call created.
+          items:
+            $ref: "#/components/schemas/MarketingChangeImportItem"
+
+    MarketingChangeImportNote:
+      type: object
+      required: [id, reason]
+      properties:
+        id: {type: string, description: "The record id, or #<position> for a record that has none."}
+        reason: {type: string}
+
+    MarketingChangeImportItem:
+      type: object
+      required: [id, displayId, recordId, status]
+      properties:
+        id: {type: string, description: "The Work Item id."}
+        displayId: {type: string}
+        recordId: {type: string, description: "The id the record has in the source log."}
+        status: {type: string, description: "The status the Work Item was created in."}
+
+    SwitchbackPlanWeek:
+      type: object
+      required: [weekStart, "on"]
+      properties:
+        weekStart: {type: string, format: date, description: "A Monday (UTC). The week runs Monday to Sunday."}
+        "on": {type: boolean, description: "Whether the keyword should be switched on (true) or off (false) this week."}
+
+    SwitchbackDecisionRule:
+      type: object
+      required: [metric, minLift, maxCannibalisationPct, incrementalIf]
+      properties:
+        metric: {type: string, description: "What is compared. Only organic_search_first_time_downloads (search first-time downloads minus Apple Ads first-time downloads) is supported."}
+        minLift: {type: number, format: double, description: "How many more total first-time installs a week (mean of on weeks minus mean of off weeks) paid must add to count as incremental."}
+        maxCannibalisationPct: {type: number, format: double, description: "How far, in percent, the on-week mean of organic first-time downloads may fall below the off-week mean before paid counts as relabelling organic."}
+        incrementalIf: {type: string, description: "The rule in one sentence, computed from the fields above."}
+
+    SwitchbackDecisionRuleInput:
+      type: object
+      description: Any field left out takes its default.
+      properties:
+        metric: {type: string, description: "Only organic_search_first_time_downloads (the default)."}
+        minLift: {type: number, format: double, minimum: 0, description: "Default 1."}
+        maxCannibalisationPct: {type: number, format: double, minimum: 0, maximum: 100, description: "Default 20."}
+
+    SwitchbackCurrentWeek:
+      type: object
+      required: [state]
+      properties:
+        state: {type: string, description: "ON or OFF: the state the keyword should be in today (UTC). \"not running\" when the test is not running, or today falls before its first week or after its last."}
+        weekStart: {type: string, format: date, nullable: true, description: "Monday of the week today falls in; null when not running."}
+        weekEnd: {type: string, format: date, nullable: true, description: "Sunday of that week; null when not running."}
+
+    SwitchbackResultWeek:
+      type: object
+      required: [weekStart, "on", searchDownloads, adsNewDownloads, organic, totalInstalls]
+      properties:
+        weekStart: {type: string, format: date}
+        "on": {type: boolean}
+        searchDownloads: {type: number, format: double, description: "App Store first-time downloads from search, summed over the week's settled days."}
+        adsNewDownloads: {type: number, format: double, description: "Apple Ads tap first-time downloads, summed over the same days."}
+        organic: {type: number, format: double, description: "searchDownloads minus adsNewDownloads, floored at 0 for the week."}
+        totalInstalls: {type: number, format: double, description: "organic plus adsNewDownloads."}
+
+    SwitchbackResultMeans:
+      type: object
+      required: [weeks, meanOrganic, meanTotalInstalls]
+      properties:
+        weeks: {type: integer, format: int32}
+        meanOrganic: {type: number, format: double, description: "Mean weekly organic first-time downloads, two decimals."}
+        meanTotalInstalls: {type: number, format: double, description: "Mean weekly total first-time installs, two decimals."}
+
+    SwitchbackResult:
+      type: object
+      description: The settled snapshot. It is stored when the test settles and never recomputed.
+      required: [weeks, onWeeks, offWeeks, n, minN, lift, verdict, reason]
+      properties:
+        weeks:
+          type: array
+          items:
+            $ref: "#/components/schemas/SwitchbackResultWeek"
+        onWeeks:
+          $ref: "#/components/schemas/SwitchbackResultMeans"
+        offWeeks:
+          $ref: "#/components/schemas/SwitchbackResultMeans"
+        n: {type: integer, format: int64, description: "First-time App Store search downloads across all weeks: the n the verdict rests on."}
+        minN: {type: integer, format: int32}
+        lift: {type: number, format: double, description: "On-week mean of total installs minus the off-week mean."}
+        organicChangePct: {type: number, format: double, nullable: true, description: "Change of the on-week organic mean against the off-week mean, in percent (negative = fell). Null when the off-week mean is 0, since nothing could fall."}
+        verdict: {type: string, description: "worked (paid is incremental), did_not_work (paid only relabels organic), no_effect or inconclusive (n below minN)."}
+        reason: {type: string, description: "One sentence saying why; for an inconclusive test it states the n reached against the minimum."}
+
+    SwitchbackTest:
+      type: object
+      required: [id, name, keywordId, keywordText, status, weeks, decisionRule, minN, currentWeek, createdAt]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        keywordId: {type: string, description: "The Apple Ads keyword id (the id in `keyword:{id}:{text}` rows)."}
+        keywordText: {type: string}
+        status: {type: string, enum: [DRAFT, RUNNING, SETTLED, INCONCLUSIVE, CANCELLED]}
+        weeks:
+          type: array
+          items:
+            $ref: "#/components/schemas/SwitchbackPlanWeek"
+        decisionRule:
+          $ref: "#/components/schemas/SwitchbackDecisionRule"
+        minN: {type: integer, format: int32, description: "The fewest first-time search downloads, across all weeks, a verdict may rest on."}
+        verdict: {type: string, nullable: true, description: "Null until the test settles."}
+        currentWeek:
+          $ref: "#/components/schemas/SwitchbackCurrentWeek"
+        waitingFor: {type: string, nullable: true, description: "Set on a running test whose last week has ended but whose days are not all settled yet, naming what is missing. Null otherwise."}
+        result:
+          allOf:
+            - $ref: "#/components/schemas/SwitchbackResult"
+          nullable: true
+        changeWorkItemId: {type: string, nullable: true, description: "The REVIEWED MARKETING_CHANGES Work Item that recorded the verdict; null until the test settles."}
+        createdAt: {type: string, format: date-time}
+        startedAt: {type: string, format: date-time, nullable: true}
+        settledAt: {type: string, format: date-time, nullable: true}
+
+    SwitchbackTestList:
+      type: object
+      required: [tests]
+      properties:
+        tests:
+          type: array
+          items:
+            $ref: "#/components/schemas/SwitchbackTest"
+
+    CreateSwitchbackTestRequest:
+      type: object
+      required: [name, keywordId, keywordText, weeks]
+      properties:
+        name: {type: string, maxLength: 200}
+        keywordId: {type: string, maxLength: 64, description: "The Apple Ads keyword id."}
+        keywordText: {type: string, maxLength: 200}
+        weeks:
+          type: array
+          minItems: 2
+          maxItems: 12
+          items:
+            $ref: "#/components/schemas/SwitchbackPlanWeek"
+        minN: {type: integer, format: int32, minimum: 1, description: "Default 20."}
+        decisionRule:
+          $ref: "#/components/schemas/SwitchbackDecisionRuleInput"
+
+    UpdateSwitchbackTestRequest:
+      type: object
+      description: A field left out is unchanged. An empty `weeks` list counts as left out; the same 2 to 12 week check as creating applies to any weeks sent.
+      properties:
+        name: {type: string, maxLength: 200}
+        keywordId: {type: string, maxLength: 64}
+        keywordText: {type: string, maxLength: 200}
+        weeks:
+          type: array
+          maxItems: 12
+          items:
+            $ref: "#/components/schemas/SwitchbackPlanWeek"
+        minN: {type: integer, format: int32, minimum: 1}
+        decisionRule:
+          $ref: "#/components/schemas/SwitchbackDecisionRuleInput"
+
+    MarketingProposalRequest:
+      type: object
+      required: [title, type, hypothesis, reviewOn, signals]
+      properties:
+        title: {type: string, maxLength: 255}
+        type:
+          type: string
+          description: A type of the workspace's MARKETING_CHANGES workflow (LISTING, ADS, PRICING, PRODUCT, CONTENT, BASELINE or OTHER by default).
+        hypothesis: {type: string, maxLength: 20000, description: "What should change, and why."}
+        reviewOn: {type: string, format: date, description: "The day to review the result; after today (UTC). Becomes the change's review date."}
+        signals:
+          type: array
+          description: Exactly two signals, each on a different metric.
+          items:
+            $ref: "#/components/schemas/MarketingProposalSignal"
+        runId: {type: string, maxLength: 100, description: "The workflow run that made the proposal, when there is one."}
+
+    MarketingProposalSignal:
+      type: object
+      required: [metricRef, window, value]
+      properties:
+        metricRef: {type: string, maxLength: 120, description: "CHANNEL.metric, e.g. ADS.installs. The channel is case-insensitive."}
+        window: {type: string, maxLength: 40, description: "7d, 28d, 90d or YYYY-MM-DD..YYYY-MM-DD: the window the figure is for."}
+        value: {type: number, format: double, description: "The ledger's figure for that metric over that window."}
+        note: {type: string, maxLength: 500, description: "What the figure shows."}
+
+    MarketingProposalResponse:
+      type: object
+      required: [workItemId, displayId, proposalsThisWeek, weeklyLimit]
+      properties:
+        workItemId: {type: string}
+        displayId: {type: string}
+        proposalsThisWeek: {type: integer, format: int32, description: "Proposals made this ISO week (UTC), this one included."}
+        weeklyLimit: {type: integer, format: int32, description: "The most proposals a workspace can make in one ISO week."}
+
+    WeeklyGrowthInstallResponse:
+      type: object
+      required: [workflowId, name, enabled, created]
+      properties:
+        workflowId: {type: string}
+        name: {type: string}
+        enabled: {type: boolean, description: "False right after installing. An existing workflow keeps whatever state it is in."}
+        created: {type: boolean, description: "True when this call created the workflow, false when it was already there."}
+
+    CreatorResults:
+      type: object
+      required: [window, creator, postCount, posts, linkDownloads, offerRedemptions]
+      properties:
+        window:
+          $ref: "#/components/schemas/CreatorResultsWindow"
+        creator:
+          $ref: "#/components/schemas/CreatorResultsCreator"
+        postCount:
+          type: integer
+          format: int32
+          description: How many Posts the creator has in all; `posts` lists the newest 50.
+        posts:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreatorResultsPost"
+        linkDownloads:
+          $ref: "#/components/schemas/CreatorResultsLinkDownloads"
+        offerRedemptions:
+          $ref: "#/components/schemas/CreatorResultsOfferRedemptions"
+
+    CreatorResultsWindow:
+      type: object
+      required: [from, to]
+      properties:
+        from: {type: string, format: date}
+        to: {type: string, format: date}
+
+    CreatorResultsCreator:
+      type: object
+      required: [workItemId, displayId, status]
+      properties:
+        workItemId: {type: string}
+        displayId: {type: string}
+        handle: {type: string, nullable: true, description: "The creator's handle field; null until it is filled in."}
+        status: {type: string, description: "PROSPECT, BRIEFED, POSTED, PAID_OUT or DROPPED."}
+
+    CreatorResultsPost:
+      type: object
+      required: [workItemId, displayId, title, status]
+      properties:
+        workItemId: {type: string}
+        displayId: {type: string}
+        title: {type: string}
+        status: {type: string}
+        views:
+          type: integer
+          format: int64
+          nullable: true
+          description: Sum of each published destination's latest snapshot. Null while no destination has reported views; never 0 for "not reported".
+
+    CreatorResultsLinkDownloads:
+      type: object
+      required: [tokens, belowThreshold]
+      properties:
+        tokens:
+          type: array
+          description: The campaign tokens read - the creator's CREATOR tracked links plus its `linkToken` field. Empty when it has none.
+          items: {type: string}
+        downloads:
+          type: number
+          format: double
+          nullable: true
+          description: Settled first-time downloads of those tokens over the window. Null when Apple reported no row for any of them, or there is no token; never 0 for "not reported".
+        belowThreshold:
+          type: boolean
+          description: True when the creator has tokens but Apple reported no row for any (rows under its reporting threshold are omitted).
+        note:
+          type: string
+          nullable: true
+          description: Why downloads is null, or that it counts only the links Apple reported.
+
+    CreatorResultsOfferRedemptions:
+      type: object
+      required: [code]
+      properties:
+        code: {type: string, nullable: true, description: "The creator's offerCode field; null until it is filled in."}
+        value:
+          type: number
+          format: double
+          nullable: true
+          description: Settled `offer_redemptions` at `offer:<code>` over the window. Null when the product backend sent none; never 0 for "not reported".
+        note:
+          type: string
+          nullable: true
+          description: Why value is null.
 
     MarketingTarget:
       type: object

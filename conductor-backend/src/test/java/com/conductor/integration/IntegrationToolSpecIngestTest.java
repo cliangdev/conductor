@@ -40,7 +40,7 @@ class IntegrationToolSpecIngestTest {
 
     @ParameterizedTest
     @ValueSource(strings = {"apple-search-ads.json", "app-store-connect.json", "posthog.json", "gsc.json",
-            "meta.json", "youtube.json", "product-metrics.json"})
+            "meta.json", "youtube.json", "tiktok.json", "product-metrics.json"})
     void channelMetricsFeedIsDeclaredWithTheChannelMetricsSink(String fileName) throws Exception {
         IngestSpec feed = parse(fileName).ingest().stream()
                 .filter(i -> i.id().equals("channel_metrics")).findFirst().orElseThrow();
@@ -51,7 +51,7 @@ class IntegrationToolSpecIngestTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"meta.json", "youtube.json"})
+    @ValueSource(strings = {"meta.json", "youtube.json", "tiktok.json"})
     void socialConnectorsKeepPostMetricsAndAddChannelMetricsWithoutAQuota(String fileName) throws Exception {
         IntegrationToolSpec spec = parse(fileName);
 
@@ -60,11 +60,6 @@ class IntegrationToolSpecIngestTest {
         assertThat(posts.sink()).isEqualTo(com.conductor.integration.IngestSink.POST_METRICS);
         assertThat(posts.quota()).isNotNull();
         assertThat(spec.ingest().get(1).quota()).isNull();
-    }
-
-    @Test
-    void tiktokDeclaresNoAccountStatsFeedWithoutTheStatsScope() throws Exception {
-        assertThat(parse("tiktok.json").ingest()).extracting(IngestSpec::id).containsExactly("post_metrics");
     }
 
     @Test

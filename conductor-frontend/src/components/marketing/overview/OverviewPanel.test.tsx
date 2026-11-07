@@ -43,6 +43,13 @@ beforeEach(() => {
 })
 
 describe('OverviewPanel', () => {
+  it('links to the verification ledger and the metric definitions', async () => {
+    render(<OverviewPanel projectId="proj-1" />)
+    await screen.findByRole('region', { name: 'Funnel' })
+    expect(screen.getByRole('link', { name: 'Verification' })).toHaveAttribute('href', '/app/projects/proj-1/marketing/verification')
+    expect(screen.getByRole('link', { name: 'Definitions' })).toHaveAttribute('href', '/app/projects/proj-1/marketing/definitions')
+  })
+
   it('shows the funnel and the five channel cards in order, defaulting to 28d', async () => {
     render(<OverviewPanel projectId="proj-1" />)
     expect(await screen.findByRole('region', { name: 'Funnel' })).toBeInTheDocument()

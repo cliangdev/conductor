@@ -4,6 +4,9 @@ import com.conductor.integration.connector.marketing.MarketingInsightsFeedProvis
 import com.conductor.integration.ingest.ConnectorFeedScheduler;
 import com.conductor.knowledge.KnowledgeIngestScheduler;
 import com.conductor.knowledge.KnowledgeRetentionService;
+import com.conductor.marketing.aivisibility.AiVisibilityJob;
+import com.conductor.marketing.growth.GrowthSignalsJob;
+import com.conductor.marketing.switchback.SwitchbackSettleJob;
 import com.conductor.memory.MemoryMaintenanceScheduler;
 import com.conductor.scheduling.ScheduledJobDefinition.Trigger;
 import com.conductor.service.ActionInvocationService;
@@ -60,7 +63,10 @@ public class ScheduledJobRegistry {
                                 WebhookRetryScheduler webhookRetryScheduler,
                                 PostPublishScheduler postPublishScheduler,
                                 WorkflowExecutionEngine workflowExecutionEngine,
-                                WorkflowScheduler workflowScheduler) {
+                                WorkflowScheduler workflowScheduler,
+                                GrowthSignalsJob growthSignalsJob,
+                                AiVisibilityJob aiVisibilityJob,
+                                SwitchbackSettleJob switchbackSettleJob) {
         fixedDelay("marketing-insights-feed-provisioner", 3_600_000, 80_000, HOURLY_TTL,
                 marketingInsightsFeedProvisioner::onSchedule);
         fixedDelay("connector-feed-poll", 60_000, 45_000, LONG_TTL, connectorFeedScheduler::poll);
@@ -81,6 +87,12 @@ public class ScheduledJobRegistry {
         fixedDelay("workflow-local-pickup-timeout", 60_000, 35_000, SHORT_TTL,
                 workflowScheduler::timeoutLocalPickupRuns);
         fixedDelay("workflow-schedule-poll", 30_000, 10_000, SHORT_TTL, workflowScheduler::poll);
+        // Weekly, Monday 06:00 UTC; up to ~35 public iTunes calls per project, each bounded at 10s.
+        cron("marketing-growth-signals", "0 0 6 * * MON", DAILY_TTL, growthSignalsJob::run);
+        // Weekly, Monday 07:00 UTC; at most 20 assistant calls per workspace, each a single short completion.
+        cron("marketing-ai-visibility", "0 0 7 * * MON", DAILY_TTL, aiVisibilityJob::run);
+        // Daily, 06:30 UTC; DB-only: settles a switchback test once its last week has ended and its days are settled.
+        cron("marketing-switchback-settle", "0 30 6 * * *", DAILY_TTL, switchbackSettleJob::run);
     }
 
     public List<ScheduledJobDefinition> jobs() {

@@ -164,9 +164,12 @@ public class ChannelMetricDailyStore {
                     new MapSqlParameterSource().addValue("connectionId", connectionId)
                             .addValue("campaigns", skippedCampaignIds), String.class));
         }
+        // Search-term rows carry no state row, so a skipped campaign's are recognised by their key prefix.
+        List<String> preservedPrefixes = skippedCampaignIds.stream().map(id -> "searchterm:" + id + ":").toList();
         List<String> stale = new ArrayList<>();
         for (Object[] row : existing) {
-            if (preserved.contains((String) row[3])) continue;
+            String dimension = (String) row[3];
+            if (preserved.contains(dimension) || preservedPrefixes.stream().anyMatch(dimension::startsWith)) continue;
             String metric = (String) row[1];
             LocalDate day = (LocalDate) row[2];
             if (returnedMetricDays.contains(metric + "\u0000" + day)

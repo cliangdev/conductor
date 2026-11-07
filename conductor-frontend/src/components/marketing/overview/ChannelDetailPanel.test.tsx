@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import { clearAllSidebarCaches } from '@/lib/workflows'
-import { channel, detailResponse, metric } from './test-fixtures'
+import { channel, detailResponse, metric, mismatch } from './test-fixtures'
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ projectId: 'proj-1' }),
@@ -219,5 +219,85 @@ describe('ChannelDetailPanel', () => {
     render(<ChannelDetailPanel projectId="proj-1" channel="search" />)
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not load this channel')
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+  describe('definitions, notes and change markers', () => {
+    const MARKER = { day: '2026-09-03', changeId: 'c1', displayId: 'RE-12', title: 'New onboarding', status: 'LIVE' }
+
+    function serve(detail = detailResponse(), report: unknown = { changeMarkers: [MARKER] }) {
+      ;(apiGet as Mock).mockImplementation((path: string) => {
+        if (path.includes('/marketing/channels/')) return Promise.resolve(detail)
+        if (path.includes('/marketing/report')) return report instanceof Error ? Promise.reject(report) : Promise.resolve(report)
+        return Promise.resolve([])
+      })
+    }
+
+    it('shows the definition line under each metric and keeps the description where there is no definition', async () => {
+      serve(
+        detailResponse({
+          channel: channel({
+            metrics: [
+              metric({ label: 'Clicks', definition: { source: 'Search Console', numerator: 'clicks', timeZone: 'UTC' } }),
+              metric({ metric: 'visitors', label: 'Visitors', description: 'People who opened the app' }),
+            ],
+          }),
+        }),
+      )
+      render(<ChannelDetailPanel projectId="proj-1" channel="search" />)
+      const clicks = within(await screen.findByRole('region', { name: 'Clicks' }))
+      expect(clicks.getByText('Counts clicks · Source: Search Console · Days in UTC')).toBeInTheDocument()
+      const visitors = within(screen.getByRole('region', { name: 'Visitors' }))
+      expect(visitors.getByText('People who opened the app')).toBeInTheDocument()
+      expect(visitors.queryByText(/Source:/)).not.toBeInTheDocument()
+    })
+
+    it('shows the metric note when the value is unknown', async () => {
+      serve(
+        detailResponse({
+          channel: channel({ metrics: [metric({ metric: 'visitors', label: 'Visitors', value: null, note: 'Unique visitors are only available for 7, 28 or 90-day windows.' })] }),
+        }),
+      )
+      render(<ChannelDetailPanel projectId="proj-1" channel="search" />)
+      expect(await screen.findByText('Unique visitors are only available for 7, 28 or 90-day windows.')).toBeInTheDocument()
+    })
+
+    it('marks the day each change went live on the charts, from the report matching the window', async () => {
+      serve()
+      render(<ChannelDetailPanel projectId="proj-1" channel="search" />)
+      const clicks = within(await screen.findByRole('region', { name: 'Clicks' }))
+      expect(await clicks.findByText('RE-12 New onboarding (live since 2026-09-03)')).toBeInTheDocument()
+      expect((apiGet as Mock).mock.calls.some((c) => String(c[0]).endsWith('/marketing/report?window=28d'))).toBe(true)
+
+      fireEvent.click(screen.getByRole('tab', { name: '7d' }))
+      await waitFor(() => expect((apiGet as Mock).mock.calls.some((c) => String(c[0]).endsWith('/marketing/report?window=7d'))).toBe(true))
+      fireEvent.click(screen.getByRole('tab', { name: '90d' }))
+      await waitFor(() =>
+        expect((apiGet as Mock).mock.calls.filter((c) => String(c[0]).endsWith('/marketing/report?window=28d')).length).toBeGreaterThanOrEqual(1),
+      )
+      expect((apiGet as Mock).mock.calls.some((c) => String(c[0]).includes('/marketing/report?window=90d'))).toBe(false)
+    })
+
+    it('draws no markers when an older server sends no changeMarkers', async () => {
+      serve(detailResponse(), {})
+      render(<ChannelDetailPanel projectId="proj-1" channel="search" />)
+      await screen.findByRole('region', { name: 'Clicks' })
+      expect(screen.queryByRole('list', { name: 'Changes marked on this chart' })).not.toBeInTheDocument()
+    })
+
+    it('says so when the markers cannot be loaded, and still shows the charts', async () => {
+      serve(detailResponse(), new Error('boom'))
+      render(<ChannelDetailPanel projectId="proj-1" channel="search" />)
+      expect(await screen.findByText('Change markers could not be loaded.')).toBeInTheDocument()
+      expect(screen.getByRole('img', { name: /Clicks by day/ })).toBeInTheDocument()
+    })
+
+    it('lists every mismatch and links to the verification ledger', async () => {
+      const a = mismatch()
+      const b = mismatch({ kind: 'PLATFORM', referenceSource: 'App Store Connect UI', referenceValue: 1300, gapPct: 0.0738 })
+      serve(detailResponse({ channel: channel({ status: 'MISMATCH', mismatch: a, mismatches: [a, b] }) }))
+      render(<ChannelDetailPanel projectId="proj-1" channel="search" />)
+      expect((await screen.findAllByText(/App Store Connect reports 1,204 downloads/)).length).toBe(2)
+      expect(screen.getByRole('link', { name: /verification ledger/i })).toHaveAttribute('href', '/app/projects/proj-1/marketing/verification')
+      expect(screen.getByText(/the platform read from App Store Connect UI reports 1,300/)).toBeInTheDocument()
+    })
   })
 })

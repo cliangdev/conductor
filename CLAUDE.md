@@ -127,7 +127,8 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 `agents` → `agent_runs` (ReAct transcripts); `provider_credentials` (BYO model keys, KMS envelope); `config.addressable` opts an agent into direct conversation  
 `conversations` → `conversation_messages` (USER/ASSISTANT turns) — multi-turn chat with an addressable agent over the REST API or Discord's `/ask`, see [`docs/conversations.md`](docs/conversations.md)  
 `agent_memories` — durable facts/decisions/preferences/events an agent accumulates across conversations, bi-temporal (`valid_from`/`valid_to`/`superseded_by`), see [`docs/memory.md`](docs/memory.md)  
-`knowledge_sources` → `knowledge_pages`/`knowledge_page_revisions` (+ links) — agent-maintained wiki, see [`docs/knowledge.md`](docs/knowledge.md)
+`knowledge_sources` → `knowledge_pages`/`knowledge_page_revisions` (+ links) — agent-maintained wiki, see [`docs/knowledge.md`](docs/knowledge.md)  
+`channel_metric_daily` (per-day connector metrics, read only through `MetricCatalog`) + `marketing_platform_read` (append-only verification ledger reads), `marketing_benchmark`, `tracked_link`, `marketing_budget`/`marketing_stop_rule`, `marketing_alert_state`, `marketing_switchback_test`, growth signals and AI-visibility tables — see [`docs/marketing-report.md`](docs/marketing-report.md)
 
 **Future eng/marketing grouping** should use **labels + saved views** (or a nullable `group` tag on `project_members`), *not* a nested container above projects — that two-level org→project model was deliberately removed for simplicity.
 

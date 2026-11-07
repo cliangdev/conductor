@@ -475,6 +475,142 @@ class MarketingOverviewProductMetricsIntegrationTest extends AbstractNoneWebInte
         assertThat(channel(overview, "PRODUCT").metrics()).extracting(m -> m.metric()).containsExactly("first_open");
     }
 
+    // ---- reconciliation pairs and band ----------------------------------------------------------
+
+    /** Seven days of an ADS metric and its reference, one figure per day. */
+    private void adsAndReference(String ads, String pm, String metric, String reference, double[] own,
+                                 double[] backend) {
+        for (int i = 0; i < own.length; i++) {
+            put(ads, "apple-search-ads", "ADS", metric, day(8 + i), own[i], null, false);
+            put(pm, CONNECTOR, "PRODUCT", reference, day(8 + i), backend[i], null, false);
+        }
+    }
+
+    private void storeAndReference(String store, String pm, String metric, String reference, double[] own,
+                                   double[] backend) {
+        for (int i = 0; i < own.length; i++) {
+            put(store, "app-store-connect", "STORE", metric, day(8 + i), own[i], null, false);
+            put(pm, CONNECTOR, "PRODUCT", reference, day(8 + i), backend[i], null, false);
+        }
+    }
+
+    @Test
+    void sevenAdsInstallsAgainstTwentyThreeInTheBackendIsAMismatchWithBothFigures() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        String ads = connect("apple-search-ads", "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(sum("first_open", "First opens", 1)));
+        adsAndReference(ads, pm, "installs", "ref_ads_tap_installs", new double[]{1, 1, 1, 1, 1, 1, 1},
+                new double[]{3, 3, 3, 3, 3, 4, 4});
+
+        ChannelView adsChannel = channel(overview7(), "ADS");
+
+        assertThat(adsChannel.status()).isEqualTo("MISMATCH");
+        assertThat(adsChannel.mismatches()).singleElement().satisfies(m -> {
+            assertThat(m.kind()).isEqualTo("BACKEND");
+            assertThat(m.metric()).isEqualTo("installs");
+            assertThat(m.label()).isEqualTo("Installs");
+            assertThat(m.referenceValue()).isEqualTo(23.0);
+            assertThat(m.channelValue()).isEqualTo(7.0);
+            assertThat(m.gapPct()).isCloseTo(16.0 / 23.0, org.assertj.core.data.Offset.offset(1e-9));
+            assertThat(m.from()).isEqualTo(day(8));
+            assertThat(m.to()).isEqualTo(day(14));
+            assertThat(m.referenceSource()).isEqualTo("product-metrics account");
+        });
+        assertThat(adsChannel.mismatch()).isEqualTo(adsChannel.mismatches().get(0));
+    }
+
+    @Test
+    void aSmallCountMayDifferByOneUnitButNotByTwo() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        String store = connect("app-store-connect", "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(sum("first_open", "First opens", 1)));
+        storeAndReference(store, pm, "downloads", "ref_store_downloads", new double[]{1, 1, 1, 0, 0, 0, 0},
+                new double[]{1, 1, 1, 1, 0, 0, 0}); // 3 vs 4
+
+        assertThat(channel(overview7(), "STORE").status()).isEqualTo("LIVE");
+        assertThat(channel(overview7(), "STORE").mismatches()).isEmpty();
+
+        restateReference("ref_store_downloads", day(12), 2); // 3 vs 5
+
+        assertThat(channel(overview7(), "STORE").status()).isEqualTo("MISMATCH");
+    }
+
+    private void restateReference(String metric, LocalDate day, double value) {
+        ChannelMetricDaily row = dailyRepository.findByProjectIdAndChannelAndMetricInAndDayBetween(project.getId(),
+                "PRODUCT", List.of(metric), day, day).get(0);
+        row.setValue(BigDecimal.valueOf(value));
+        dailyRepository.saveAndFlush(row);
+    }
+
+    @Test
+    void countsFromFiftyUpAndMoneyAreJudgedByTwoPercentOfTheLargerFigure() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        String ads = connect("apple-search-ads", "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(sum("first_open", "First opens", 1)));
+        // spend 700 against 710.5: 1.5% apart, inside the band (it was a mismatch under the old 1% rule)
+        adsAndReference(ads, pm, "spend", "ref_ads_spend", new double[]{100, 100, 100, 100, 100, 100, 100},
+                new double[]{101.5, 101.5, 101.5, 101.5, 101.5, 101.5, 101.5});
+        // installs 100 against 103: 2.9% apart, outside it
+        adsAndReference(ads, pm, "installs", "ref_ads_tap_installs", new double[]{50, 50, 0, 0, 0, 0, 0},
+                new double[]{50, 53, 0, 0, 0, 0, 0});
+
+        ChannelView adsChannel = channel(overview7(), "ADS");
+
+        assertThat(adsChannel.mismatches()).extracting(m -> m.metric()).containsExactly("installs");
+        assertThat(adsChannel.mismatches().get(0).referenceValue()).isEqualTo(103.0);
+    }
+
+    @Test
+    void downloadsOfRecordAreComparedWithTheSalesReportsReference() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        String store = connect("app-store-connect", "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(sum("first_open", "First opens", 1)));
+        storeAndReference(store, pm, "downloads_of_record", "ref_sales_first_time_downloads",
+                new double[]{5, 5, 5, 5, 5, 5, 0}, new double[]{5, 5, 5, 5, 5, 5, 0});
+        assertThat(channel(overview7(), "STORE").mismatches()).isEmpty();
+
+        restateReference("ref_sales_first_time_downloads", day(14), 20); // 30 vs 50
+
+        assertThat(channel(overview7(), "STORE").mismatches()).singleElement().satisfies(m -> {
+            assertThat(m.metric()).isEqualTo("downloads_of_record");
+            assertThat(m.label()).isEqualTo("Downloads of record");
+            assertThat(m.referenceValue()).isEqualTo(50.0);
+            assertThat(m.channelValue()).isEqualTo(30.0);
+        });
+    }
+
+    @Test
+    void everyMismatchIsListedLargestGapFirstAndTheSingleFieldIsTheLargestBackendGap() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        String ads = connect("apple-search-ads", "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(sum("first_open", "First opens", 1)));
+        adsAndReference(ads, pm, "spend", "ref_ads_spend", new double[]{100, 100, 100, 100, 100, 100, 100},
+                new double[]{110, 110, 110, 110, 110, 110, 110}); // 9%
+        adsAndReference(ads, pm, "installs", "ref_ads_tap_installs", new double[]{1, 1, 1, 1, 1, 1, 1},
+                new double[]{3, 3, 3, 3, 3, 4, 4}); // 70%
+
+        ChannelView adsChannel = channel(overview7(), "ADS");
+
+        assertThat(adsChannel.mismatches()).extracting(m -> m.metric()).containsExactly("installs", "spend");
+        assertThat(adsChannel.mismatch().metric()).isEqualTo("installs");
+    }
+
+    @Test
+    void aMetricWithNoReferenceFromTheBackendIsNeverAMismatch() {
+        String pm = connect(CONNECTOR, "API_KEY");
+        String ads = connect("apple-search-ads", "API_KEY");
+        definitionStore.replace(project.getId(), pm, List.of(sum("first_open", "First opens", 1)));
+        for (int d = 8; d <= 14; d++) {
+            put(ads, "apple-search-ads", "ADS", "installs", day(d), 1, null, false);
+        }
+
+        ChannelView adsChannel = channel(overview7(), "ADS");
+
+        assertThat(adsChannel.status()).isEqualTo("LIVE");
+        assertThat(adsChannel.mismatches()).isEmpty();
+        assertThat(adsChannel.mismatch()).isNull();
+    }
+
     @Test
     void provisionalReferenceDaysAreNotComparedAndAMissingOwnDayIsSkipped() {
         String pm = connect(CONNECTOR, "API_KEY");

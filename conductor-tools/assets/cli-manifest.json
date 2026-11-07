@@ -162,7 +162,7 @@
     }
   ],
   "claudeIntegration": {
-    "description": "Conductor ships a full Claude Code plugin \u2014 slash commands, skills, and a background agent \u2014 installed automatically by conductor init into your Claude Code configuration.",
+    "description": "Conductor ships a full Claude Code plugin — slash commands, skills, and a background agent — installed automatically by conductor init into your Claude Code configuration.",
     "mcpConfig": "{\n  \"mcpServers\": {\n    \"conductor\": {\n      \"command\": \"conductor\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}",
     "slashCommands": [
       {
@@ -175,15 +175,15 @@
       },
       {
         "name": "conductor:implement",
-        "description": "Take a PRD issue from BACKLOG to a green PR \u2014 status transitions, branch, parallel coding agents, CI monitoring."
+        "description": "Take a PRD issue from BACKLOG to a green PR — status transitions, branch, parallel coding agents, CI monitoring."
       },
       {
         "name": "conductor:fix",
-        "description": "Fix a bug found during PR review \u2014 root cause investigation, full build validation, push to the existing PR branch."
+        "description": "Fix a bug found during PR review — root cause investigation, full build validation, push to the existing PR branch."
       },
       {
         "name": "conductor:workflow",
-        "description": "Design and create a Conductor workflow \u2014 YAML automation or statechart lifecycle \u2014 via guided discovery and MCP creation."
+        "description": "Design and create a Conductor workflow — YAML automation or statechart lifecycle — via guided discovery and MCP creation."
       },
       {
         "name": "conductor:marketing",
@@ -380,7 +380,7 @@
     },
     {
       "name": "write_document",
-      "description": "Create or update a Work Item document by filename with full content (upsert). Works headlessly \u2014 supersedes scaffold_document+Write for new documents.",
+      "description": "Create or update a Work Item document by filename with full content (upsert). Works headlessly — supersedes scaffold_document+Write for new documents.",
       "category": "documents",
       "requiredParams": [
         "issueId",
@@ -408,7 +408,7 @@
     },
     {
       "name": "list_workflows",
-      "description": "List the project's Workflows. Discovery entry point \u2014 resolves workflow names to slugs before creating a Work Item.",
+      "description": "List the project's Workflows. Discovery entry point — resolves workflow names to slugs before creating a Work Item.",
       "category": "workflows"
     },
     {
@@ -470,7 +470,7 @@
     },
     {
       "name": "update_workflow",
-      "description": "Update a DRAFT workflow definition. Fix validation errors before retrying publish \u2014 do not create a second workflow.",
+      "description": "Update a DRAFT workflow definition. Fix validation errors before retrying publish — do not create a second workflow.",
       "category": "workflows",
       "requiredParams": [
         "workflowId"
@@ -478,7 +478,7 @@
     },
     {
       "name": "delete_workflow",
-      "description": "Delete a DRAFT workflow definition. PUBLISHED and DISABLED workflows are rejected \u2014 prefer update_workflow to fix a DRAFT in place.",
+      "description": "Delete a DRAFT workflow definition. PUBLISHED and DISABLED workflows are rejected — prefer update_workflow to fix a DRAFT in place.",
       "category": "workflows",
       "requiredParams": [
         "workflowId"
@@ -528,7 +528,7 @@
     },
     {
       "name": "list_workflow_secrets",
-      "description": "List the names of workflow secrets configured for this project (keys only \u2014 values are never returned over MCP).",
+      "description": "List the names of workflow secrets configured for this project (keys only — values are never returned over MCP).",
       "category": "workflows"
     },
     {
@@ -562,7 +562,7 @@
     },
     {
       "name": "update_agent",
-      "description": "Update an existing AI Agent. Partial \u2014 only the supplied fields change. Also how an ACTIVE agent is set back to DRAFT so it can be deleted.",
+      "description": "Update an existing AI Agent. Partial — only the supplied fields change. Also how an ACTIVE agent is set back to DRAFT so it can be deleted.",
       "category": "discovery",
       "requiredParams": [
         "agentId"
@@ -570,7 +570,7 @@
     },
     {
       "name": "delete_agent",
-      "description": "Delete a DRAFT AI Agent. An ACTIVE agent is rejected \u2014 set it to DRAFT with update_agent first. Also rejected if a workflow still references this agent.",
+      "description": "Delete a DRAFT AI Agent. An ACTIVE agent is rejected — set it to DRAFT with update_agent first. Also rejected if a workflow still references this agent.",
       "category": "discovery",
       "requiredParams": [
         "agentId"
@@ -631,7 +631,7 @@
     },
     {
       "name": "list_knowledge_domains",
-      "description": "List this project's knowledge domains \u2014 slug, displayName, description, pathPrefix, filing conventions.",
+      "description": "List this project's knowledge domains — slug, displayName, description, pathPrefix, filing conventions.",
       "category": "knowledge"
     },
     {
@@ -646,12 +646,12 @@
     },
     {
       "name": "list_project_docs",
-      "description": "Map the project's Docs section \u2014 folder paths and every document as a \"Folder/Title\" path, or full-text search with query.",
+      "description": "Map the project's Docs section — folder paths and every document as a \"Folder/Title\" path, or full-text search with query.",
       "category": "project-docs"
     },
     {
       "name": "read_project_doc",
-      "description": "Read one project document by path or docId \u2014 full Markdown plus taskLines (every checkbox with its line number and state).",
+      "description": "Read one project document by path or docId — full Markdown plus taskLines (every checkbox with its line number and state).",
       "category": "project-docs"
     },
     {
@@ -701,7 +701,7 @@
     },
     {
       "name": "respond_to_project_doc_comment",
-      "description": "Answer a comment thread on a project document \u2014 reply, resolve, or both.",
+      "description": "Answer a comment thread on a project document — reply, resolve, or both.",
       "category": "project-docs",
       "requiredParams": [
         "commentId"
@@ -709,7 +709,7 @@
     },
     {
       "name": "list_project_doc_versions",
-      "description": "List a project document's edit history \u2014 version number, author and timestamp, newest first.",
+      "description": "List a project document's edit history — version number, author and timestamp, newest first.",
       "category": "project-docs"
     },
     {
@@ -793,7 +793,7 @@
     },
     {
       "name": "list_assets",
-      "description": "Every Asset on a Work Item \u2014 uploaded media and recorded links, with the ids set_publish_targets takes.",
+      "description": "Every Asset on a Work Item — uploaded media and recorded links, with the ids set_publish_targets takes.",
       "category": "marketing",
       "requiredParams": [
         "issueId"
@@ -837,8 +837,48 @@
       "requiredParams": []
     },
     {
+      "name": "get_budget_pacing",
+      "description": "Paid spend against the month's budget cap per paid channel: month-to-date spend, pace, projected month-end, compliance (a paid channel needs a stop rule), tripped stop rules and marginal cost per install.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "set_marketing_budget",
+      "description": "Set the paid budget cap for a month. Records the cap only; it changes nothing on an ad platform.",
+      "category": "marketing",
+      "requiredParams": [
+        "month",
+        "capAmount"
+      ]
+    },
+    {
+      "name": "set_stop_rule",
+      "description": "Add a stop rule for a paid channel (metric, comparator, threshold, minimum sample, window). Conductor evaluates and records it; a human applies any bid or budget change.",
+      "category": "marketing",
+      "requiredParams": [
+        "channel",
+        "metric",
+        "comparator",
+        "threshold"
+      ]
+    },
+    {
+      "name": "remove_stop_rule",
+      "description": "Remove a stop rule by id.",
+      "category": "marketing",
+      "requiredParams": [
+        "ruleId"
+      ]
+    },
+    {
+      "name": "get_marketing_definitions",
+      "description": "What each marketing metric counts: source report or field, numerator and denominator, source type, exclusions and time zone. Optionally one channel.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
       "name": "get_marketing_report",
-      "description": "The whole-funnel marketing report in one payload: sources, headline metrics, acquisition by source, funnel with its biggest drop, daily chart data, scorecard, keywords, ads, benchmarks and changes. Window 7d or 28d.",
+      "description": "The whole-funnel marketing report in one payload: sources, headline metrics, acquisition by source, funnel with its biggest drop, daily chart data, scorecard, keywords with cost per outcome, payback, exclusions, ASO keywords, email, shares and tracked-link rows, a verification tally, ads, benchmarks and changes. Window 7d or 28d.",
       "category": "marketing",
       "requiredParams": []
     },
@@ -861,6 +901,204 @@
       "requiredParams": [
         "metricRef"
       ]
+    },
+    {
+      "name": "get_verification_ledger",
+      "description": "Which marketing numbers to trust: per metric, Conductor's value, the product backend's, the latest direct platform read and a verdict (BOTH, CONNECTOR, BACKEND, PLATFORM or UNCHECKED). Optional window, channel and only-problems filter.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "record_platform_read",
+      "description": "Log what a platform's own UI or API shows for one metric over an exact day range. Append-only; returns the metric's row with its verdict.",
+      "category": "marketing",
+      "requiredParams": [
+        "channel",
+        "metric",
+        "from",
+        "to",
+        "value",
+        "sourceName"
+      ]
+    },
+    {
+      "name": "propose_marketing_change",
+      "description": "Propose one marketing change with exactly two ledger-verified signals as a PLANNED change with a review date. Refuses unverified evidence and more than 3 a week; a person approves every change and moves it to LIVE.",
+      "category": "marketing",
+      "requiredParams": [
+        "title",
+        "type",
+        "hypothesis",
+        "reviewOn",
+        "signals"
+      ]
+    },
+    {
+      "name": "install_weekly_growth_workflow",
+      "description": "Install the Weekly growth review workflow from the template, disabled (Admin; safe to repeat). It needs a runtime target for Claude Code steps and a person to enable it.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "get_growth_signals",
+      "description": "Growth signals from public data: seasonal moments with overdue warnings, weekly ratings growth, recent reviews, competitor listing changes and keyword positions.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "set_marketing_moment",
+      "description": "Record a dated moment (e.g. Thanksgiving) and the surfaces that must change for it, each with a due date. A surface past due with no linked change warns.",
+      "category": "marketing",
+      "requiredParams": [
+        "key",
+        "name",
+        "date",
+        "surfaces"
+      ]
+    },
+    {
+      "name": "link_moment_change",
+      "description": "Link the marketing change Work Item that handled a moment surface, which clears its warning.",
+      "category": "marketing",
+      "requiredParams": [
+        "key",
+        "surfaceId",
+        "workItemId"
+      ]
+    },
+    {
+      "name": "add_competitor",
+      "description": "Watch a competitor app's public App Store listing, ratings, reviews and keyword positions each week.",
+      "category": "marketing",
+      "requiredParams": [
+        "appId",
+        "name"
+      ]
+    },
+    {
+      "name": "remove_competitor",
+      "description": "Stop watching a competitor app; its history is kept.",
+      "category": "marketing",
+      "requiredParams": [
+        "appId"
+      ]
+    },
+    {
+      "name": "set_tracked_keywords",
+      "description": "Replace the App Store keywords whose search position is recorded weekly for our app and each competitor.",
+      "category": "marketing",
+      "requiredParams": [
+        "keywords"
+      ]
+    },
+    {
+      "name": "get_ai_visibility",
+      "description": "Whether AI assistants name the brand for a fixed set of questions, checked weekly: per question and assistant the latest answer and a weekly trend. An assistant with no provider key is skipped, never shown as not named.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "set_ai_questions",
+      "description": "Replace the questions put to the AI assistants each week, and optionally the brand terms that count as naming the brand.",
+      "category": "marketing",
+      "requiredParams": [
+        "questions"
+      ]
+    },
+    {
+      "name": "run_ai_visibility_check",
+      "description": "Run this week's AI-assistant checks now with the workspace's own provider keys (Admin; at most 20 calls a week, safe to repeat).",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "create_switchback_test",
+      "description": "Declare a weekly on/off test of one Apple Ads keyword (weeks, decision rule and minimum n fixed up front) to see whether paid adds installs or only relabels organic ones. A person applies the switch; the test settles itself.",
+      "category": "marketing",
+      "requiredParams": [
+        "name",
+        "keywordId",
+        "keywordText"
+      ]
+    },
+    {
+      "name": "start_switchback_test",
+      "description": "Start a drafted switchback test: its weeks and rule are frozen and it settles itself into a reviewed change once the last week has ended and the data is settled.",
+      "category": "marketing",
+      "requiredParams": [
+        "id"
+      ]
+    },
+    {
+      "name": "get_switchback_test",
+      "description": "One switchback test: plan, rule, the state the keyword should be in this week, and once settled the verdict, per-week figures, n reached and the change that records it.",
+      "category": "marketing",
+      "requiredParams": [
+        "id"
+      ]
+    },
+    {
+      "name": "list_switchback_tests",
+      "description": "The workspace's switchback tests with status, this week's state and any verdict.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "import_marketing_changes",
+      "description": "Import a marketing change log from a local JSONL file as Changes on the MARKETING_CHANGES workflow. Reference records are skipped, an unknown status or verdict refuses that record, and re-running skips what was already imported.",
+      "category": "marketing",
+      "requiredParams": [
+        "filePath"
+      ]
+    },
+    {
+      "name": "get_creator_results",
+      "description": "What one creator has produced: its posts with views, the downloads of its campaign links and the redemptions of its offer code over a window of settled days. An unknown figure is null with a note, never 0.",
+      "category": "marketing",
+      "requiredParams": [
+        "creatorId"
+      ]
+    },
+    {
+      "name": "create_tracked_link",
+      "description": "Create an App Store campaign link (pt/ct) for a bio, creator, email or other place and return its url. Every new Post already gets one automatically. Tokens roll up by family past Apple's reporting threshold.",
+      "category": "marketing",
+      "requiredParams": [
+        "kind",
+        "family",
+        "token"
+      ]
+    },
+    {
+      "name": "list_tracked_links",
+      "description": "List tracked App Store links with their urls. Optionally add downloads and views per family; a family Apple reported nothing for reads below the threshold, never 0.",
+      "category": "marketing",
+      "requiredParams": []
+    },
+    {
+      "name": "tag_message",
+      "description": "Tag a keyword, product page, Post, creative or paywall headline with the message it makes, so the promise ledger can join it to installs, intent picks, trial rate and D7. A target carries one message; tagging it again moves it.",
+      "category": "marketing",
+      "requiredParams": [
+        "message",
+        "targetKind",
+        "targetRef"
+      ]
+    },
+    {
+      "name": "untag_message",
+      "description": "Remove the message from a target. Safe to repeat.",
+      "category": "marketing",
+      "requiredParams": [
+        "targetKind",
+        "targetRef"
+      ]
+    },
+    {
+      "name": "list_promises",
+      "description": "The promise ledger: per message, installs, intent mix, trial rate and D7 with 95% ranges and n, flagged as a small sample under 20. A figure with no data is null, never 0.",
+      "category": "marketing",
+      "requiredParams": []
     },
     {
       "name": "submit_review",
@@ -966,7 +1204,7 @@
     },
     {
       "name": "upload_creative_photo",
-      "description": "Deprecated alias for upload_creative_media \u2014 same behavior, including for video/audio.",
+      "description": "Deprecated alias for upload_creative_media — same behavior, including for video/audio.",
       "category": "marketing"
     },
     {

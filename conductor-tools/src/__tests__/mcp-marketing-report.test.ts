@@ -8,11 +8,13 @@ vi.mock('../mcp/api.js', () => ({
 }))
 
 import { apiGet, apiPut, apiDelete } from '../mcp/api.js'
+import { TOOLS } from '../mcp/index.js'
 import {
   getMarketingReport,
   setMarketingBenchmark,
   deleteMarketingBenchmark,
   trimReportValue,
+  MAX_REPORT_ASO_KEYWORDS,
 } from '../mcp/tools/marketing-report.js'
 
 const config: Config = {
@@ -65,6 +67,168 @@ describe('getMarketingReport', () => {
     expect(out['changes']).toEqual({ open: [], dueForReview: [], reviewedInWindow: [] })
   })
 
+  it('keeps the RE-99 fields: view-through installs, derivation, comparable and reason, definitions, store, markers', async () => {
+    const definition = { source: 'Apple Ads campaign report, tapInstalls', numerator: 'tap_installs', timeZone: 'UTC', denominator: null }
+    mocked(apiGet).mockResolvedValue({
+      window: { from: '2026-09-29', to: '2026-10-26' },
+      sources: [{ channel: 'ADS', status: 'LIVE', timeZone: 'UTC', searchTermTimeZone: 'ORTZ', connector: null }],
+      headline: [{ channel: 'ADS', key: 'cost_per_install', value: 7.0809, definition }],
+      acquisition: [
+        { key: 'apple_ads', installs: 23, viewThroughInstalls: 1, likes: null },
+        {
+          key: 'app_store_search',
+          installs: 6,
+          reach: 3696,
+          reachLabel: 'Impressions (organic)',
+          derived: true,
+          derivation: { from: '2026-09-29', to: '2026-10-26', days: 28, grossInstalls: 29, paidInstalls: 23, grossReach: 7101, paidReach: 3405 },
+        },
+      ],
+      benchmarks: [
+        { metricRef: 'STORE.conversion_rate', comparable: true, comparedMetricRef: 'STORE.conversion_rate_search', reason: null, judged: true },
+        { metricRef: 'ADS.spend', comparable: false, reason: 'definition missing', judged: false },
+      ],
+      definitions: { 'ADS.installs': definition },
+      store: { downloadsOfRecord: 30, analyticsDownloads: 27, coverage: { daysCovered: 28, daysInWindow: 28 } },
+      adsCoverage: [{ campaignId: '1', name: 'Brand', spend: 100, keywordSpend: 98, keywordCoveragePct: 0.98, rows: 2 }],
+      changeMarkers: [{ day: '2026-10-10', changeId: 'w1', displayId: 'RE-1', title: 'Change', status: 'LIVE' }],
+      changes: { open: [], dueForReview: [], reviewedInWindow: [] },
+    })
+    const out = (await getMarketingReport(config, {})) as Record<string, any>
+    expect(out['sources'][0]).toEqual({ channel: 'ADS', status: 'LIVE', timeZone: 'UTC', searchTermTimeZone: 'ORTZ' })
+    expect(out['acquisition'][0]).toEqual({ key: 'apple_ads', installs: 23, viewThroughInstalls: 1 })
+    expect(out['acquisition'][1].derivation).toEqual({
+      from: '2026-09-29',
+      to: '2026-10-26',
+      days: 28,
+      grossInstalls: 29,
+      paidInstalls: 23,
+      grossReach: 7101,
+      paidReach: 3405,
+    })
+    expect(out['benchmarks'][0]).toEqual({
+      metricRef: 'STORE.conversion_rate',
+      comparable: true,
+      comparedMetricRef: 'STORE.conversion_rate_search',
+      judged: true,
+    })
+    // a comparable: false is not a null, so it stays, and so does the reason that goes with it
+    expect(out['benchmarks'][1]).toEqual({ metricRef: 'ADS.spend', comparable: false, reason: 'definition missing', judged: false })
+    expect(out['headline'][0].definition).toEqual({ source: definition.source, numerator: 'tap_installs', timeZone: 'UTC' })
+    expect(out['definitions']['ADS.installs']).toEqual({ source: definition.source, numerator: 'tap_installs', timeZone: 'UTC' })
+    expect(out['store']).toEqual({ downloadsOfRecord: 30, analyticsDownloads: 27, coverage: { daysCovered: 28, daysInWindow: 28 } })
+    expect(out['adsCoverage']).toEqual([{ campaignId: '1', name: 'Brand', spend: 100, keywordSpend: 98, keywordCoveragePct: 0.98, rows: 2 }])
+    expect(out['changeMarkers']).toEqual([{ day: '2026-10-10', changeId: 'w1', displayId: 'RE-1', title: 'Change', status: 'LIVE' }])
+    expect(out['totalRows']).toBeUndefined()
+  })
+
+  it('caps the coverage rows and the change markers at 20, keeps the newest markers and reports the totals', async () => {
+    const day = (i: number) => `2026-10-${String(i + 1).padStart(2, '0')}`
+    mocked(apiGet).mockResolvedValue({
+      window: { from: '2026-09-29', to: '2026-10-26' },
+      adsCoverage: Array.from({ length: 23 }, (_, i) => ({ campaignId: `c${i}`, name: `campaign ${i}`, rows: 1 })),
+      changeMarkers: Array.from({ length: 25 }, (_, i) => ({ day: day(i), changeId: `w${i}`, displayId: `RE-${i}`, title: `t${i}`, status: 'LIVE' })),
+    })
+    const out = (await getMarketingReport(config, {})) as Record<string, any>
+    expect(out['adsCoverage']).toHaveLength(20)
+    expect(out['adsCoverage'][0].campaignId).toBe('c0')
+    expect(out['changeMarkers']).toHaveLength(20)
+    expect(out['changeMarkers'][0].changeId).toBe('w5')
+    expect(out['changeMarkers'][19].changeId).toBe('w24')
+    expect(out['totalRows']).toEqual({ adsCoverage: 23, changeMarkers: 25 })
+  })
+
+  it('keeps the channel-quality sections: keyword cost per outcome, payback, exclusions, email, links, ASO and verification', async () => {
+    mocked(apiGet).mockResolvedValue({
+      window: { from: '2026-09-29', to: '2026-10-26' },
+      keywords: [
+        {
+          keywordId: '11', text: 'rexipe', judgeable: true, spend: 17.51, activations: 2, retainedW2: 1, trials: 1,
+          costPerActivatedInstall: 8.755, costPerRetainedW2Install: 17.51, costPerTrial: 17.51, qualityNote: null,
+        },
+        {
+          keywordId: '12', text: 'meal planner', judgeable: false, spend: 5, activations: 0, retainedW2: 0, trials: null,
+          costPerActivatedInstall: null, qualityNote: 'No activations yet; no week-2 retained installs yet',
+        },
+      ],
+      acquisition: [
+        {
+          key: 'email', label: 'Email', status: 'LIVE', derived: false, reach: 400, reachLabel: 'Emails sent',
+          actions: 60, actionsLabel: 'Clicks', installs: 5, installsLabel: 'Trials saved', definitionLine: 'Lifecycle emails sent.',
+        },
+        {
+          key: 'link_family:creators', label: 'creators links (CREATOR)', status: 'LIVE', derived: false, installs: null,
+          installsLabel: 'Downloads', note: "below Apple's reporting threshold", definitionLine: 'First-time downloads.',
+        },
+      ],
+      payback: {
+        channels: [{ channel: 'apple_ads', label: 'Apple Ads', spend: 162.86, proceedsNet12m: 400, ratio: 2.45617, note: null }],
+        total: { channel: 'total', label: 'All paid channels', spend: 162.86, proceedsNet12m: 400, ratio: 2.45617 },
+        basis: 'Proceeds after Apple\'s commission, 12-month cohort horizon',
+      },
+      exclusions: [{ key: 'app_review_installs', label: 'Likely App Review installs', value: 7, note: null }],
+      asoKeywords: [{ keyword: 'rexipe', rank: 3, popularity: 40, rankChange: 0, previousRank: 3 }],
+      verification: { unchecked: 0, mismatched: 1, staleReads: 0, both: 0 },
+    })
+    const out = (await getMarketingReport(config, {})) as Record<string, any>
+    expect(out['keywords'][0]).toEqual({
+      keywordId: '11', text: 'rexipe', judgeable: true, spend: 17.51, activations: 2, retainedW2: 1, trials: 1,
+      costPerActivatedInstall: 8.755, costPerRetainedW2Install: 17.51, costPerTrial: 17.51,
+    })
+    // a reported zero is a value and stays; a null cost is dropped and its qualityNote says why
+    expect(out['keywords'][1]).toEqual({
+      keywordId: '12', text: 'meal planner', judgeable: false, spend: 5, activations: 0, retainedW2: 0,
+      qualityNote: 'No activations yet; no week-2 retained installs yet',
+    })
+    expect(out['acquisition'][0]).toMatchObject({ key: 'email', installsLabel: 'Trials saved', definitionLine: 'Lifecycle emails sent.' })
+    expect(out['acquisition'][1]).toEqual({
+      key: 'link_family:creators', label: 'creators links (CREATOR)', status: 'LIVE', derived: false,
+      installsLabel: 'Downloads', note: "below Apple's reporting threshold", definitionLine: 'First-time downloads.',
+    })
+    expect(out['payback'].channels[0]).toEqual({ channel: 'apple_ads', label: 'Apple Ads', spend: 162.86, proceedsNet12m: 400, ratio: 2.4562 })
+    expect(out['payback'].total.ratio).toBe(2.4562)
+    expect(out['payback'].basis).toMatch(/12-month/)
+    expect(out['exclusions']).toEqual([{ key: 'app_review_installs', label: 'Likely App Review installs', value: 7 }])
+    expect(out['asoKeywords']).toEqual([{ keyword: 'rexipe', rank: 3, popularity: 40, rankChange: 0, previousRank: 3 }])
+    // all-zero counts are real numbers, not absent
+    expect(out['verification']).toEqual({ unchecked: 0, mismatched: 1, staleReads: 0, both: 0 })
+  })
+
+  it('caps ASO keywords at 20 keeping the best ranks and reports the total', async () => {
+    mocked(apiGet).mockResolvedValue({
+      window: { from: '2026-09-29', to: '2026-10-26' },
+      asoKeywords: Array.from({ length: 50 }, (_, i) => ({ keyword: `kw ${i}`, rank: i + 1 })),
+    })
+    const out = (await getMarketingReport(config, {})) as Record<string, any>
+    expect(out['asoKeywords']).toHaveLength(MAX_REPORT_ASO_KEYWORDS)
+    expect(out['asoKeywords'][0]).toEqual({ keyword: 'kw 0', rank: 1 })
+    expect(out['asoKeywords'][19]).toEqual({ keyword: 'kw 19', rank: 20 })
+    expect(out['totalRows']).toEqual({ asoKeywords: 50 })
+  })
+
+  it('leaves the new sections out when the report has none: absent data is not a zero', async () => {
+    mocked(apiGet).mockResolvedValue({
+      window: { from: '2026-09-29', to: '2026-10-26' },
+      payback: null,
+      exclusions: [],
+      asoKeywords: [],
+      verification: null,
+    })
+    const out = (await getMarketingReport(config, {})) as Record<string, unknown>
+    for (const key of ['payback', 'exclusions', 'asoKeywords', 'verification', 'totalRows']) {
+      expect(out).not.toHaveProperty(key)
+    }
+  })
+
+  it('keeps empty coverage, markers and definitions as present keys so "none" never reads as missing', async () => {
+    mocked(apiGet).mockResolvedValue({ window: { from: '2026-09-29', to: '2026-10-26' }, sources: [] })
+    const out = (await getMarketingReport(config, {})) as Record<string, unknown>
+    expect(out['adsCoverage']).toEqual([])
+    expect(out['changeMarkers']).toEqual([])
+    expect(out['definitions']).toEqual({})
+    expect(out['store']).toBeUndefined()
+  })
+
   it('keeps all three change buckets when only some have items', async () => {
     mocked(apiGet).mockResolvedValue({
       window: { from: '2026-09-20', to: '2026-10-17' },
@@ -89,6 +253,14 @@ describe('getMarketingReport', () => {
     expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/marketing/report?window=7d', config)
     await expect(getMarketingReport(config, { window: '30d' })).rejects.toThrow(/Unknown window/)
   })
+
+  it('passes a fixed date range and rejects a malformed one', async () => {
+    mocked(apiGet).mockResolvedValue({ window: { from: '2026-09-29', to: '2026-10-26' } })
+    await getMarketingReport(config, { window: '2026-09-29..2026-10-26' })
+    expect(apiGet).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/report?window=2026-09-29..2026-10-26', config)
+    await expect(getMarketingReport(config, { window: '2026-09-29-2026-10-26' })).rejects.toThrow(/Unknown window/)
+  })
 })
 
 describe('setMarketingBenchmark', () => {
@@ -107,6 +279,52 @@ describe('setMarketingBenchmark', () => {
     expect(path).toBe('/api/v2/projects/proj-1/marketing/benchmarks/STORE.conversion_rate')
     expect(body).toMatchObject({ value: 0.03, sourceUrl: ok.sourceUrl, checkedOn: '2026-10-22', segment: 'US' })
     expect(out).toEqual({ metricRef: 'STORE.conversion_rate', value: 0.03 })
+  })
+
+  it('passes the definition (numerator, denominator, sourceType) to the API', async () => {
+    mocked(apiPut).mockResolvedValue({
+      metricRef: 'STORE.conversion_rate',
+      value: 0.124,
+      numerator: 'total_downloads',
+      denominator: 'unique_impressions',
+      sourceType: 'APP_STORE_SEARCH',
+    })
+    const out = await setMarketingBenchmark(config, {
+      ...ok,
+      value: 0.124,
+      numerator: 'total_downloads',
+      denominator: 'unique_impressions',
+      sourceType: 'APP_STORE_SEARCH',
+    })
+    const [, body] = mocked(apiPut).mock.calls[0]!
+    expect(body).toMatchObject({
+      numerator: 'total_downloads',
+      denominator: 'unique_impressions',
+      sourceType: 'APP_STORE_SEARCH',
+    })
+    expect(out).toMatchObject({ numerator: 'total_downloads', denominator: 'unique_impressions', sourceType: 'APP_STORE_SEARCH' })
+  })
+
+  it('still succeeds for an old call without a definition and sends none', async () => {
+    mocked(apiPut).mockResolvedValue({ metricRef: 'STORE.conversion_rate', value: 0.03 })
+    await expect(setMarketingBenchmark(config, ok)).resolves.toEqual({ metricRef: 'STORE.conversion_rate', value: 0.03 })
+    const [, body] = mocked(apiPut).mock.calls[0]!
+    expect(JSON.parse(JSON.stringify(body))).not.toHaveProperty('numerator')
+    expect(JSON.parse(JSON.stringify(body))).not.toHaveProperty('denominator')
+    expect(JSON.parse(JSON.stringify(body))).not.toHaveProperty('sourceType')
+  })
+
+  it('describes the vocabulary and the AppFollow example in the tool schema', () => {
+    const tool = TOOLS.find((t) => t.name === 'set_marketing_benchmark')!
+    const schema = tool.inputSchema as { properties: Record<string, { description: string }>; required: string[] }
+    expect(Object.keys(schema.properties)).toEqual(expect.arrayContaining(['numerator', 'denominator', 'sourceType']))
+    expect(schema.required).not.toEqual(expect.arrayContaining(['numerator']))
+    expect(schema.required).not.toEqual(expect.arrayContaining(['sourceType']))
+    expect(schema.properties['numerator']!.description).toMatch(/total_downloads/)
+    expect(schema.properties['numerator']!.description).toMatch(/product:<key>/)
+    expect(schema.properties['denominator']!.description).toMatch(/unique_impressions/)
+    expect(schema.properties['sourceType']!.description).toMatch(/APP_STORE_SEARCH/)
+    expect(schema.properties['sourceType']!.description).toMatch(/ALL/)
   })
 
   it('refuses a benchmark without a real source URL or a date', async () => {
