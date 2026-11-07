@@ -35,7 +35,13 @@ jobs:
       build-context: conductor-backend/
       health-path: /api/v1/health
       # See backend-cd.yml for why these flags changed from cpu=2/--no-cpu-throttling/min-instances=1.
-      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }},GCP_CLOUDRUN_PROJECT_ID=${{ vars.GCP_CLOUDRUN_PROJECT_ID }},GCP_CLOUDRUN_REGION=${{ vars.GCP_CLOUDRUN_REGION }},GCP_CLOUDRUN_CLAUDE_JOB_NAME=${{ vars.GCP_CLOUDRUN_CLAUDE_JOB_NAME }},GCP_TASKS_DISPATCH_BASE_URL=${{ vars.BACKEND_URL }} --memory=1Gi --cpu=1 --cpu-throttling --min-instances=0 --timeout=3600"
+      # This deploys into the SAME prod conductor-backend service as backend-cd.yml, so it must keep
+      # CONDUCTOR_SCHEDULING_MODE=external in step with backend-cd.yml: a preview revision without it would fall back to
+      # in-app timers and double-fire jobs alongside Cloud Scheduler. The other CD-only vars (CONDUCTOR_SCHEDULER_*,
+      # OAUTH_CALLBACK_BASE_URL) are deliberately omitted: --update-env-vars leaves omitted vars untouched, so this
+      # relies on the values CD already set persisting on the service. Cloud Run flags are not shared via
+      # deploy-cloudrun.yml (each caller owns its own), so edit both files together.
+      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }},GCP_CLOUDRUN_PROJECT_ID=${{ vars.GCP_CLOUDRUN_PROJECT_ID }},GCP_CLOUDRUN_REGION=${{ vars.GCP_CLOUDRUN_REGION }},GCP_CLOUDRUN_CLAUDE_JOB_NAME=${{ vars.GCP_CLOUDRUN_CLAUDE_JOB_NAME }},GCP_TASKS_DISPATCH_BASE_URL=${{ vars.BACKEND_URL }},CONDUCTOR_SCHEDULING_MODE=external --memory=1Gi --cpu=1 --cpu-throttling --min-instances=0 --timeout=3600"
       cloudrun-secrets: |
         DATABASE_URL=DATABASE_URL:latest
         DATABASE_USERNAME=DATABASE_USERNAME:latest

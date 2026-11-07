@@ -1508,16 +1508,26 @@ Auth is a Google-signed OIDC ID token from Cloud Scheduler's service account, no
 
 `scripts/setup-cloud-scheduler.sh` creates (or updates in place) one Cloud Scheduler job per registry job (`conductor-<job>`, UTC), the `conductor-scheduler` service account, and its `run.invoker` binding. Its job table is checked against the registry by `CloudSchedulerScriptTest`, so adding a job to the registry fails the build until the table has it. Sub-minute jobs (30s in-app) run every minute, Cloud Scheduler's floor; the lease makes that safe.
 
+**CD syncs the jobs.** After each backend deploy, the `sync-scheduler` job in `backend-cd.yml` runs `scripts/setup-cloud-scheduler.sh --jobs-only`, which only creates or updates the job table (it skips the API, service account and IAM steps). It runs once the new revision is healthy and does not roll the deploy back; if it fails the workflow goes red. It needs a one-time grant from the project owner (CD cannot grant IAM):
+
+```bash
+gcloud projects add-iam-policy-binding ai-conductor-prod \
+  --member serviceAccount:conductor-cd@ai-conductor-prod.iam.gserviceaccount.com \
+  --role roles/cloudscheduler.admin
+```
+
+Until that grant exists, `sync-scheduler` fails red on every deploy; that is intended, so a missing sync is never silent. PR preview deploys (`deploy-backend` label) go to the same service and set `CONDUCTOR_SCHEDULING_MODE=external` too; they don't touch the Scheduler jobs.
+
 1. Deploy a backend that has the endpoint. CD sets `CONDUCTOR_SCHEDULER_OIDC_AUDIENCE` (`$BACKEND_URL/internal/v1/scheduler`) and `CONDUCTOR_SCHEDULER_INVOKER_EMAIL` (`conductor-scheduler@<project>.iam.gserviceaccount.com`). CD also sets `CONDUCTOR_SCHEDULING_MODE=external`, so on a new service no timed job runs until step 3 is done.
 2. Preview: `scripts/setup-cloud-scheduler.sh --backend-url "$BACKEND_URL" --dry-run` (prints every command, changes nothing). Pass the same URL as the `BACKEND_URL` repo variable: it becomes the OIDC audience and must match what CD set. Without `--backend-url` the script reads it from `gcloud run services describe`.
-3. Create: rerun without `--dry-run`. Add `--prune` to delete `conductor-*` jobs no longer in the table.
+3. First-time setup by the project owner: rerun without `--dry-run` (enables the API, creates the service account and `run.invoker` binding, then the jobs). Add `--prune` to delete `conductor-*` jobs no longer in the table. Without owner rights the `run.invoker` step is skipped with a message and the jobs are still created.
 4. Verify (manual triggers are safe, the lease prevents double runs):
    - `gcloud scheduler jobs list --location us-central1`
    - `gcloud scheduler jobs run conductor-workflow-schedule-poll --location us-central1`
    - logs: `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="conductor-backend" AND jsonPayload.message="scheduler_tick"' --limit 20`
    - SQL: `SELECT job_name, last_started_at, last_status FROM scheduled_job_lease ORDER BY job_name;`
-5. Roll back: `gcloud run services update conductor-backend --region us-central1 --update-env-vars CONDUCTOR_SCHEDULING_MODE=in-app`, and change the value in `.github/workflows/backend-cd.yml` too or the next deploy flips it back. The Scheduler jobs can keep running (the lease dedupes) or be paused.
-6. New registry job: after the deploy that adds it, rerun `scripts/setup-cloud-scheduler.sh` (step 3). Prod has no in-app timers, so until the script creates its Scheduler job the new job never fires.
+5. Roll back: `gcloud run services update conductor-backend --region us-central1 --update-env-vars CONDUCTOR_SCHEDULING_MODE=in-app`, and change the value in `.github/workflows/backend-cd.yml` and `.github/workflows/deploy-on-label.yml` too or the next deploy flips it back. The Scheduler jobs can keep running (the lease dedupes) or be paused.
+6. New registry job: add its row to the script's table (the build enforces it). The next CD deploy creates its Scheduler job; to remove a retired job, run the script with `--prune` by hand.
 
 Cost: Cloud Scheduler gives 3 jobs free per billing account, then about $0.10 per job per month (15 jobs is roughly $1.20/month). Each per-minute call is a billed Cloud Run request, the same work the in-app timers did.
 
