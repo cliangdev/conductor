@@ -5,7 +5,7 @@ import { emptyInsightsResponse, insightsResponse } from './test-fixtures'
 
 const push = vi.fn()
 const replace = vi.fn()
-let pathname = '/app/projects/proj-1/marketing/insights'
+let pathname = '/app/projects/proj-1/marketing/posts'
 let searchParams = new URLSearchParams()
 
 vi.mock('next/navigation', () => ({
@@ -90,7 +90,7 @@ describe('WhatsWorkingPanel', () => {
     ;(apiGet as Mock).mockReset()
     push.mockClear()
     replace.mockClear()
-    pathname = '/app/projects/proj-1/marketing/insights'
+    pathname = '/app/projects/proj-1/marketing/posts'
     searchParams = new URLSearchParams()
   })
 
@@ -188,15 +188,28 @@ describe('WhatsWorkingPanel', () => {
     expect(screen.queryByText('Needs a rethink')).not.toBeInTheDocument()
   })
 
+  it('keeps view=insights when it writes the window into the URL', async () => {
+    searchParams = new URLSearchParams('view=insights')
+    stubApi(() => Promise.resolve(insightsResponse()))
+    renderPanel()
+
+    await screen.findByText('Top posts')
+    fireEvent.click(screen.getByRole('radio', { name: '7d' }))
+
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith('/app/projects/proj-1/marketing/posts?view=insights&window=7d'),
+    )
+  })
+
   it('selecting the 7d tab updates the URL to window=7d', async () => {
     stubApi(() => Promise.resolve(insightsResponse()))
     renderPanel()
 
     await screen.findByText('Top posts')
-    fireEvent.click(screen.getByRole('tab', { name: '7d' }))
+    fireEvent.click(screen.getByRole('radio', { name: '7d' }))
 
     await waitFor(() =>
-      expect(replace).toHaveBeenCalledWith('/app/projects/proj-1/marketing/insights?window=7d'),
+      expect(replace).toHaveBeenCalledWith('/app/projects/proj-1/marketing/posts?window=7d'),
     )
   })
 
@@ -208,7 +221,7 @@ describe('WhatsWorkingPanel', () => {
     fireEvent.change(screen.getByLabelText('Platform'), { target: { value: 'tiktok' } })
 
     await waitFor(() =>
-      expect(replace).toHaveBeenCalledWith('/app/projects/proj-1/marketing/insights?platform=tiktok'),
+      expect(replace).toHaveBeenCalledWith('/app/projects/proj-1/marketing/posts?platform=tiktok'),
     )
   })
 

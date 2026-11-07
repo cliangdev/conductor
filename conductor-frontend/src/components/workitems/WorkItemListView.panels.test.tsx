@@ -44,6 +44,7 @@ vi.mock('@/lib/workflows', async (importOriginal) => {
 })
 vi.mock('@/components/overview/OverviewPanel', () => ({ OverviewPanel: () => <div data-testid="overview-panel-stub" /> }))
 vi.mock('@/components/roadmap/RoadmapPanel', () => ({ RoadmapPanel: () => <div data-testid="roadmap-panel-stub" /> }))
+vi.mock('@/components/marketing/insights/WhatsWorkingPanel', () => ({ WhatsWorkingPanel: () => <div data-testid="insights-panel-stub" /> }))
 
 import { WorkItemListView } from './WorkItemListView'
 
@@ -124,5 +125,52 @@ describe('Plans and Roadmap panels', () => {
     await waitFor(() => expect(screen.getByRole('tab', { name: /^Active/, selected: true })).toBeInTheDocument())
     expect(screen.queryByTestId('overview-panel-stub')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Filter/ })).toBeInTheDocument()
+  })
+})
+
+describe("What's working panel", () => {
+  const POSTS_VIEW: WorkflowView = { ...BASE_VIEW, slug: 'MARKETING', noun: 'Post', area: 'MARKETING', types: ['POST'], assetTypes: ['facebook_post'] }
+
+  it('shows the tab on a Workflow that declares publish targets', async () => {
+    VIEW = POSTS_VIEW
+    renderList()
+    expect(await screen.findByRole('tab', { name: /^What's working$/ })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /^Plans$/ })).not.toBeInTheDocument()
+  })
+
+  it('does not show it on an Issues / PRD Workflow', async () => {
+    renderList()
+    await screen.findByRole('tab', { name: /^Active/ })
+    expect(screen.queryByRole('tab', { name: /What's working/ })).not.toBeInTheDocument()
+  })
+
+  it('deep-links ?view=insights to the panel, without the toolbar', async () => {
+    VIEW = POSTS_VIEW
+    searchParamsValue = new URLSearchParams('view=insights')
+    renderList()
+    expect(await screen.findByTestId('insights-panel-stub')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /^What's working$/, selected: true })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Filter/ })).not.toBeInTheDocument()
+  })
+
+  it('renders the panel before the Workflow view has loaded', async () => {
+    VIEW = null as unknown as WorkflowView
+    searchParamsValue = new URLSearchParams('view=insights')
+    renderList()
+    expect(await screen.findByTestId('insights-panel-stub')).toBeInTheDocument()
+  })
+
+  it('ignores ?view=insights on a Workflow without publish targets', async () => {
+    searchParamsValue = new URLSearchParams('view=insights')
+    renderList()
+    await waitFor(() => expect(screen.getByRole('tab', { name: /^Active/, selected: true })).toBeInTheDocument())
+    expect(screen.queryByTestId('insights-panel-stub')).not.toBeInTheDocument()
+  })
+
+  it('writes view=insights when the tab is clicked', async () => {
+    VIEW = POSTS_VIEW
+    renderList()
+    await userEvent.click(await screen.findByRole('tab', { name: /^What's working$/ }))
+    expect(replace).toHaveBeenCalledWith('/app/projects/proj-1/engineering/issues?view=insights')
   })
 })

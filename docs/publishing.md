@@ -610,7 +610,7 @@ Read it back with `GET …/work-items/{id}/publish-metrics` (a series per destin
 totals) and `GET /projects/{id}/publish-metrics/top-posts?metric=views` (every destination's latest
 snapshot, ranked) and `GET /projects/{id}/marketing/insights?window=30d` (totals, engagement rate by
 platform, format, hour and weekday, best and worst destinations, and movers against the prior window — the
-"What's working" page in the Marketing area); over MCP, `get_post_analytics`, `list_top_posts` and
+"What's working" tab on the Posts list, `?view=insights`); over MCP, `get_post_analytics`, `list_top_posts` and
 `get_marketing_insights`.
 
 Three things to know: TikTok's read needs the `video.list` scope, so a TikTok account connected before this

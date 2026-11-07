@@ -248,22 +248,7 @@ describe('Sidebar', () => {
     expect(screen.getByText('Marketing')).toBeInTheDocument()
   })
 
-  // ── Marketing insights v1: "What's working" as a sibling entry inside the Marketing area group ──
-
-  it('renders What’s working as a sibling of the Posts entry inside the Marketing group', async () => {
-    (apiGet as Mock).mockResolvedValue([
-      workflow({ id: 'wf-mkt', name: 'MARKETING', area: 'MARKETING', slug: 'MARKETING', noun: 'Post' }),
-    ])
-    render(<Sidebar />)
-
-    const posts = await screen.findByRole('link', { name: /posts/i })
-    const insights = screen.getByRole('link', { name: /what.s working/i })
-    expect(insights).toHaveAttribute('href', '/app/projects/proj-1/marketing/insights')
-    // Same group, same entry list — a sibling row, not a tab inside Posts.
-    expect(posts.parentElement).toBe(insights.parentElement)
-  })
-
-  it('keeps a second Marketing workflow in the same group alongside What’s working and Media', async () => {
+  it('keeps a second Marketing workflow in the same group alongside Creatives and Media', async () => {
     (apiGet as Mock).mockResolvedValue([
       workflow({ id: 'wf-mkt', name: 'MARKETING', area: 'MARKETING', slug: 'MARKETING', noun: 'Post' }),
       workflow({
@@ -278,7 +263,7 @@ describe('Sidebar', () => {
     render(<Sidebar />)
 
     await screen.findByRole('link', { name: /campaigns/i })
-    // One Marketing section, holding both Workflow entries plus insights, creatives and media — in nav order.
+    // One Marketing section, holding both Workflow entries plus creatives and media — in nav order.
     expect(screen.getAllByText('Marketing')).toHaveLength(1)
     const group = screen.getByText('Marketing').nextElementSibling as HTMLElement
     const hrefs = within(group).getAllByRole('link').map((l) => l.getAttribute('href'))
@@ -286,7 +271,6 @@ describe('Sidebar', () => {
       '/app/projects/proj-1/marketing/overview',
       '/app/projects/proj-1/marketing/posts',
       '/app/projects/proj-1/marketing/campaigns',
-      '/app/projects/proj-1/marketing/insights',
       '/app/projects/proj-1/marketing/creatives',
       '/app/projects/proj-1/marketing/media',
     ])
@@ -304,12 +288,20 @@ describe('Sidebar', () => {
     expect(posts.parentElement).toBe(creatives.parentElement)
   })
 
-  it('does not render What’s working or Media when no Marketing workflow is in the nav', async () => {
+  it('has no What’s working row; it is a tab on the Posts list', async () => {
+    (apiGet as Mock).mockResolvedValue([
+      workflow({ id: 'wf-mkt', name: 'MARKETING', area: 'MARKETING', slug: 'MARKETING', noun: 'Post' }),
+    ])
+    render(<Sidebar />)
+    await screen.findByRole('link', { name: /posts/i })
+    expect(screen.queryByRole('link', { name: /what.s working/i })).not.toBeInTheDocument()
+  })
+
+  it('does not render Creatives or Media when no Marketing workflow is in the nav', async () => {
     (apiGet as Mock).mockResolvedValue([workflow({})])
     render(<Sidebar />)
 
     await screen.findByRole('link', { name: /issues/i })
-    expect(screen.queryByRole('link', { name: /what.s working/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /^creatives$/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /^media$/i })).not.toBeInTheDocument()
   })
