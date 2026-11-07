@@ -260,6 +260,7 @@ interface OverviewChannel {
   label: string
   status: string
   dataCompleteThrough?: string | null
+  noDataYet?: boolean
   mismatch?: OverviewMismatch | null
   connectHint?: { connectors?: { connectorId: string; name: string }[] } | null
   metrics: OverviewMetric[]
@@ -370,7 +371,9 @@ function trimMetric(
     provisional: flags && windowHasProvisionalDay(m, dataCompleteThrough) ? true : null,
     smallSample: flags && m.insufficientData ? true : null,
     target: m.target ? trimTarget(m.target) : null,
-    // Standing against the target: ON_TRACK, WATCH (close), OFF_TRACK or TOO_EARLY; omitted without a target.
+    // Standing against the target: ON_TRACK; WATCH (close, or a rate miss too small a sample to call real); OFF_TRACK;
+    // TOO_EARLY; STOPPED (a snapshot the feed stopped sending, so it is not judged; `note` says when it was last reported).
+    // Omitted without a target.
     // missPct is the shortfall as a fraction of the (prorated) target.
     status: m.status && m.status !== 'NO_TARGET' ? m.status : null,
     missPct: m.status && m.status !== 'NO_TARGET' ? round4(m.missPct) : null,
@@ -402,7 +405,9 @@ function trimChannel(c: OverviewChannel, withSeries: boolean): Record<string, un
     channel: c.channel,
     label: c.label,
     status: c.status,
-    dataCompleteThrough: c.dataCompleteThrough,
+    // A channel with no complete day of data yet has a stand-in end date, so it carries noDataYet instead.
+    dataCompleteThrough: c.noDataYet ? null : c.dataCompleteThrough,
+    noDataYet: c.noDataYet ? true : null,
     connect: c.status === 'NOT_CONNECTED' ? c.connectHint?.connectors?.map((x) => x.name).join(', ') || null : null,
     // MISMATCH: a connector's own figure and a second source (the product backend's reference or a direct platform
     // read) differ outside the band: 1 unit for counts under 50, else 2%. get_verification_ledger lists every one.

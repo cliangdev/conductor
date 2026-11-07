@@ -61,4 +61,14 @@ public interface ChannelMetricDailyRepository extends JpaRepository<ChannelMetri
                                                 @Param("channel") String channel,
                                                 @Param("connectionIds") java.util.Collection<String> connectionIds,
                                                 @Param("upTo") LocalDate upTo);
+
+    /** Per stored metric name and dimension, the latest day with a row on or before {@code upTo}: [metric, dimensionKey, day] rows. */
+    @Query("select d.metric, d.dimensionKey, max(d.day) from ChannelMetricDaily d where d.projectId = :projectId"
+            + " and d.channel = :channel and d.connectionId in :connectionIds and d.metric in :metrics"
+            + " and d.day <= :upTo group by d.metric, d.dimensionKey")
+    List<Object[]> latestDayByMetric(@Param("projectId") String projectId,
+                                     @Param("channel") String channel,
+                                     @Param("connectionIds") java.util.Collection<String> connectionIds,
+                                     @Param("metrics") java.util.Collection<String> metrics,
+                                     @Param("upTo") LocalDate upTo);
 }

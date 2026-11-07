@@ -15,9 +15,10 @@ Status colours (also say it in text, never colour alone):
 | Status | Label | Variable |
 |---|---|---|
 | ON_TRACK | On target | `--ok` |
-| WATCH | Close | `--warn` |
+| WATCH | Watch | `--warn` |
 | OFF_TRACK | Off target | `--bad` |
 | TOO_EARLY | Too early | `--muted` |
+| STOPPED | Stopped arriving | `--warn` |
 | NO_TARGET | No target | `--muted` |
 
 ## Sections

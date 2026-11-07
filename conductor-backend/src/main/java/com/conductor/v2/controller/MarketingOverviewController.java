@@ -112,7 +112,8 @@ public class MarketingOverviewController implements MarketingOverviewApi {
                 .lastFetchedAt(c.lastFetchedAt())
                 .targetsEditable(c.targetsEditable())
                 .mismatches(c.mismatches().stream().map(MarketingOverviewController::toMismatch).toList())
-                .partial(c.partial());
+                .partial(c.partial())
+                .noDataYet(c.noDataYet());
         if (c.mismatch() != null) {
             channel.mismatch(toMismatch(c.mismatch()));
         }

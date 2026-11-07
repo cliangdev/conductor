@@ -23,6 +23,7 @@ import com.conductor.integration.ingest.ChannelDimensionStateStore;
 import com.conductor.marketing.overview.MetricCatalog.Dimension;
 import com.conductor.marketing.overview.MetricCatalog.Metric;
 import com.conductor.marketing.overview.MetricCatalog.Unit;
+import com.conductor.marketing.promises.WilsonInterval;
 import com.conductor.marketing.verification.MarketingPlatformRead;
 import com.conductor.marketing.verification.MarketingPlatformReadRepository;
 import com.conductor.marketing.verification.ReconciliationBand;
@@ -158,20 +159,53 @@ public class MarketingOverviewQueryService {
         }
     }
 
-    /** ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY or NO_TARGET; {@code missPct} is the shortfall as a fraction of the target. */
-    public record TargetStatus(String status, Double missPct) {}
+    // A metric's standing against its target (see targetStatus).
+    public static final String ON_TRACK = "ON_TRACK";
+    public static final String WATCH = "WATCH";
+    public static final String OFF_TRACK = "OFF_TRACK";
+    public static final String TOO_EARLY = "TOO_EARLY";
+    /** A targeted snapshot the feed stopped sending (see {@link #stoppedArriving}): not judged. */
+    public static final String STOPPED = "STOPPED";
+    public static final String NO_TARGET = "NO_TARGET";
+
+    /**
+     * ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY, STOPPED or NO_TARGET; {@code missPct} is the shortfall as a fraction of
+     * the target. {@code closeToTarget} is true when the target is met or missed by no more than half the watch
+     * band: an open off-track alert resolves only then, so a value hovering at the band's edge, or inside the
+     * Wilson interval only by chance, does not resolve and re-raise as the window rolls.
+     */
+    public record TargetStatus(String status, Double missPct, boolean closeToTarget) {
+        public TargetStatus(String status, Double missPct) {
+            this(status, missPct, ON_TRACK.equals(status));
+        }
+    }
 
     /** {@code insufficientData}: the feed reported fewer than {@link #MIN_SAMPLE} observations behind the window.
      *  {@code funnelOrder}: the metric's place among the in-app funnel stages (PRODUCT only), else null.
      *  {@code definition}: where the number comes from and what it counts (every catalog metric has one).
-     *  {@code note}: a plain sentence about why the value reads as it does, set only when the value is null
-     *  because the stored data cannot answer (see {@link Aggregation#WINDOW_UNIQUE}); else null. */
+     *  {@code note}: a plain sentence about why the value reads as it does: the stored data cannot answer (see
+     *  {@link Aggregation#WINDOW_UNIQUE}), or the snapshot stopped arriving (see {@link #stoppedArriving}); else null.
+     *  Internal, read by the alerts and not part of the API: {@code closeToTarget} (see
+     *  {@link TargetStatus#closeToTarget()}) and {@code lastReportedOn}, the last day a STOPPED metric was reported. */
     public record MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous, Double change,
                              Double changePct, boolean noise, int provisionalDays, TargetView target,
                              List<Point> series, LocalDate historyStartsOn, LocalDate asOf,
                              boolean insufficientData, Integer funnelOrder, String aggregation, String status,
                              Double missPct, Long sampleSize, String area, String description, Integer headline,
-                             String basis, MetricCatalog.Definition definition, String note) {
+                             String basis, MetricCatalog.Definition definition, String note,
+                             boolean closeToTarget, LocalDate lastReportedOn) {
+        public MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous,
+                          Double change, Double changePct, boolean noise, int provisionalDays, TargetView target,
+                          List<Point> series, LocalDate historyStartsOn, LocalDate asOf, boolean insufficientData,
+                          Integer funnelOrder, String aggregation, String status, Double missPct, Long sampleSize,
+                          String area, String description, Integer headline, String basis,
+                          MetricCatalog.Definition definition, String note) {
+            this(metric, label, unit, goodDirection, value, previous, change, changePct, noise, provisionalDays,
+                    target, series, historyStartsOn, asOf, insufficientData, funnelOrder, aggregation, status,
+                    missPct, sampleSize, area, description, headline, basis, definition, note,
+                    ON_TRACK.equals(status), null);
+        }
+
         public MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous,
                           Double change, Double changePct, boolean noise, int provisionalDays, TargetView target,
                           List<Point> series, LocalDate historyStartsOn, LocalDate asOf, boolean insufficientData,
@@ -232,12 +266,23 @@ public class MarketingOverviewQueryService {
      * {@code mismatch} is the entry of {@code mismatches} with the largest gap (a backend one when there is any),
      * for clients that read one; {@code mismatches} lists every second source that disagrees, largest gap first.
      * {@code partial} is true only in a fixed window, when the channel's settled data ends before the window's
-     * last day (null otherwise: a rolling window always ends where the data does).
+     * last day (null otherwise: a rolling window always ends where the data does). {@code noDataYet} is true only
+     * for a connected channel with no complete day of data, ever: its {@code dataCompleteThrough} is then the
+     * stand-in end of its window, not a day it has data for (null otherwise).
      */
     public record ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
                               List<ConnectionView> connections, ConnectHint connectHint,
                               List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch,
-                              boolean targetsEditable, List<MismatchView> mismatches, Boolean partial) {
+                              boolean targetsEditable, List<MismatchView> mismatches, Boolean partial,
+                              Boolean noDataYet) {
+        public ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
+                           List<ConnectionView> connections, ConnectHint connectHint,
+                           List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch,
+                           boolean targetsEditable, List<MismatchView> mismatches, Boolean partial) {
+            this(channel, label, status, lastFetchedAt, connections, connectHint, metrics, dataCompleteThrough,
+                    mismatch, targetsEditable, mismatches, partial, null);
+        }
+
         public ChannelView(String channel, String label, String status, OffsetDateTime lastFetchedAt,
                            List<ConnectionView> connections, ConnectHint connectHint,
                            List<MetricView> metrics, LocalDate dataCompleteThrough, MismatchView mismatch,
@@ -932,6 +977,8 @@ public class MarketingOverviewQueryService {
         final LocalDate settledThrough;
         /** The channel's rows (null when it has no connection), so the funnel can re-read them over its own window. */
         ChannelData data;
+        /** True when the channel is connected but has no complete day of data, ever. */
+        boolean noDataYet;
 
         ChannelBuild(MetricCatalog.Channel channel, String status, OffsetDateTime lastFetchedAt,
                      List<ConnectionView> connections, ConnectHint connectHint, List<MetricView> metrics,
@@ -1007,7 +1054,7 @@ public class MarketingOverviewQueryService {
             List<MetricView> shown = headlineOnly ? headlineMetrics() : metrics;
             return new ChannelView(channel.channel().name(), channel.label(), status, lastFetchedAt, connections,
                     connectHint, shown, window.to(), legacyMismatch(), channel.channel() != MetricChannel.PRODUCT,
-                    mismatches, partial);
+                    mismatches, partial, noDataYet ? Boolean.TRUE : null);
         }
     }
 
@@ -1062,12 +1109,13 @@ public class MarketingOverviewQueryService {
         // Only a fixed window can outrun the data: a rolling one ends where the channel's data does.
         boolean partial = ctx.fixed() && settledThrough != null && settledThrough.isBefore(ctx.fixedTo);
         ChannelData data = new ChannelData(channel, rows);
+        Map<String, LocalDate> reportedBefore = snapshotsBeforeLookback(ctx, channel, connectionIds, data);
+        // an optional snapshot with a target that was reported before the lookback stays, so its stop is seen
+        List<Metric> visible = channel.visibleMetrics().stream()
+                .filter(m -> !m.optional() || data.hasRows(m) || reportedBefore.containsKey(m.key())).toList();
         List<MetricView> metrics = new ArrayList<>();
-        for (Metric metric : channel.visibleMetrics()) {
-            if (metric.optional() && !data.hasRows(metric)) {
-                continue;
-            }
-            metrics.add(metricView(ctx, channel, data, metric, window, partial));
+        for (Metric metric : visible) {
+            metrics.add(metricView(ctx, channel, data, metric, window, partial, reportedBefore));
         }
         List<MismatchView> mismatches = mismatches(ctx, channel, data, window, settledThrough);
         String status = olderSettled != null ? "STALE"
@@ -1075,7 +1123,59 @@ public class MarketingOverviewQueryService {
         ChannelBuild built = new ChannelBuild(channel, status, lastFetchedAt, connectionViews, hint, metrics, window,
                 mismatches, partial ? Boolean.TRUE : null, settledThrough);
         built.data = data;
+        built.noDataYet = settledThrough == null;
         return built;
+    }
+
+    /** The target on {@code metric}: the product feed's own, else one a person set in Conductor; null with none. */
+    private static TargetView targetOf(Context ctx, MetricCatalog.Channel channel, Metric metric) {
+        TargetView feedTarget = channel.channel() == MetricChannel.PRODUCT ? ctx.feedTargets.get(metric.key()) : null;
+        if (feedTarget != null) {
+            return feedTarget;
+        }
+        ChannelMetricTarget target = ctx.targets.get(channel.channel().name() + "/" + metric.key());
+        return target == null ? null : new TargetView(target.getTarget().doubleValue(), target.getDirection());
+    }
+
+    /**
+     * For the targeted snapshots (levels) with no row inside the lookback, the last day each was reported before it,
+     * by metric key, so a snapshot the feed stopped sending long ago still says when it was last read (see
+     * {@link #stoppedArriving}) instead of reading as never reported. A row counts for a level exactly as
+     * {@link ChannelData} reads it. One query, and none in the usual case of every targeted level having rows.
+     *
+     * <p>Only snapshots: a feed sends a reading for one every day, so its absence means it stopped. A flow with no
+     * rows may simply have had no events (not every feed writes zero days), so it is never called stopped.
+     */
+    private Map<String, LocalDate> snapshotsBeforeLookback(Context ctx, MetricCatalog.Channel channel,
+                                                           Set<String> connectionIds, ChannelData data) {
+        LocalDate end = ctx.fixed() ? ctx.fixedTo : ctx.today;
+        List<Metric> missing = channel.visibleMetrics().stream()
+                .filter(m -> m.agg() == Aggregation.LEVEL && data.latestDay(m, end) == null
+                        && targetOf(ctx, channel, m) != null)
+                .toList();
+        if (missing.isEmpty()) {
+            return Map.of();
+        }
+        List<Object[]> latest = dailyRepository.latestDayByMetric(ctx.projectId, channel.channel().name(),
+                connectionIds, missing.stream().map(Metric::stored).collect(java.util.stream.Collectors.toSet()),
+                ctx.historyStart.minusDays(1));
+        Map<String, LocalDate> out = new HashMap<>();
+        for (Metric metric : missing) {
+            for (Object[] row : latest) {
+                if (metric.stored().equals(row[0]) && readsStoredRow(channel, metric, (String) row[1])) {
+                    out.merge(metric.key(), (LocalDate) row[2], (a, b) -> b.isAfter(a) ? b : a);
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Whether the overview would read a stored row of {@code dimensionKey} as {@code metric}'s: it loads per-dimension
+     * rows only for a channel that reads them, then applies {@link ChannelData#reads}.
+     */
+    static boolean readsStoredRow(MetricCatalog.Channel channel, Metric metric, String dimensionKey) {
+        return (dimensionKey.isEmpty() || channel.usesDimensionSeries()) && ChannelData.reads(metric, dimensionKey);
     }
 
     /** The slowest connection's latest settled day before the lookback began, or null if none has one. */
@@ -1279,7 +1379,7 @@ public class MarketingOverviewQueryService {
                     .filter(m -> m.agg() == Aggregation.WINDOW_UNIQUE).toList();
             for (ChannelMetricDaily row : rows) {
                 for (Metric metric : readers.getOrDefault(row.getMetric(), List.of())) {
-                    if (reads(metric, row)) {
+                    if (reads(metric, row.getDimensionKey())) {
                         add(metric, row);
                     }
                 }
@@ -1295,13 +1395,13 @@ public class MarketingOverviewQueryService {
             return rows;
         }
 
-        /** Whether {@code row} belongs to {@code metric}: its one dimension key, or else the '' total (a level or a per-dimension metric reads them all). */
-        private static boolean reads(Metric metric, ChannelMetricDaily row) {
+        /** Whether a row of {@code dimensionKey} belongs to {@code metric}: its one dimension key, or else the '' total (a level or a per-dimension metric reads them all). */
+        static boolean reads(Metric metric, String dimensionKey) {
             if (metric.dimensionKey() != null) {
-                return metric.dimensionKey().equals(row.getDimensionKey());
+                return metric.dimensionKey().equals(dimensionKey);
             }
             // a total metric: its per-dimension rows (loaded for the channel's level series) would double count
-            return metric.agg() == Aggregation.LEVEL || metric.fromDimensions() || row.getDimensionKey().isEmpty();
+            return metric.agg() == Aggregation.LEVEL || metric.fromDimensions() || dimensionKey.isEmpty();
         }
 
         private void add(Metric metric, ChannelMetricDaily row) {
@@ -1554,14 +1654,16 @@ public class MarketingOverviewQueryService {
     /**
      * @param partial the channel's settled data ends before a fixed window's last day: its flows cover fewer days
      *                than the previous window, so they carry no comparison with it
+     * @param reportedBefore for targeted levels with no row in the lookback, the last day each was reported before
+     *                       it (see {@link #snapshotsBeforeLookback})
      */
     private MetricView metricView(Context ctx, MetricCatalog.Channel channel, ChannelData data, Metric metric,
-                                  Window flowWindow, boolean partial) {
+                                  Window flowWindow, boolean partial, Map<String, LocalDate> reportedBefore) {
         // A level is a snapshot, not a flow: its value is the latest snapshot at or before today whatever the
         // flow window (in a fixed window, at or before its last day), and its previous is the snapshot one window
         // earlier than that.
-        LocalDate asOf = metric.agg() == Aggregation.LEVEL
-                ? data.latestDay(metric, ctx.fixed() ? ctx.fixedTo : ctx.today) : null;
+        LocalDate end = ctx.fixed() ? ctx.fixedTo : ctx.today;
+        LocalDate asOf = metric.agg() == Aggregation.LEVEL ? data.latestDay(metric, end) : null;
         Window w = asOf != null ? windowEnding(ctx, asOf) : flowWindow;
         Double value = data.periodValue(metric, w.from(), w.to());
         Double previous = data.periodValue(metric, w.previousFrom(), w.previousTo());
@@ -1600,11 +1702,7 @@ public class MarketingOverviewQueryService {
             series.add(new Point(day, dayValue, afterWindow || data.isProvisional(metric, day)));
         }
 
-        ChannelMetricTarget target = ctx.targets.get(channel.channel().name() + "/" + metric.key());
-        TargetView feedTarget = channel.channel() == MetricChannel.PRODUCT ? ctx.feedTargets.get(metric.key()) : null;
-        TargetView targetView = feedTarget != null ? feedTarget
-                : target == null ? null
-                : new TargetView(target.getTarget().doubleValue(), target.getDirection());
+        TargetView targetView = targetOf(ctx, channel, metric);
         // A feed that reports how many observations stand behind a number decides for itself: too few is
         // insufficient data. Otherwise the change detector judges.
         Long sample = data.sampleSize(metric, w.from(), w.to());
@@ -1614,52 +1712,95 @@ public class MarketingOverviewQueryService {
         LocalDate historyStartsOn = previous == null
                 ? (metric.agg() == Aggregation.WINDOW_UNIQUE ? data.firstWindowUniqueDay(metric, ctx.days) : firstDay)
                 : null;
-        // A window-unique count that cannot be read says why, and is never rebuilt from the daily counts.
-        String note = value == null ? windowUniqueReason(metric, w) : null;
-        // A rate with no reported sample is judged by how many it was divided over (its denominator's total).
-        Long statusSample = sample;
-        if (statusSample == null && metric.agg() == Aggregation.DERIVED
+        // A snapshot the feed stopped sending says when it was last reported, and a targeted one is not judged: a
+        // reading that old says where it was, not where it is. A window-unique count that cannot be read says why,
+        // and is never rebuilt from the daily counts.
+        LocalDate lastReported = asOf != null ? asOf : reportedBefore.get(metric.key());
+        boolean stopped = stoppedArriving(lastReported, flowWindow.to());
+        String note = stopped ? stoppedNote(channel, lastReported, flowWindow.to())
+                : value == null ? windowUniqueReason(metric, w) : null;
+        // A rate is divided over its denominator's total: the n of its interval, and its sample when the feed
+        // reported none.
+        Long divisor = null;
+        if (metric.agg() == Aggregation.DERIVED
                 && channel.metric(metric.denominator()).filter(c -> c.unit() == Unit.COUNT).isPresent()) {
             Double denominator = data.periodValue(channel.metric(metric.denominator()).orElseThrow(), w.from(), w.to());
-            statusSample = denominator == null ? null : Math.round(denominator);
+            divisor = denominator == null ? null : Math.round(denominator);
         }
-        TargetStatus targetStatus = targetStatus(metric, value, targetView, statusSample, ctx.days);
+        Long statusSample = sample != null ? sample : divisor;
+        TargetStatus targetStatus = stopped && targetView != null ? new TargetStatus(STOPPED, null)
+                : targetStatus(metric, value, targetView, statusSample, divisor != null ? divisor : statusSample,
+                        ctx.days);
         if (targetView != null) {
             targetView = targetView.withEffectiveValue(effectiveTarget(metric, targetView, ctx.days));
         }
         return new MetricView(metric.key(), metric.label(), metric.unit(), metric.good().name(), value, previous,
                 change, changePct, noise, provisionalDays, targetView, series, historyStartsOn, asOf, insufficient, metric.funnelOrder(),
                 metric.agg().name(), targetStatus.status(), targetStatus.missPct(), statusSample, metric.area(),
-                metric.description(), metric.headline(), metric.basis(), metric.definition(), note);
+                metric.description(), metric.headline(), metric.basis(), metric.definition(), note,
+                targetStatus.closeToTarget(), STOPPED.equals(targetStatus.status()) ? lastReported : null);
     }
 
     /**
      * Where {@code value} stands against its target. NO_TARGET with none; TOO_EARLY with no value, or for a rate
      * (a PERCENT metric or a ratio) resting on fewer than {@link #MIN_SAMPLE} observations; ON_TRACK when met in
      * the target's direction; WATCH when it misses by no more than the watch band (default
-     * {@link #DEFAULT_WATCH_BAND_PCT}%) of the target; otherwise OFF_TRACK. A count or currency total is compared
+     * {@link #DEFAULT_WATCH_BAND_PCT}%) of the target, or when it is a share over a known {@code n} whose 95% Wilson
+     * interval still contains the target (4 of 32 against 20% is a miss chance alone makes one time in five);
+     * otherwise OFF_TRACK. A count or currency total is compared
      * with its target prorated from the window the target declares (feed targets only; none means compared as stated) to {@code windowDays}.
+     *
+     * @param sample the observations behind the value, for the {@link #MIN_SAMPLE} gate
+     * @param n      what a share was divided over (its denominator's total), for the interval and the same gate;
+     *               null when unknown
      */
-    static TargetStatus targetStatus(Metric metric, Double value, TargetView target, Long sample, int windowDays) {
+    static TargetStatus targetStatus(Metric metric, Double value, TargetView target, Long sample, Long n,
+                                     int windowDays) {
         if (target == null) {
-            return new TargetStatus("NO_TARGET", null);
+            return new TargetStatus(NO_TARGET, null);
         }
         boolean rate = metric.unit() == Unit.PERCENT || metric.agg() == Aggregation.DERIVED;
-        if (value == null || (rate && sample != null && sample < MIN_SAMPLE)) {
-            return new TargetStatus("TOO_EARLY", null);
+        if (value == null || (rate && ((sample != null && sample < MIN_SAMPLE) || (n != null && n < MIN_SAMPLE)))) {
+            return new TargetStatus(TOO_EARLY, null);
         }
         double expected = effectiveTarget(metric, target, windowDays);
         boolean up = "UP".equals(target.direction());
         if (up ? value >= expected : value <= expected) {
-            return new TargetStatus("ON_TRACK", 0.0);
+            return new TargetStatus(ON_TRACK, 0.0);
         }
         if (expected <= 0) {
-            return new TargetStatus("OFF_TRACK", null);
+            return new TargetStatus(OFF_TRACK, null);
         }
         double miss = up ? (expected - value) / expected : (value - expected) / expected;
         double band = (target.watchBandPct() != null ? target.watchBandPct()
                 : metric.watchBandPct() != null ? metric.watchBandPct() : DEFAULT_WATCH_BAND_PCT) / 100;
-        return new TargetStatus(miss <= band + 1e-9 ? "WATCH" : "OFF_TRACK", miss);
+        if (miss <= band + 1e-9) {
+            return new TargetStatus(WATCH, miss, miss <= band / 2 + 1e-9);
+        }
+        boolean couldBeChance = metric.unit() == Unit.PERCENT && n != null && n > 0
+                && value >= 0 && value <= 1 && expected <= 1 && wilsonContains(value, n, expected);
+        return new TargetStatus(couldBeChance ? WATCH : OFF_TRACK, miss, false);
+    }
+
+    /** Whether {@code target} lies inside the 95% Wilson interval of {@code rate} (0 to 1) over {@code n}. */
+    static boolean wilsonContains(double rate, long n, double target) {
+        WilsonInterval.Range range = WilsonInterval.of(rate * n, n);
+        return target >= range.low() && target <= range.high();
+    }
+
+    /**
+     * A snapshot (a level) the feed stopped sending while the rest of its channel kept arriving: last reported more
+     * than {@link #LAGGING_DAYS} days before the channel's data ends. A targeted one is {@link #STOPPED}, not on or
+     * off target, and the alerts report the stop.
+     */
+    public static boolean stoppedArriving(LocalDate lastReported, LocalDate channelThrough) {
+        return lastReported != null && channelThrough != null
+                && lastReported.isBefore(channelThrough.minusDays(LAGGING_DAYS));
+    }
+
+    private static String stoppedNote(MetricCatalog.Channel channel, LocalDate asOf, LocalDate channelThrough) {
+        return "Last reported " + asOf + "; the rest of the " + channel.label() + " data runs to " + channelThrough
+                + ".";
     }
 
     /**

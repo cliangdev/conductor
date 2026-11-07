@@ -50,7 +50,7 @@ function MetricRow({
           <Sparkline series={metric.series} label={metric.label} />
         </div>
       </div>
-      {metric.value == null && metric.note && <p className="text-xs text-muted-foreground">{metric.note}</p>}
+      {metric.note && <p className="text-xs text-muted-foreground">{metric.note}</p>}
       <ChangeLine metric={metric} />
       {showFlags && <MetricFlags metric={metric} />}
       <TargetNote
@@ -101,7 +101,10 @@ export function ChannelCard({
           {channel.lastFetchedAt && (
             <p className="mb-3 text-xs text-muted-foreground">Last updated {timeAgo(channel.lastFetchedAt)}</p>
           )}
-          {channel.status === 'STALE' && channel.dataCompleteThrough && (
+          {channel.status === 'STALE' && channel.noDataYet && (
+            <p className="mb-3 text-xs text-muted-foreground">No data yet. Check the connection in Integrations.</p>
+          )}
+          {channel.status === 'STALE' && !channel.noDataYet && channel.dataCompleteThrough && (
             <p className="mb-3 text-xs text-muted-foreground">No new data since {shortDate(channel.dataCompleteThrough)}</p>
           )}
           {channel.status === 'MISMATCH' && mismatchLine && (

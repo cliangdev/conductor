@@ -141,7 +141,7 @@ limits:
 | `area` | `ACQUISITION`, `ACTIVATION`, `RETENTION` or `REVENUE`: where the metric sits on a growth scorecard. |
 | `description` | Up to 240 characters, what the metric counts in plain words, for example `"Installs that started a free trial"`. Shown under the metric. |
 | `headline` | Whole number from 1: the priority among your headline metrics. The in-app card leads with them in that order. |
-| `target.watchBandPct` | Percent of the target within which a miss reads as **Close** rather than **Off target**. Default 10. |
+| `target.watchBandPct` | Percent of the target within which a miss reads as **Watch** rather than **Off target**. Default 10. |
 | `restatementDays` | Up to 60 (v1: 30), so cohorts have time to mature. |
 | `dimension` | Also `keyword:<id>:<text>` and `ad:<id>:<name>`, each at most 190 characters after the prefix. |
 
@@ -219,9 +219,10 @@ gets a standing:
 | Status | Shown as | When |
 |---|---|---|
 | `ON_TRACK` | On target | The target is met, in its `direction`. |
-| `WATCH` | Close | Missed by no more than `watchBandPct` (default 10%) of the target. |
+| `WATCH` | Watch | Missed by no more than `watchBandPct` (default 10%) of the target, or a `PERCENT` rate whose miss is too small a sample to call real: the target is still inside the 95% Wilson interval drawn over the rate's denominator. |
 | `OFF_TRACK` | Off target | Missed by more. |
 | `TOO_EARLY` | Too early | There is no value yet, or the metric is a rate (`PERCENT` unit or `RATIO`) resting on fewer than 20 observations. |
+| `STOPPED` | Stopped arriving | A snapshot (`LEVEL`) your feed last sent more than 7 days before the rest of its data. It is not judged until it arrives again; the metric's note says when it was last reported. A flow is never `STOPPED`: send zero days, since a day with no rows reads as no data. |
 | `NO_TARGET` | no label | The metric has no target. |
 
 `missPct` is the shortfall as a fraction of the target (0.05 is 5% short; 0 when met). A **count or currency

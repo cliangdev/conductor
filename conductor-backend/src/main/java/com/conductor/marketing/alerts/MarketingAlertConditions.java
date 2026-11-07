@@ -2,6 +2,7 @@ package com.conductor.marketing.alerts;
 
 import com.conductor.marketing.alerts.MarketingAlert.Kind;
 import com.conductor.marketing.budget.BudgetPacingService.TrippedRule;
+import com.conductor.marketing.overview.MarketingOverviewQueryService;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.ChannelView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.ConnectionView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.MetricView;
@@ -17,6 +18,7 @@ import com.conductor.marketing.verification.VerificationLedgerService.LedgerRow;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -26,9 +28,15 @@ import java.util.function.BooleanSupplier;
  *
  * <p><b>What never alerts.</b> An off-track metric is only reported when the overview judged it OFF_TRACK, did not
  * flag it as noise, had enough data behind it and rests on settled days; a status of TOO_EARLY (no value, or a rate
- * on too small a sample) is never OFF_TRACK, so it falls out by construction and is also checked explicitly. The
+ * on too small a sample) is never OFF_TRACK, so it falls out by construction. The
  * overview already compares only settled days for mismatches and stop rules, so provisional days cannot make
  * either.
+ *
+ * <p><b>What never resolves.</b> An open off-track alert resolves only on evidence the metric recovered: its
+ * target met, or missed by no more than half the watch band ({@code closeToTarget}). Anything short of that (a miss
+ * at the band's edge, a rate whose miss only its sample size excuses, a value too early to judge, noise, a metric
+ * that stopped arriving) holds it: neither raised again nor resolved. Otherwise a value on either edge would resolve
+ * and re-raise as the window rolls.
  */
 final class MarketingAlertConditions {
 
@@ -43,33 +51,34 @@ final class MarketingAlertConditions {
     static final String TRUST_FALLBACK = "Trust the connector until the gap is explained.";
     private static final String STALE = "STALE";
     private static final String LIVE = "LIVE";
-    private static final String OFF_TRACK = "OFF_TRACK";
-    private static final String TOO_EARLY = "TOO_EARLY";
 
     private MarketingAlertConditions() {
     }
 
     /**
-     * Mismatches, stale channels and off-track targets from one overview.
+     * Mismatches, stale channels, stopped snapshots and off-track targets from one overview.
      *
      * @param ledger the verification ledger for the same window, or null when it could not be read (a mismatch
      *               then says to trust the connector until explained)
      * @param pulledConnectionId the connection whose pull triggered this evaluation, or null
      * @param pulledConnectionHealthy whether that connection's health is fine; asked at most once and only when a
      *                                stale channel contains it and no other connection in it is stale
+     * @param held receives the keys this overview cannot judge (see the class comment): an alert open on one is
+     *             neither raised again nor resolved
      */
     static List<MarketingAlert> fromOverview(Overview overview, Ledger ledger, String pulledConnectionId,
-                                             BooleanSupplier pulledConnectionHealthy) {
+                                             BooleanSupplier pulledConnectionHealthy, Set<String> held) {
         List<MarketingAlert> alerts = new ArrayList<>();
         if (overview == null || overview.channels() == null) {
             return alerts;
         }
         for (ChannelView channel : overview.channels()) {
             mismatches(channel, ledger, alerts);
-            if (isStale(channel, pulledConnectionId, pulledConnectionHealthy)) {
+            boolean stale = isStale(channel, pulledConnectionId, pulledConnectionHealthy);
+            if (stale) {
                 alerts.add(stale(channel));
             }
-            offTrack(channel, alerts);
+            targets(channel, stale, alerts, held);
         }
         return alerts;
     }
@@ -156,31 +165,75 @@ final class MarketingAlertConditions {
         return !(containsPulled && healthy.getAsBoolean());
     }
 
+    /**
+     * "No new data since" the last settled day. A channel with no complete day of data, ever, says that instead:
+     * the overview gives it a stand-in end date, not a day it had data for.
+     */
     private static MarketingAlert stale(ChannelView channel) {
-        String since = channel.dataCompleteThrough() != null ? " since " + channel.dataCompleteThrough()
-                : channel.lastFetchedAt() != null ? " since " + channel.lastFetchedAt().toLocalDate() : "";
-        String text = "No new " + channel.label() + " data" + (since.isEmpty() ? " has arrived recently" : since);
-        return new MarketingAlert(Kind.STALE.keyOf(channel.channel()), Kind.STALE, channel.channel(),
-                channel.label() + " data is stale", text, List.of(), 0);
+        boolean noData = Boolean.TRUE.equals(channel.noDataYet());
+        String text;
+        if (noData) {
+            text = channel.label() + " has not delivered a complete day of data yet. Check its connection in"
+                    + " Integrations.";
+        } else {
+            String since = channel.dataCompleteThrough() != null ? " since " + channel.dataCompleteThrough()
+                    : channel.lastFetchedAt() != null ? " since " + channel.lastFetchedAt().toLocalDate() : "";
+            text = "No new " + channel.label() + " data" + (since.isEmpty() ? " has arrived recently" : since);
+        }
+        String title = channel.label() + (noData ? " has no data yet" : " data is stale");
+        return new MarketingAlert(Kind.STALE.keyOf(channel.channel()), Kind.STALE, channel.channel(), title, text,
+                List.of(), 0);
     }
 
     // ---- off track -----------------------------------------------------------------------------------
 
-    private static void offTrack(ChannelView channel, List<MarketingAlert> out) {
+    /**
+     * Per targeted metric: a snapshot that stopped arriving is reported as stopped and its off-track key held; a real
+     * miss is reported off track; anything short of a recovery ({@code closeToTarget}) holds its off-track key. While
+     * the channel's own stale alert is raised it covers the gap: a stopped snapshot there is held, not reported a
+     * second time, and nothing in it has arrived again.
+     *
+     * @param channelStale whether this evaluation raises the channel's stale alert (see {@link #isStale})
+     */
+    private static void targets(ChannelView channel, boolean channelStale, List<MarketingAlert> out,
+                                Set<String> held) {
         if (channel.metrics() == null) {
             return;
         }
         for (MetricView metric : channel.metrics()) {
-            if (isRealOffTrack(metric)) {
+            if (metric.target() == null) {
+                continue;
+            }
+            String offTrackKey = Kind.OFF_TRACK.keyOf(channel.channel(), metric.metric());
+            String stoppedKey = Kind.STALE.keyOf(channel.channel(), metric.metric());
+            if (MarketingOverviewQueryService.STOPPED.equals(metric.status())) {
+                held.add(offTrackKey);
+                if (!channelStale) {
+                    out.add(stopped(channel, metric));
+                }
+            } else if (isRealOffTrack(metric)) {
                 out.add(offTrack(channel, metric));
+            } else if (!metric.closeToTarget()) {
+                held.add(offTrackKey);
+            }
+            if (channelStale) {
+                held.add(stoppedKey);
             }
         }
     }
 
+    private static MarketingAlert stopped(ChannelView channel, MetricView metric) {
+        String text = metric.label() + " was last reported " + metric.lastReportedOn() + ", while the rest of the "
+                + channel.label() + " data runs to " + channel.dataCompleteThrough() + ". "
+                + (metric.value() != null ? "Its last value, " + AlertText.value(metric.unit(), metric.value())
+                + ", is" : "It is") + " not judged against the target until it arrives again.";
+        return new MarketingAlert(Kind.STALE.keyOf(channel.channel(), metric.metric()), Kind.STALE,
+                channel.channel(), channel.label() + ": " + metric.label() + " stopped arriving", text, List.of(), 0);
+    }
+
     /** OFF_TRACK, on a value, with a target, not noise, not on a thin sample, and not resting on provisional days. */
     private static boolean isRealOffTrack(MetricView metric) {
-        return OFF_TRACK.equals(metric.status())
-                && !TOO_EARLY.equals(metric.status())
+        return MarketingOverviewQueryService.OFF_TRACK.equals(metric.status())
                 && !metric.noise()
                 && !metric.insufficientData()
                 && metric.value() != null

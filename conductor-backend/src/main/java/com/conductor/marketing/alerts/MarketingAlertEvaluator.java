@@ -29,6 +29,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +46,8 @@ import java.util.UUID;
  *   <li>a condition that is new, or comes back after resolving, posts once;</li>
  *   <li>a condition already posted posts again only when its figures have moved meaningfully
  *       ({@link MarketingAlert#sameCondition}), and then as an update;</li>
- *   <li>a condition that no longer holds posts one "Resolved" message and is marked resolved;</li>
+ *   <li>a condition that no longer holds posts one "Resolved" message and is marked resolved, except an
+ *       off-track target with no evidence it recovered, or a stopped snapshot, which is held as it is;</li>
  *   <li>nothing is posted for noise, TOO_EARLY, thin or provisional data (see {@link MarketingAlertConditions}).</li>
  * </ul>
  *
@@ -146,8 +148,11 @@ public class MarketingAlertEvaluator {
 
     // ---- evaluation ----------------------------------------------------------------------------------
 
-    /** What holds now, and which kinds of condition could actually be checked this time. */
-    private record Collected(Map<String, MarketingAlert> alerts, Set<Kind> checked) {}
+    /**
+     * What holds now, which kinds of condition could actually be checked this time, and the keys that could not be
+     * judged (left as they are, neither raised nor resolved).
+     */
+    private record Collected(Map<String, MarketingAlert> alerts, Set<Kind> checked, Set<String> held) {}
 
     private void evaluate(ChannelMetricsPulledEvent event) {
         String projectId = event.projectId();
@@ -171,7 +176,7 @@ public class MarketingAlertEvaluator {
         for (MarketingAlertState state : stored.values()) {
             Kind kind = Kind.ofKey(state.getAlertKey());
             if (state.isActive() && kind != null && now.checked().contains(kind)
-                    && !now.alerts().containsKey(state.getAlertKey())) {
+                    && !now.alerts().containsKey(state.getAlertKey()) && !now.held().contains(state.getAlertKey())) {
                 try {
                     resolve(projectId, state, at);
                 } catch (RuntimeException e) {
@@ -186,12 +191,13 @@ public class MarketingAlertEvaluator {
         String projectId = event.projectId();
         Map<String, MarketingAlert> alerts = new LinkedHashMap<>();
         Set<Kind> checked = EnumSet.noneOf(Kind.class);
+        Set<String> held = new HashSet<>();
 
         Overview overview = readOverview(projectId);
         if (overview != null) {
             Ledger ledger = hasMismatch(overview) ? readLedger(projectId) : null;
             MarketingAlertConditions.fromOverview(overview, ledger, event.connectionId(),
-                            () -> isHealthy(event.connectionId()))
+                            () -> isHealthy(event.connectionId()), held)
                     .forEach(a -> alerts.putIfAbsent(a.key(), a));
             checked.addAll(EnumSet.of(Kind.MISMATCH, Kind.STALE, Kind.OFF_TRACK));
         }
@@ -204,7 +210,7 @@ public class MarketingAlertEvaluator {
             log.warn("Marketing stop rules for project {} could not be read; their alerts are left as they are: {}",
                     projectId, e.getMessage());
         }
-        return new Collected(alerts, checked);
+        return new Collected(alerts, checked, held);
     }
 
     private Overview readOverview(String projectId) {

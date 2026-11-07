@@ -207,7 +207,7 @@
                   "type": "number",
                   "minimum": 0,
                   "maximum": 100,
-                  "description": "v2. A miss within this percent of the target reads as Close (WATCH) instead of Off target. Default 10."
+                  "description": "v2. A miss within this percent of the target reads as Watch (WATCH) instead of Off target. Default 10."
                 }
               }
             }

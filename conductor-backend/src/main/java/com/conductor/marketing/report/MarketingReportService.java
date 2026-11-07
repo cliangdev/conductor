@@ -420,7 +420,9 @@ public class MarketingReportService {
                 return;
             }
             boolean ads = channel == MetricChannel.ADS && live(v);
-            out.add(new Source(v.channel(), connectors(v), v.status(), live(v) ? v.dataCompleteThrough() : null,
+            // a channel with no data yet has a stand-in end date, not a day it has data for
+            boolean dated = live(v) && !Boolean.TRUE.equals(v.noDataYet());
+            out.add(new Source(v.channel(), connectors(v), v.status(), dated ? v.dataCompleteThrough() : null,
                     v.lastFetchedAt(), ads ? ADS_DAY_ZONE : null, ads ? ADS_SEARCH_TERM_ZONE : null));
         });
         return out;
