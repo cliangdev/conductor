@@ -13,15 +13,15 @@ const filterGraph = (args) => args[args.indexOf('-filter_complex') + 1];
 
 test('slideshow offsets: O_k = sum(d_j, j<k) - 0.5k, defaults and custom durations', () => {
   const d4 = resolveSlideDurations(undefined, 4);
-  assert.deepEqual(d4, [3, 2.5, 2.5, 2.5]);
-  assert.deepEqual(slideshowOffsets(d4), [2.5, 4.5, 6.5]);
-  assert.equal(slideshowDuration(d4), 9);
+  assert.deepEqual(d4, [3.5, 3, 3, 3]);
+  assert.deepEqual(slideshowOffsets(d4), [3, 5.5, 8]);
+  assert.equal(slideshowDuration(d4), 11);
   assert.deepEqual(slideshowOffsets([4, 1, 10]), [3.5, 4.0]);
   assert.equal(slideshowDuration([4, 1, 10]), 14);
   assert.deepEqual(slideshowOffsets([5]), []);
   assert.equal(slideshowDuration([5]), 5);
-  // partial custom durations: the rest fall back to 2.5
-  assert.deepEqual(resolveSlideDurations([6], 3), [6, 2.5, 2.5]);
+  // partial custom durations: the rest fall back to 3
+  assert.deepEqual(resolveSlideDurations([6], 3), [6, 3, 3]);
 });
 
 test('slideshow args: xfade chain carries those offsets and the total is -t T', () => {

@@ -77,8 +77,9 @@ export function spillDetect(boardRect, nodes) {
 /** Copy intruding on the placement's reserved bottom safe zone (where a
  * platform's own UI — Instagram's story CTA, TikTok's caption — sits).
  * Mirrors render.js's own `fits()` bottom check exactly, so fitting and this
- * safety net can never disagree. Only the bottom zone is enforced: the top
- * reserve varies far more per platform and is documented, not asserted. */
+ * safety net can never disagree. The top zone is checked by
+ * `safeZoneTopIntrusion` below; the right column is not asserted (copy boxes
+ * span the full padded width, so a box test would always trip). */
 export function safeZoneIntrusion(boardRect, nodes, safe) {
   const issues = [];
   const bottom = (safe && safe.bottom) || 0;
@@ -88,6 +89,29 @@ export function safeZoneIntrusion(boardRect, nodes, safe) {
     if (over > 1) issues.push(`${name} intrudes ${Math.round(over)}px into the bottom safe zone (reserves ${bottom}px)`);
   }
   return issues;
+}
+
+/** Text intruding on the placement's reserved top safe zone (Instagram's Reels
+ * header, TikTok's tabs and search): headline, body and CTA starting inside it.
+ * The lockup (logo) is not text and is never checked. `ratio` names the
+ * placement in the message. `severity: 'warning'` reports the findings as
+ * warnings (saved Creatives that rendered before the zone grew must keep
+ * rendering). Returns `{ errors, warnings }` message arrays. Mirrors
+ * render.js's `fits()` top check. */
+export function safeZoneTopIntrusion(boardRect, nodes, safe, ratio, severity = 'error') {
+  const out = { errors: [], warnings: [] };
+  const top = (safe && safe.top) || 0;
+  if (!top) return out;
+  const h = Math.round(boardRect.bottom - boardRect.top);
+  const w = Math.round(boardRect.right - boardRect.left);
+  for (const { name, rect } of nodes) {
+    if (String(name).includes('cc-lockup')) continue;
+    const over = boardRect.top + top - rect.top;
+    if (over <= 1) continue;
+    const msg = `${name} starts ${Math.round(over)}px inside the top safe zone of ${ratio || 'this placement'} (platform UI covers y < ${top}); move it below y=${top} at ${w || 1080}x${h || 1920}`;
+    (severity === 'warning' ? out.warnings : out.errors).push(msg);
+  }
+  return out;
 }
 
 /** Pure: what a render requires on the board, from the resolved ad and the brand kit it renders with —
@@ -136,7 +160,7 @@ function sameRgb(a, b) {
  * to renderBoard; `expect` (optional, see expectedElements) names the elements the spec requires, so a
  * missing one fails. An empty `errors` array means the frame is safe to ship; `warnings` are non-fatal
  * (e.g. a soft, upscaled photo, or a body line the layout drops at this placement). */
-export async function runAssertions(board, placement, brand, { outputScale = 2, expect = null } = {}) {
+export async function runAssertions(board, placement, brand, { outputScale = 2, expect = null, safeTopSeverity = 'warning' } = {}) {
   const errors = [];
   const warnings = [];
   // The same findings with a stable `rule` id each, for callers (the draft preview) that report them
@@ -164,6 +188,9 @@ export async function runAssertions(board, placement, brand, { outputScale = 2, 
   };
   const intrusion = safeZoneIntrusion(br, nodes, safe);
   if (intrusion.length) fail('safeZone', `safe-zone intrusion: ${intrusion.join('; ')}`);
+  const topZone = safeZoneTopIntrusion(br, nodes, safe, board.dataset.ratio, safeTopSeverity === 'error' ? 'error' : 'warning');
+  if (topZone.errors.length) fail('safeZone', `safe-zone intrusion: ${topZone.errors.join('; ')}`);
+  if (topZone.warnings.length) warn('safeZone', `safe-zone intrusion: ${topZone.warnings.join('; ')}`);
 
   if (brand && brand.fontFamily) {
     const headlineEl = board.querySelector('.cc-headline');

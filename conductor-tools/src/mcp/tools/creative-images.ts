@@ -92,6 +92,19 @@ function nextStep(fit: Record<string, PlacementFit> | undefined): string {
   return `${REALISM_STEP}${upscale} If it passes, pass a path as photoPath (or sequence[].photoPath) to preview_creative_draft. Its .provenance.json sidecar carries the AI-generated label either way.`
 }
 
+/**
+ * The per-run folder under <project>/.conductor/generated/ (pruned, git-ignored), named by time and prompt.
+ * Shared by the image and video tools. The caller creates the folder itself.
+ */
+export async function prepareGeneratedOutDir(prompt: string, cwd?: string): Promise<string> {
+  const projectRoot = findProjectRoot(cwd)
+  const root = join(resolve(projectRoot), GENERATED_SUBDIR)
+  await pruneGenerated(projectRoot)
+  await mkdir(root, { recursive: true })
+  await writeFile(join(root, '.gitignore'), '*\n').catch(() => {})
+  return join(root, `${stamp(new Date())}-${slugify(prompt)}`)
+}
+
 export async function generateCreativeImage(
   params: GenerateCreativeImageParams,
   options: GenerateCreativeImageOptions = {}
@@ -117,15 +130,7 @@ export async function generateCreativeImage(
     referenceImagePaths.push(abs)
   }
 
-  let outDir = options.outDir
-  if (!outDir) {
-    const projectRoot = findProjectRoot(options.cwd)
-    const root = join(resolve(projectRoot), GENERATED_SUBDIR)
-    await pruneGenerated(projectRoot)
-    await mkdir(root, { recursive: true })
-    await writeFile(join(root, '.gitignore'), '*\n').catch(() => {})
-    outDir = join(root, `${stamp(new Date())}-${slugify(prompt)}`)
-  }
+  const outDir = options.outDir ?? (await prepareGeneratedOutDir(prompt, options.cwd))
 
   const result = await generateImages({
     prompt,

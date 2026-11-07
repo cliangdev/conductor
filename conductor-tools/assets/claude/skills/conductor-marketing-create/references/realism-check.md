@@ -71,6 +71,24 @@ crop it. Never judge from a contact sheet: it hides exactly the tells below.
   background.
 - **Detail under zoom**: smeared or mushy detail, repeating textures, a staged stock-photo look.
 
+## Video and audio (generated clips)
+
+For a clip from `generate_creative_video`, see `references/direct.md`, "Video from a still". Check the
+4 fps contact sheet, then 100% crops of the face and hands at 2 or 3 timestamps (ffmpeg frame
+extraction), then listen to the audio if there is any. Any tell is a FAIL.
+
+- **Face**: exaggerated or bug eyes, rubber faces, unnatural mouth motion.
+- **Hands**: morphing or merging, fingers appearing or vanishing.
+- **Identity**: the person, clothes or set drifting between frames.
+- **Background**: warping or flicker.
+- **Text**: garbled text or logos appearing.
+- **Camera**: a move that does not match a handheld phone.
+- **Audio**: lip-sync drift, a robotic or mismatched voice, sound that does not match the action,
+  music or speech nobody asked for, clipped endings.
+
+On FAIL, retry at most twice with the failed tells named in the prompt; then the Standard-tier offer
+in `direct.md`. Never ship a FAIL.
+
 ## Verdict
 
 Write PASS or FAIL for each placement crop, naming the tell on a FAIL. Any tell above that shows in

@@ -74,7 +74,7 @@ export interface SequenceBeat {
 }
 
 /** A CAROUSEL's slideshow-video settings (used when the carousel has a music track). Defaults: first
- *  slide 3.0 s, the rest 2.5 s, each 1-10 s; zoom on. */
+ *  slide 3.5 s, the rest 3.0 s, each 1-10 s; zoom on. */
 export interface CreativeSlideshow {
   slideDurations?: number[] | null
   zoom?: boolean | null

@@ -135,9 +135,9 @@ class CreativeSpecBuilderTest {
 
         assertThat(spec.getCreative().getSlides()).extracting("url")
                 .containsExactly("signed://photos/a.jpg", "signed://photos/b.jpg", "local:c");
-        // No durations given: 3.0 s for the first slide, 2.5 s for the rest; zoom on; 0.5 s crossfade.
+        // No durations given: 3.5 s for the first slide, 3.0 s for the rest; zoom on; 0.5 s crossfade.
         assertThat(spec.getCreative().getSlideshow().getSlideDurations()).extracting(BigDecimal::doubleValue)
-                .containsExactly(3.0, 2.5, 2.5);
+                .containsExactly(3.5, 3.0, 3.0);
         assertThat(spec.getCreative().getSlideshow().getZoom()).isTrue();
         assertThat(spec.getCreative().getSlideshow().getCrossfadeSec()).isEqualByComparingTo("0.5");
         assertThat(spec.getCreative().getAudio().getTrackUrl()).isEqualTo("local:song");
@@ -152,8 +152,8 @@ class CreativeSpecBuilderTest {
         com.conductor.generated.v2.model.CreativeSlideshow show = new com.conductor.generated.v2.model.CreativeSlideshow()
                 .slideDurations(List.of(new BigDecimal("4"), new BigDecimal("1"))).zoom(false);
         assertThat(CreativeSpecBuilder.resolveSlideDurations(show, 2)).extracting(BigDecimal::doubleValue).containsExactly(4.0, 1.0);
-        assertThat(CreativeSpecBuilder.resolveSlideDurations(show, 3)).extracting(BigDecimal::doubleValue).containsExactly(3.0, 2.5, 2.5);
-        assertThat(CreativeSpecBuilder.resolveSlideDurations(null, 1)).extracting(BigDecimal::doubleValue).containsExactly(3.0);
+        assertThat(CreativeSpecBuilder.resolveSlideDurations(show, 3)).extracting(BigDecimal::doubleValue).containsExactly(3.5, 3.0, 3.0);
+        assertThat(CreativeSpecBuilder.resolveSlideDurations(null, 1)).extracting(BigDecimal::doubleValue).containsExactly(3.5);
 
         Creative carousel = creative();
         carousel.setKind(Creative.KIND_CAROUSEL);

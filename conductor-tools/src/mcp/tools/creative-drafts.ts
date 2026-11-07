@@ -21,6 +21,24 @@ import {
 } from './creatives.js'
 import { chooseDraftSpec, uploadSpecImages } from './slideshow-spec.js'
 import { listTextFields, specLocalImages, type SlideshowSpec } from '../../lib/slideshow/index.js'
+import { zonesFor } from '../../lib/safe-zone/zones.js'
+import {
+  checkClipPixels,
+  checkSlidesPixels,
+  describeChecks,
+  givenDurations,
+  hasErrors,
+  hasTrack,
+  inlineOverlay,
+  pacingFor,
+  platformsFor,
+  writeOverlaySheets,
+  withSharedOverlayBrowser,
+  type OverlaySheet,
+  type PacingResult,
+  type PixelToolOptions,
+  type UiOverlay,
+} from './safe-zone-pixels.js'
 
 /**
  * Draft-first Creatives: render a Creative on this machine from a spec the backend resolves WITHOUT
@@ -51,8 +69,12 @@ export const DRAFTS_SUBDIR = join('.conductor', 'drafts')
 export interface PreviewCreativeDraftParams extends CreativeFields {
   /** A photo on this machine; becomes `photoId: "local:photo"`. */
   photoPath?: string
-  /** A video clip on this machine; becomes the MOTION background clip (`local:clip`). */
+  /** A video clip on this machine. For MOTION it becomes the background clip (`local:clip`); for kind CLIP it is the finished video to check (9:16 unless its aspect says otherwise). */
   clipPath?: string
+  /** kind CLIP only: finished videos on this machine per placement, e.g. {"9x16": "/clips/a.mp4"}. */
+  clipPaths?: Record<string, string>
+  /** The platform UI drawn over 9:16 frames: instagram | tiktok | both | none. Default for a 9:16 CAROUSEL or CLIP: both, written to disk, with the Instagram sheet shown. */
+  uiOverlay?: UiOverlay
   /** An audio file on this machine; becomes the audio track of a MOTION or CAROUSEL (`local:audio`). */
   audioPath?: string
   /** CAROUSEL only: the slides as local image files (or existing media ids), ordered per placement,
@@ -106,7 +128,7 @@ interface LocalMediaMeta {
   hasAudio?: boolean
 }
 
-export interface DraftToolOptions {
+export interface DraftToolOptions extends PixelToolOptions {
   /** Override the project root (tests). Default: the git root of the cwd, else the cwd. */
   projectRoot?: string
   log?: (...args: unknown[]) => void
@@ -135,6 +157,12 @@ export interface PreviewCreativeDraftSuccess {
   /** CAROUSEL with a track only: the slideshow MP4 rendered on this machine (the full video, not a sheet). */
   slideshowVideoPath?: string
   slideshowDurationSeconds?: number
+  /** CAROUSEL with a track: seconds per 9x16 slide (computed from the slides' text, or the ones passed). */
+  slideDurations?: number[]
+  /** CAROUSEL with a track: where the timing came from. `computed: false` means the caller's durations were kept. */
+  pacing?: { basis: string; computed: boolean }
+  /** The platform UI drawn over the 9:16 frames, one sheet per platform, on disk. The image shown is the Instagram one. */
+  overlaySheets?: OverlaySheet[]
   readiness?: unknown
   warnings: Array<{ placementKey?: string; index?: number; message: string }>
   /**
@@ -230,7 +258,7 @@ type Beat = Record<string, unknown>
 /** Splits the tool params into the create-creative body (with `local:<key>` references) and the key ->
  * file map, refusing a combination that names the same slot twice. */
 function buildDraftRequest(params: PreviewCreativeDraftParams): { request: Record<string, unknown>; localFiles: Record<string, string> } {
-  const { photoPath, clipPath, audioPath, slidePaths, slideshowSpecPath: _s, baseCreativeId: _b, draftDir: _d, full: _f, ...fields } = params as PreviewCreativeDraftParams & {
+  const { photoPath, clipPath, clipPaths: _cp, uiOverlay: _ui, audioPath, slidePaths, slideshowSpecPath: _s, baseCreativeId: _b, draftDir: _d, full: _f, ...fields } = params as PreviewCreativeDraftParams & {
     variantOf?: unknown
   }
   const request: Record<string, unknown> = { ...fields }
@@ -348,14 +376,18 @@ async function carouselPreview(input: {
   /** The slideshow spec kept with the draft, and notes about one that was dropped. */
   spec?: { path: string; slides: number; textFields: number }
   specNotes: string[]
+  /** The pixel check of the 9x16 slides, the overlay sheets written for them, and notes about both. */
+  pixel: { checks: DraftCheck[]; overlaySheets: OverlaySheet[]; notes: string[] }
+  /** CAROUSEL with a track: the slide timing. */
+  pacing?: PacingResult
   log: (...args: unknown[]) => void
 }): Promise<PreviewCreativeDraftSuccess> {
-  const { request, localFiles, draftDir, localProvenance } = input
+  const { request, localFiles, draftDir, localProvenance, pixel, pacing } = input
   const slides = (request['slides'] ?? {}) as Record<string, string[]>
   const SHEET_SLIDES = 10
   const sheets: Array<{ placementKey: string; file: string; slides: number }> = []
-  const notes: string[] = [...input.specNotes]
-  let image: PreviewCreativeDraftSuccess['image']
+  const notes: string[] = [...input.specNotes, ...pixel.notes]
+  let cleanImage: PreviewCreativeDraftSuccess['image']
 
   for (const [placement, refs] of Object.entries(slides)) {
     const paths: string[] = []
@@ -371,13 +403,29 @@ async function carouselPreview(input: {
         const bytes = await composePosterSheet(chunk)
         await writeFile(join(draftDir, name), bytes)
         sheets.push({ placementKey: placement, file: join(draftDir, name), slides: chunk.length })
-        if (!image && bytes.byteLength <= MAX_INLINE_IMAGE_BYTES) image = { data: bytes, mimeType: 'image/jpeg' }
+        if (!cleanImage && bytes.byteLength <= MAX_INLINE_IMAGE_BYTES) cleanImage = { data: bytes, mimeType: 'image/jpeg' }
       } catch (err) {
         notes.push(`${placement}: could not compose a contact sheet (${err instanceof Error ? err.message : String(err)}) — open the slide files directly.`)
       }
     }
   }
-  if (sheets.length && !image) notes.push('The contact sheet is larger than this tool can inline (~1 MB) — open the sheet files directly.')
+  if (sheets.length && !cleanImage) notes.push('The contact sheet is larger than this tool can inline (~1 MB) — open the sheet files directly.')
+
+  // With the platform UI drawn on, the overlay sheet is THE image (one image per result); the clean sheet stays on disk.
+  const overlay = await inlineOverlay(pixel.overlaySheets)
+  if (overlay.note) notes.push(overlay.note)
+  const image = overlay.image ?? cleanImage
+
+  const checks = pixel.checks
+  const passed = !hasErrors(checks)
+  const failing = checks.filter((c) => c.severity === 'error')
+  const advisories = checks.filter((c) => c.severity !== 'error')
+  const warnings: PreviewCreativeDraftSuccess['warnings'] = (pacing?.warnings ?? []).map((message) => ({ message }))
+  const showWhat = overlay.image
+    ? `Show the UI overlay image (the platform UI drawn over the slides) and say the clean contact sheet is at ${sheets[0]?.file ?? 'the draft folder'}. `
+    : 'Show the contact sheet(s) to the person '
+  const looks = 'and check the order, the crop and any burned-in text. '
+  const length = pacing ? `Say the total length (${pacing.totalSeconds} s) when showing it. ` : ''
 
   return {
     ok: true,
@@ -387,24 +435,141 @@ async function carouselPreview(input: {
     ...(image ? { image } : {}),
     files: sheets.map((sh) => ({ placementKey: sh.placementKey, file: sh.file })),
     sheets,
+    ...(pixel.overlaySheets.length ? { overlaySheets: pixel.overlaySheets } : {}),
+    ...(pacing ? { slideDurations: pacing.slideDurations, slideshowDurationSeconds: pacing.totalSeconds, pacing: { basis: pacing.basis, computed: pacing.computed } } : {}),
     ...(input.spec ? { slideshowSpec: input.spec } : {}),
     readiness: input.readiness,
-    warnings: [],
-    checks: [],
-    passed: true,
+    warnings,
+    checks,
+    passed,
     provenance: {
       recorded: Object.keys(localProvenance),
       needed: Object.keys(localFiles).filter((k) => !localProvenance[k]),
     },
     ...(notes.length ? { note: notes.join(' ') } : {}),
-    nextStep:
-      'Nothing has been saved to Conductor, and the slides are used exactly as they are (no brand layout is applied). ' +
-      'Show the contact sheet(s) to the person and check the order, the crop and any burned-in text. ' +
-      'Resolve any blocking readiness item (caption, alt text, photoChecked) you can fix now. ' +
-      (input.spec
-        ? `The slideshow spec (${input.spec.slides} slides, ${input.spec.textFields} editable text fields) is kept with the draft and is stored on the Creative at commit, so its text can be edited later. `
-        : '') +
-      'Only after they approve, call commit_creative_draft({draftDir, photoChecked: true}); to change something, call preview_creative_draft again.',
+    nextStep: !passed
+      ? `NOT ready for approval: ${failing.length} safe-zone check${failing.length === 1 ? '' : 's'} failed (${describeChecks(failing)}). ` +
+        'Nothing has been saved. Fix the slides first (move the text below y=290 at 1080x1920, re-export the image) and call preview_creative_draft again BEFORE showing them. ' +
+        'Do not ask the person to approve and do not call commit_creative_draft while a check fails; tell them what you changed.'
+      : 'Nothing has been saved to Conductor, and the slides are used exactly as they are (no brand layout is applied). ' +
+        showWhat +
+        looks +
+        length +
+        'Resolve any blocking readiness item (caption, alt text, photoChecked) you can fix now. ' +
+        (input.spec
+          ? `The slideshow spec (${input.spec.slides} slides, ${input.spec.textFields} editable text fields) is kept with the draft and is stored on the Creative at commit, so its text can be edited later. `
+          : '') +
+        (advisories.length ? `Warnings (they do not block, but tell the person when you show it): ${describeChecks(advisories)} ` : '') +
+        'Only after they approve, call commit_creative_draft({draftDir, photoChecked: true}); to change something, call preview_creative_draft again.',
+  }
+}
+
+
+// --- CLIP preview ---------------------------------------------------------------------
+
+const PLACEMENT_RATIOS: Array<[string, number]> = [['9x16', 9 / 16], ['4x5', 4 / 5], ['1x1', 1], ['16x9', 16 / 9]]
+
+/** The placement a video's aspect belongs to ('default' when it matches none). */
+function placementForAspect(width: number, height: number): string {
+  const ratio = width / height
+  const hit = PLACEMENT_RATIOS.find(([, r]) => Math.abs(ratio / r - 1) < 0.03)
+  return hit ? hit[0] : 'default'
+}
+
+/**
+ * CLIP preview: the video is used as-is, so there is nothing to render and nothing to send to Conductor.
+ * Each 9:16 clip is sampled (every 0.5 s and at each cut), checked for text under the platform UI, and
+ * drawn with the Instagram/TikTok chrome over its early frames and cuts. Only a minimal draft.json is written (for pruning) —
+ * a CLIP has no commit step; once the checks pass, upload_creative_media + create_creative kind CLIP.
+ */
+async function clipPreview(params: PreviewCreativeDraftParams, options: DraftToolOptions, projectRoot: string, projectId: string): Promise<PreviewCreativeDraftResult> {
+  const abs = (p: string) => (isAbsolute(p) ? p : resolve(p))
+  const given: Record<string, string> = params.clipPaths ? { ...params.clipPaths } : params.clipPath ? { '9x16': params.clipPath } : {}
+  if (!Object.keys(given).length) {
+    return { ok: false, rendered: false, error: 'For kind CLIP pass clipPath (one video file) or clipPaths ({"9x16": "/path/clip.mp4"}). The video is checked and shown here; nothing is sent to Conductor.' }
+  }
+  const clips: Array<{ placement: string; path: string; width?: number; height?: number; durationSeconds?: number }> = []
+  try {
+    for (const [key, raw] of Object.entries(given)) {
+      const path = abs(raw)
+      try {
+        await stat(path)
+      } catch {
+        throw new Error(`The clip for ${key} does not exist: ${path}`)
+      }
+      const probe = await probeMedia(path)
+      if (probe.kind !== 'VIDEO') throw new Error(`"${basename(path)}" is not a video file.`)
+      // One file given as clipPath: its own aspect decides the placement.
+      const placement = !params.clipPaths && probe.width && probe.height ? placementForAspect(probe.width, probe.height) : key
+      clips.push({ placement, path, width: probe.width, height: probe.height, durationSeconds: probe.durationSeconds })
+    }
+  } catch (err) {
+    return { ok: false, rendered: false, error: err instanceof Error ? err.message : String(err) }
+  }
+
+  const draftDir = params.draftDir
+    ? resolve(params.draftDir)
+    : join(draftsRoot(projectRoot), `${stamp(new Date())}-${slugify((params.name as string | undefined) ?? 'clip')}`)
+  await mkdir(draftDir, { recursive: true })
+  if (!params.draftDir) await writeFile(join(draftsRoot(projectRoot), '.gitignore'), '*\n').catch(() => {})
+  // A minimal draft.json, so pruneDrafts ages the overlay images out like any other draft. commit_creative_draft
+  // refuses it by its request.kind (a CLIP has no commit step).
+  const clipDraft: DraftFile = {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    committed: false,
+    projectId,
+    full: false,
+    request: { kind: 'CLIP' },
+    localFiles: {},
+    localMedia: {},
+    specSha256: '',
+  }
+  await writeFile(join(draftDir, 'draft.json'), JSON.stringify(clipDraft, null, 2))
+
+  const checks: DraftCheck[] = []
+  const overlaySheets: OverlaySheet[] = []
+  const notes: string[] = []
+  for (const clip of clips) {
+    const vertical = !!clip.width && !!clip.height && zonesFor(clip.width, clip.height).length > 0
+    if (!vertical) {
+      notes.push(`${clip.placement}: ${basename(clip.path)} is ${clip.width ?? '?'}x${clip.height ?? '?'}, not 9:16, so it was not checked for text under the platform UI and no overlay is drawn.`)
+      continue
+    }
+    const r = await checkClipPixels(clip.path, { ...options, ...(clip.durationSeconds !== undefined ? { durationSeconds: clip.durationSeconds } : {}), placementKey: clip.placement, outDir: draftDir, baseName: `overlay-${clip.placement}`, uiOverlay: params.uiOverlay })
+    checks.push(...r.checks)
+    overlaySheets.push(...r.overlaySheets)
+    notes.push(...r.notes)
+  }
+  const overlay = await inlineOverlay(overlaySheets)
+  if (overlay.note) notes.push(overlay.note)
+  if (!overlay.image && overlaySheets.length === 0 && clips.some((c) => c.width && c.height && zonesFor(c.width, c.height).length)) {
+    notes.push('No UI overlay image was drawn — open the clip itself.')
+  }
+
+  const passed = !hasErrors(checks)
+  const failing = checks.filter((c) => c.severity === 'error')
+  const advisories = checks.filter((c) => c.severity !== 'error')
+  return {
+    ok: true,
+    committed: false,
+    draftDir,
+    previewOnly: true,
+    ...(overlay.image ? { image: overlay.image } : {}),
+    files: clips.map((c) => ({ placementKey: c.placement, file: c.path, ...(c.width ? { width: c.width } : {}), ...(c.height ? { height: c.height } : {}) })),
+    ...(overlaySheets.length ? { overlaySheets } : {}),
+    warnings: [],
+    checks,
+    passed,
+    provenance: { recorded: [], needed: [] },
+    ...(notes.length ? { note: notes.join(' ') } : {}),
+    nextStep: !passed
+      ? `NOT ready for approval: ${failing.length} safe-zone check${failing.length === 1 ? '' : 's'} failed (${describeChecks(failing)}). Nothing has been sent to Conductor. ` +
+        'Re-export the video with the text moved below y=290 at 1080x1920 (and out of the other UI areas) and call preview_creative_draft again BEFORE showing it. Do not ask the person to approve while a check fails.'
+      : 'Nothing has been sent to Conductor, and a CLIP has no commit step. ' +
+        (overlay.image ? 'Show the UI overlay image (the first seconds and each cut with the Instagram UI drawn on; the TikTok sheet is on disk) and ask whether to approve. ' : 'Ask the person to watch the clip and approve. ') +
+        (advisories.length ? `Warnings (they do not block, but tell the person when you show it): ${describeChecks(advisories)} ` : '') +
+        'Only after they approve, call upload_creative_media for each file, then create_creative with kind CLIP and clipMedia ({"9x16": mediaId}).',
   }
 }
 
@@ -421,19 +586,20 @@ export async function previewCreativeDraft(
   config: Config,
   options: DraftToolOptions = {}
 ): Promise<PreviewCreativeDraftResult> {
+  // One browser for every overlay sheet this call draws (all platforms and placements).
+  return withSharedOverlayBrowser(options, (shared) => previewCreativeDraftInner(params, config, shared))
+}
+
+async function previewCreativeDraftInner(
+  params: PreviewCreativeDraftParams,
+  config: Config,
+  options: DraftToolOptions
+): Promise<PreviewCreativeDraftResult> {
   const log = options.log ?? (() => {})
   const projectRoot = options.projectRoot ?? findProjectRoot()
   await pruneDrafts(projectRoot)
 
-  if (params.kind === 'CLIP') {
-    return {
-      ok: false,
-      rendered: false,
-      error:
-        'A CLIP Creative is a finished video used as-is — there is no artwork to render and preview. ' +
-        'Look at the video itself, then upload_creative_media and create_creative with kind CLIP.',
-    }
-  }
+  if (params.kind === 'CLIP') return clipPreview(params, options, projectRoot, config.projectId)
 
   if (params.slidePaths && params.kind && params.kind !== 'CAROUSEL') {
     return { ok: false, rendered: false, error: `slidePaths is for kind CAROUSEL, not ${params.kind}.` }
@@ -505,6 +671,43 @@ export async function previewCreativeDraft(
   // A CAROUSEL with a track gets its slideshow MP4 rendered here, so its spec must be a full render spec.
   const requestAudio = request['audio'] as { source?: string; trackId?: string } | undefined
   const carouselVideo = isCarousel && needsLocalRender('CAROUSEL', requestAudio ?? baseAudio)
+
+  // The 9x16 slides, as files where they are on this machine. They are timed from their text (CAROUSEL with a
+  // track) and checked for text under the platform UI; slides that are existing media are not on this machine.
+  const slideLists = (request['slides'] ?? {}) as Record<string, string[]>
+  const isVertical = (key: string | undefined) => {
+    const m = key ? localMedia[key] : undefined
+    return !!m?.width && !!m?.height && Math.abs(m.width / m.height - 9 / 16) < 0.01
+  }
+  const keyOf = (ref: string) => LOCAL_REF.exec(ref)?.[1]
+  const pixelKey = isCarousel
+    ? slideLists['9x16']
+      ? '9x16'
+      : (slideLists['default'] ?? []).some((r) => isVertical(keyOf(r)))
+        ? 'default'
+        : undefined
+    : undefined
+  const slideInputs = pixelKey
+    ? slideLists[pixelKey]!.map((ref, index) => {
+        const key = keyOf(ref)
+        return { index, ...(key && localFiles[key] ? { path: localFiles[key]! } : {}) }
+      })
+    : undefined
+  const slideshowField = request['slideshow'] as Record<string, unknown> | undefined
+  let pacing: PacingResult | undefined
+  if (carouselVideo && slideInputs?.length) {
+    pacing = await pacingFor({
+      count: slideInputs.length,
+      altText: request['slideAltText'] as string[] | undefined,
+      // OCR only fills in a slide with no "Text:" in its alt text, and only on a 9:16 file.
+      paths: slideInputs.map((si, i) => (si.path && isVertical(keyOf(slideLists[pixelKey!]![i]!)) ? si.path : undefined)),
+      ocr: true,
+      engine: options.ocrEngine,
+      given: givenDurations(slideshowField),
+    })
+    // Written into the request before it is sent and saved, so commit_creative_draft stores the durations.
+    if (pacing.computed) request['slideshow'] = { ...slideshowField, slideDurations: pacing.slideDurations }
+  }
   const body: Record<string, unknown> = { ...request, previewOnly: carouselVideo ? false : !full }
   if (params.baseCreativeId) body['baseCreativeId'] = params.baseCreativeId
   if (Object.keys(localMedia).length) {
@@ -560,6 +763,16 @@ export async function previewCreativeDraft(
   await writeFile(join(draftDir, 'draft.json'), JSON.stringify(draft, null, 2))
 
   if (isCarousel) {
+    const pixel = slideInputs?.length
+      ? await checkSlidesPixels(slideInputs, {
+          ...options,
+          placementKey: '9x16',
+          zoom: carouselVideo && slideshowField?.['zoom'] !== false,
+          outDir: draftDir,
+          baseName: 'overlay-9x16',
+          uiOverlay: params.uiOverlay,
+        })
+      : { checks: [] as DraftCheck[], overlaySheets: [] as OverlaySheet[], notes: [] as string[] }
     const sheetResult = await carouselPreview({
       request,
       localFiles,
@@ -568,10 +781,13 @@ export async function previewCreativeDraft(
       draftDir,
       readiness: response.readiness,
       specNotes,
+      pixel,
+      ...(pacing ? { pacing } : {}),
       ...(slideshow ? { spec: { path: slideshow.path, slides: slideshow.spec.slides.length, textFields: listTextFields(slideshow.spec).length } } : {}),
       log,
     })
-    if (!carouselVideo) return sheetResult
+    // A failing check means the slides get fixed and re-previewed first, so the video is not made yet.
+    if (!carouselVideo || !sheetResult.passed) return sheetResult
     const video = await renderDraft({ spec, localFiles, outDir: draftDir }, log)
     if (!video.ok || !video.manifest) {
       return { ok: false, rendered: false, error: `The slideshow video could not be rendered: ${video.error ?? 'the draft render failed.'}`, draftDir }
@@ -581,16 +797,23 @@ export async function previewCreativeDraft(
       return { ok: false, rendered: false, error: 'The slideshow render finished but produced no video.', draftDir }
     }
     const videoPath = join(draftDir, mp4.file)
+    const total = mp4.durationSeconds ?? pacing?.totalSeconds
+    const advisories = sheetResult.checks.filter((c) => c.severity !== 'error')
     return {
       ...sheetResult,
       files: [...sheetResult.files, { placementKey: mp4.placementKey, file: videoPath, ...(mp4.width !== undefined ? { width: mp4.width } : {}), ...(mp4.height !== undefined ? { height: mp4.height } : {}) }],
       slideshowVideoPath: videoPath,
-      ...(mp4.durationSeconds !== undefined ? { slideshowDurationSeconds: mp4.durationSeconds } : {}),
-      warnings: video.manifest.warnings,
+      ...(total !== undefined ? { slideshowDurationSeconds: total } : {}),
+      warnings: [...sheetResult.warnings, ...video.manifest.warnings],
       nextStep:
-        `Nothing has been saved to Conductor. The slideshow video (${mp4.durationSeconds !== undefined ? `${mp4.durationSeconds}s, ` : ''}with the track) is at ${videoPath}; ` +
-        'the contact sheet shows the slides. Show the contact sheet and give the person the video path to watch (check the music level, the fade and the pacing), ' +
-        'and check the order, the crop and any burned-in text. Resolve any blocking readiness item you can fix now (caption, alt text, photoChecked, the track\'s source and licence). ' +
+        `Nothing has been saved to Conductor. The slideshow video (${total !== undefined ? `${total}s, ` : ''}with the track) is at ${videoPath}; ` +
+        (sheetResult.overlaySheets
+          ? `the image is the slides with the Instagram UI drawn over them (the clean contact sheet is at ${sheetResult.sheets?.[0]?.file ?? draftDir}). Show the image`
+          : 'the contact sheet shows the slides. Show the contact sheet') +
+        ' and give the person the video path to watch (check the music level, the fade and the pacing)' +
+        (total !== undefined ? `; say the total length (${total} s) when showing it` : '') +
+        ', and check the order, the crop and any burned-in text. Resolve any blocking readiness item you can fix now (caption, alt text, photoChecked, the track\'s source and licence). ' +
+        (advisories.length ? `Warnings (they do not block, but tell the person when you show it): ${describeChecks(advisories)} ` : '') +
         'Only after they approve, call commit_creative_draft({draftDir, photoChecked: true, source, licence}) with the track\'s provenance; to change something, call preview_creative_draft again.',
     }
   }
@@ -629,6 +852,28 @@ export async function previewCreativeDraft(
     note = `${secs}s animation — this image shows three key moments across the timeline, not the finished video.${note ? ` ${note}` : ''}`
   }
 
+  // A 9x16 or story frame image (a full preview) also gets the platform UI drawn over it, on disk only; the
+  // contact sheet stays the image shown. A contact-sheet-only preview has no frame to draw on, so it is skipped.
+  const overlaySheets: OverlaySheet[] = []
+  if (platformsFor(params.uiOverlay).length) {
+    for (const key of ['9x16', 'story']) {
+      const frames = manifest.frames
+        .filter((f) => f.placementKey === key)
+        .map((f) => ({ f, file: f.contentType.startsWith('image/') ? f.file : f.poster }))
+        .filter((x): x is { f: DraftManifest['frames'][number]; file: string } => !!x.file)
+      if (!frames.length) continue
+      const written = await writeOverlaySheets(
+        frames.map(({ f, file }) => ({ png: join(draftDir, file), label: f.index !== undefined ? `${key} ${f.index + 1}` : key })),
+        platformsFor(params.uiOverlay),
+        draftDir,
+        `overlay-${key}`,
+        key,
+        options,
+      )
+      overlaySheets.push(...written.sheets)
+    }
+  }
+
   // A full draft render already failed (ok: false) on any error, so reaching here with no `checks` means
   // every placement was rendered and checked.
   const checks = manifest.checks ?? []
@@ -643,6 +888,7 @@ export async function previewCreativeDraft(
     previewOnly: !full,
     ...(image ? { image } : {}),
     files,
+    ...(overlaySheets.length ? { overlaySheets } : {}),
     readiness: response.readiness,
     warnings: manifest.warnings,
     checks,
@@ -710,6 +956,11 @@ export async function commitCreativeDraft(
 
   const draft = await readDraftFile(draftDir)
   if (!draft) throw new Error(`No draft.json found in ${draftDir} — pass the draftDir preview_creative_draft returned.`)
+  if (draft.request?.kind === 'CLIP') {
+    throw new Error(
+      'This is a CLIP preview, which has no commit step. Upload the clip with upload_creative_media, then create_creative with kind CLIP.'
+    )
+  }
   if (draft.committed) {
     throw new Error(
       `This draft was already committed${draft.creativeId ? ` (Creative ${draft.creativeId})` : ''}. ` +

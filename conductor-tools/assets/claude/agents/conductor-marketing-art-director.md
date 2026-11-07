@@ -23,7 +23,8 @@ send to the draft renderer, so it has to be valid on the first try.
 
 Follow the shot-list template: shot list table (time, visual, on-screen text, VO or audio, asset),
 safe zones, sound, and the mapping to the Creative's fields. Keep text out of the platform's UI
-(top ~14%, bottom ~35%, ~6% at each side for 9:16). For a `FILM` idea, include capture settings and
+(9:16 at 1080x1920: text at y >= 290, above y=1490, out of the right 15% column; see
+`references/platform-specs.md`). For a `FILM` idea, include capture settings and
 the ready-to-paste text. Pick the layout per
 `references/layout-guide.md`: `bleed` by default when 9:16 is enabled, `card` when the photo must stay
 readable or a face would sit under the copy. Never `stacked` or `split` when 9:16 is enabled. Build the

@@ -328,21 +328,30 @@ function applyType(board, size, leading, tracking) {
 }
 
 /* True when nothing in the panel crosses the artboard's edges or intrudes on
- * the placement's bottom safe zone. These are the same tests a headless
- * exporter would run before writing a PNG, so fitting and that safety net
- * cannot disagree. */
-function fits(board) {
+ * the placement's bottom safe zone, and (when `clearTop`) the headline, body
+ * and CTA start below the top safe zone. The lockup is never held to the top
+ * zone (the zone is about text). These are the same tests a headless exporter
+ * would run before writing a PNG, so fitting and that safety net cannot
+ * disagree. */
+function fits(board, clearTop) {
   const br = board.getBoundingClientRect();
   const safeBottom = Number(board.dataset.safeBottom) || 0;
+  const safeTop = clearTop ? Number(board.dataset.safeTop) || 0 : 0;
   for (const n of board.querySelectorAll('.cc-headline, .cc-body, .cc-cta, .cc-lockup')) {
     const r = n.getBoundingClientRect();
     if (r.top < br.top - 1 || r.right > br.right + 1) return false;
+    if (safeTop && !n.classList.contains('cc-lockup') && r.top < br.top + safeTop - 1) return false;
     if (r.bottom > br.bottom - safeBottom + 1) return false;
   }
   return true;
 }
 
 /* Steps the headline down from the placement's max until the board fits.
+ * Prefers the largest size that fits AND clears the top safe zone; when no
+ * size does (a top-anchored layout, where shrinking never moves the start),
+ * falls back to the largest size that merely fits, exactly as before the top
+ * zone existed. One algorithm for every caller (frame, sheet, saved render),
+ * so what is checked is what is shown and shipped.
  * Must run AFTER the board is in the document (a detached element measures
  * zero) and AFTER document.fonts.ready (or it measures the fallback face).
  * Steps rather than binary-searches because `text-wrap: balance` makes height
@@ -352,10 +361,13 @@ export function fitBoard(board, placements) {
   if (board.dataset.autofit !== 'true') return;
   const { max, min, lines } = placements[board.dataset.ratio].fit;
   const headline = board.querySelector('.cc-headline');
-  for (let size = max; size >= min; size -= 2) {
-    applyType(board, size);
-    const used = Math.round(headline.getBoundingClientRect().height / (size * leadingFor(size)));
-    if (used <= lines && fits(board)) return size;
+  const hasTopZone = (Number(board.dataset.safeTop) || 0) > 0;
+  for (const clearTop of hasTopZone ? [true, false] : [false]) {
+    for (let size = max; size >= min; size -= 2) {
+      applyType(board, size);
+      const used = Math.round(headline.getBoundingClientRect().height / (size * leadingFor(size)));
+      if (used <= lines && fits(board, clearTop)) return size;
+    }
   }
   applyType(board, min);
   return min;

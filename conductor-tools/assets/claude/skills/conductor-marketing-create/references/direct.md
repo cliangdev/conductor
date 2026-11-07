@@ -296,8 +296,16 @@ Not every video needs the brand layout above — a finished clip (a demo recordi
 something a person or another tool already produced) can go up as-is. That's a CLIP Creative: no
 photo, headline or layout, just the video.
 
-A CLIP has no artwork to render, so it is the one flow without a draft preview: open the video
-itself and check it with the person before uploading.
+A CLIP has no brand artwork to render, but `preview_creative_draft({kind: "CLIP", clipPath})` (or
+`clipPaths` per placement) checks the finished video without uploading anything: it samples frames
+every 0.5 s and at each scene cut, reads their text with OCR, returns the safe-zone `checks` and an
+overlay sheet (see "Safe zones in finished pixels" below). Open the video itself and check it with the
+person before uploading.
+
+If you made the clip outside Conductor (ffmpeg, Veo or another generator, burned-in captions), lay
+its text inside the safe zone before upload (numbers in `references/platform-specs.md`) and do not
+rely on the preview check alone. Self-check: export frame 1 and the first frame after each cut, and
+confirm every line of text starts below y=290.
 
 1. Check `list_creative_media({kind: "VIDEO"})` for a clip already in the project before uploading a
    new one. A new one goes through `upload_creative_media` (local path or URL) — same provenance
@@ -311,7 +319,7 @@ itself and check it with the person before uploading.
    nothing renders in a browser). With `audio` (below) it encodes a new MP4 on this machine with
    ffmpeg instead.
 4. `preview_creative` — returns a small poster sheet across placements instead of the STILL contact
-   sheet, plus each placement's duration. Still worth a look: a poster is one frame, not the whole
+   sheet, plus each placement's duration, and runs the same safe-zone check on a saved 9:16 CLIP. Still worth a look: a poster is one frame, not the whole
    cut, so open the actual video before calling a rough or misframed clip done.
 5. `attach_creative_to_post`, same as any other Creative.
 
@@ -326,6 +334,10 @@ platform may get rejected or trimmed on another; check before attaching to a Pos
 broadly.
 
 ## Finished images (carousel or single still)
+
+When you render the slides yourself (HTML, Playwright, ffmpeg or any generator), lay the text inside
+the safe zone before upload (numbers in `references/platform-specs.md`) and do not rely on the preview
+check alone. Self-check: export slide 1 and confirm every line of text starts below y=290.
 
 Slides made by `compose_slideshow` take this same CAROUSEL route: pass its `slidePaths` to
 `preview_creative_draft` (see `references/slideshow-formats.md`).
@@ -356,10 +368,18 @@ thing).
    library (see "Music" below) also renders a 9:16 slideshow MP4 here: `preview_creative_draft`
    returns it as `slideshowVideoPath` beside the contact sheet, so watch it with the person, not
    just the sheet. `slideshow: {slideDurations, zoom}` sets the pace (one entry per 9x16 slide, 1 to
-   10 s; default 3 s for the first slide and 2.5 s for the rest) and the slow push-in (default on).
-   Keep the total short: a 20-slide default runs about 40 s.
+   10 s) and the slow push-in (default on). Always pass `slideDurations` explicitly, per slide
+   `clamp(2.4 + 0.14 x words, 3.0, 4.8)` s from the words on that slide, plus 0.5 s for slide 1 and
+   0.5 s for an app-screen or chart slide. The 0.5 s cross-fade comes out of each slide's time, so
+   the total is the sum minus 0.5 s per cut. The tool computes the same formula itself when
+   `slideDurations` is omitted (from the `Text:` part of `slideAltText`, or OCR); with no text it
+   falls back to 3.5 s for the first slide and 3.0 s for the rest, so 20 slides run about 51 s.
+   Say the total length when showing the draft, and keep it short.
 4. Alt text: `slideAltText` has one entry per slide, in order (or a single Creative `altText`); readiness
-   blocks without it. Slides are never rewritten, so check them for burned-in text, logos and claims
+   blocks without it. Each entry describes the picture, then ends with `Text: "first line" / "second
+   line"`, quoting the words on the slide exactly (lines separated by " / "); write `Text: none` for
+   a slide with no words. The tool times each slide from these words, and screen readers get the
+   on-slide text. Slides are never rewritten, so check them for burned-in text, logos and claims
    and approve with `photoChecked: true`.
 5. `get_creative` for `readiness` (slides, caption, altText, photoChecked block going READY), then
    `attach_creative_to_post` (it renders first if needed). The mapping: Instagram feed gets `4x5`
@@ -409,6 +429,66 @@ destination rewards video over an image.
 5. `attach_creative_to_post`, same as any Creative — one MP4 per placement.
 
 A reel or other vertical placement takes exactly one video, same as a CLIP.
+
+## Safe zones in finished pixels
+
+The layout engine places text for STILL and MOTION Creatives, and checks it. Finished images and
+clips (CAROUSEL slides, CLIP media, anything rendered outside Conductor) are pixels it did not place,
+so `preview_creative_draft` reads their text with OCR in the UI zones instead and reports
+`safeZoneText` checks (slide index or `atSeconds`, the box, the text, which platform's UI covers it).
+It also returns an overlay sheet with Instagram and TikTok chrome drawn over the frames: `uiOverlay`
+is `instagram | tiktok | both | none`, inlined by default for 9:16 CAROUSEL and CLIP (the TikTok
+sheet is written to disk and its path returned). Look at it. OCR misses stylised or low-contrast
+text, and a `safeZoneUnchecked` check means OCR could not run and nothing was checked. A blocking
+error (text in the top zone on slide 1 or in the first 3 s) fails `passed`, and
+`attach_creative_to_post` refuses the Creative unless `ignoreSafeZone: true`.
+
+## Video from a still (generated clip)
+
+Only when the person asks for animation, motion, real movement or a video hook. Never offer it
+unprompted and never pick it yourself. A still with ffmpeg zoompan or shake looks fake; real motion
+needs `generate_creative_video`. Team mode is opt-in per run (`references/team-run.md`).
+
+1. **Still first.** Make the first frame with `generate_creative_image` and pass the realism check
+   (`references/realism-check.md`). A start still keeps the face, clothes and set steady. Optionally
+   make an end still and pass it as `lastFramePath` so the clip lands on a composed frame.
+2. **Say the cost, then call.** Before the first call state the number of clips, seconds, audio
+   on/off and the estimated cost. Call once without `confirmCost`: the tool returns
+   `VIDEO_COST_CONFIRMATION_REQUIRED` with the estimate. Show it, and call again with
+   `confirmCost: true` only after the person agrees.
+   - `VIDEO_ROUTE_NOT_CONFIGURED`: relay the setup commands and stop. Video is off until a route is set.
+   - `VIDEO_COST_CAP_EXCEEDED` or `VIDEO_DAILY_CAP_EXCEEDED`: say so plainly and mention
+     `conductor config set-video-caps`. Do not work around it (a shorter or cheaper call is the
+     person's choice).
+3. **Generate** with `generate_creative_video`: `imagePath` the still, `tier: "fast"` (default),
+   `resolution: "1080p"` (default; a 720p clip is a 1.5x upscale at 1080 wide, and `placementFit` warns).
+   `aspect` is `9:16` or `16:9`; `durationSeconds` 4, 6 or 8 (Omni 3 to 10). Describe the sound in the prompt.
+4. **Video realism check** before showing it (`references/realism-check.md`, "Video and audio"): the
+   4 fps contact sheet the tool returns, plus 100% crops of the face and hands at 2 or 3 timestamps
+   (extract frames with ffmpeg), and listen to the audio if there is any.
+5. **On fail**, retry at most twice, naming the failed tells in the prompt. After two failed Fast
+   takes, offer one `tier: "standard"` take with its cost; never run it automatically. If that
+   still fails, stop and say what looks generated.
+6. **Trim to the beat.** Hooks run about 2 to 4 s; a 4 s clip trimmed to about 3.4 s made a good hook.
+7. **Use it** as a MOTION background (`motion.background.source: "clip"` with `clipPath`, and
+   `motion.background.motion: "none"`: the clip already moves, and the default zoom would upscale it
+   and add a fake camera move) or the opening of a CLIP. Sound with `audio.source`: `clip` keeps the generated sound, `track` replaces it
+   with a library track, `none` mutes it; on a CLIP, `mix` also puts it under a library track (MOTION
+   has no `mix`).
+
+**Prompt for a person** (the first takes tend to overact, hence the acting line): handheld
+front-facing selfie; the start pose from the still; one clear action (for example "looks up from the
+phone, eyebrows lift, mouth opens slightly, palm-up hand"); "subtle, realistic acting, eyes stay
+their normal size, not exaggerated, not cartoonish"; "same person, clothes, set and light
+throughout"; "no text, no other people"; and "no talking" unless a spoken line is wanted.
+
+**Audio.** `generateAudio: true` makes native sound: ambience, SFX, short lip-synced lines. Audio
+raises the cost. A spoken line is at most about 8 words per 4 s, in quotes in the prompt, with no
+brand or product claim unless it passes the claims check, and the post needs captions for it. On the
+Gemini (Omni) route audio is always generated; with `generateAudio: false` the tool strips it.
+
+A generated clip is `aiGenerated: true` (its `.provenance.json` sidecar), so the AI label applies
+(`references/compliance-checklist.md`, section 2).
 
 ## Music
 

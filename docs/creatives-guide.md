@@ -131,6 +131,24 @@ billed per image), or asks you. `conductor doctor` shows both routes.
 Generated photos contain no text or logos, and never show your real product unless you give Claude a
 real photo of it.
 
+#### Want motion? Have a clip generated from a photo
+
+Ask for motion or a video ("make this photo move", "a 4 second clip of them laughing") and Claude can
+turn a still into a short clip, with sound if you want it. **It always tells you the estimated price
+first and waits for your yes**; nothing is generated or billed until you agree. Spending is capped at
+$2 per clip run and $5 a day by default (`conductor config set-video-caps --per-call <usd> --daily <usd>`).
+
+Video is off until you set up one route:
+
+- **Veo on Vertex AI** (uses your Google Cloud login): `conductor config set-vertex-project <id>` and
+  `gcloud auth login`. Billed to that project.
+- **Gemini Omni** (uses a Gemini API key): `conductor config set-gemini-api-key <key>`.
+
+A 4 second clip takes one to three minutes. Claude checks it for AI tells (warped faces or hands, a
+face that changes, lips that don't match the sound) and retries at most twice before telling you it
+still looks generated. The clip is recorded as AI-generated, so the AI label applies when you publish.
+If it has a spoken line, add captions. `conductor doctor` shows the route and today's spend.
+
 ### b. In the web app
 
 Go to **Marketing → Creatives → New creative**. It opens straight into the Creative editor:
@@ -312,7 +330,7 @@ sent as a video instead. Ask Claude for "a slideshow with a music track". Claude
 your audio library and reuses a track that fits; a new file is added to the library with its source
 and licence first (never mixed into an MP4 somewhere else). The preview then also builds a 9:16
 slideshow video on your machine (it needs ffmpeg) and gives you its path to watch before you approve.
-Slides last 3 seconds for the first and 2.5 seconds for the rest, with a slow zoom and 0.5-second
+Slides last 3.5 seconds for the first and 3 seconds for the rest by default (longer when a slide has more text), with a slow zoom and 0.5-second
 cross-fades; ask for different timing or no zoom. Keep it under about 60 seconds, since YouTube
 blocks a Short longer than that when it has a track, and Facebook reels run 3 to 90 seconds. When
 you attach it to a Post, each destination sends either the photos (silent) or the video: TikTok and
@@ -492,6 +510,16 @@ A Reel or Story destination takes exactly one video — Conductor never sends it
 Keep an eye on each platform's own duration limits (TikTok, Reels, and Shorts are all built for
 short vertical video; YouTube's own limits depend on the destination format) — Conductor flags a
 clip over about three minutes as a heads-up when you upload it, but doesn't refuse it.
+
+### Text under the app's buttons
+
+On a vertical video or slideshow, TikTok and Instagram draw their own buttons and captions over your
+picture: roughly the top 15% (back arrow, tabs, search), the bottom third and a column on the right.
+Keep your words inside the middle. When you hand Claude finished slides or a finished video, the
+preview reads their text, flags anything under those areas, and shows a sheet with the app's screen
+drawn on top, so look at that sheet before you approve. It can miss fancy or faint lettering, and if
+it says it could not check, check by eye. Slideshows are also timed to the words on each slide, so
+a slide with two lines stays up long enough to read.
 
 ## 6. Troubleshooting
 

@@ -745,7 +745,7 @@ class CreativeRenderServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         assertThat(result.spec().getCreative().getKind().getValue()).isEqualTo("CAROUSEL");
         assertThat(result.spec().getCreative().getSlides()).hasSize(3);
         assertThat(result.spec().getCreative().getSlideshow().getSlideDurations())
-                .extracting(BigDecimal::doubleValue).containsExactly(3.0, 2.5, 2.5);
+                .extracting(BigDecimal::doubleValue).containsExactly(3.5, 3.0, 3.0);
         assertThat(result.spec().getCreative().getAudio().getTrackUrl()).isNotBlank();
         assertThat(result.spec().getCreative().getAudio().getTargetLufs()).isEqualByComparingTo("-14");
         assertThat(result.spec().getPlacements()).hasSize(1);

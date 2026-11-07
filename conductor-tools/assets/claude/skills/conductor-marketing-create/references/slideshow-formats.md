@@ -90,7 +90,8 @@ detail, and none may state a fact the brief does not support.
 - Every card reads like a person posted it (`voice.md`): a speaker, one real detail, no template
   frames, never a description of the photo.
 - Keep text between about y 16 and y 75 (percent of the 9:16 frame). That survives the 4:5 Instagram
-  cut and the platform UI (top bar, bottom caption, right button column).
+  cut and the platform UI (top bar, bottom caption, right button column). In pixels the top limit is
+  y=290 of 1920 (15.1%), which y 16 (307 px) clears.
 - The first text of every slide needs `y`.
 - Read the composer's `checks`; an `error` severity blocks the preview.
 

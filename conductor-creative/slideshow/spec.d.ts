@@ -12,6 +12,12 @@ export type TextStyle = (typeof TEXT_STYLES)[number];
 export type SlideRatio = '9x16' | '4x5';
 export declare const SLIDE_RATIOS: readonly SlideRatio[];
 export declare const MAX_SLIDES = 35;
+/** The current layout generation: tier/week/receipt default below the 290 px top band, text clear of the 162 px
+ * right band. A spec stored without it was composed before, and is re-rendered with the old layout. */
+export declare const SLIDESHOW_LAYOUT = 2;
+export declare const isLegacyLayout: (spec: {
+    layout?: unknown;
+} | null | undefined) => boolean;
 export interface SlideText {
     t: string;
     /** % of the 9:16 frame height. Omitted: joins the previous text's stack. */
@@ -100,6 +106,8 @@ export interface SlideSpec {
 export interface SlideshowSpec {
     id: string;
     grain?: boolean;
+    /** The layout generation the slides were composed with; absent = before the 290 px top / 162 px right bands. */
+    layout?: number;
     /** The look of the composed text and callouts (partial or resolved); absent = the native look. */
     style?: SlideshowStyle | null;
     slides: SlideSpec[];

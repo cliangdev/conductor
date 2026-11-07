@@ -13,6 +13,18 @@ import { compactRevisionState } from '../../lib/slideshow/revision-view.js'
 import { PROVENANCE_FIELD_MAX, fitProvenanceForUpload, readProvenanceSidecar } from '../../lib/provenance-sidecar.js'
 import { renderCreative as runLocalRender, renderViaApi } from '../../lib/creative-render.js'
 import { needsLocalRender } from '../../lib/creative-local-render.js'
+import type { DraftCheck } from '../../lib/creative-render.js'
+import {
+  checkSavedCreativePixels,
+  describeChecks,
+  hasErrors,
+  pacingFor,
+  pickRender,
+  type OverlaySheet,
+  type PixelToolOptions,
+  type SavedRender,
+  type UiOverlay,
+} from './safe-zone-pixels.js'
 
 /**
  * Conductor Creatives: a Brand Kit (tokens, copy rules, approved lines) governs one or more
@@ -454,6 +466,66 @@ export interface CreateCreativeParams extends CreativeFields {
   variantOf?: string
 }
 
+/**
+ * A CAROUSEL with a track and no slideshow.slideDurations is timed from its alt text's "Text:" parts (no OCR
+ * here: the slides are media ids). Returns the fields with the durations added, and the timing to report.
+ */
+async function withReadingDurations<T extends CreativeFields>(
+  params: T,
+  kind: string | undefined,
+  saved?: CreativeFields
+): Promise<{ fields: T; pacing?: { slideDurations: number[]; slideshowDurationSeconds: number; basis: string; warnings?: string[] } }> {
+  // On update, whatever the patch leaves out comes from the saved Creative (the PATCH replaces the whole
+  // slideshow object, so anything we send must carry the saved fields too).
+  const slidesMap = params.slides ?? saved?.slides
+  const slides = slidesMap?.['9x16'] ?? slidesMap?.['default']
+  const altText = params.slideAltText ?? saved?.slideAltText
+  const audio = params.audio ?? saved?.audio
+  const track = (audio as { source?: string } | undefined)?.source === 'track'
+  const patchDurations = (params.slideshow as { slideDurations?: unknown } | undefined)?.slideDurations
+  const savedDurations = (saved?.slideshow as { slideDurations?: unknown } | undefined)?.slideDurations
+  // Saved durations are kept while they still match the slide count (the backend rejects a mismatched list;
+  // it counts the 9x16 slide list, else the default one, exactly as `slides` is picked above).
+  const patchHasDurations = Array.isArray(patchDurations) && patchDurations.length > 0
+  // An explicit empty list clears the saved one, so it is not kept (and the timing is computed when it can be).
+  const patchClears = Array.isArray(patchDurations) && patchDurations.length === 0
+  const savedKept = !patchClears && Array.isArray(savedDurations) && savedDurations.length > 0 && savedDurations.length === slides?.length
+  const hasDurations = patchHasDurations || savedKept
+  // A patch that sends its own slideshow still must not drop the saved one's other fields, but a saved
+  // duration list the new slide count no longer fits must not ride along (the patch does not replace it).
+  const mergedSlideshow = (): Record<string, unknown> | undefined => {
+    if (!saved?.slideshow || !params.slideshow) return undefined
+    const merged: Record<string, unknown> = { ...saved.slideshow, ...params.slideshow }
+    if (!patchHasDurations && !savedKept) delete merged['slideDurations']
+    return merged
+  }
+  if (kind !== 'CAROUSEL' || !track || !slides?.length || !altText?.length || hasDurations) {
+    const merged = mergedSlideshow()
+    const fields = merged ? ({ ...params, slideshow: merged } as T) : params
+    // Kept durations are not recomputed (a saved list may be hand-set), but a slide whose text changed and
+    // is now too short for its words is flagged. Alt text only: no OCR here, and slides without a "Text:"
+    // part count as unknown (no warning).
+    if (kind === 'CAROUSEL' && track && slides?.length && altText?.length && hasDurations) {
+      const kept = (patchHasDurations ? patchDurations : savedDurations) as number[]
+      if (kept.every((n) => typeof n === 'number')) {
+        const checked = await pacingFor({ count: slides.length, altText, given: kept })
+        if (checked.warnings.length) {
+          return {
+            fields,
+            pacing: { slideDurations: kept, slideshowDurationSeconds: checked.totalSeconds, basis: checked.basis, warnings: checked.warnings },
+          }
+        }
+      }
+    }
+    return { fields }
+  }
+  const paced = await pacingFor({ count: slides.length, altText })
+  return {
+    fields: { ...params, slideshow: { ...saved?.slideshow, ...params.slideshow, slideDurations: paced.slideDurations } },
+    pacing: { slideDurations: paced.slideDurations, slideshowDurationSeconds: paced.totalSeconds, basis: paced.basis },
+  }
+}
+
 export async function createCreative(params: CreateCreativeParams, config: Config): Promise<Record<string, unknown>> {
   return withCreativeErrors(async () => {
     if (params.variantOf) {
@@ -463,7 +535,9 @@ export async function createCreative(params: CreateCreativeParams, config: Confi
         config
       )
     }
-    return apiPost(creativesBase(config), { ...params, variantOf: undefined }, config)
+    const { fields, pacing } = await withReadingDurations(params, params.kind)
+    const created = await apiPost<Record<string, unknown>>(creativesBase(config), { ...fields, variantOf: undefined }, config)
+    return pacing && created && typeof created === 'object' ? { ...created, ...pacing } : created
   })
 }
 
@@ -479,11 +553,23 @@ export async function updateCreative(params: UpdateCreativeParams, config: Confi
   try {
     return await withCreativeErrors(async () => {
       let version = patch.version
-      if (version === undefined || version === null) {
-        const current = await apiGet<{ version?: number }>(url, config)
-        version = current.version
+      // Read the saved Creative unless the patch is a no-pacing patch with a known version: the pacing
+      // fallback needs its slides, alt text, audio and slideshow. A failed read only costs the fallback.
+      const touchesPacing = patch.kind !== undefined || patch.slides !== undefined || patch.slideAltText !== undefined || patch.audio !== undefined || patch.slideshow !== undefined
+      let current: (CreativeFields & { version?: number }) | undefined
+      if (version === undefined || version === null || touchesPacing) {
+        try {
+          current = await apiGet<CreativeFields & { version?: number }>(url, config)
+        } catch (err) {
+          if (version === undefined || version === null) throw err
+        }
+        if (version === undefined || version === null) version = current?.version
       }
-      return apiPatch(url, { ...patch, version }, config)
+      // Without a kind in the patch, the saved kind decides (else slides alone mean a CAROUSEL).
+      const kind = patch.kind ?? current?.kind ?? (patch.slides ? 'CAROUSEL' : undefined)
+      const { fields, pacing } = await withReadingDurations(patch, touchesPacing ? kind : undefined, current)
+      const updated = await apiPatch<Record<string, unknown>>(url, { ...fields, version }, config)
+      return pacing && updated && typeof updated === 'object' ? { ...updated, ...pacing } : updated
     })
   } catch (err) {
     // A 409 carrying violations is a readiness/structural rule (already formatted above); a bare 409 is a stale version.
@@ -1080,10 +1166,34 @@ interface RenderApiItem {
   frames?: RenderApiFrame[]
 }
 
+/** Fetches the Creative and its renders and runs the pixel check on a saved CAROUSEL or CLIP; never throws. */
+async function savedPixelCheck(
+  creativeId: string,
+  config: Config,
+  opts: PixelToolOptions & { renderId?: string; writeOverlay?: boolean; uiOverlay?: UiOverlay; knownRenders?: SavedRender[]; knownCreative?: Record<string, unknown> }
+): Promise<{ checks?: DraftCheck[]; passed?: boolean; overlaySheets?: OverlaySheet[]; notes: string[]; skipped?: string }> {
+  try {
+    const creative = (opts.knownCreative ?? (await apiGet<Record<string, unknown>>(`${creativesBase(config)}/${creativeId}`, config))) as {
+      kind?: string
+      version?: number
+      audio?: { source?: string } | null
+      slideshow?: { zoom?: boolean } | null
+    }
+    if (creative?.kind !== 'CAROUSEL' && creative?.kind !== 'CLIP') return { notes: [], skipped: 'not a CAROUSEL or CLIP' }
+    const renders = opts.knownRenders ?? (await apiGet<SavedRender[]>(`${creativesBase(config)}/${creativeId}/renders`, config))
+    const { result, skipped } = await checkSavedCreativePixels(creative, pickRender(renders, opts.renderId, creative.version), opts)
+    if (!result) return { notes: [], ...(skipped ? { skipped } : {}) }
+    return { checks: result.checks, passed: result.passed, overlaySheets: result.overlaySheets, notes: result.notes }
+  } catch (e) {
+    return { notes: [], skipped: `the safe-zone check could not run (${e instanceof Error ? e.message : String(e)})` }
+  }
+}
+
 export async function renderCreativeTool(
   params: { creativeId: string; previewOnly?: boolean; renderer?: string; workflowRunId?: string },
   config: Config,
-  onProgress?: (message: string) => void
+  onProgress?: (message: string) => void,
+  pixelOptions: PixelToolOptions = {}
 ): Promise<Record<string, unknown>> {
   // A MOTION render can run for a while (roughly 20s per placement for an 8s video, streamed one
   // ffmpeg progress line every ~25% per placement) — this tool call is still synchronous, but the
@@ -1098,15 +1208,31 @@ export async function renderCreativeTool(
       onProgress?.(line)
     }
   )
+  // A CAROUSEL or CLIP is finished pixels: report any text under the platform UI (reported only, never blocking).
+  const pixel =
+    result.ok && !params.previewOnly && result.renderId
+      ? await savedPixelCheck(params.creativeId, config, {
+          ...pixelOptions,
+          renderId: result.renderId,
+          // Frames without download URLs (an older server) are looked up again from the render list.
+          ...(result.frames.every((f) => f.placementKey !== '9x16' || f.url)
+            ? { knownRenders: [{ id: result.renderId, state: 'SUCCEEDED', previewOnly: false, frames: result.frames }] }
+            : {}),
+        })
+      : undefined
   return {
     renderId: result.renderId,
     state: result.state,
     ok: result.ok,
     error: result.error,
     frames: result.frames,
+    ...(pixel?.checks ? { checks: pixel.checks, passed: pixel.passed } : {}),
     ...(progress.length ? { log: progress.join('\n') } : {}),
     nextStep: result.ok
-      ? 'Call preview_creative to look at the render, or get_creative for the stored frame list.'
+      ? 'Call preview_creative to look at the render, or get_creative for the stored frame list.' +
+        (pixel?.checks?.some((c) => c.severity === 'error')
+          ? ` Text sits under the platform UI (${describeChecks(pixel.checks.filter((c) => c.severity === 'error'))}); fix the media and re-render before attaching.`
+          : '')
       : 'Fix what `error` names and call render_creative again.',
   }
 }
@@ -1119,6 +1245,11 @@ export interface PreviewCreativeResult {
   url?: string
   image?: { data: Buffer; mimeType: string }
   note?: string
+  /** CAROUSEL and CLIP with a 9x16 placement: text under the platform UI, found in the rendered pixels. */
+  checks?: DraftCheck[]
+  passed?: boolean
+  /** The platform UI drawn over the 9x16 slides or clip frames, on disk. */
+  overlaySheets?: OverlaySheet[]
 }
 
 // Only a sheet rendered from the creative as it is now is worth showing: an older one would show the model
@@ -1193,7 +1324,8 @@ async function previewClip(
   creativeId: string,
   version: number | undefined,
   renders: RenderApiItem[],
-  config: Config
+  config: Config,
+  used: { render?: RenderApiItem } = {}
 ): Promise<PreviewCreativeResult> {
   let render = findLatestRenderWithFrames(renders, version)
   if (!render) {
@@ -1208,6 +1340,7 @@ async function previewClip(
     }
     render = { id: rendered.renderId!, state: rendered.state ?? 'SUCCEEDED', frames: rendered.frames as RenderApiFrame[] }
   }
+  used.render = render
 
   const frames = (render.frames ?? []).filter((f) => f.posterUrl)
   if (!frames.length) {
@@ -1262,17 +1395,47 @@ function withMotionNote(note: string | undefined, motionNote: string | undefined
   return note ? `${motionNote}\n\n${note}` : motionNote
 }
 
-export async function previewCreative(params: { creativeId: string }, config: Config): Promise<PreviewCreativeResult> {
+export async function previewCreative(
+  params: { creativeId: string; uiOverlay?: UiOverlay },
+  config: Config,
+  options: PixelToolOptions = {}
+): Promise<PreviewCreativeResult> {
   const [creative, renders] = await Promise.all([
-    apiGet<{ version?: number; kind?: string; motion?: { durationSec?: number } }>(
+    apiGet<{ version?: number; kind?: string; motion?: { durationSec?: number }; audio?: { source?: string } | null; slideshow?: { zoom?: boolean } | null }>(
       `${creativesBase(config)}/${params.creativeId}`,
       config
     ),
     apiGet<RenderApiItem[]>(`${creativesBase(config)}/${params.creativeId}/renders`, config),
   ])
+  const used: { render?: RenderApiItem } = {}
+  const shown = await previewSheet(params, creative, renders, config, used)
+  if (creative?.kind !== 'CAROUSEL' && creative?.kind !== 'CLIP') return shown
 
+  // CAROUSEL and CLIP are finished pixels: check the 9x16 slides or video of the render for text under the platform UI.
+  const render = used.render ?? pickRender(renders, undefined, creative.version)
+  const { result, skipped } = await checkSavedCreativePixels(creative, render as SavedRender | undefined, {
+    ...options,
+    writeOverlay: true,
+    uiOverlay: params.uiOverlay,
+  })
+  const extra = [...(result?.notes ?? []), ...(skipped && skipped !== 'no 9x16 placement to check' ? [`Safe-zone check not run: ${skipped}.`] : [])]
+  const note = [shown.note, ...extra].filter(Boolean).join(' ') || undefined
+  return {
+    ...shown,
+    ...(note ? { note } : {}),
+    ...(result ? { checks: result.checks, passed: result.passed, ...(result.overlaySheets.length ? { overlaySheets: result.overlaySheets } : {}) } : {}),
+  }
+}
+
+async function previewSheet(
+  params: { creativeId: string },
+  creative: { version?: number; kind?: string; motion?: { durationSec?: number } },
+  renders: RenderApiItem[],
+  config: Config,
+  used: { render?: RenderApiItem }
+): Promise<PreviewCreativeResult> {
   if (creative?.kind === 'CLIP') {
-    return previewClip(params.creativeId, creative?.version, renders, config)
+    return previewClip(params.creativeId, creative?.version, renders, config, used)
   }
 
   // For MOTION this note (duration, and any already-rendered MP4 URLs for the current version) is
@@ -1340,9 +1503,66 @@ export async function previewCreative(params: { creativeId: string }, config: Co
   return { renderId: render.id, state: render.state, url: frame.url, image: { data: Buffer.from(bytes), mimeType }, note: motionNote }
 }
 
-export async function attachCreativeToPost(
-  params: { creativeId: string; postId?: string; workItemId?: string; renderId?: string },
+/**
+ * Whether the Post has a destination that takes this Creative's 9x16 frames, mirroring the backend's
+ * CreativePlacementTargetMapper (matches / matchesVideo / carouselVideoFor). Returns true (check and block)
+ * when the targets cannot be read or the Post has none yet, since then nothing says the 9x16 frames are unused.
+ */
+async function postUsesVerticalFrames(
+  postId: string,
+  creative: { kind?: string; audio?: { source?: string } | null } | undefined,
+  presentKeys: Set<string>,
   config: Config
+): Promise<boolean> {
+  let rows: unknown
+  try {
+    rows = await apiGet<unknown>(`${V2_PROJECT(config)}/work-items/${postId}/publish-targets`, config)
+  } catch {
+    return true
+  }
+  if (!Array.isArray(rows) || rows.length === 0) return true
+  const clip = creative?.kind === 'CLIP'
+  const track = creative?.audio?.source === 'track'
+  return rows.some((row) => {
+    const r = row as { platform?: string; format?: string | null; publishOptions?: { carouselAs?: unknown } | null; assetIds?: unknown }
+    // A destination with its own chosen media is skipped by attach (CreativeAttachService leaves it as it is),
+    // so this render's frames never reach it. An empty own selection is not "chosen media": attach fills it.
+    if (Array.isArray(r.assetIds) && r.assetIds.length > 0) return false
+    const platform = String(r.platform ?? '').trim().toLowerCase()
+    const format = String(r.format ?? 'feed').trim().toLowerCase() || 'feed'
+    const feed = format === 'feed'
+    const ig = platform === 'instagram'
+    const fb = platform === 'facebook'
+    if (clip) {
+      return (
+        platform === 'tiktok' ||
+        ((ig || fb) && format === 'reel') ||
+        (fb && feed && !presentKeys.has('1x1')) ||
+        (ig && feed && !presentKeys.has('4x5')) ||
+        (platform === 'youtube' && !presentKeys.has('16x9')) ||
+        (format === 'story' && !presentKeys.has('story'))
+      )
+    }
+    // CAROUSEL (CreativePlacementMedia.mediaFor): with a track the target's own carouselAs option, else the
+    // default (video for TikTok, YouTube and Reels, photos for a feed post), picks the 9x16 slideshow video, on
+    // a destination that can take one (carouselVideoFor). The video's presence in the render is assumed.
+    // Otherwise the slide images go out, and the 9x16 list is only used by TikTok (carouselPlacementFor: an
+    // Instagram or Facebook feed prefers 4x5/1x1, and a Reel, story or YouTube takes no image set).
+    if (track) {
+      const raw = typeof r.publishOptions?.carouselAs === 'string' ? r.publishOptions.carouselAs.trim().toLowerCase() : ''
+      const explicit = raw === 'photos' || raw === 'video' ? raw : undefined
+      const wantsVideo = (explicit ?? (platform === 'tiktok' || platform === 'youtube' || format === 'reel' ? 'video' : 'photos')) === 'video'
+      const takesVideo = platform === 'tiktok' || platform === 'youtube' || ((ig || fb) && (feed || format === 'reel'))
+      if (wantsVideo && takesVideo) return true
+    }
+    return platform === 'tiktok'
+  })
+}
+
+export async function attachCreativeToPost(
+  params: { creativeId: string; postId?: string; workItemId?: string; renderId?: string; ignoreSafeZone?: boolean },
+  config: Config,
+  options: PixelToolOptions = {}
 ): Promise<Record<string, unknown>> {
   // `postId` is the primary name (it matches get_post_status's own param); `workItemId` is kept as a
   // deprecated alias so existing callers don't break.
@@ -1351,29 +1571,70 @@ export async function attachCreativeToPost(
     throw new Error('postId is required (the Post\'s Work Item id).')
   }
   let renderId = params.renderId
+  let creative: Record<string, unknown> | undefined
+  let renders: RenderApiItem[] | undefined
   if (!renderId) {
-    const renders = await apiGet<RenderApiItem[]>(`${creativesBase(config)}/${params.creativeId}/renders`, config)
+    renders = await apiGet<RenderApiItem[]>(`${creativesBase(config)}/${params.creativeId}/renders`, config)
     const latest = renders.find((r) => r.state === 'SUCCEEDED' && !r.previewOnly)
     if (latest) {
       renderId = latest.id
     } else {
       // CLIP and CAROUSEL render in one synchronous call (on the server, or here when their audio needs
       // encoding), so there is no reason to make the caller do it as a separate step.
-      const creative = await apiGet<{ kind?: string; audio?: { source?: string } | null }>(`${creativesBase(config)}/${params.creativeId}`, config)
-      if (creative?.kind !== 'CLIP' && creative?.kind !== 'CAROUSEL') {
+      creative = await apiGet<Record<string, unknown>>(`${creativesBase(config)}/${params.creativeId}`, config)
+      const kind = creative?.['kind'] as string | undefined
+      if (kind !== 'CLIP' && kind !== 'CAROUSEL') {
         throw new Error(
           'No SUCCEEDED render exists for this Creative yet — call render_creative (previewOnly: false) first, or pass an explicit renderId.'
         )
       }
       const renderParams = { creativeId: params.creativeId, previewOnly: false, renderer: 'mcp' }
-      const rendered = needsLocalRender(creative.kind, creative.audio)
+      const rendered = needsLocalRender(kind, creative?.['audio'] as { source?: string } | null | undefined)
         ? await runLocalRender(renderParams, config)
         : await renderViaApi(renderParams, config)
       if (!rendered.ok || !rendered.renderId) {
-        throw new Error(`Rendering this ${creative.kind} Creative before attaching failed: ${rendered.error ?? 'unknown error'}`)
+        throw new Error(`Rendering this ${kind} Creative before attaching failed: ${rendered.error ?? 'unknown error'}`)
       }
       renderId = rendered.renderId
+      renders = undefined // the list above predates this render
     }
   }
-  return apiPost(`${creativesBase(config)}/${params.creativeId}/attach`, { renderId, workItemId: postId }, config)
+
+  // Pre-flight for finished pixels: a CAROUSEL or CLIP with text under the platform UI is not attached
+  // unless the person accepted it (ignoreSafeZone). Warnings never block.
+  const pixel = await savedPixelCheck(params.creativeId, config, {
+    ...options,
+    renderId,
+    ...(creative ? { knownCreative: creative } : {}),
+    ...(renders ? { knownRenders: renders } : {}),
+  })
+  const errors = (pixel.checks ?? []).filter((c) => c.severity === 'error')
+  // The check only reads 9x16 frames, so it only blocks when one of the Post's destinations uses them.
+  let blocking = errors.length > 0 && params.ignoreSafeZone !== true
+  if (blocking) {
+    const saved = creative ?? (await apiGet<Record<string, unknown>>(`${creativesBase(config)}/${params.creativeId}`, config).catch(() => undefined))
+    // CLIP rules depend on which cuts the render has: look the render up when it was not listed above (an
+    // explicit renderId, or one just made); if that fails the set stays empty, which keeps blocking.
+    let render = (renders ?? []).find((r) => r.id === renderId)
+    if (!render && saved?.['kind'] === 'CLIP') {
+      const listed = await apiGet<RenderApiItem[]>(`${creativesBase(config)}/${params.creativeId}/renders`, config).catch(() => undefined)
+      render = Array.isArray(listed) ? listed.find((r) => r.id === renderId) : undefined
+    }
+    const present = new Set<string>((render?.frames ?? []).map((f) => f.placementKey))
+    blocking = await postUsesVerticalFrames(postId, saved as { kind?: string; audio?: { source?: string } | null } | undefined, present, config)
+  }
+  if (blocking) {
+    return {
+      ok: false,
+      code: 'SAFE_ZONE_TEXT',
+      error:
+        `Not attached: text sits under the platform UI in the finished media (${describeChecks(errors)}). ` +
+        'Fix the media (move the text below y=290 at 1080x1920), re-upload and update the Creative, then attach again. ' +
+        'Only if the person has seen this and accepts it, call again with ignoreSafeZone: true.',
+      checks: pixel.checks,
+    }
+  }
+  const attached = await apiPost<Record<string, unknown>>(`${creativesBase(config)}/${params.creativeId}/attach`, { renderId, workItemId: postId }, config)
+  const warnings = (pixel.checks ?? []).filter((c) => c.severity !== 'error' || errors.length > 0)
+  return warnings.length && attached && typeof attached === 'object' ? { ...attached, safeZoneChecks: warnings } : attached
 }

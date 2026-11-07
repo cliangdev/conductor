@@ -8,7 +8,7 @@
 import { isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mapSpecImages } from './compose.js'
-import { validateSlideshowSpec, type SlideshowSpec } from './spec.js'
+import { SLIDESHOW_LAYOUT, validateSlideshowSpec, type SlideshowSpec } from './spec.js'
 import { listTextFields, type TextField } from './text-fields.js'
 
 export const MEDIA_REF = /^media:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i
@@ -50,7 +50,9 @@ export function prepareSpecForCreative(raw: unknown, specDir: string): PrepareRe
   })
   if (problems.length > 0) return { ok: false, errors: problems }
   const style = typeof resolvedStyle === 'object' && resolvedStyle !== null && !Array.isArray(resolvedStyle) ? (resolvedStyle as Record<string, unknown>) : undefined
-  return { ok: true, spec, ...(style ? { resolvedStyle: style } : {}) }
+  // Stored with the layout generation this CLI composes, so a later text edit re-renders it the same way.
+  const stamped = spec.layout === undefined ? { ...spec, layout: SLIDESHOW_LAYOUT } : spec
+  return { ok: true, spec: stamped, ...(style ? { resolvedStyle: style } : {}) }
 }
 
 /** Every distinct image a spec names, in first-use order (media refs included). */

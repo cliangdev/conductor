@@ -13,6 +13,11 @@ export type SlideRatio = '9x16' | '4x5'
 export const SLIDE_RATIOS: readonly SlideRatio[] = ['9x16', '4x5']
 export const MAX_SLIDES = 35
 
+/** The current layout generation: tier/week/receipt default below the 290 px top band, text clear of the 162 px
+ * right band. A spec stored without it was composed before, and is re-rendered with the old layout. */
+export const SLIDESHOW_LAYOUT = 2
+export const isLegacyLayout = (spec: { layout?: unknown } | null | undefined): boolean => !(typeof spec?.layout === 'number' && spec.layout >= SLIDESHOW_LAYOUT)
+
 export interface SlideText {
   t: string
   /** % of the 9:16 frame height. Omitted: joins the previous text's stack. */
@@ -84,6 +89,8 @@ export interface SlideSpec {
 export interface SlideshowSpec {
   id: string
   grain?: boolean
+  /** The layout generation the slides were composed with; absent = before the 290 px top / 162 px right bands. */
+  layout?: number
   /** The look of the composed text and callouts (partial or resolved); absent = the native look. */
   style?: SlideshowStyle | null
   slides: SlideSpec[]
@@ -111,6 +118,7 @@ export function validateSlideshowSpec(spec: unknown): string[] {
     errors.push('id is required: letters, digits, ".", "_" or "-" only (it names the output files)')
   }
   if (spec.style !== undefined && spec.style !== null) errors.push(...validateSlideshowStyle(spec.style, 'spec.style'))
+  if (spec.layout !== undefined && !(Number.isInteger(spec.layout) && (spec.layout as number) >= 1)) errors.push('layout must be a positive whole number when given')
   if (!Array.isArray(spec.slides) || spec.slides.length === 0) {
     errors.push('slides must be a non-empty array')
     return errors

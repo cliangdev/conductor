@@ -231,9 +231,17 @@ export interface DraftManifestFrame {
 export interface DraftCheck {
   placementKey: string
   index?: number
-  /** spill | safeZone | contrast | font | image | accent | size | photoResolution | render */
+  /** spill | safeZone | safeZoneText | safeZoneUnchecked | contrast | font | image | accent | size | photoResolution | render */
   rule: string
   message: string
+  /** safeZoneText on a video: when the text first appears, in seconds. */
+  atSeconds?: number
+  /** safeZoneText: where the text was read, in the image's pixels. */
+  box?: { x: number; y: number; w: number; h: number }
+  /** safeZoneText: the text that was read. */
+  text?: string
+  /** safeZoneText: the platform UI that covers it. */
+  platforms?: string[]
   /** An "error" would fail the full render of that placement; a "warning" would only be reported. */
   severity: 'error' | 'warning'
 }
@@ -276,7 +284,9 @@ export async function renderDraft(
   params: { spec: { creative?: { kind?: string; audio?: { source?: string } | null }; previewOnly?: boolean }; localFiles: Record<string, string>; outDir: string },
   log: (...args: unknown[]) => void = () => {}
 ): Promise<RenderDraftResult> {
-  const { spec, localFiles, outDir } = params
+  const { localFiles, outDir } = params
+  // A draft preview is where the top safe zone is enforced as an error; a saved Creative's render only warns.
+  const spec = { ...params.spec, safeTopSeverity: 'error' as const }
 
   let ffmpegPath: string | undefined
   const draftAudio = spec.creative?.audio

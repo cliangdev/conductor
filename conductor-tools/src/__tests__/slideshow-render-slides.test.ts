@@ -129,6 +129,15 @@ describe('renderSlides', () => {
     })
   })
 
+  it('re-renders a spec stored before the layout version with the old layout, and a current one strictly', async () => {
+    await run()
+    expect(calls[0]!.options.lenientSafeZone).toBe(true)
+    calls = []
+    current = detail({ spec: { ...detail().spec, layout: 2 } })
+    await run()
+    expect(calls[0]!.options.lenientSafeZone).toBe(false)
+  })
+
   it('reports a revision the backend settled as FAILED on complete instead of success', async () => {
     mocked(apiPost).mockImplementation(async (url: string) =>
       url.endsWith('/complete') ? { status: 'FAILED', error: 'The Creative changed while the slides were rendering.' } : {}

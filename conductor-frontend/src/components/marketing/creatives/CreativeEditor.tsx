@@ -141,7 +141,7 @@ interface SlideshowFormState {
 
 const SLIDE_MIN_SEC = 1
 const SLIDE_MAX_SEC = 10
-const defaultSlideSec = (i: number) => (i === 0 ? 3 : 2.5)
+const defaultSlideSec = (i: number) => (i === 0 ? 3.5 : 3)
 
 interface FormState {
   brandKitId: string
@@ -258,6 +258,16 @@ function toSlideshowForm(slideshow: CreativeSlideshow | null | undefined): Slide
     zoom: slideshow?.zoom ?? true,
     slideDurations: (slideshow?.slideDurations ?? []).map((d) => String(d)),
   }
+}
+
+/** Total video length in seconds: the slide times (blank = default) minus 0.5 s per cross-fade. */
+function slideshowTotalSec(durations: string[], count: number): string {
+  let sum = 0
+  for (let i = 0; i < count; i++) {
+    const n = Number(durations[i])
+    sum += durations[i]?.trim() && Number.isFinite(n) ? n : defaultSlideSec(i)
+  }
+  return String(Math.round((sum - 0.5 * Math.max(0, count - 1)) * 10) / 10)
 }
 
 /** Resolved per-slide seconds to save, or undefined when every slide is left at its default. */
@@ -1889,7 +1899,8 @@ export function CreativeEditor({ projectId, creativeId, token }: CreativeEditorP
                         ))}
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        {SLIDE_MIN_SEC}-{SLIDE_MAX_SEC} s each. Blank uses the default: 3 s for the first slide, 2.5 s for the rest.
+                        {SLIDE_MIN_SEC}-{SLIDE_MAX_SEC} s each. Blank uses the default: 3.5 s for the first slide, 3 s for the rest.
+                        {' '}Total about {slideshowTotalSec(form.slideshow.slideDurations, slideshowSlideCount(form.slides))} s (slides cross-fade for 0.5 s each).
                       </p>
                     </div>
                   )}

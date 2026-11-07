@@ -24,6 +24,20 @@ export interface Config {
   /** OpenAI API key for `generate_creative_image`. Used from this local file when no
    * OPENAI_API_KEY env var is set (Claude Desktop's MCP servers don't inherit the shell env). */
   openaiApiKey?: string
+  /** `generate_creative_video` route: 'vertex' (Veo) or 'gemini' (Omni). Unset: vertex when a project is set, else gemini when a key resolves. */
+  videoRoute?: 'vertex' | 'gemini'
+  /** Google Cloud project billed for Veo on Vertex AI. */
+  vertexProject?: string
+  /** Vertex region; read as us-central1 when unset. */
+  vertexRegion?: string
+  /** Gemini API key for the Omni video route (env CONDUCTOR_GEMINI_API_KEY / GEMINI_API_KEY win). */
+  geminiApiKey?: string
+  /** Refuse a single video call estimated above this many USD (default 2). */
+  videoPerCallCapUsd?: number
+  /** Refuse video calls once today's estimated spend would pass this many USD (default 5). */
+  videoDailyCapUsd?: number
+  /** Partial override of the video rate table, USD per second, e.g. { "fast": 0.12, "omni-720p": 0.1 }. */
+  videoRates?: Record<string, number>
 }
 
 export const CONFIG_PATH = path.join(os.homedir(), '.conductor', 'config.json')

@@ -100,4 +100,23 @@ describe('validateSlideshowSpec', () => {
     expect(ok([{ type: 'screen', shot: 's', callouts: [{ x: 150, y: 1, label: 'a' }] }]).join()).toMatch(/callouts\[0\]\.x/)
     expect(ok([{ bgColor: 'red;} body{display:none' }]).join()).toMatch(/bgColor/)
   })
+
+  it('defaults tier/week/receipt below the 290 top band, and re-renders keep the saved defaults', () => {
+    const slides = [
+      { type: 'tier' as const, rows: [{ k: 'S', c: '#f00', items: ['x'] }] },
+      { type: 'week' as const, days: [{ d: 'Mon', t: 'Tacos' }] },
+      { type: 'receipt' as const, head: 'SHOP', sections: [{ h: 'A', items: ['i'] }] },
+    ]
+    for (const sl of slides) {
+      expect(html(sl)).toContain('--top:310px')
+      const legacy = buildSlideHtml({ id: 't', slides: [sl] }, 0, '9x16', base, undefined, { lenientSafeZone: true })
+      expect(legacy).toMatch(/--top:2[56]0px/)
+      expect(legacy).toContain('"lenientSafeZone":true')
+      expect(html(sl)).not.toContain('"lenientSafeZone"')
+      // a re-render keeps the old text width and week spacing through the legacy class
+      expect(legacy).toContain('<div id="s" class="legacy">')
+      expect(html(sl)).toContain('<div id="s">')
+    }
+    expect(buildSlideHtml({ id: 't', slides: [{ ...slides[0]!, top: 240 }] }, 0, '9x16', base, undefined, { lenientSafeZone: true })).toContain('--top:240px')
+  })
 })

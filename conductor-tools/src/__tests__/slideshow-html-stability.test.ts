@@ -15,6 +15,14 @@ const base = 'file:///fonts/'
 
 /** New stylesheet declarations -> the declarations they replaced. */
 const INTENDED: Array<[string, string]> = [
+  // the 9:16 top overlay band grew to 290 and the right to 162: the native text container and the default tops moved clear of them
+  ['.txt{position:absolute;left:70px;right:180px;', '.txt{position:absolute;left:70px;right:150px;'],
+  ['.tier{position:absolute;left:0;right:0;top:var(--top,310px)', '.tier{position:absolute;left:0;right:0;top:var(--top,250px)'],
+  ['.week{position:absolute;left:60px;right:60px;top:var(--top,310px)', '.week{position:absolute;left:60px;right:60px;top:var(--top,260px)'],
+  ['.receipt{position:absolute;left:150px;right:150px;top:var(--top,310px)', '.receipt{position:absolute;left:150px;right:150px;top:var(--top,250px)'],
+  ['gap:26px;padding:14px 0;border-top:2px solid #ececf0', 'gap:26px;padding:20px 0;border-top:2px solid #ececf0'],
+  // a re-render of a saved slide (text edit) keeps the old text width and week spacing
+  ['#s.legacy .txt:not(.full){right:150px}\n#s.legacy .week .d{padding:20px 0}\n', ''],
   ['font-family:"Inter",sans-serif;padding:0 70px}', 'font-family:-apple-system,"SF Pro Text","Helvetica Neue",sans-serif;padding:0 70px}'],
   ['font:600 24px "Inter",sans-serif;', 'font:600 24px -apple-system,"Helvetica Neue",sans-serif;'],
   ['font-family:"Inter",sans-serif;background:#fff;border-radius:36px', 'font-family:-apple-system,"Helvetica Neue",sans-serif;background:#fff;border-radius:36px'],
