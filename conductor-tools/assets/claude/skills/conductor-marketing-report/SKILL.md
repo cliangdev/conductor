@@ -21,7 +21,7 @@ fractions (0.12 = 12%). The payload drops null and empty fields, except `window.
 `STALE`, `NOT_CONNECTED`, or behind the others is named in the report with its lag. If `window.to` is
 null or `sources` are all unconnected, say so and stop: there is nothing to report on yet.
 
-Statuses: `ON_TRACK`, `WATCH` (close), `OFF_TRACK`, `TOO_EARLY` (no value, or a rate on fewer than 20
+Statuses: `ON_TRACK`, `WATCH` (close, or a rate miss too small a sample to call real), `OFF_TRACK`, `TOO_EARLY` (no value, or a rate on fewer than 20
 observations), `NO_TARGET`. Rows with `derived` or a `note` carry a caveat: repeat it.
 
 ## Step 2 — Benchmarks

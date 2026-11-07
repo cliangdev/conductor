@@ -78,6 +78,31 @@ class MarketingTargetStatusTest {
     }
 
     @Test
+    void aRateMissThatChanceCouldMakeIsWatchNotOffTrack() {
+        // Rexipe's day-1 return: 4 of 32 against 20%; at a true 20%, 4 or fewer happens about one time in five
+        TargetStatus dayOne = status(rate(), 4.0 / 32, new TargetView(0.20, "UP"), 32L, 28);
+        assertThat(dayOne.status()).isEqualTo("WATCH");
+        assertThat(dayOne.missPct()).isCloseTo(0.375, within(1e-9));
+        // the same rate on 400 installs is a real miss
+        assertThat(status(rate(), 50.0 / 400, new TargetView(0.20, "UP"), 400L, 28).status()).isEqualTo("OFF_TRACK");
+        // a DOWN rate too: 6 of 20 cancelled against a 10% ceiling is real, 3 of 20 could be chance
+        Metric down = new Metric("c", "C", Unit.PERCENT, Aggregation.DERIVED, Good.DOWN, false, false, false, "a", "b",
+                null);
+        assertThat(status(down, 6.0 / 20, new TargetView(0.10, "DOWN"), 20L, 28).status()).isEqualTo("OFF_TRACK");
+        assertThat(status(down, 3.0 / 20, new TargetView(0.10, "DOWN"), 20L, 28).status()).isEqualTo("WATCH");
+    }
+
+    @Test
+    void aRateMissOutsideItsIntervalStaysOffTrack() {
+        // Rexipe's paywall reach: 20 of 28 against 85%, just outside the 95% interval (upper bound about 84.7%)
+        assertThat(status(rate(), 20.0 / 28, new TargetView(0.85, "UP"), 28L, 28).status()).isEqualTo("OFF_TRACK");
+        // with no sample reported the interval cannot be drawn, so the band alone decides
+        assertThat(status(rate(), 4.0 / 32, new TargetView(0.20, "UP"), null, 28).status()).isEqualTo("OFF_TRACK");
+        // a count is never judged by the interval
+        assertThat(status(count(Good.UP), 28.0, new TargetView(60, "UP"), 28L, 28).status()).isEqualTo("OFF_TRACK");
+    }
+
+    @Test
     void aCountTargetIsProratedFromItsWindowToTheRequestedOne() {
         TargetView per28 = new TargetView(280, "UP", true, "Set in x", "28d", null);
         assertThat(status(count(Good.UP), 70.0, per28, null, 7).status()).isEqualTo("ON_TRACK");

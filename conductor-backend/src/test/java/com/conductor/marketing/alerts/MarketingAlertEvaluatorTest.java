@@ -437,6 +437,40 @@ class MarketingAlertEvaluatorTest {
     }
 
     @Test
+    void aChannelWhoseFeedsNeverSucceededIsNotStaleBecauseItNeverDelivered() {
+        // A Search connection left at setup: the overview calls it STALE with a made-up end date, and another
+        // connection's pull (here the App Store's) evaluates the project.
+        ChannelView leftAtSetup = AlertFixtures.neverFetched("SEARCH", "Search",
+                connectionView("gsc-conn", "gsc", "STALE"));
+        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(leftAtSetup));
+
+        evaluator.onChannelMetricsPulled(new ChannelMetricsPulledEvent(PROJECT, "STORE", "store-conn"));
+
+        assertNothingPosted();
+    }
+
+    @Test
+    void aSnapshotTheFeedStoppedSendingIsNotReportedOffTrack() {
+        // MRR last arrived 17 days before the rest of the in-app data: where it was, not where it is.
+        offTrackOverview(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
+                AlertFixtures.THROUGH.minusDays(17)));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        assertNothingPosted();
+    }
+
+    @Test
+    void aSnapshotWithinAWeekOfTheChannelsDataIsStillReportedOffTrack() {
+        offTrackOverview(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
+                AlertFixtures.THROUGH.minusDays(MarketingOverviewQueryService.LAGGING_DAYS)));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "off_track:ADS:mrr");
+    }
+
+    @Test
     void aChannelWhoseJustPulledConnectionIsDegradedIsStale() {
         ChannelView noNewData = channel("ADS", "Apple Ads", "STALE", List.of(), List.of(), CONNECTION);
         when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(noNewData));

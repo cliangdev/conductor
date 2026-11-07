@@ -32,7 +32,7 @@ All of the sections after `acquisition` that are new (`store`, `adsCoverage`, `d
 
 ### Status bands
 
-`ON_TRACK`, `WATCH` (miss within the band, default 10% of target), `OFF_TRACK`, `TOO_EARLY` (no value, or a rate on fewer than 20 observations) and `NO_TARGET`. A count or currency target that declares a window is prorated to the requested one; a target with no window is compared as stated.
+`ON_TRACK`, `WATCH` (miss within the band, default 10% of target, or a rate with a known sample whose 95% Wilson interval still contains the target), `OFF_TRACK`, `TOO_EARLY` (no value, or a rate on fewer than 20 observations) and `NO_TARGET`. A count or currency target that declares a window is prorated to the requested one; a target with no window is compared as stated.
 
 ### Apple Ads
 

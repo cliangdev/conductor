@@ -19,7 +19,10 @@ export const CHANNEL_ORDER: ChannelKey[] = ['WEB', 'SEARCH', 'SOCIAL', 'STORE', 
 export type ChannelStatus = 'LIVE' | 'STALE' | 'NOT_CONNECTED' | 'COMING_SOON' | 'MISMATCH'
 export type MetricUnit = 'COUNT' | 'CURRENCY' | 'PERCENT' | 'POSITION' | 'RATING'
 export type TargetDirection = 'UP' | 'DOWN'
-/** Where a value stands against its target. TOO_EARLY: no value, or a rate on fewer than 20 observations. */
+/**
+ * Where a value stands against its target. TOO_EARLY: no value, or a rate on fewer than 20 observations. WATCH:
+ * a small miss, or a rate miss its sample is too small to call real.
+ */
 export type TargetStatus = 'ON_TRACK' | 'WATCH' | 'OFF_TRACK' | 'TOO_EARLY' | 'NO_TARGET'
 /** COHORT: a value counts the people who first opened on that day (or in the window), followed to now. */
 export type MetricBasis = 'EVENT' | 'COHORT'

@@ -105,6 +105,8 @@ public class MarketingOverviewQueryService {
     static final long MIN_SAMPLE = 20;
     /** How close a miss counts as WATCH rather than OFF_TRACK, in percent of the target, when a target does not say. */
     static final double DEFAULT_WATCH_BAND_PCT = 10;
+    /** The z of the 95% Wilson interval a rate's miss must clear to be OFF_TRACK rather than chance. */
+    static final double RATE_MISS_Z = 1.96;
     /** The period a count or currency total target is stated for when it does not say. */
     static final int DEFAULT_TARGET_WINDOW_DAYS = 28;
     /** The most days a fixed window may span. */
@@ -1637,7 +1639,9 @@ public class MarketingOverviewQueryService {
      * Where {@code value} stands against its target. NO_TARGET with none; TOO_EARLY with no value, or for a rate
      * (a PERCENT metric or a ratio) resting on fewer than {@link #MIN_SAMPLE} observations; ON_TRACK when met in
      * the target's direction; WATCH when it misses by no more than the watch band (default
-     * {@link #DEFAULT_WATCH_BAND_PCT}%) of the target; otherwise OFF_TRACK. A count or currency total is compared
+     * {@link #DEFAULT_WATCH_BAND_PCT}%) of the target, or when it is a share with a known sample whose 95% Wilson
+     * interval still contains the target (4 of 32 against 20% is a miss chance alone makes one time in five);
+     * otherwise OFF_TRACK. A count or currency total is compared
      * with its target prorated from the window the target declares (feed targets only; none means compared as stated) to {@code windowDays}.
      */
     static TargetStatus targetStatus(Metric metric, Double value, TargetView target, Long sample, int windowDays) {
@@ -1659,7 +1663,19 @@ public class MarketingOverviewQueryService {
         double miss = up ? (expected - value) / expected : (value - expected) / expected;
         double band = (target.watchBandPct() != null ? target.watchBandPct()
                 : metric.watchBandPct() != null ? metric.watchBandPct() : DEFAULT_WATCH_BAND_PCT) / 100;
-        return new TargetStatus(miss <= band + 1e-9 ? "WATCH" : "OFF_TRACK", miss);
+        boolean withinBand = miss <= band + 1e-9;
+        boolean couldBeChance = metric.unit() == Unit.PERCENT && sample != null && sample > 0
+                && value >= 0 && value <= 1 && expected <= 1 && wilsonContains(value, sample, expected);
+        return new TargetStatus(withinBand || couldBeChance ? "WATCH" : "OFF_TRACK", miss);
+    }
+
+    /** Whether {@code target} lies inside the {@link #RATE_MISS_Z} Wilson score interval of {@code rate} over {@code n}. */
+    static boolean wilsonContains(double rate, long n, double target) {
+        double z2 = RATE_MISS_Z * RATE_MISS_Z;
+        double denominator = 1 + z2 / n;
+        double centre = (rate + z2 / (2.0 * n)) / denominator;
+        double half = RATE_MISS_Z * Math.sqrt(rate * (1 - rate) / n + z2 / (4.0 * n * n)) / denominator;
+        return target >= centre - half && target <= centre + half;
     }
 
     /**

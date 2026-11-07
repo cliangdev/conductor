@@ -17,6 +17,8 @@ import com.conductor.marketing.verification.VerificationLedgerService.Verdict;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -26,6 +28,7 @@ final class AlertFixtures {
     static final LocalDate THROUGH = LocalDate.of(2026, 11, 3);
     static final LocalDate FROM = LocalDate.of(2026, 9, 29);
     static final LocalDate TO = LocalDate.of(2026, 10, 26);
+    static final OffsetDateTime FETCHED = OffsetDateTime.of(2026, 11, 4, 6, 0, 0, 0, ZoneOffset.UTC);
     static final String TRUST_NOTE = "The product backend differs from the connector (123 against 100) and no"
             + " direct read has checked it; trust the connector until the gap is explained.";
 
@@ -43,7 +46,7 @@ final class AlertFixtures {
         for (String id : connectionIds) {
             connections.add(new ConnectionView(id, "apple-search-ads", label, "LIVE"));
         }
-        return new ChannelView(channel, label, status, null, connections, null, metrics, THROUGH, null, true,
+        return new ChannelView(channel, label, status, FETCHED, connections, null, metrics, THROUGH, null, true,
                 mismatches, null);
     }
 
@@ -54,8 +57,21 @@ final class AlertFixtures {
 
     /** A channel whose connections each carry their own LIVE/STALE status, as the overview builds them. */
     static ChannelView channelOf(String channel, String label, String status, ConnectionView... connections) {
-        return new ChannelView(channel, label, status, null, List.of(connections), null, List.of(), THROUGH, null,
+        return new ChannelView(channel, label, status, FETCHED, List.of(connections), null, List.of(), THROUGH, null,
                 true, List.of(), null);
+    }
+
+    /** A channel left at setup: its feeds never succeeded, so it has no fetch time and no data of its own. */
+    static ChannelView neverFetched(String channel, String label, ConnectionView... connections) {
+        return new ChannelView(channel, label, "STALE", null, List.of(connections), null, List.of(), THROUGH, null,
+                true, List.of(), null);
+    }
+
+    /** A level metric off its target, read as of {@code asOf}. */
+    static MetricView offTrackLevel(String key, String label, double value, double target, LocalDate asOf) {
+        return new MetricView(key, label, Unit.CURRENCY, "UP", value, null, null, null, false, 0,
+                new TargetView(target, "UP"), settledSeries(), null, asOf, false, null, "LEVEL", "OFF_TRACK", 1.0,
+                null, null, null, null, "EVENT");
     }
 
     static ChannelView liveChannel(String channel, String label, List<MetricView> metrics) {

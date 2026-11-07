@@ -2,6 +2,7 @@ package com.conductor.marketing.alerts;
 
 import com.conductor.marketing.alerts.MarketingAlert.Kind;
 import com.conductor.marketing.budget.BudgetPacingService.TrippedRule;
+import com.conductor.marketing.overview.MarketingOverviewQueryService;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.ChannelView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.ConnectionView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.MetricView;
@@ -137,9 +138,12 @@ final class MarketingAlertConditions {
      * the channel's alert stands: a healthy pull elsewhere must not drop and resolve it, only for the next pull
      * to raise it again. A connection the overview did not call LIVE counts as stale, so an unknown status never
      * excuses anything.
+     *
+     * <p>A channel none of whose feeds has ever succeeded is not stale: it never delivered, so it cannot have
+     * stopped (a connection left at setup reads STALE in the overview, with a made-up end date).
      */
     private static boolean isStale(ChannelView channel, String pulledConnectionId, BooleanSupplier healthy) {
-        if (!STALE.equals(channel.status())) {
+        if (!STALE.equals(channel.status()) || channel.lastFetchedAt() == null) {
             return false;
         }
         if (pulledConnectionId == null || channel.connections() == null) {
@@ -171,7 +175,7 @@ final class MarketingAlertConditions {
             return;
         }
         for (MetricView metric : channel.metrics()) {
-            if (isRealOffTrack(metric)) {
+            if (isRealOffTrack(metric) && !outdatedSnapshot(channel, metric)) {
                 out.add(offTrack(channel, metric));
             }
         }
@@ -186,6 +190,17 @@ final class MarketingAlertConditions {
                 && metric.value() != null
                 && metric.target() != null
                 && !provisionalOnly(metric.series());
+    }
+
+    /**
+     * A snapshot (a level, read as of its latest day) that the feed stopped sending while the rest of the channel
+     * kept arriving: more than {@link MarketingOverviewQueryService#LAGGING_DAYS} days behind the channel's data.
+     * Its value says where the metric was, not where it is, so it is not reported as off track now.
+     */
+    private static boolean outdatedSnapshot(ChannelView channel, MetricView metric) {
+        return metric.asOf() != null && channel.dataCompleteThrough() != null
+                && metric.asOf().isBefore(channel.dataCompleteThrough()
+                .minusDays(MarketingOverviewQueryService.LAGGING_DAYS));
     }
 
     /** True only when the metric has daily values and every one of them is still provisional. */
