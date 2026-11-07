@@ -6,7 +6,9 @@
 # See docs/workflows.md#timed-jobs for the runbook.
 #
 # --backend-url must equal the BACKEND_URL repo variable CD uses (it becomes the OIDC audience).
-# Usage: scripts/setup-cloud-scheduler.sh [--project P] [--region R] [--backend-url URL] [--dry-run] [--prune]
+# --jobs-only only creates/updates the job table: it skips enabling the API, the service account and the
+# run.invoker binding (one-time owner steps). Backend CD runs it this way after each deploy.
+# Usage: scripts/setup-cloud-scheduler.sh [--project P] [--region R] [--backend-url URL] [--dry-run] [--prune] [--jobs-only]
 set -euo pipefail
 
 PROJECT="ai-conductor-prod"
@@ -15,6 +17,7 @@ SERVICE="conductor-backend"
 BACKEND_URL=""
 DRY_RUN=0
 PRUNE=0
+JOBS_ONLY=0
 
 # ONE table of jobs. Names must equal ScheduledJobRegistry's (enforced by ScheduledJobCloudSchedulerScriptTest).
 # Columns: job | cron (Etc/UTC) | attempt-deadline | max-retry-attempts | min-backoff | max-backoff
@@ -40,7 +43,7 @@ JOBS=(
   "marketing-switchback-settle|30 6 * * *|1800s|2|5m|1h"
 )
 
-usage() { sed -n "2,9p" "$0"; exit "${1:-0}"; }
+usage() { sed -n "2,11p" "$0"; exit "${1:-0}"; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -49,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --backend-url) BACKEND_URL="${2:?--backend-url needs a value}"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --prune) PRUNE=1; shift ;;
+    --jobs-only) JOBS_ONLY=1; shift ;;
     -h|--help) usage 0 ;;
     *) echo "unknown flag: $1" >&2; usage 1 ;;
   esac
@@ -75,22 +79,26 @@ SA_NAME="conductor-scheduler"
 SA_EMAIL="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 AUDIENCE="${BACKEND_URL}/internal/v1/scheduler"
 
-echo "project=$PROJECT region=$REGION backend=$BACKEND_URL sa=$SA_EMAIL dry-run=$DRY_RUN prune=$PRUNE"
+echo "project=$PROJECT region=$REGION backend=$BACKEND_URL sa=$SA_EMAIL dry-run=$DRY_RUN prune=$PRUNE jobs-only=$JOBS_ONLY"
 
-echo "== enable Cloud Scheduler API"
-run gcloud services enable cloudscheduler.googleapis.com --project "$PROJECT"
+if [[ $JOBS_ONLY -eq 0 ]]; then
+  echo "== enable Cloud Scheduler API"
+  run gcloud services enable cloudscheduler.googleapis.com --project "$PROJECT"
 
-echo "== service account"
-if [[ $DRY_RUN -eq 0 ]] && gcloud iam service-accounts describe "$SA_EMAIL" --project "$PROJECT" >/dev/null 2>&1; then
-  echo "exists: $SA_EMAIL"
-else
-  run gcloud iam service-accounts create "$SA_NAME" --project "$PROJECT" \
-    --display-name "Conductor Cloud Scheduler invoker"
+  echo "== service account"
+  if [[ $DRY_RUN -eq 0 ]] && gcloud iam service-accounts describe "$SA_EMAIL" --project "$PROJECT" >/dev/null 2>&1; then
+    echo "exists: $SA_EMAIL"
+  else
+    run gcloud iam service-accounts create "$SA_NAME" --project "$PROJECT" \
+      --display-name "Conductor Cloud Scheduler invoker"
+  fi
+
+  # Non-fatal: editor and CD identities cannot set IAM policy, and the binding is harmless while the service is public.
+  echo "== run.invoker on $SERVICE (harmless while public; needed if the service goes private)"
+  run gcloud run services add-iam-policy-binding "$SERVICE" --project "$PROJECT" --region "$REGION" \
+    --member "serviceAccount:${SA_EMAIL}" --role roles/run.invoker \
+    || echo "skipped: run.invoker binding needs the project owner (jobs below are still created)"
 fi
-
-echo "== run.invoker on $SERVICE (harmless while public; needed if the service goes private)"
-run gcloud run services add-iam-policy-binding "$SERVICE" --project "$PROJECT" --region "$REGION" \
-  --member "serviceAccount:${SA_EMAIL}" --role roles/run.invoker
 
 echo "== jobs"
 names=()
@@ -124,6 +132,10 @@ if [[ $PRUNE -eq 1 ]]; then
       run gcloud scheduler jobs delete "$short" --project "$PROJECT" --location "$REGION" --quiet
     fi
   done <<<"$existing"
+fi
+
+if [[ $JOBS_ONLY -eq 1 ]]; then
+  exit 0
 fi
 
 cat <<OUT

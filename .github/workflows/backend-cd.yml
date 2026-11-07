@@ -44,9 +44,10 @@ jobs:
       # dispatch has no other path. See docs/workflows.md#queued-and-waiting-work and the Aug 2026 cost report.
       # Timed publishing (scheduled Posts) rides the same mechanism on its own queue, publish-tasks — see
       # docs/publishing.md#firing-on-time. The publishing pollers only sweep behind it.
-      # CONDUCTOR_SCHEDULER_* authenticate Cloud Scheduler's OIDC calls (scripts/setup-cloud-scheduler.sh creates the
-      # jobs and the service account). Mode is NOT set here: it stays in-app until flipped, see docs/workflows.md#timed-jobs.
-      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }},GCP_CLOUDRUN_PROJECT_ID=${{ vars.GCP_CLOUDRUN_PROJECT_ID }},GCP_CLOUDRUN_REGION=${{ vars.GCP_CLOUDRUN_REGION }},GCP_CLOUDRUN_CLAUDE_JOB_NAME=${{ vars.GCP_CLOUDRUN_CLAUDE_JOB_NAME }},GCP_TASKS_DISPATCH_BASE_URL=${{ vars.BACKEND_URL }},OAUTH_CALLBACK_BASE_URL=${{ vars.OAUTH_CALLBACK_BASE_URL }},CONDUCTOR_SCHEDULER_OIDC_AUDIENCE=${{ vars.BACKEND_URL }}/internal/v1/scheduler,CONDUCTOR_SCHEDULER_INVOKER_EMAIL=conductor-scheduler@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com --memory=1Gi --cpu=1 --cpu-throttling --min-instances=0 --timeout=3600"
+      # Prod runs timed jobs in external mode (CONDUCTOR_SCHEDULING_MODE=external): Cloud Scheduler fires them, no in-app
+      # timers. The jobs and the service account come from scripts/setup-cloud-scheduler.sh; CONDUCTOR_SCHEDULER_*
+      # authenticate its OIDC calls. See docs/workflows.md#timed-jobs.
+      cloudrun-flags: "--update-env-vars=GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }},BACKEND_URL=${{ vars.BACKEND_URL }},GITHUB_APP_ID=${{ vars.GH_APP_ID }},GITHUB_APP_SLUG=${{ vars.GH_APP_SLUG }},GCP_CLOUDRUN_PROJECT_ID=${{ vars.GCP_CLOUDRUN_PROJECT_ID }},GCP_CLOUDRUN_REGION=${{ vars.GCP_CLOUDRUN_REGION }},GCP_CLOUDRUN_CLAUDE_JOB_NAME=${{ vars.GCP_CLOUDRUN_CLAUDE_JOB_NAME }},GCP_TASKS_DISPATCH_BASE_URL=${{ vars.BACKEND_URL }},OAUTH_CALLBACK_BASE_URL=${{ vars.OAUTH_CALLBACK_BASE_URL }},CONDUCTOR_SCHEDULER_OIDC_AUDIENCE=${{ vars.BACKEND_URL }}/internal/v1/scheduler,CONDUCTOR_SCHEDULER_INVOKER_EMAIL=conductor-scheduler@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com,CONDUCTOR_SCHEDULING_MODE=external --memory=1Gi --cpu=1 --cpu-throttling --min-instances=0 --timeout=3600"
       # The TIKTOK_*, META_* and YOUTUBE_OAUTH_* bindings below are Conductor's own TikTok, Meta and
       # YouTube apps. Those platforms review an app once and every workspace authorizes its own
       # account through it, so the app belongs to the deployment. YOUTUBE_OAUTH_* is Conductor's own
@@ -77,3 +78,26 @@ jobs:
         GITHUB_APP_PRIVATE_KEY=GITHUB_APP_PRIVATE_KEY:latest
         GITHUB_APP_WEBHOOK_SECRET=GITHUB_APP_WEBHOOK_SECRET:latest
     secrets: inherit
+
+  # Keep the Cloud Scheduler jobs in step with ScheduledJobRegistry. Prod runs no in-app timers, so a job
+  # added to the registry never fires until its Scheduler job exists. Runs only after the new revision is
+  # serving (deploy-backend includes the health check); a failure here goes red but does not undo the deploy.
+  # Needs roles/cloudscheduler.admin on the CD service account, a one-time owner grant, until then this job
+  # fails on every deploy. See docs/workflows.md#operator-runbook-cloud-scheduler.
+  sync-scheduler:
+    needs: deploy-backend
+    if: github.repository == 'cliangdev/conductor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093  # v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db  # v3
+      - name: Sync Cloud Scheduler jobs
+        run: scripts/setup-cloud-scheduler.sh --jobs-only --project "${{ vars.GCP_PROJECT_ID }}" --region "${{ vars.GCP_REGION }}" --backend-url "${{ vars.BACKEND_URL }}"
