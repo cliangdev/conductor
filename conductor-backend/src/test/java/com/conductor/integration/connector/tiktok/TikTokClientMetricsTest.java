@@ -49,6 +49,22 @@ class TikTokClientMetricsTest {
         server.verify();
     }
 
+    @Test
+    void fetchPublishStatus_mapsProgressCountersAndLogId() {
+        server.expect(requestTo(TikTokClient.API_BASE + TikTokClient.STATUS_FETCH_PATH))
+                .andRespond(withSuccess("{\"data\":{\"status\":\"PROCESSING_DOWNLOAD\",\"downloaded_bytes\":2048,"
+                        + "\"uploaded_bytes\":0},\"error\":{\"code\":\"ok\",\"message\":\"\",\"log_id\":\"log-123\"}}",
+                        MediaType.APPLICATION_JSON));
+
+        TikTokClient.PublishStatus status = client.fetchPublishStatus("token", "pub-1");
+
+        assertThat(status.status()).isEqualTo("PROCESSING_DOWNLOAD");
+        assertThat(status.downloadedBytes()).isEqualTo(2048L);
+        assertThat(status.uploadedBytes()).isEqualTo(0L);
+        assertThat(status.logId()).isEqualTo("log-123");
+        server.verify();
+    }
+
     /**
      * A 403's verdict lives in the body. The code is what callers branch on (the pre-audit inbox fallback,
      * the verified-URL-prefix explanation), so it has to be the exception's code rather than "http_403".

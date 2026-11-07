@@ -141,6 +141,10 @@ public class TikTokPublishAction {
     long pollIntervalMillis = 3_000L;
     /** Poll budget: with the default interval, roughly ten minutes before the attempt gives up. */
     int maxPollAttempts = 200;
+    /** Package-private and non-final so tests can pin "now" when deciding whether photo links have expired. */
+    java.time.Clock clock = java.time.Clock.systemUTC();
+    /** A status poll is logged when it changes, and otherwise only on every Nth poll as a heartbeat. */
+    private static final int POLL_HEARTBEAT_EVERY = 20;
 
     private final TikTokClient client;
     private final AssetRepository assetRepository;
@@ -227,23 +231,50 @@ public class TikTokPublishAction {
      * <p>A photo checkpoint carries no upload url, size or chunk plan: there is nothing to upload. It
      * exists only to remember the {@code publish_id}, so a retry polls the post TikTok already has rather
      * than creating a second one.
+     *
+     * <p>{@code linksExpireAt} (ISO-8601 instant, photo posts only) is when the signed image links handed
+     * to TikTok die. It is the rule that makes re-opening safe: once the links are dead, a publish still
+     * stuck in {@code PROCESSING_DOWNLOAD} can never fetch an image and so can never complete, which means
+     * opening a fresh post cannot produce a duplicate. It is null on checkpoints written before the field
+     * existed, which are treated as "expiry unknown" and never re-opened.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record UploadCheckpoint(String assetId, String publishId, String uploadUrl,
                             long videoSize, long chunkSize, int totalChunkCount, int nextChunkIndex,
-                            String mode, List<String> assetIds) {
+                            String mode, List<String> assetIds, String linksExpireAt) {
 
         static final String MODE_PHOTO = "PHOTO";
+
+        /** The form before {@code linksExpireAt} existed. */
+        UploadCheckpoint(String assetId, String publishId, String uploadUrl, long videoSize, long chunkSize,
+                         int totalChunkCount, int nextChunkIndex, String mode, List<String> assetIds) {
+            this(assetId, publishId, uploadUrl, videoSize, chunkSize, totalChunkCount, nextChunkIndex,
+                    mode, assetIds, null);
+        }
 
         /** The video form, which is every field but the two added for photo posts. */
         UploadCheckpoint(String assetId, String publishId, String uploadUrl, long videoSize, long chunkSize,
                          int totalChunkCount, int nextChunkIndex) {
             this(assetId, publishId, uploadUrl, videoSize, chunkSize, totalChunkCount, nextChunkIndex,
-                    null, null);
+                    null, null, null);
         }
 
-        static UploadCheckpoint forPhotoPost(String publishId, List<String> assetIds) {
-            return new UploadCheckpoint(null, publishId, null, 0, 0, 0, 0, MODE_PHOTO, assetIds);
+        static UploadCheckpoint forPhotoPost(String publishId, List<String> assetIds,
+                                             java.time.Instant linksExpireAt) {
+            return new UploadCheckpoint(null, publishId, null, 0, 0, 0, 0, MODE_PHOTO, assetIds,
+                    linksExpireAt == null ? null : linksExpireAt.toString());
+        }
+
+        /** The parsed link expiry, or null when unknown (old checkpoint) or unparseable. */
+        java.time.Instant linksExpireInstant() {
+            if (linksExpireAt == null || linksExpireAt.isBlank()) {
+                return null;
+            }
+            try {
+                return java.time.Instant.parse(linksExpireAt);
+            } catch (java.time.format.DateTimeParseException e) {
+                return null;
+            }
         }
 
         boolean isPhotoPost() {
@@ -329,7 +360,7 @@ public class TikTokPublishAction {
             saveCheckpoint(idempotencyKey, checkpoint);
         }
 
-        PublishStatus status = awaitPublish(accessToken, checkpoint.publishId());
+        PublishStatus status = awaitPublish(accessToken, checkpoint.publishId(), false, null);
         return ActionResult.ok(publishOutput(checkpoint.publishId(), status, ctx, TikTokPermalinks.KIND_VIDEO));
     }
 
@@ -390,17 +421,33 @@ public class TikTokPublishAction {
 
     /**
      * Polls until TikTok says the post is live. Running out of poll budget <em>throws</em> rather than
-     * returning an error: the bytes are already up there, so the next attempt should resume the wait,
-     * not restart the upload — and the checkpoint, whose chunk index is already past the last chunk,
-     * makes that exactly what happens.
+     * returning an error, so the invocation retries and resumes from its checkpoint. For a video the bytes
+     * are already up there, so the retry resumes the wait; for a photo post nothing was uploaded, and the
+     * message says when the retry stops waiting on this post ({@code photoLinksExpireAt}, null if unknown).
+     *
+     * <p>Logging is deliberately sparse: the first poll, any change in status or byte counters, and a
+     * heartbeat every {@value #POLL_HEARTBEAT_EVERY} polls, plus one WARN summary on timeout.
      */
-    private PublishStatus awaitPublish(String accessToken, String publishId) {
-        String lastStatus = null;
+    private PublishStatus awaitPublish(String accessToken, String publishId, boolean photo,
+                                       java.time.Instant photoLinksExpireAt) {
+        long startedAt = System.currentTimeMillis();
+        PublishStatus last = null;
+        int polls = 0;
         for (int attempt = 1; attempt <= maxPollAttempts; attempt++) {
             PublishStatus status = client.fetchPublishStatus(accessToken, publishId);
-            lastStatus = status.status();
-            log.info("TikTok publish {} status poll {}/{}: status={} failReason={} postId={}", publishId, attempt,
-                    maxPollAttempts, status.status(), status.failReason(), status.postId());
+            polls = attempt;
+            boolean changed = last == null
+                    || !Objects.equals(last.status(), status.status())
+                    || !Objects.equals(last.downloadedBytes(), status.downloadedBytes())
+                    || !Objects.equals(last.uploadedBytes(), status.uploadedBytes());
+            last = status;
+            if (changed || attempt % POLL_HEARTBEAT_EVERY == 0) {
+                log.info("TikTok publish {} status poll {}/{} after {}s: status={} failReason={} postId={} "
+                                + "downloadedBytes={} uploadedBytes={} logId={}", publishId, attempt,
+                        maxPollAttempts, (System.currentTimeMillis() - startedAt) / 1000, status.status(),
+                        status.failReason(), status.postId(), status.downloadedBytes(), status.uploadedBytes(),
+                        status.logId());
+            }
             if (status.complete() || status.sentToInbox()) {
                 return status;
             }
@@ -411,8 +458,27 @@ public class TikTokPublishAction {
             }
             sleep(pollIntervalMillis);
         }
-        throw new IllegalStateException("TikTok publish " + publishId + " was still " + lastStatus
-                + " after " + maxPollAttempts + " status polls; upload is complete, so a retry resumes the wait");
+        long elapsedSeconds = (System.currentTimeMillis() - startedAt) / 1000;
+        String lastStatus = last == null ? null : last.status();
+        log.warn("TikTok publish {} timed out: mode={} polls={} elapsed={}s lastStatus={} downloadedBytes={} "
+                        + "uploadedBytes={} logId={} linksExpireAt={}", publishId, photo ? "photo" : "video",
+                polls, elapsedSeconds, lastStatus, last == null ? null : last.downloadedBytes(),
+                last == null ? null : last.uploadedBytes(), last == null ? null : last.logId(),
+                photo ? photoLinksExpireAt : null);
+        if (!photo) {
+            throw new IllegalStateException("TikTok publish " + publishId + " was still " + lastStatus
+                    + " after " + maxPollAttempts + " status polls; upload is complete, so a retry resumes the wait");
+        }
+        String expiry = photoLinksExpireAt == null
+                ? "a retry keeps waiting on this post."
+                : "Its image links expire at "
+                        + java.time.format.DateTimeFormatter.ofPattern("HH:mm", Locale.ROOT)
+                                .withZone(java.time.ZoneOffset.UTC).format(photoLinksExpireAt)
+                        + " UTC; a retry before then keeps waiting on this post, and one after sends it again "
+                        + "with fresh links.";
+        throw new IllegalStateException("TikTok accepted photo post " + publishId + " but had not finished with "
+                + "its images after " + maxPollAttempts + " status polls (" + elapsedSeconds / 60 + " min, still "
+                + lastStatus + "). " + expiry);
     }
 
     private void sleep(long millis) {
@@ -476,6 +542,13 @@ public class TikTokPublishAction {
      * <p>The checkpoint records the {@code publish_id} the moment TikTok returns one. Without it a retry
      * after a transient status-poll failure would init a second post, and the creator would find the same
      * photos published twice.
+     *
+     * <p>That checkpoint also records when the signed image links expire. A retry polls the recorded post
+     * while its links are valid (or when the expiry is unknown). Once they are dead, one status read
+     * decides: finished or failed is returned as is; still {@code PROCESSING_DOWNLOAD} means TikTok never
+     * fetched the images and now never can, so a fresh post with fresh links is opened. That cannot
+     * duplicate, because the old post can no longer complete. Any other in-progress status (TikTok already
+     * holds the bytes) keeps waiting on the existing post.
      */
     private ActionResult publishPhotoPost(String accessToken, Map<String, Object> input,
                                           ConnectionContext ctx, List<Asset> photos) {
@@ -484,16 +557,36 @@ public class TikTokPublishAction {
         String publishId = existing != null && existing.publishId() != null && existing.isPhotoPost()
                 ? existing.publishId()
                 : null;
+        java.time.Instant linksExpireAt = publishId == null ? null : existing.linksExpireInstant();
+
+        if (publishId != null && linksExpireAt != null && !clock.instant().isBefore(linksExpireAt)) {
+            PublishStatus current = client.fetchPublishStatus(accessToken, publishId);
+            if (current.complete() || current.sentToInbox()) {
+                return ActionResult.ok(publishOutput(publishId, current, ctx, TikTokPermalinks.KIND_PHOTO));
+            }
+            if (current.failed()) {
+                throw new PermanentPublishException("TikTok publish " + publishId + " failed: "
+                        + (current.failReason() == null || current.failReason().isBlank()
+                                ? "no reason given" : current.failReason()));
+            }
+            if (TikTokClient.STATUS_PROCESSING_DOWNLOAD.equalsIgnoreCase(current.status())) {
+                log.warn("TikTok photo post {} never downloaded its images and its links expired at {}; "
+                        + "opening a fresh post with new links", publishId, linksExpireAt);
+                publishId = null;
+            }
+        }
 
         if (publishId == null) {
+            // Taken before the URLs are signed, so the real links never die earlier than this instant.
+            linksExpireAt = clock.instant().plus(PHOTO_URL_EXPIRY_MINUTES, java.time.temporal.ChronoUnit.MINUTES);
             String publicBase = text(input.get(PublishInputBuilder.INPUT_PUBLIC_MEDIA_BASE_URL));
             List<String> urls = photos.stream()
                     .map(photo -> publicMediaUrl(signedUrl(photo), publicBase))
                     .toList();
             int coverIndex = resolvePhotoCoverIndex(input, photos.size());
-            log.info("TikTok photo post init: {} images (assets {}), cover {}, hosts {}", photos.size(),
-                    photos.stream().map(p -> p.getId() + ":" + p.getContentType()).toList(), coverIndex,
-                    urls.stream().map(TikTokPublishAction::hostOf).distinct().toList());
+            log.info("TikTok photo post init: {} images (assets {}), cover {}, hosts {}, links expire {}",
+                    photos.size(), photos.stream().map(p -> p.getId() + ":" + p.getContentType()).toList(),
+                    coverIndex, urls.stream().map(TikTokPublishAction::hostOf).distinct().toList(), linksExpireAt);
             try {
                 publishId = client.initPhotoPost(accessToken, buildPhotoPostInfo(input, ctx), urls, coverIndex);
             } catch (TikTokApiException e) {
@@ -516,13 +609,15 @@ public class TikTokPublishAction {
                 }
             }
             saveCheckpoint(idempotencyKey, UploadCheckpoint.forPhotoPost(publishId,
-                    photos.stream().map(Asset::getId).toList()));
-            log.info("TikTok photo post {} opened with {} images", publishId, photos.size());
+                    photos.stream().map(Asset::getId).toList(), linksExpireAt));
+            log.info("TikTok photo post {} opened with {} images, links expire {}", publishId, photos.size(),
+                    linksExpireAt);
         } else {
-            log.info("TikTok photo post {} resuming: already opened, polling for its outcome", publishId);
+            log.info("TikTok photo post {} resuming: already opened, polling for its outcome (links expire {})",
+                    publishId, linksExpireAt == null ? "unknown" : linksExpireAt);
         }
 
-        PublishStatus status = awaitPublish(accessToken, publishId);
+        PublishStatus status = awaitPublish(accessToken, publishId, true, linksExpireAt);
         return ActionResult.ok(publishOutput(publishId, status, ctx, TikTokPermalinks.KIND_PHOTO));
     }
 
