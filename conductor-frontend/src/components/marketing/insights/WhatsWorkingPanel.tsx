@@ -19,6 +19,7 @@ import { compactCount, count } from '@/components/marketing/destinations/Destina
 import { humanizeId, findPostsNavEntry, useSidebarWorkNav, workItemDetailPath, workItemListPath } from '@/lib/workflows'
 import { InsightsGroupTable } from './InsightsGroupTable'
 import { InsightsBestTimes } from './InsightsBestTimes'
+import { InsightsHelp, InsightsHelpToggle } from './InsightsHelp'
 import { InsightsPostList } from './InsightsPostList'
 import { TopCreativesList } from './TopCreativesList'
 import {
@@ -97,6 +98,7 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
   // The server narrows coverage.platforms to the active filter, so keep the unfiltered list to stay
   // switchable (otherwise picking one platform leaves it as the only option).
   const [allPlatforms, setAllPlatforms] = useState<string[]>([])
+  const [helpOpen, setHelpOpen] = useState(false)
 
   const { entries } = useSidebarWorkNav(projectId, accessToken)
   const postWorkflow = useMemo(
@@ -194,7 +196,10 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
             </option>
           ))}
         </Select>
+        <InsightsHelpToggle open={helpOpen} onToggle={() => setHelpOpen((o) => !o)} />
       </div>
+
+      {helpOpen && <InsightsHelp />}
 
       {error && <Alert variant="destructive">{error}</Alert>}
 

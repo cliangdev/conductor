@@ -119,6 +119,14 @@ export function engagementRateLabel(rate: number | null | undefined): string {
   return `${(rate * 100).toFixed(1)}%`
 }
 
+/** Below this many engagements a rate is too noisy to compare: one like moves it by points. */
+export const LOW_SAMPLE_ENGAGEMENTS = 20
+
+/** Likes + comments + shares + saves — the numerator of the engagement rate. */
+export function engagementsOf(group: InsightsGroup): number {
+  return group.likes + group.comments + group.shares + group.saves
+}
+
 /** avgViewPct already arrives as a 0..100 percentage (YouTube's average-view-percentage). */
 export function avgViewPctLabel(pct: number | null | undefined): string {
   if (pct === null || pct === undefined) return '—'
