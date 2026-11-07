@@ -1,7 +1,6 @@
 package com.conductor.knowledge.controller;
 
 import com.conductor.entity.User;
-import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.api.KnowledgeApi;
 import com.conductor.generated.model.CreateKnowledgeDomainRequest;
 import com.conductor.generated.model.KnowledgeActor;
@@ -43,8 +42,6 @@ import com.conductor.knowledge.page.SkippedSource;
 import com.conductor.service.ProjectActor;
 import com.conductor.service.ProjectSecurityService;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
@@ -114,7 +111,8 @@ public class KnowledgeController implements KnowledgeApi {
 
     @Override
     public ResponseEntity<KnowledgeSourceRetryResult> retryDeadKnowledgeSources(String projectId) {
-        requireProjectAdmin(projectId);
+        // Domain-registry mutation: ADMIN only, and only a person (an admin-configured setting, not machine-callable).
+        projectSecurityService.requireAdminUser(projectId);
         int retried = ingestionService.retryDeadSources(projectId);
         KnowledgeSourceRetryResult result = new KnowledgeSourceRetryResult();
         result.setRetried(retried);
@@ -134,7 +132,8 @@ public class KnowledgeController implements KnowledgeApi {
     @Override
     public ResponseEntity<KnowledgeDomainDto> updateKnowledgeDomain(String projectId, String slug,
                                                                      UpdateKnowledgeDomainRequest request) {
-        requireProjectAdmin(projectId);
+        // Domain-registry mutation: ADMIN only, and only a person (an admin-configured setting, not machine-callable).
+        projectSecurityService.requireAdminUser(projectId);
         com.conductor.knowledge.domain.KnowledgeDomainState state = request.getState() != null
                 ? com.conductor.knowledge.domain.KnowledgeDomainState.valueOf(request.getState().name())
                 : null;
@@ -158,7 +157,8 @@ public class KnowledgeController implements KnowledgeApi {
 
     @Override
     public ResponseEntity<KnowledgeDomainDto> createKnowledgeDomainSpecialist(String projectId, String slug) {
-        requireProjectAdmin(projectId);
+        // Domain-registry mutation: ADMIN only, and only a person (an admin-configured setting, not machine-callable).
+        projectSecurityService.requireAdminUser(projectId);
         KnowledgeDomain domain = domainService.createSpecialist(projectId, slug);
         Map<String, KnowledgeSourceCountsView> counts = ingestionService.getDomainCounts(projectId);
         return ResponseEntity.ok(toDto(domain, counts.get(domain.getSlug())));
@@ -263,17 +263,6 @@ public class KnowledgeController implements KnowledgeApi {
             return user.getName();
         }
         return user.getEmail();
-    }
-
-    /** Domain-registry mutation gate: ADMIN only, {@link User} principals only -- the registry is an
-     *  admin-configured project setting (mirrors {@code ProjectSettingsService#verifyAdmin}), not a
-     *  machine-callable surface like the generalist submit/list endpoints above. */
-    private void requireProjectAdmin(String projectId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        Object principal = auth != null ? auth.getPrincipal() : null;
-        if (!(principal instanceof User user) || !projectSecurityService.isProjectAdmin(projectId, user.getId())) {
-            throw new ForbiddenException("Requires ADMIN role");
-        }
     }
 
     private List<String> splitCsv(String csv) {

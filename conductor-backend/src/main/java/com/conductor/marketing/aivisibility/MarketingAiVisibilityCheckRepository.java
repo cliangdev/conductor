@@ -14,8 +14,24 @@ import java.util.List;
 @Repository
 public interface MarketingAiVisibilityCheckRepository extends JpaRepository<MarketingAiVisibilityCheck, String> {
 
-    /** Every reading of one ISO week; its size is what the weekly call cap has already used. */
+    /** Every reading of one ISO week. */
     List<MarketingAiVisibilityCheck> findByProjectIdAndWeekStart(String projectId, LocalDate weekStart);
+
+    /**
+     * Takes one provider call from the workspace's allowance for the ISO week, atomically and durably (V197).
+     * Called before the call is made, so a call that then fails is still counted. Returns 1 when the call may be
+     * made, 0 when {@code cap} calls were already taken this week.
+     */
+    @Transactional
+    @Modifying
+    @Query(value = """
+            INSERT INTO marketing_ai_call_budget AS b (project_id, week_start, calls)
+            VALUES (:projectId, :weekStart, 1)
+            ON CONFLICT (project_id, week_start) DO UPDATE SET calls = b.calls + 1
+            WHERE b.calls < :cap
+            """, nativeQuery = true)
+    int reserveCall(@Param("projectId") String projectId, @Param("weekStart") LocalDate weekStart,
+                    @Param("cap") int cap);
 
     /** The readings from {@code since} on, oldest week first. */
     List<MarketingAiVisibilityCheck> findByProjectIdAndWeekStartGreaterThanEqualOrderByWeekStartAscAssistantAsc(

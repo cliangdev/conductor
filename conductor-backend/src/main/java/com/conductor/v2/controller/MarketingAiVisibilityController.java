@@ -1,7 +1,5 @@
 package com.conductor.v2.controller;
 
-import com.conductor.entity.User;
-import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.v2.api.MarketingAiVisibilityApi;
 import com.conductor.generated.v2.model.AiBrandTerms;
 import com.conductor.generated.v2.model.AiQuestion;
@@ -19,8 +17,6 @@ import com.conductor.generated.v2.model.SetAiQuestionsRequest;
 import com.conductor.marketing.aivisibility.AiVisibilityService;
 import com.conductor.service.ProjectSecurityService;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -65,17 +61,9 @@ public class MarketingAiVisibilityController implements MarketingAiVisibilityApi
 
     @Override
     public ResponseEntity<AiVisibilityRunResult> runAiVisibilityCheck(String projectId) {
-        requireProjectAdmin(projectId);
+        // ADMIN only, and only a person: a run spends the workspace's provider keys, so no machine credential may start one.
+        projectSecurityService.requireAdminUser(projectId);
         return ResponseEntity.ok(toRunResult(service.runChecks(projectId)));
-    }
-
-    /** ADMIN only, and only a person: a run spends the workspace's provider keys, so no machine credential may start one. */
-    private void requireProjectAdmin(String projectId) {
-        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        Object principal = auth != null ? auth.getPrincipal() : null;
-        if (!(principal instanceof User user) || !projectSecurityService.isProjectAdmin(projectId, user.getId())) {
-            throw new ForbiddenException("Requires the Admin role");
-        }
     }
 
     // ---- mapping ------------------------------------------------------------------------------------

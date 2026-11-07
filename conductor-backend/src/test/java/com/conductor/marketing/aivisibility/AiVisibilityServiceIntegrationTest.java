@@ -414,6 +414,85 @@ class AiVisibilityServiceIntegrationTest extends AbstractNoneWebIntegrationTest 
         assertThat(again.recorded()).isZero();
     }
 
+    private static ChatResponse failing() {
+        throw new ModelProviderException("Request failed (401): revoked key", false, null);
+    }
+
+    @Test
+    void failedCallsCountTowardTheCapSoARerunAfterAllCallsFailedMakesNone() {
+        claude.respondingWith(q -> failing());
+        openai.respondingWith(q -> failing());
+        AiVisibilityService service = service(WEDNESDAY);
+        ask(service, questions(15));
+
+        RunResult first = service.runChecks(project.getId(), WEDNESDAY);
+        int callsAfterFirst = claude.callCount() + openai.callCount();
+        RunResult second = service.runChecks(project.getId(), WEDNESDAY);
+
+        assertThat(callsAfterFirst).isEqualTo(AiVisibilityService.WEEKLY_CALL_CAP);
+        assertThat(first.errors()).hasSize(AiVisibilityService.WEEKLY_CALL_CAP);
+        assertThat(claude.callCount() + openai.callCount()).isEqualTo(callsAfterFirst);
+        assertThat(second.recorded()).isZero();
+        assertThat(second.errors()).isEmpty();
+        assertThat(second.skipped()).extracting(s -> s.assistant() + ":" + s.reason())
+                .containsExactlyInAnyOrder("claude:weekly limit of 20 checks reached",
+                        "openai:weekly limit of 20 checks reached");
+    }
+
+    @Test
+    void failedCallsNeverBecomeResultsOrZeroScores() {
+        claude.respondingWith(q -> failing());
+        openai.respondingWith(q -> failing());
+        AiVisibilityService service = service(WEDNESDAY);
+        ask(service, questions(15));
+        service.runChecks(project.getId(), WEDNESDAY);
+
+        View view = service.view(project.getId(), 4, WEDNESDAY);
+
+        assertThat(rows(MONDAY)).isEmpty();
+        assertThat(view.questions()).allSatisfy(q -> assertThat(q.assistants()).isEmpty());
+    }
+
+    @Test
+    void successesAndFailuresTogetherCountTowardTheCapAcrossRuns() {
+        claude.respondingWith(q -> failing());
+        AiVisibilityService service = service(WEDNESDAY);
+        ask(service, questions(8));
+
+        service.runChecks(project.getId(), WEDNESDAY);
+        service.runChecks(project.getId(), WEDNESDAY);
+        service.runChecks(project.getId(), WEDNESDAY);
+        service.runChecks(project.getId(), WEDNESDAY);
+
+        assertThat(claude.callCount() + openai.callCount()).isEqualTo(AiVisibilityService.WEEKLY_CALL_CAP);
+        assertThat(rows(MONDAY)).hasSize(8).allSatisfy(r -> assertThat(r.getAssistant()).isEqualTo("openai"));
+    }
+
+    @Test
+    void theAttemptCountResetsInANewWeek() {
+        claude.respondingWith(q -> failing());
+        openai.respondingWith(q -> failing());
+        AiVisibilityService service = service(WEDNESDAY);
+        ask(service, questions(15));
+        service.runChecks(project.getId(), WEDNESDAY);
+        claude.reset();
+        openai.reset();
+
+        service.runChecks(project.getId(), NEXT_WEDNESDAY);
+
+        assertThat(claude.callCount() + openai.callCount()).isEqualTo(AiVisibilityService.WEEKLY_CALL_CAP);
+    }
+
+    @Test
+    void reservingACallIsRefusedOnceTheCapIsUsedAndIsPerProjectAndWeek() {
+        for (int i = 0; i < 3; i++) {
+            assertThat(checkRepository.reserveCall(project.getId(), MONDAY, 3)).isEqualTo(1);
+        }
+
+        assertThat(checkRepository.reserveCall(project.getId(), MONDAY, 3)).isZero();
+        assertThat(checkRepository.reserveCall(project.getId(), NEXT_MONDAY, 3)).isEqualTo(1);
+    }
+
     @Test
     void checksSkippedByTheCapGoFirstTheFollowingWeek() {
         AiVisibilityService service = service(WEDNESDAY);
