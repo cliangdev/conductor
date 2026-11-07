@@ -75,7 +75,7 @@ class WorkItemControllerListTest {
         when(jwtService.validateToken("valid-token")).thenReturn(true);
         when(jwtService.getUserIdFromToken("valid-token")).thenReturn("user-1");
         when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
-        when(workItemService.listWorkItemEntities(any(), any(WorkItemService.ListFilter.class), any())).thenReturn(List.of());
+        when(workItemService.listWorkItemEntitiesForCaller(any(), any(WorkItemService.ListFilter.class))).thenReturn(List.of());
         when(workItemService.unresolvedCommentCounts(anyList())).thenReturn(Map.of());
         when(workItemService.externalLinks(anyList())).thenReturn(Map.of());
         when(reviewerService.reviewersByWorkItem(anyList())).thenReturn(Map.of());
@@ -101,13 +101,13 @@ class WorkItemControllerListTest {
         mockMvc.perform(get(URL).param("dueBefore", "next tuesday").header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isBadRequest());
 
-        verify(workItemService, never()).listWorkItemEntities(any(), any(WorkItemService.ListFilter.class), any());
+        verify(workItemService, never()).listWorkItemEntitiesForCaller(any(), any(WorkItemService.ListFilter.class));
     }
 
     /** The filter the controller handed the service for the one list call this test made. */
     private WorkItemService.ListFilter listFilter() {
         ArgumentCaptor<WorkItemService.ListFilter> filter = ArgumentCaptor.forClass(WorkItemService.ListFilter.class);
-        verify(workItemService).listWorkItemEntities(eq("proj-1"), filter.capture(), any());
+        verify(workItemService).listWorkItemEntitiesForCaller(eq("proj-1"), filter.capture());
         return filter.getValue();
     }
 
@@ -142,7 +142,7 @@ class WorkItemControllerListTest {
         mockMvc.perform(get(URL).param("priority", "P9").header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isBadRequest());
 
-        verify(workItemService, never()).listWorkItemEntities(any(), any(WorkItemService.ListFilter.class), any());
+        verify(workItemService, never()).listWorkItemEntitiesForCaller(any(), any(WorkItemService.ListFilter.class));
     }
 
     @Test

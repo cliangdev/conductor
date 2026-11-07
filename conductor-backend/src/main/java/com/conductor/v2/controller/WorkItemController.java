@@ -159,12 +159,11 @@ public class WorkItemController implements WorkItemsApi {
                                                                 String assigneeId, Boolean withProgress,
                                                                 String sort, Boolean ready, Boolean blocked,
                                                                 Boolean stale) {
-        User caller = currentUser();
-        List<WorkItem> items = workItemService.listWorkItemEntities(projectId,
+        // A person or a project-scoped machine credential: a workflow run's MCP token lists its own project's items.
+        List<WorkItem> items = workItemService.listWorkItemEntitiesForCaller(projectId,
                 new WorkItemService.ListFilter(type, status, workflow, tag, dueBefore, parentId, rootId,
                         milestoneId, priority == null ? null : PriorityScale.parse(priority.getValue()),
-                        assigneeId, sort),
-                caller);
+                        assigneeId, sort));
         // "Posts using this Creative / Media": narrow the already project-scoped, access-checked list.
         Set<String> using = listEnricher.idsUsing(projectId, creativeId, mediaId);
         if (using != null) {
