@@ -1,7 +1,7 @@
 'use client'
 
 // Marketing overview — /app/projects/{id}/marketing/overview. A static sibling of the Area's other
-// Marketing routes (insights, creatives, media): it reads across channels, so it belongs to the Area.
+// Marketing routes (creatives, media): it reads across channels, so it belongs to the Area.
 
 import { useParams } from 'next/navigation'
 import { PageContainer } from '@/components/layout/PageContainer'
