@@ -188,12 +188,21 @@ public class KnowledgeIngestScheduler {
         if (due.isEmpty()) {
             return List.of();
         }
-        List<String> ids = new ArrayList<>(due.size());
-        for (KnowledgeSource source : due) {
+        // A source whose run already failed goes alone. Re-batching it with the same batch-mates
+        // replays the same failure (e.g. a run that ran out of turns on one long page), so every
+        // source in that batch would be dead-lettered together and the librarian auto-paused.
+        // Alone, the run has the least work, and if it still fails only that source is spent.
+        List<KnowledgeSource> claimed = due.stream()
+                .filter(source -> source.getAttempts() > 0)
+                .findFirst()
+                .map(List::of)
+                .orElse(due);
+        List<String> ids = new ArrayList<>(claimed.size());
+        for (KnowledgeSource source : claimed) {
             source.setStatus(KnowledgeSourceStatus.PROCESSING);
             ids.add(source.getId());
         }
-        sourceRepository.saveAll(due);
+        sourceRepository.saveAll(claimed);
         return ids;
     }
 

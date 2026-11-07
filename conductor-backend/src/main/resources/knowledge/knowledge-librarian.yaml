@@ -43,6 +43,10 @@ jobs:
             (filed) or `skipped` (reviewed, deliberately not filed, with a reason). Skipping is a
             normal outcome -- see _curation.md for the bar.
 
+            Long pages: read a page you expect to be long on its own (one path per
+            read_knowledge_pages call). Don't grow a page that is already over about 60 KB: put the
+            new material on a focused page next to it and add a one-line link from the long page.
+
             Return a short JSON summary:
             {"pagesWritten": <int>, "sourcesFiled": <int>, "sourcesSkipped": <int>}.
           output_schema:

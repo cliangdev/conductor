@@ -114,7 +114,9 @@ for the generalist/unclassified lane; the concurrency unit is `(project, lane)`,
 
 1. **Dispatch.** For each project with `knowledge_enabled` and any due `PENDING` source (`nextAttemptAt`
    null or past), the scheduler enumerates every lane with due work and, for each lane not already busy,
-   claims up to 10 oldest sources *in that lane* into `PROCESSING` (`REQUIRES_NEW` transaction), then fires
+   claims up to 10 oldest sources *in that lane* into `PROCESSING` (`REQUIRES_NEW` transaction) — except
+   that a due source whose earlier run failed (`attempts > 0`) is claimed on its own, so one source that
+   can't be filed doesn't take its batch-mates to `DEAD` with it — then fires
    a `knowledge-librarian` run via `LibrarianDispatchService` — a `workflow_dispatch` trigger carrying
    `sourceIds` (comma-joined), `projectId`, `agentSlug`, and `domain` (`""` for the null lane) as top-level
    event-payload fields (`${{ event.sourceIds }}` etc.), not `workflow_dispatch` `inputs` (see

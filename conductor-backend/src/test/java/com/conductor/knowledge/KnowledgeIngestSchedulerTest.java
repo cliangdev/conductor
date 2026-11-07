@@ -13,6 +13,7 @@ import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -68,5 +69,38 @@ class KnowledgeIngestSchedulerTest {
 
         // The lane after the failing one was still claimed and dispatched.
         verify(dispatchService).dispatch("p1", "product", List.of("src-product"));
+    }
+
+    private static KnowledgeSource retried(String id, int attempts) {
+        KnowledgeSource source = pending(id);
+        source.setAttempts(attempts);
+        return source;
+    }
+
+    @Test
+    void freshSources_areClaimedAsOneBatch() {
+        OffsetDateTime now = OffsetDateTime.now();
+        when(sourceRepository.findDuePendingForProjectAndDomain("p1", "engineering", now, 10))
+                .thenReturn(List.of(pending("a"), pending("b"), pending("c")));
+
+        assertThat(scheduler.claimBatchInNewTx("p1", "engineering", now)).containsExactly("a", "b", "c");
+    }
+
+    @Test
+    void aSourceWhoseRunFailed_isClaimedAlone_soItsBatchMatesAreNotSpentWithIt() {
+        OffsetDateTime now = OffsetDateTime.now();
+        KnowledgeSource fresh = pending("fresh");
+        KnowledgeSource firstRetry = retried("retry-1", 1);
+        KnowledgeSource secondRetry = retried("retry-2", 1);
+        when(sourceRepository.findDuePendingForProjectAndDomain("p1", "engineering", now, 10))
+                .thenReturn(List.of(fresh, firstRetry, secondRetry));
+
+        List<String> claimed = scheduler.claimBatchInNewTx("p1", "engineering", now);
+
+        assertThat(claimed).containsExactly("retry-1");
+        assertThat(firstRetry.getStatus()).isEqualTo(KnowledgeSourceStatus.PROCESSING);
+        assertThat(fresh.getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
+        assertThat(secondRetry.getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
+        verify(sourceRepository).saveAll(List.of(firstRetry));
     }
 }
