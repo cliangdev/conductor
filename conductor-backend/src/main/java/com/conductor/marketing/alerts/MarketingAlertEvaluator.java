@@ -10,6 +10,8 @@ import com.conductor.notification.EventType;
 import com.conductor.notification.NotificationDeliveryService;
 import com.conductor.notification.NotificationMessage;
 import com.conductor.repository.ConnectionRepository;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,7 +23,6 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -32,7 +33,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.UUID;
 
 /**
  * Tells a person, in Discord, when marketing data needs them: a figure two sources disagree on, a channel that
@@ -63,17 +64,27 @@ import java.util.concurrent.ConcurrentHashMap;
  * repeated; with no channel to send to it is still recorded, which is why setting a channel up later does not
  * replay every standing condition.
  *
- * <h2>Debounce</h2>
- * A workspace's connections pull one after another, and each pull asks the same whole-workspace question, so a
- * workspace is evaluated at most once in {@link #DEBOUNCE}. It is kept in memory (no timers): a restart only
- * costs one extra evaluation, and the stored fingerprints keep that from posting anything twice.
+ * <h2>Every pull is evaluated</h2>
+ * A workspace's connections pull one after another, and a daily feed pulls once in 24 hours, so a pull whose
+ * evaluation is skipped is a state that stays unseen until that feed's next pull. Every pull therefore evaluates
+ * the whole workspace and the stored state always reflects the latest one. Nothing is rate-limited here: the
+ * stored state makes Discord quiet (a condition posts once when new, once when it moves meaningfully, once when
+ * resolved, whatever the number of evaluations), and the cost of another evaluation is a handful of short reads.
+ *
+ * <h2>Racing evaluations</h2>
+ * Cloud Run runs several instances, so two pulls of one workspace can be evaluated at the same moment, read the same
+ * state and both decide to post. Nothing in memory can prevent that, so the state row itself decides: a new key is
+ * written with {@code INSERT ... ON CONFLICT DO NOTHING}, and a change or a resolution is an {@code UPDATE} that
+ * matches only the state and fingerprint that were read. An evaluation posts only when its statement changed one
+ * row; the loser changed nothing, so it neither posts nor retries (the next pull reads what the winner wrote).
+ * No lock is held while waiting for anything.
  */
 @Component
 public class MarketingAlertEvaluator {
 
     private static final Logger log = LoggerFactory.getLogger(MarketingAlertEvaluator.class);
+    private static final ObjectMapper JSON = new ObjectMapper();
 
-    static final Duration DEBOUNCE = Duration.ofMinutes(10);
     private static final String STATUS_NEW = "NEW";
     private static final String STATUS_CHANGED = "CHANGED";
     private static final String STATUS_RESOLVED = "RESOLVED";
@@ -86,7 +97,6 @@ public class MarketingAlertEvaluator {
     private final ConnectionRepository connections;
     private final TransactionTemplate tx;
     private final Clock clock;
-    private final Map<String, Instant> lastEvaluated = new ConcurrentHashMap<>();
 
     @Autowired
     public MarketingAlertEvaluator(MarketingOverviewQueryService overviewService,
@@ -128,29 +138,10 @@ public class MarketingAlertEvaluator {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onChannelMetricsPulled(ChannelMetricsPulledEvent event) {
         try {
-            if (!claimEvaluation(event.projectId())) {
-                log.debug("Marketing alerts for project {} were evaluated within the last {}; skipping",
-                        event.projectId(), DEBOUNCE);
-                return;
-            }
             evaluate(event);
         } catch (RuntimeException e) {
             log.warn("Marketing alert evaluation for project {} failed: {}", event.projectId(), e.getMessage(), e);
         }
-    }
-
-    /** True for the one caller that may evaluate this workspace now; later callers within the debounce get false. */
-    private boolean claimEvaluation(String projectId) {
-        Instant now = clock.instant();
-        boolean[] claimed = {false};
-        lastEvaluated.compute(projectId, (id, last) -> {
-            if (last == null || !last.plus(DEBOUNCE).isAfter(now)) {
-                claimed[0] = true;
-                return now;
-            }
-            return last;
-        });
-        return claimed[0];
     }
 
     // ---- evaluation ----------------------------------------------------------------------------------
@@ -261,18 +252,43 @@ public class MarketingAlertEvaluator {
 
     // ---- state changes and posts ---------------------------------------------------------------------
 
-    /** A condition that holds: post it when it is new, back after resolving, or has moved; otherwise stay quiet. */
+    /**
+     * A condition that holds: post it when it is new, back after resolving, or has moved; otherwise stay quiet.
+     * The state change comes first and is conditional on the row still being what was read; only the evaluation
+     * that made it posts.
+     */
     private void raise(String projectId, MarketingAlert alert, MarketingAlertState state, Instant at) {
-        if (state != null && state.isActive()) {
+        OffsetDateTime now = OffsetDateTime.ofInstant(at, ZoneOffset.UTC);
+        String details = detailsJson(alert);
+        if (state == null) {
+            boolean won = inTx(() -> states.insertIfAbsent(UUID.randomUUID().toString(), projectId, alert.key(),
+                    alert.fingerprint(), details, now)) == 1;
+            if (won) {
+                post(projectId, alert.key(), alert.kind(), STATUS_NEW, alert.title(), alert.text(), at);
+            }
+            return;
+        }
+        if (state.isActive()) {
             if (alert.sameCondition(state.getFingerprint())) {
                 return;
             }
-            MarketingAlertState saved = record(projectId, alert, state, at, false);
-            post(projectId, saved, alert.kind(), STATUS_CHANGED, "Updated: " + alert.title(), alert.text(), at);
+            boolean won = reactivate(projectId, alert, state, details, null);
+            if (won) {
+                post(projectId, alert.key(), alert.kind(), STATUS_CHANGED, "Updated: " + alert.title(), alert.text(),
+                        at);
+            }
             return;
         }
-        MarketingAlertState saved = record(projectId, alert, state, at, true);
-        post(projectId, saved, alert.kind(), STATUS_NEW, alert.title(), alert.text(), at);
+        if (reactivate(projectId, alert, state, details, now)) {
+            post(projectId, alert.key(), alert.kind(), STATUS_NEW, alert.title(), alert.text(), at);
+        }
+    }
+
+    /** True when this evaluation moved the row from the state it read; false when another one got there first. */
+    private boolean reactivate(String projectId, MarketingAlert alert, MarketingAlertState read, String details,
+                               OffsetDateTime firstSeenAt) {
+        return inTx(() -> states.reactivateIfUnchanged(projectId, alert.key(), read.getState(), read.getFingerprint(),
+                alert.fingerprint(), details, firstSeenAt)) == 1;
     }
 
     /** An alert that held and no longer does: one "Resolved" message, then marked resolved. */
@@ -280,47 +296,44 @@ public class MarketingAlertEvaluator {
         Map<String, Object> details = state.getDetails() == null ? Map.of() : state.getDetails();
         String title = String.valueOf(details.getOrDefault("title", state.getAlertKey()));
         String text = String.valueOf(details.getOrDefault("text", ""));
-        state.setState(MarketingAlertState.RESOLVED);
-        state.setResolvedAt(OffsetDateTime.ofInstant(at, ZoneOffset.UTC));
-        MarketingAlertState saved = save(state);
-        Kind kind = Kind.ofKey(state.getAlertKey());
-        post(projectId, saved, kind, STATUS_RESOLVED, "Resolved: " + title,
+        OffsetDateTime now = OffsetDateTime.ofInstant(at, ZoneOffset.UTC);
+        boolean won = inTx(() -> states.resolveIfUnchanged(projectId, state.getAlertKey(), state.getFingerprint(),
+                now)) == 1;
+        if (!won) {
+            return;
+        }
+        post(projectId, state.getAlertKey(), Kind.ofKey(state.getAlertKey()), STATUS_RESOLVED, "Resolved: " + title,
                 "This no longer holds in the latest data." + (text.isBlank() ? "" : " It was: " + text), at);
     }
 
-    /** Writes the state row for a condition being posted, before anything is sent; returns the saved row. */
-    private MarketingAlertState record(String projectId, MarketingAlert alert, MarketingAlertState existing,
-                                       Instant at, boolean activating) {
-        MarketingAlertState state = existing != null ? existing : new MarketingAlertState();
-        state.setProjectId(projectId);
-        state.setAlertKey(alert.key());
-        state.setState(MarketingAlertState.ACTIVE);
-        state.setFingerprint(alert.fingerprint());
+    /** Title, text, kind and channel of what is being said, kept so a later "Resolved" message can repeat it. */
+    private static String detailsJson(MarketingAlert alert) {
         Map<String, Object> details = new LinkedHashMap<>();
         details.put("kind", alert.kind().name());
         details.put("channel", alert.channel());
         details.put("title", alert.title());
         details.put("text", alert.text());
-        state.setDetails(details);
-        if (activating) {
-            state.setFirstSeenAt(OffsetDateTime.ofInstant(at, ZoneOffset.UTC));
-            state.setResolvedAt(null);
+        try {
+            return JSON.writeValueAsString(details);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("Alert details could not be written: " + e.getMessage(), e);
         }
-        return save(state);
     }
 
-    private MarketingAlertState save(MarketingAlertState state) {
-        return tx.execute(status -> states.save(state));
+    /** Runs one short statement in a transaction of its own and returns its row count. */
+    private int inTx(java.util.function.IntSupplier statement) {
+        Integer rows = tx.execute(status -> statement.getAsInt());
+        return rows == null ? 0 : rows;
     }
 
     /**
      * Sends one message and, when it reached a channel, stamps {@code last_posted_at}. A failed send is logged
      * and forgotten: the condition is already recorded, so it is not sent again.
      */
-    private void post(String projectId, MarketingAlertState state, Kind kind, String status, String title,
+    private void post(String projectId, String alertKey, Kind kind, String status, String title,
                       String text, Instant at) {
         Map<String, String> metadata = new HashMap<>();
-        metadata.put("alertKey", state.getAlertKey());
+        metadata.put("alertKey", alertKey);
         metadata.put("alertKind", kind == null ? "" : kind.name());
         metadata.put("alertStatus", status);
         metadata.put("title", AlertText.cap(title, AlertText.MAX_TITLE));
@@ -329,17 +342,16 @@ public class MarketingAlertEvaluator {
         try {
             sent = delivery.deliverAlert(NotificationMessage.of(EventType.MARKETING_ALERT, projectId, metadata));
         } catch (RuntimeException e) {
-            log.warn("Marketing alert {} for project {} could not be sent: {}", state.getAlertKey(), projectId,
+            log.warn("Marketing alert {} for project {} could not be sent: {}", alertKey, projectId,
                     e.getMessage());
             return;
         }
         if (sent) {
-            state.setLastPostedAt(OffsetDateTime.ofInstant(at, ZoneOffset.UTC));
             try {
-                save(state);
+                inTx(() -> states.markPosted(projectId, alertKey, OffsetDateTime.ofInstant(at, ZoneOffset.UTC)));
             } catch (RuntimeException e) {
                 log.warn("Marketing alert {} for project {} was sent but its post time could not be recorded: {}",
-                        state.getAlertKey(), projectId, e.getMessage());
+                        alertKey, projectId, e.getMessage());
             }
         }
     }

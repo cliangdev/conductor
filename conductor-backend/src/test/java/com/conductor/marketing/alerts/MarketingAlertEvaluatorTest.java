@@ -32,6 +32,8 @@ import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static com.conductor.marketing.alerts.AlertFixtures.backendMismatch;
+import static com.conductor.marketing.alerts.AlertFixtures.channelOf;
+import static com.conductor.marketing.alerts.AlertFixtures.connectionView;
 import static com.conductor.marketing.alerts.AlertFixtures.channel;
 import static com.conductor.marketing.alerts.AlertFixtures.connectorTrustedRow;
 import static com.conductor.marketing.alerts.AlertFixtures.emptyLedger;
@@ -446,6 +448,48 @@ class MarketingAlertEvaluatorTest {
     }
 
     @Test
+    void aHealthyPullOnOneConnectionDoesNotExcuseAnotherConnectionThatIsStillStaleInTheChannel() {
+        // SOCIAL has Meta (just pulled, healthy) and YouTube (its feed keeps failing). The channel is STALE
+        // because of YouTube, so Meta's pull must neither drop the alert nor resolve it.
+        ChannelView social = channelOf("SOCIAL", "Social", "STALE",
+                connectionView(CONNECTION, "Meta", "STALE"), connectionView("youtube-conn", "YouTube", "STALE"));
+        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(social));
+        ChannelMetricsPulledEvent youtubeFailedEarlier = new ChannelMetricsPulledEvent(PROJECT, "SOCIAL", "other");
+        evaluator.onChannelMetricsPulled(youtubeFailedEarlier);
+        assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "stale:SOCIAL")
+                .containsEntry("alertStatus", "NEW");
+
+        clock.advance(Duration.ofMinutes(11));
+        evaluator.onChannelMetricsPulled(new ChannelMetricsPulledEvent(PROJECT, "SOCIAL", CONNECTION));
+
+        verify(delivery, times(1)).deliverAlert(any());
+        assertThat(states.get(PROJECT, "stale:SOCIAL").getState()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void aHealthyPullOnOneAppStoreAppDoesNotExcuseTheOtherAppStillStale() {
+        ChannelView store = channelOf("STORE", "App Store", "STALE",
+                connectionView(CONNECTION, "App A", "STALE"), connectionView("app-b", "App B", "STALE"));
+        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(store));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "stale:STORE");
+    }
+
+    @Test
+    void aHealthyPullExcusesItsOwnStalenessWhenTheOtherConnectionsInTheChannelAreLive() {
+        // Only the pulled connection's lastSuccessAt is unwritten; the channel is STALE on that alone.
+        ChannelView channelWithOneStaleConnection = channelOf("ADS", "Apple Ads", "STALE",
+                connectionView(CONNECTION, "Apple Ads", "STALE"), connectionView("other", "Other", "LIVE"));
+        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(channelWithOneStaleConnection));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        assertNothingPosted();
+    }
+
+    @Test
     void aStaleChannelThatDidNotJustPullIsStaleWhateverTheOtherConnectionsHealthIs() {
         ChannelView other = channel("STORE", "App Store", "STALE", List.of(), List.of(), "store-conn");
         when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(other));
@@ -455,7 +499,7 @@ class MarketingAlertEvaluatorTest {
         assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "stale:STORE");
     }
 
-    // ---- delivery: no channel configured, debounce, failures ------------------------------------------
+    // ---- delivery: no channel configured, every pull evaluated, failures ------------------------------------------
 
     @Test
     void aProjectWithNoChannelStillRecordsTheStateSoEnablingLaterDoesNotFlood() {
@@ -488,35 +532,133 @@ class MarketingAlertEvaluatorTest {
     }
 
     @Test
-    void anEventWithinTenMinutesOfTheLastEvaluationIsSkipped() {
+    void everyPullIsEvaluatedEvenWhenAnotherFinishedMomentsBefore() {
+        // A workspace's feeds pull one after another; the state must reflect the latest pull, not the first.
         evaluator.onChannelMetricsPulled(PULLED);
-        clock.advance(Duration.ofMinutes(9));
+        clock.advance(Duration.ofMinutes(2));
 
         evaluator.onChannelMetricsPulled(new ChannelMetricsPulledEvent(PROJECT, "STORE", "store-conn"));
-
-        verify(overviewService, times(1)).overview(eq(PROJECT), anyString());
-    }
-
-    @Test
-    void anEventAfterTenMinutesEvaluatesAgain() {
-        evaluator.onChannelMetricsPulled(PULLED);
-        clock.advance(Duration.ofMinutes(10));
-
-        evaluator.onChannelMetricsPulled(PULLED);
 
         verify(overviewService, times(2)).overview(eq(PROJECT), anyString());
     }
 
     @Test
-    void theDebounceIsPerProject() {
+    void aSecondPullTwoMinutesLaterThatChangesAConditionIsReflectedInTheStoredState() {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
         evaluator.onChannelMetricsPulled(PULLED);
-        when(overviewService.overview(eq("proj-2"), anyString())).thenReturn(overview());
-        when(ledgerService.ledger(eq("proj-2"), anyString())).thenReturn(emptyLedger());
-        when(pacingService.trippedRules(eq("proj-2"), any(LocalDate.class))).thenReturn(List.of());
+        assertThat(states.get(PROJECT, "mismatch:ADS:installs:BACKEND").getState()).isEqualTo("ACTIVE");
+        mismatchOverview();
+        clock.advance(Duration.ofMinutes(2));
 
-        evaluator.onChannelMetricsPulled(new ChannelMetricsPulledEvent("proj-2", "ADS", "other-conn"));
+        evaluator.onChannelMetricsPulled(new ChannelMetricsPulledEvent(PROJECT, "ADS", "second-conn"));
 
-        verify(overviewService).overview(eq("proj-2"), anyString());
+        assertThat(states.get(PROJECT, "mismatch:ADS:installs:BACKEND").getState()).isEqualTo("RESOLVED");
+        assertThat(allPosts(2).get(1).getMetadata()).containsEntry("alertStatus", "RESOLVED");
+    }
+
+    @Test
+    void pullsMinutesApartThatSeeTheSameConditionPostItOnce() {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+        clock.advance(Duration.ofMinutes(2));
+        evaluator.onChannelMetricsPulled(PULLED);
+        clock.advance(Duration.ofMinutes(2));
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        verify(delivery, times(1)).deliverAlert(any());
+    }
+
+    // ---- two evaluators racing (separate Cloud Run instances share only the database) -----------------
+
+    @Test
+    void twoEvaluatorsThatBothReadNoStateRaiseANewAlertExactlyOnce() throws Exception {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        MarketingAlertEvaluator other = anotherInstance();
+        states.holdReadersUntil(2);
+
+        race(() -> evaluator.onChannelMetricsPulled(PULLED), () -> other.onChannelMetricsPulled(PULLED));
+
+        assertThat(onlyPost().getMetadata()).containsEntry("alertStatus", "NEW");
+        assertThat(states.size()).isEqualTo(1);
+        assertThat(states.get(PROJECT, "mismatch:ADS:installs:BACKEND").getLastPostedAt()).isNotNull();
+    }
+
+    @Test
+    void twoEvaluatorsThatBothSeeTheSameAlertClearResolveItExactlyOnce() throws Exception {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        evaluator.onChannelMetricsPulled(PULLED);
+        mismatchOverview();
+        MarketingAlertEvaluator other = anotherInstance();
+        states.holdReadersUntil(2);
+
+        race(() -> evaluator.onChannelMetricsPulled(PULLED), () -> other.onChannelMetricsPulled(PULLED));
+
+        List<NotificationMessage> posts = allPosts(2);
+        assertThat(posts.get(1).getMetadata()).containsEntry("alertStatus", "RESOLVED");
+        assertThat(states.get(PROJECT, "mismatch:ADS:installs:BACKEND").getState()).isEqualTo("RESOLVED");
+    }
+
+    @Test
+    void twoEvaluatorsThatBothSeeTheSameMovedFigureUpdateItExactlyOnce() throws Exception {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        evaluator.onChannelMetricsPulled(PULLED);
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 150, 0.333));
+        MarketingAlertEvaluator other = anotherInstance();
+        states.holdReadersUntil(2);
+
+        race(() -> evaluator.onChannelMetricsPulled(PULLED), () -> other.onChannelMetricsPulled(PULLED));
+
+        List<NotificationMessage> posts = allPosts(2);
+        assertThat(posts.get(1).getMetadata()).containsEntry("alertStatus", "CHANGED");
+        assertThat(states.get(PROJECT, "mismatch:ADS:installs:BACKEND").getFingerprint()).isEqualTo("33.3");
+    }
+
+    @Test
+    void twoEvaluatorsThatBothSeeAResolvedAlertComeBackRaiseItExactlyOnce() throws Exception {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        evaluator.onChannelMetricsPulled(PULLED);
+        mismatchOverview();
+        evaluator.onChannelMetricsPulled(PULLED);
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        MarketingAlertEvaluator other = anotherInstance();
+        states.holdReadersUntil(2);
+
+        race(() -> evaluator.onChannelMetricsPulled(PULLED), () -> other.onChannelMetricsPulled(PULLED));
+
+        List<NotificationMessage> posts = allPosts(3);
+        assertThat(posts.get(2).getMetadata()).containsEntry("alertStatus", "NEW");
+        assertThat(states.get(PROJECT, "mismatch:ADS:installs:BACKEND").getState()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void anEvaluatorThatLosesTheRaceDoesNotPostAndDoesNotFail() throws Exception {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        MarketingAlertEvaluator other = anotherInstance();
+        states.holdReadersUntil(2);
+
+        assertThatNoException().isThrownBy(() ->
+                race(() -> evaluator.onChannelMetricsPulled(PULLED), () -> other.onChannelMetricsPulled(PULLED)));
+
+        verify(delivery, times(1)).deliverAlert(any());
+    }
+
+    private MarketingAlertEvaluator anotherInstance() {
+        return new MarketingAlertEvaluator(overviewService, ledgerService, pacingService, states.repository(),
+                delivery, connections, mock(PlatformTransactionManager.class), clock);
+    }
+
+    /** Runs both on their own threads and waits for both; the first failure, if any, is rethrown. */
+    private static void race(Runnable first, Runnable second) throws Exception {
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var a = pool.submit(first);
+            var b = pool.submit(second);
+            a.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            b.get(10, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test

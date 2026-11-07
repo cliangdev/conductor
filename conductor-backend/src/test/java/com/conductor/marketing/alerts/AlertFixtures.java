@@ -47,6 +47,17 @@ final class AlertFixtures {
                 mismatches, null);
     }
 
+    /** A connection as the overview reports it: {@code status} is the overview's LIVE or STALE call for it. */
+    static ConnectionView connectionView(String id, String label, String status) {
+        return new ConnectionView(id, "connector-" + id, label, status);
+    }
+
+    /** A channel whose connections each carry their own LIVE/STALE status, as the overview builds them. */
+    static ChannelView channelOf(String channel, String label, String status, ConnectionView... connections) {
+        return new ChannelView(channel, label, status, null, List.of(connections), null, List.of(), THROUGH, null,
+                true, List.of(), null);
+    }
+
     static ChannelView liveChannel(String channel, String label, List<MetricView> metrics) {
         return channel(channel, label, "LIVE", metrics, List.of(), channel.toLowerCase() + "-conn");
     }

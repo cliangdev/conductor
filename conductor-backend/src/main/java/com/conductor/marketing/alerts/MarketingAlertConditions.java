@@ -3,6 +3,7 @@ package com.conductor.marketing.alerts;
 import com.conductor.marketing.alerts.MarketingAlert.Kind;
 import com.conductor.marketing.budget.BudgetPacingService.TrippedRule;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.ChannelView;
+import com.conductor.marketing.overview.MarketingOverviewQueryService.ConnectionView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.MetricView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.MismatchView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.Overview;
@@ -41,6 +42,7 @@ final class MarketingAlertConditions {
 
     static final String TRUST_FALLBACK = "Trust the connector until the gap is explained.";
     private static final String STALE = "STALE";
+    private static final String LIVE = "LIVE";
     private static final String OFF_TRACK = "OFF_TRACK";
     private static final String TOO_EARLY = "TOO_EARLY";
 
@@ -54,7 +56,7 @@ final class MarketingAlertConditions {
      *               then says to trust the connector until explained)
      * @param pulledConnectionId the connection whose pull triggered this evaluation, or null
      * @param pulledConnectionHealthy whether that connection's health is fine; asked at most once and only when a
-     *                                stale channel contains it
+     *                                stale channel contains it and no other connection in it is stale
      */
     static List<MarketingAlert> fromOverview(Overview overview, Ledger ledger, String pulledConnectionId,
                                              BooleanSupplier pulledConnectionHealthy) {
@@ -123,18 +125,34 @@ final class MarketingAlertConditions {
     // ---- stale ---------------------------------------------------------------------------------------
 
     /**
-     * A channel the overview calls STALE, except where that could only be the feed's own bookkeeping lagging
-     * behind. The puller announces a pull before the feed's {@code lastSuccessAt} is saved, so for the connection
-     * that just pulled the overview's "no recent success" is out of date by construction (a first-ever pull always
-     * reads that way). That connection is judged by its health instead, which the pull has already written: a
-     * pull that found no new days has marked it DEGRADED, so a genuinely stalled channel is still reported.
+     * A channel the overview calls STALE, except where that could only be the pulling connection's own bookkeeping
+     * lagging behind. The puller announces a pull before the feed's {@code lastSuccessAt} is saved, so for the
+     * connection that just pulled the overview's "no recent success" is out of date by construction (a first-ever
+     * pull always reads that way). That connection is judged by its health instead, which the pull has already
+     * written: a pull that found no new days has marked it DEGRADED, so a genuinely stalled channel is still
+     * reported.
+     *
+     * <p>The exemption covers that one connection only. A channel is STALE as soon as any of its connections is,
+     * so when another connection in it (the other app on STORE, YouTube beside Meta on SOCIAL) is still stale,
+     * the channel's alert stands: a healthy pull elsewhere must not drop and resolve it, only for the next pull
+     * to raise it again. A connection the overview did not call LIVE counts as stale, so an unknown status never
+     * excuses anything.
      */
     private static boolean isStale(ChannelView channel, String pulledConnectionId, BooleanSupplier healthy) {
         if (!STALE.equals(channel.status())) {
             return false;
         }
-        boolean containsPulled = pulledConnectionId != null && channel.connections() != null
-                && channel.connections().stream().anyMatch(c -> pulledConnectionId.equals(c.id()));
+        if (pulledConnectionId == null || channel.connections() == null) {
+            return true;
+        }
+        boolean containsPulled = false;
+        for (ConnectionView connection : channel.connections()) {
+            if (pulledConnectionId.equals(connection.id())) {
+                containsPulled = true;
+            } else if (!LIVE.equals(connection.status())) {
+                return true;
+            }
+        }
         return !(containsPulled && healthy.getAsBoolean());
     }
 
