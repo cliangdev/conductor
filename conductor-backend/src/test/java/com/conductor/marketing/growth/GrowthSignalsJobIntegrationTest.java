@@ -33,7 +33,9 @@ import static com.conductor.marketing.growth.GrowthSignalsFixture.date;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -232,6 +234,69 @@ class GrowthSignalsJobIntegrationTest extends AbstractNoneWebIntegrationTest {
         // the second run did not even look the apps up again
         verify(client).lookup(ours, "us");
         verify(client).lookup(rival, "us");
+    }
+
+    private void track(String keyword) {
+        MarketingTrackedKeyword k = new MarketingTrackedKeyword();
+        k.setProjectId(project.getId());
+        k.setKeyword(keyword);
+        k.setCountry("us");
+        trackedKeywordRepository.save(k);
+    }
+
+    @Test
+    void aRerunInTheSameWeekAfterEverySnapshotExistsSearchesNoKeywordAtAll() {
+        track("recipe app");
+        track("meal planner");
+        GrowthSignalsJob job = job(true);
+        job.captureProject(project.getId(), MONDAY, WEDNESDAY);
+        verify(client).searchAppIds("recipe app", "us");
+        verify(client).searchAppIds("meal planner", "us");
+        clearInvocations(client);
+
+        Summary second = job.captureProject(project.getId(), MONDAY, WEDNESDAY);
+
+        assertThat(second).isEqualTo(new Summary(1, 0, 0, 0));
+        verify(client, never()).searchAppIds(anyString(), anyString());
+        verify(client, never()).lookup(anyString(), anyString());
+    }
+
+    @Test
+    void aPartialRerunSearchesTheKeywordsOnceForTheAppsThatStillNeedASnapshot() throws Exception {
+        track("recipe app");
+        track("meal planner");
+        when(client.searchAppIds("recipe app", "us")).thenReturn(List.of(ours, rival));
+        when(client.searchAppIds("meal planner", "us")).thenReturn(List.of(rival, ours));
+        when(client.lookup(rival, "us")).thenThrow(new ITunesUnavailableException("boom", null));
+        GrowthSignalsJob job = job(true);
+        job.captureProject(project.getId(), MONDAY, WEDNESDAY);
+        assertThat(snapshots(rival)).isEmpty();
+        clearInvocations(client);
+        doReturn(Optional.of(listing(rival, "Rival", "0.99", "4.2", 900L, "3.0"))).when(client).lookup(rival, "us");
+        when(client.recentReviews(anyString(), anyString())).thenReturn(List.of());
+
+        Summary retry = job.captureProject(project.getId(), MONDAY, WEDNESDAY);
+
+        assertThat(retry).isEqualTo(new Summary(1, 1, 0, 0));
+        // one search per keyword, shared by the one app that needs it, and our finished app is not looked up again
+        verify(client, times(1)).searchAppIds("recipe app", "us");
+        verify(client, times(1)).searchAppIds("meal planner", "us");
+        verify(client, never()).lookup(ours, "us");
+        JsonNode theirs = objectMapper.readTree(snapshots(rival).get(0).getKeywordRanks());
+        assertThat(theirs.get("recipe app").asInt()).isEqualTo(2);
+        assertThat(theirs.get("meal planner").asInt()).isEqualTo(1);
+        assertThat(snapshots(ours)).hasSize(1);
+    }
+
+    @Test
+    void whenNoLookupFindsAListingNoKeywordIsSearched() {
+        track("recipe app");
+        when(client.lookup(ours, "us")).thenReturn(Optional.empty());
+        when(client.lookup(rival, "us")).thenThrow(new ITunesUnavailableException("boom", null));
+
+        job(true).captureProject(project.getId(), MONDAY, WEDNESDAY);
+
+        verify(client, never()).searchAppIds(anyString(), anyString());
     }
 
     @Test

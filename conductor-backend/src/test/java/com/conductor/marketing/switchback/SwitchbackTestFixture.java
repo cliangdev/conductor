@@ -136,6 +136,11 @@ final class SwitchbackTestFixture {
                 provisional);
     }
 
+    /** A day total point of another Apple Ads metric, with no first-time downloads beside it. */
+    void adsMetricOnly(Feeds feeds, String metric, LocalDate day, double value) {
+        put(feeds.projectId(), feeds.adsConnectionId(), "apple-search-ads", "ADS", metric, "", day, value, false);
+    }
+
     private void put(String projectId, String connectionId, String connectorId, String channel, String metric,
                      String dimension, LocalDate day, double value, boolean provisional) {
         transactions.executeWithoutResult(status -> daily.upsert(UUID.randomUUID().toString(), projectId, connectionId,

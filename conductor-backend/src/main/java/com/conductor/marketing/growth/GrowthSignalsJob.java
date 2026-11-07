@@ -36,7 +36,8 @@ import java.util.UUID;
  * an app whose lookup failed simply has no snapshot yet, so the next run fills it.
  *
  * <p>Keyword positions: each tracked keyword (at most {@value TrackedKeywordSource#MAX_KEYWORDS} per project) is
- * searched once and every watched app is ranked within it. A keyword whose search failed is left out of that
+ * searched once and every watched app is ranked within it, but only when some app still needs this week's snapshot
+ * (ranks are stored only inside a new snapshot, so searching otherwise would be thrown away). A keyword whose search failed is left out of that
  * week's ranks rather than recorded as "not found".
  */
 @Component
@@ -140,9 +141,10 @@ public class GrowthSignalsJob {
         }
 
         int[] failures = {0};
-        Map<String, List<String>> searches = searchTrackedKeywords(
-                keywordSource.resolve(projectId, OwnApps.defaultCountry(own), today).keywords(), projectId, failures);
-
+        // Ranks live only inside a new snapshot, so the keyword searches (up to MAX_KEYWORDS, slow) run at most once,
+        // and only when an app that still needs this week's snapshot has a listing to write one with: a rerun in a week
+        // whose snapshots all exist, or a run where every lookup failed, searches nothing.
+        Map<String, List<String>> searches = null;
         int snapshots = 0;
         int reviews = 0;
         for (Watched app : watched) {
@@ -152,6 +154,10 @@ public class GrowthSignalsJob {
                     Optional<Listing> listing = client.lookup(app.appId(), app.country());
                     known = listing.isPresent();
                     if (known) {
+                        if (searches == null) {
+                            searches = searchTrackedKeywords(keywordSource
+                                    .resolve(projectId, OwnApps.defaultCountry(own), today).keywords(), projectId, failures);
+                        }
                         snapshots += writeSnapshot(projectId, app, week, listing.get(), searches);
                     }
                 }
