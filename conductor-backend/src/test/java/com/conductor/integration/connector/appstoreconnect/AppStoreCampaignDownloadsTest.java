@@ -249,13 +249,20 @@ class AppStoreCampaignDownloadsTest {
 
         server.verify();
         assertThat(campaignPoints(points)).isEmpty();
-        assertThat(standardPoints(points)).containsOnly(
-                Map.entry("downloads||2026-10-02", 29.0),
-                Map.entry("downloads|source:APP_STORE_SEARCH|2026-10-02", 29.0),
-                Map.entry("redownloads||2026-10-02", 4.0),
-                Map.entry("redownloads|source:APP_STORE_SEARCH|2026-10-02", 4.0),
-                Map.entry("total_downloads||2026-10-02", 33.0),
-                Map.entry("total_downloads|source:APP_STORE_SEARCH|2026-10-02", 33.0));
+        Map<String, Double> expected = new java.util.HashMap<>(Map.of(
+                "downloads||2026-10-02", 29.0,
+                "downloads|source:APP_STORE_SEARCH|2026-10-02", 29.0,
+                "redownloads||2026-10-02", 4.0,
+                "redownloads|source:APP_STORE_SEARCH|2026-10-02", 4.0,
+                "total_downloads||2026-10-02", 33.0,
+                "total_downloads|source:APP_STORE_SEARCH|2026-10-02", 33.0));
+        // the other sources read one by one had no rows that covered day: real zeros
+        for (String source : List.of("APP_STORE_BROWSE", "APP_REFERRER", "WEB_REFERRER")) {
+            for (String metric : List.of("downloads", "redownloads", "total_downloads")) {
+                expected.put(metric + "|source:" + source + "|2026-10-02", 0.0);
+            }
+        }
+        assertThat(standardPoints(points)).containsExactlyInAnyOrderEntriesOf(expected);
     }
 
     @Test
@@ -411,7 +418,7 @@ class AppStoreCampaignDownloadsTest {
     // -- contract version ---------------------------------------------------------------------------------
 
     @Test
-    void thePullReportsContractVersion3SoHistoryIsReWalkedOnceMoreForCampaignDownloads() {
+    void thePullCarriesTheContractVersionThatAddedCampaignDownloadsOrALaterOne() {
         expectStandard();
         expectDetailedReport();
         expectDetailedInstance("DET", "2026-10-03", gzip(HEADER
@@ -420,8 +427,8 @@ class AppStoreCampaignDownloadsTest {
 
         ChannelMetricsPull pull = connector.pull(ctx(), FROM, TO);
 
-        assertThat(pull.contractVersion()).isEqualTo(3);
-        assertThat(AppStoreConnectConnector.CONTRACT_VERSION).isEqualTo(3);
+        // version 3 added campaign downloads; a later version re-walks history too, so it still gets them
+        assertThat(pull.contractVersion()).isEqualTo(AppStoreConnectConnector.CONTRACT_VERSION).isGreaterThanOrEqualTo(3);
         assertThat(byKey(campaignPoints(pull.points()))).containsOnly(
                 Map.entry("campaign_downloads|ct:spring|2026-10-02", 3.0));
     }
