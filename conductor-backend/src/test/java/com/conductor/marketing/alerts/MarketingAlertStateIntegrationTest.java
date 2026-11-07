@@ -65,6 +65,13 @@ class MarketingAlertStateIntegrationTest extends AbstractNoneWebIntegrationTest 
         projectId = projectRepository.save(p).getId();
     }
 
+    /** The statements need a read-write transaction, which the evaluator supplies in production. */
+    private int inTx(java.util.function.IntSupplier statement) {
+        Integer rows = new org.springframework.transaction.support.TransactionTemplate(transactionManager)
+                .execute(status -> statement.getAsInt());
+        return rows == null ? 0 : rows;
+    }
+
     private MarketingAlertState state(String key, String stateName) {
         MarketingAlertState s = new MarketingAlertState();
         s.setProjectId(projectId);
@@ -106,6 +113,61 @@ class MarketingAlertStateIntegrationTest extends AbstractNoneWebIntegrationTest 
     void theStateColumnOnlyAcceptsActiveOrResolved() {
         assertThatThrownBy(() -> repository.saveAndFlush(state("stale:STORE", "SNOOZED")))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void onlyOneOfTwoInsertsOfTheSameKeyChangesARow() {
+        OffsetDateTime at = OffsetDateTime.now();
+        String details = "{\"title\":\"Apple Ads: Installs\"}";
+
+        int first = inTx(() -> repository.insertIfAbsent(UUID.randomUUID().toString(), projectId, "stale:STORE", "x", details, at));
+        int second = inTx(() -> repository.insertIfAbsent(UUID.randomUUID().toString(), projectId, "stale:STORE", "x", details, at));
+
+        assertThat(first).isEqualTo(1);
+        assertThat(second).isZero();
+        assertThat(repository.findByProjectId(projectId)).hasSize(1);
+        assertThat(repository.findByProjectId(projectId).get(0).getDetails()).containsEntry("title",
+                "Apple Ads: Installs");
+    }
+
+    @Test
+    void anUpdateAndAResolveOnlyApplyToTheStateThatWasRead() {
+        OffsetDateTime at = OffsetDateTime.now();
+        inTx(() -> repository.insertIfAbsent(UUID.randomUUID().toString(), projectId, "mismatch:ADS:installs:BACKEND", "18.7",
+                "{\"title\":\"t\"}", at));
+
+        int staleUpdate = inTx(() -> repository.reactivateIfUnchanged(projectId, "mismatch:ADS:installs:BACKEND", "ACTIVE",
+                "99.9", "33.3", "{\"title\":\"t2\"}", null));
+        int update = inTx(() -> repository.reactivateIfUnchanged(projectId, "mismatch:ADS:installs:BACKEND", "ACTIVE", "18.7",
+                "33.3", "{\"title\":\"t2\"}", null));
+        int staleResolve = inTx(() -> repository.resolveIfUnchanged(projectId, "mismatch:ADS:installs:BACKEND", "18.7", at));
+        int resolve = inTx(() -> repository.resolveIfUnchanged(projectId, "mismatch:ADS:installs:BACKEND", "33.3", at));
+        int resolveAgain = inTx(() -> repository.resolveIfUnchanged(projectId, "mismatch:ADS:installs:BACKEND", "33.3", at));
+        int comeBack = inTx(() -> repository.reactivateIfUnchanged(projectId, "mismatch:ADS:installs:BACKEND", "RESOLVED",
+                "33.3", "18.7", "{\"title\":\"t3\"}", at));
+        int comeBackAgain = inTx(() -> repository.reactivateIfUnchanged(projectId, "mismatch:ADS:installs:BACKEND", "RESOLVED",
+                "33.3", "18.7", "{\"title\":\"t3\"}", at));
+
+        assertThat(List.of(staleUpdate, update, staleResolve, resolve, resolveAgain, comeBack, comeBackAgain))
+                .containsExactly(0, 1, 0, 1, 0, 1, 0);
+        MarketingAlertState row = repository.findByProjectId(projectId).get(0);
+        assertThat(row.getState()).isEqualTo("ACTIVE");
+        assertThat(row.getFingerprint()).isEqualTo("18.7");
+        assertThat(row.getResolvedAt()).isNull();
+        assertThat(row.getDetails()).containsEntry("title", "t3");
+    }
+
+    @Test
+    void markPostedStampsOnlyThePostTime() {
+        OffsetDateTime at = OffsetDateTime.now();
+        inTx(() -> repository.insertIfAbsent(UUID.randomUUID().toString(), projectId, "stale:STORE", "x", "{\"title\":\"t\"}", at));
+
+        int rows = inTx(() -> repository.markPosted(projectId, "stale:STORE", at));
+
+        assertThat(rows).isEqualTo(1);
+        MarketingAlertState row = repository.findByProjectId(projectId).get(0);
+        assertThat(row.getLastPostedAt()).isNotNull();
+        assertThat(row.getState()).isEqualTo("ACTIVE");
     }
 
     @Test

@@ -569,36 +569,96 @@ class MarketingAlertEvaluatorTest {
         verify(delivery, times(1)).deliverAlert(any());
     }
 
+    // ---- two evaluators racing (separate Cloud Run instances share only the database) -----------------
+
     @Test
-    void aWorkspaceIsNeverEvaluatedByTwoPullsAtOnce() throws Exception {
-        // Two overlapping evaluations of one workspace could each read "nothing stored" and post the same NEW
-        // alert twice, so the second waits for the first.
-        java.util.concurrent.atomic.AtomicInteger inside = new java.util.concurrent.atomic.AtomicInteger();
-        java.util.concurrent.atomic.AtomicInteger maxInside = new java.util.concurrent.atomic.AtomicInteger();
-        java.util.concurrent.CountDownLatch firstIn = new java.util.concurrent.CountDownLatch(1);
-        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
-        when(overviewService.overview(eq(PROJECT), anyString())).thenAnswer(invocation -> {
-            maxInside.accumulateAndGet(inside.incrementAndGet(), Math::max);
-            firstIn.countDown();
-            release.await(2, java.util.concurrent.TimeUnit.SECONDS);
-            inside.decrementAndGet();
-            return overview();
-        });
+    void twoEvaluatorsThatBothReadNoStateRaiseANewAlertExactlyOnce() throws Exception {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        MarketingAlertEvaluator other = anotherInstance();
+        states.holdReadersUntil(2);
+
+        race(() -> evaluator.onChannelMetricsPulled(PULLED), () -> other.onChannelMetricsPulled(PULLED));
+
+        assertThat(onlyPost().getMetadata()).containsEntry("alertStatus", "NEW");
+        assertThat(states.size()).isEqualTo(1);
+        assertThat(states.get(PROJECT, "mismatch:ADS:installs:BACKEND").getLastPostedAt()).isNotNull();
+    }
+
+    @Test
+    void twoEvaluatorsThatBothSeeTheSameAlertClearResolveItExactlyOnce() throws Exception {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        evaluator.onChannelMetricsPulled(PULLED);
+        mismatchOverview();
+        MarketingAlertEvaluator other = anotherInstance();
+        states.holdReadersUntil(2);
+
+        race(() -> evaluator.onChannelMetricsPulled(PULLED), () -> other.onChannelMetricsPulled(PULLED));
+
+        List<NotificationMessage> posts = allPosts(2);
+        assertThat(posts.get(1).getMetadata()).containsEntry("alertStatus", "RESOLVED");
+        assertThat(states.get(PROJECT, "mismatch:ADS:installs:BACKEND").getState()).isEqualTo("RESOLVED");
+    }
+
+    @Test
+    void twoEvaluatorsThatBothSeeTheSameMovedFigureUpdateItExactlyOnce() throws Exception {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        evaluator.onChannelMetricsPulled(PULLED);
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 150, 0.333));
+        MarketingAlertEvaluator other = anotherInstance();
+        states.holdReadersUntil(2);
+
+        race(() -> evaluator.onChannelMetricsPulled(PULLED), () -> other.onChannelMetricsPulled(PULLED));
+
+        List<NotificationMessage> posts = allPosts(2);
+        assertThat(posts.get(1).getMetadata()).containsEntry("alertStatus", "CHANGED");
+        assertThat(states.get(PROJECT, "mismatch:ADS:installs:BACKEND").getFingerprint()).isEqualTo("33.3");
+    }
+
+    @Test
+    void twoEvaluatorsThatBothSeeAResolvedAlertComeBackRaiseItExactlyOnce() throws Exception {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        evaluator.onChannelMetricsPulled(PULLED);
+        mismatchOverview();
+        evaluator.onChannelMetricsPulled(PULLED);
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        MarketingAlertEvaluator other = anotherInstance();
+        states.holdReadersUntil(2);
+
+        race(() -> evaluator.onChannelMetricsPulled(PULLED), () -> other.onChannelMetricsPulled(PULLED));
+
+        List<NotificationMessage> posts = allPosts(3);
+        assertThat(posts.get(2).getMetadata()).containsEntry("alertStatus", "NEW");
+        assertThat(states.get(PROJECT, "mismatch:ADS:installs:BACKEND").getState()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void anEvaluatorThatLosesTheRaceDoesNotPostAndDoesNotFail() throws Exception {
+        mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
+        MarketingAlertEvaluator other = anotherInstance();
+        states.holdReadersUntil(2);
+
+        assertThatNoException().isThrownBy(() ->
+                race(() -> evaluator.onChannelMetricsPulled(PULLED), () -> other.onChannelMetricsPulled(PULLED)));
+
+        verify(delivery, times(1)).deliverAlert(any());
+    }
+
+    private MarketingAlertEvaluator anotherInstance() {
+        return new MarketingAlertEvaluator(overviewService, ledgerService, pacingService, states.repository(),
+                delivery, connections, mock(PlatformTransactionManager.class), clock);
+    }
+
+    /** Runs both on their own threads and waits for both; the first failure, if any, is rethrown. */
+    private static void race(Runnable first, Runnable second) throws Exception {
         java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
         try {
-            var first = pool.submit(() -> evaluator.onChannelMetricsPulled(PULLED));
-            firstIn.await();
-            var second = pool.submit(() -> evaluator.onChannelMetricsPulled(PULLED));
-            org.awaitility.Awaitility.await().during(Duration.ofMillis(300)).atMost(Duration.ofSeconds(2))
-                    .until(() -> maxInside.get() == 1);
-            release.countDown();
-            first.get(5, java.util.concurrent.TimeUnit.SECONDS);
-            second.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            var a = pool.submit(first);
+            var b = pool.submit(second);
+            a.get(10, java.util.concurrent.TimeUnit.SECONDS);
+            b.get(10, java.util.concurrent.TimeUnit.SECONDS);
         } finally {
             pool.shutdownNow();
         }
-        assertThat(maxInside.get()).isEqualTo(1);
-        verify(overviewService, times(2)).overview(eq(PROJECT), anyString());
     }
 
     @Test
