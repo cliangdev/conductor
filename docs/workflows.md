@@ -1823,7 +1823,10 @@ The built-in `MARKETING_CHANGES` lifecycle ("Change": `PLANNED -> LIVE -> REVIEW
 this as a log of changes and what came of them: hypothesis, baseline, control, live since, outcome, verdict, lesson and
 evidence, with the due date labelled "Review on". `REVIEWED` is review-gated, so a person approves the verdict. It is
 seeded into new workspaces and (migration V157) every existing one. Verdicts are worked, did_not_work, no_effect,
-expected and inconclusive (V187).
+expected and inconclusive (V187). It is hidden from the sidebar (new workspaces seed it with `sidebar_enabled = false`;
+migration V198 hid it in existing ones): open Changes show on Marketing Overview (an "Open changes" card, only when
+any exist) and the list is at `/marketing/changes`. Changes are written via MCP, the change-log import and the
+marketing report skill.
 
 The built-in `CREATORS` lifecycle ("Creator": `PROSPECT -> BRIEFED -> POSTED -> PAID_OUT`, or `DROPPED`) runs a creator
 partnership: handle, platform, offer code, fee, link token and brief, with the due date labelled "Post by". Its results

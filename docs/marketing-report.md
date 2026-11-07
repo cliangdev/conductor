@@ -144,6 +144,8 @@ One acquisition row per tracked-link family (`TrackedLinkService.performance` ov
 
 ### Changes
 
+The Changes lifecycle is not in the sidebar. Open Changes appear on Marketing Overview (only when any exist) and the full list is at `/marketing/changes`; they are written via MCP and the report skill.
+
 `reviewedInWindow` reads the Work Item's `completed_at` (when it reached REVIEWED) and falls back to `updated_at` for an item with none. `dueForReview` holds PLANNED or LIVE changes whose `dueOn` (the review date) is before today and whose `verdict` field is empty; a change with a verdict is reviewed, whatever its status. The list comes from one query that fetches the project and assignee, so it costs the same for one change as for a hundred.
 
 `changeMarkers` come from the same rows: LIVE or REVIEWED changes whose `liveSince` field is a date on or before the window's last day, oldest first. A field that is not a date is skipped. A REVIEWED change that was reviewed before the window is not in the query, so it has no marker.

@@ -48,6 +48,7 @@ describe('OverviewPanel', () => {
     await screen.findByRole('region', { name: 'Funnel' })
     expect(screen.getByRole('link', { name: 'Verification' })).toHaveAttribute('href', '/app/projects/proj-1/marketing/verification')
     expect(screen.getByRole('link', { name: 'Definitions' })).toHaveAttribute('href', '/app/projects/proj-1/marketing/definitions')
+    expect(screen.getByRole('link', { name: 'Changes' })).toHaveAttribute('href', '/app/projects/proj-1/marketing/changes')
   })
 
   it('shows the funnel and the five channel cards in order, defaulting to 28d', async () => {

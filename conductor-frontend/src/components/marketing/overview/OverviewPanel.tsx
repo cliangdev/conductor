@@ -5,7 +5,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { BookOpenIcon, PlugIcon, ShieldCheckIcon } from 'lucide-react'
+import { BookOpenIcon, FlaskConicalIcon, PlugIcon, ShieldCheckIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -15,8 +15,10 @@ import { useAuth } from '@/contexts/AuthContext'
 import { usePermissions } from '@/contexts/PermissionsContext'
 import { apiErrorMessage } from '@/lib/api'
 import { usePersistedStateAfterMount } from '@/lib/persisted'
+import { workItemListPath } from '@/lib/workflows'
 import { ChannelCard } from './ChannelCard'
 import { FunnelStrip } from './FunnelStrip'
+import { OpenChangesCard } from './OpenChangesCard'
 import { TargetDialog } from './TargetDialog'
 import { dataThroughSummary } from './format'
 import { useTargetEditor } from './useTargetEditor'
@@ -123,6 +125,14 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Link
             prefetch={false}
+            href={workItemListPath(projectId, 'MARKETING', 'Change')}
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+          >
+            <FlaskConicalIcon className="mr-1.5 h-3.5 w-3.5" aria-hidden />
+            Changes
+          </Link>
+          <Link
+            prefetch={false}
             href={`/app/projects/${projectId}/marketing/verification`}
             className={buttonVariants({ variant: 'outline', size: 'sm' })}
           >
@@ -186,6 +196,8 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
               />
             ))}
           </div>
+
+          <OpenChangesCard projectId={projectId} />
         </>
       )}
 

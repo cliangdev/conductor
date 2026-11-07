@@ -240,7 +240,8 @@ class WorkflowSeederTest {
         // Built-in Marketing changes lives beside Posts under the MARKETING area, not its own slug.
         assertThat(header.getArea()).isEqualTo("MARKETING");
         assertThat(header.getState()).isEqualTo("PUBLISHED");
-        assertThat(header.isSidebarEnabled()).isTrue();
+        // Hidden from the sidebar: reached from Marketing Overview, written via MCP and the report skill.
+        assertThat(header.isSidebarEnabled()).isFalse();
         assertThat(header.getDefinition().get("noun").asText()).isEqualTo("Change");
         verify(versionRepository).save(any(WorkflowDefinitionVersion.class));
     }
@@ -335,11 +336,23 @@ class WorkflowSeederTest {
 
         seeder.seedEngineering(project);
         seeder.seedMarketing(project);
-        seeder.seedMarketingChanges(project);
 
         ArgumentCaptor<WorkflowDefinition> headerCaptor = ArgumentCaptor.forClass(WorkflowDefinition.class);
-        verify(workflowRepository, times(3)).save(headerCaptor.capture());
+        verify(workflowRepository, times(2)).save(headerCaptor.capture());
         assertThat(headerCaptor.getAllValues()).allMatch(WorkflowDefinition::isSidebarEnabled);
+    }
+
+    @Test
+    void marketingChangesAndTaskAreHiddenFromTheSidebar() {
+        when(workflowRepository.existsByProjectIdAndDefinitionSlug(any(), any())).thenReturn(false);
+        when(workflowRepository.save(any(WorkflowDefinition.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        seeder.seedMarketingChanges(project);
+        seeder.seedTask(project);
+
+        ArgumentCaptor<WorkflowDefinition> headerCaptor = ArgumentCaptor.forClass(WorkflowDefinition.class);
+        verify(workflowRepository, times(2)).save(headerCaptor.capture());
+        assertThat(headerCaptor.getAllValues()).noneMatch(WorkflowDefinition::isSidebarEnabled);
     }
 
     @Test
