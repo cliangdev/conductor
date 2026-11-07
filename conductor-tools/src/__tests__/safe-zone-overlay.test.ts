@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +16,8 @@ async function probe(): Promise<BrowserFactory | null> {
   }
 }
 const browserFactory = await probe()
+// The real-browser test makes its input with ffmpeg, which CI runners may not have.
+const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0
 
 const frames = [
   { dataUrl: 'data:image/png;base64,AAAA', label: 'Slide 1' },
@@ -63,7 +65,7 @@ describe('overlay input checks', () => {
   })
 })
 
-describe.skipIf(!browserFactory)('overlay rendering (real browser)', () => {
+describe.skipIf(!browserFactory || !hasFfmpeg)('overlay rendering (real browser)', () => {
   it('renders frames and a sheet under 1 MB', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'overlay-'))
     try {
