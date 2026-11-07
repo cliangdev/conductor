@@ -146,6 +146,19 @@ public class ProjectSecurityService {
         return user;
     }
 
+    /**
+     * ADMIN only, and only a person: for actions that spend the workspace's money or change its configuration.
+     * A project key or run token has no user, so no machine credential passes; a user API key does, as the
+     * Admin's own. Anyone else (a non-admin member, a non-member, no authentication) gets a 403.
+     */
+    public User requireAdminUser(String projectId) {
+        User user = currentUserOrNull();
+        if (user == null || !isProjectAdmin(projectId, user.getId())) {
+            throw new ForbiddenException("Requires the Admin role");
+        }
+        return user;
+    }
+
     /** The authenticated user, or null for a machine credential or no authentication. */
     public User currentUserOrNull() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();

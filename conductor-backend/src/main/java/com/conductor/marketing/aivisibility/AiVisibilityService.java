@@ -50,8 +50,9 @@ import java.util.UUID;
  * means the assistant answered, and the next run in the same week retries only what is missing.
  *
  * <p><b>One reading per (question, assistant, ISO week)</b> (Monday, UTC): a pair already read this week is not asked
- * again. At most {@value #WEEKLY_CALL_CAP} provider calls are made per workspace per week, counting the readings
- * already stored this week and every call a run attempts, failed or not. When pairs outnumber the cap, the pairs
+ * again. At most {@value #WEEKLY_CALL_CAP} provider calls are made per workspace per week, counting every call any
+ * run attempts, failed or not. The count is kept in the database ({@code marketing_ai_call_budget}, taken before each
+ * call), not derived from stored readings, so reruns after failures cannot buy a fresh allowance. When pairs outnumber the cap, the pairs
  * read least recently go first (never read before everything else), so no question starves; what the cap held back
  * is reported as skipped.
  *
@@ -175,19 +176,19 @@ public class AiVisibilityService {
         List<MarketingAiVisibilityCheck> thisWeek = checkRepository.findByProjectIdAndWeekStart(projectId, week);
         Set<String> done = new HashSet<>();
         thisWeek.forEach(c -> done.add(pairKey(c.getQuestionId(), c.getAssistant())));
-        int budget = Math.max(0, WEEKLY_CALL_CAP - thisWeek.size());
 
         int recorded = 0;
         int already = 0;
+        boolean capReached = false;
         Set<String> limited = new LinkedHashSet<>();
         for (Pair pair : orderedPairs(projectId, questions, assistants)) {
             String assistantId = pair.assistant().provider().id();
             if (done.contains(pairKey(pair.question().getId(), assistantId))) {
                 already++;
-            } else if (budget == 0) {
+            } else if (capReached || checkRepository.reserveCall(projectId, week, WEEKLY_CALL_CAP) == 0) {
+                capReached = true;
                 limited.add(assistantId);
             } else {
-                budget--;
                 try {
                     recorded += check(projectId, week, pair, terms);
                 } catch (RuntimeException e) {
