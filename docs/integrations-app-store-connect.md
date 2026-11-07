@@ -38,6 +38,11 @@ key's role is too weak (403), when the key is wrong (401) and when the app id is
   (first-time), `redownloads`, `total_downloads` (first-time plus redownloads, written only where both exist;
   the numerator of Apple's per-source conversion rate), and the snapshots `rating_count`, `rating_avg`
   (today's value only, accumulating day by day from the first pull).
+- **Zero days.** Apple's files leave out zero rows. On a day a report covers, a metric with no row is stored
+  as 0: for the total, and for each of `APP_STORE_SEARCH`, `APP_STORE_BROWSE`, `APP_REFERRER` and
+  `WEB_REFERRER`, the sources the overview and the report read one by one (per-source conversion, the
+  organic search split). Other sources keep only the rows Apple sent; a day no report covers stays empty.
+  Contract version 4 added the per-source zeros, so the feed re-walks its history once.
 - A day's rows are the sum of all segments of the report instance. When several instances carry the
   same report date, the one with the latest processing date wins.
 - **Campaign tokens.** It also reads **App Downloads Detailed** from the same request and stores first-time

@@ -76,10 +76,18 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     static final String CAMPAIGN_DOWNLOADS = "campaign_downloads";
     /**
      * Version 2: {@code total_downloads} exists. Version 3: {@code campaign_downloads} (per campaign token, from
-     * the App Downloads Detailed report) exists. The version differing from the one in the feed cursor makes the
-     * puller re-walk the backfill window once, so stored history gets it too.
+     * the App Downloads Detailed report) exists. Version 4: a covered day stores 0 for each of
+     * {@link #ZERO_FILLED_SOURCES} that has no row, as the day total already did. The version differing from the
+     * one in the feed cursor makes the puller re-walk the backfill window once, so stored history gets it too.
      */
-    static final int CONTRACT_VERSION = 3;
+    static final int CONTRACT_VERSION = 4;
+    /**
+     * The sources the overview and the report read one by one (the per-source conversion rates, the organic search
+     * split). Apple's TSVs omit zero rows, so on a day a report covers, one of these with no row for a metric really
+     * had none: it is stored as 0, never left as a gap that would drop the day from a per-source sum or ratio.
+     */
+    static final List<String> ZERO_FILLED_SOURCES = List.of("APP_STORE_SEARCH", "APP_STORE_BROWSE", "APP_REFERRER",
+            "WEB_REFERRER");
     /** Apple dates its Sales reports in Pacific time; a day is not published before that day has ended there. */
     private static final ZoneId SALES_REPORT_ZONE = ZoneId.of("America/Los_Angeles");
     /** A Sales report day this many days old (Pacific) is published if it ever will be: a 404 then means no sales. */
@@ -374,11 +382,12 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     }
 
     private static void emit(LocalDate day, AppStoreAnalyticsClient.DayRows rows, List<ChannelMetricPoint> out) {
+        Map<String, Map<String, Double>> bySource = withZeroFilledSources(rows);
         Map<String, Double> dayTotals = new HashMap<>();
         for (String metric : REPORT_METRICS) {
             double total = 0;
             boolean present = false;
-            for (Map.Entry<String, Map<String, Double>> source : rows.bySource().entrySet()) {
+            for (Map.Entry<String, Map<String, Double>> source : bySource.entrySet()) {
                 Double v = source.getValue().get(metric);
                 if (v == null) continue;
                 present = true;
@@ -394,18 +403,35 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
                 out.add(ChannelMetricPoint.total(metric, day, 0));
             }
         }
-        emitTotalDownloads(day, rows, dayTotals, out);
+        emitTotalDownloads(day, bySource, dayTotals, out);
+    }
+
+    /**
+     * The day's rows by source, plus a 0 for each covered metric of each {@link #ZERO_FILLED_SOURCES} source with no
+     * row for it. Other sources are left as Apple sent them, and a metric no report covers that day stays absent.
+     */
+    private static Map<String, Map<String, Double>> withZeroFilledSources(AppStoreAnalyticsClient.DayRows rows) {
+        Map<String, Map<String, Double>> out = new java.util.LinkedHashMap<>();
+        rows.bySource().forEach((source, metrics) -> out.put(source, new HashMap<>(metrics)));
+        for (String source : ZERO_FILLED_SOURCES) {
+            Map<String, Double> metrics = out.computeIfAbsent(source, s -> new HashMap<>());
+            for (String metric : rows.coveredMetrics()) {
+                metrics.putIfAbsent(metric, 0.0);
+            }
+        }
+        out.values().removeIf(Map::isEmpty);
+        return out;
     }
 
     /** First-time + redownloads, for the day and per source, wherever both inputs exist (never guessed as 0). */
-    private static void emitTotalDownloads(LocalDate day, AppStoreAnalyticsClient.DayRows rows,
+    private static void emitTotalDownloads(LocalDate day, Map<String, Map<String, Double>> bySource,
                                            Map<String, Double> dayTotals, List<ChannelMetricPoint> out) {
         Double downloads = dayTotals.get(AppStoreAnalyticsClient.M_DOWNLOADS);
         Double redownloads = dayTotals.get(AppStoreAnalyticsClient.M_REDOWNLOADS);
         if (downloads != null && redownloads != null) {
             out.add(ChannelMetricPoint.total(TOTAL_DOWNLOADS, day, downloads + redownloads));
         }
-        rows.bySource().forEach((source, metrics) -> {
+        bySource.forEach((source, metrics) -> {
             Double d = metrics.get(AppStoreAnalyticsClient.M_DOWNLOADS);
             Double r = metrics.get(AppStoreAnalyticsClient.M_REDOWNLOADS);
             if (d != null && r != null) {

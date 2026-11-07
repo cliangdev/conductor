@@ -375,15 +375,19 @@ class AppStoreConnectChannelMetricsTest {
                 .containsEntry("page_views_unique||2026-10-02", 0.0)
                 .containsEntry("downloads||2026-10-02", 3.0)
                 .containsEntry("redownloads||2026-10-02", 0.0);
-        // Both day totals exist, so the total exists; the search source has no redownloads row, so it has no total.
+        // Both day totals exist, so the total exists; the search source's missing redownloads row is a covered
+        // zero too, so it has a total of its own.
         assertThat(m).containsEntry("total_downloads||2026-10-02", 3.0)
-                .doesNotContainKey("total_downloads|source:APP_STORE_SEARCH|2026-10-02");
+                .containsEntry("redownloads|source:APP_STORE_SEARCH|2026-10-02", 0.0)
+                .containsEntry("total_downloads|source:APP_STORE_SEARCH|2026-10-02", 3.0);
         // Oct 1: a processed Discovery day with no rows -> zeros for all four Discovery metrics (and nothing else).
         assertThat(m).containsEntry("impressions||2026-10-01", 0.0)
                 .containsEntry("impressions_unique||2026-10-01", 0.0)
                 .containsEntry("page_views||2026-10-01", 0.0)
                 .containsEntry("page_views_unique||2026-10-01", 0.0)
-                .doesNotContainKey("downloads||2026-10-01");
+                .containsEntry("impressions|source:APP_STORE_SEARCH|2026-10-01", 0.0)
+                .doesNotContainKey("downloads||2026-10-01")
+                .doesNotContainKey("downloads|source:APP_STORE_SEARCH|2026-10-01");
         // Nothing for a day without a processed instance.
         assertThat(points).extracting(ChannelMetricPoint::day)
                 .noneMatch(d -> d.isAfter(LocalDate.of(2026, 10, 2)));
@@ -485,7 +489,7 @@ class AppStoreConnectChannelMetricsTest {
     // -- total downloads ----------------------------------------------------------------------------------
 
     @Test
-    void totalDownloadsIsFirstTimePlusRedownloadsPerSourceOnlyWhereBothInputsExist() {
+    void totalDownloadsIsFirstTimePlusRedownloadsPerSourceOnDaysTheDownloadsReportCovers() {
         expectRequestAndReports();
         expectJson(DISCOVERY_INSTANCES, "{\"data\":[]}");
         expectJson(DOWNLOADS_INSTANCES, "{\"data\":[{\"id\":\"D\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
@@ -506,13 +510,31 @@ class AppStoreConnectChannelMetricsTest {
                 .containsEntry("redownloads||2026-10-02", 6.0)
                 .containsEntry("total_downloads||2026-10-02", 36.0)
                 .containsEntry("total_downloads|source:APP_STORE_SEARCH|2026-10-02", 33.0);
-        // a source with only one of the two inputs gets no total (absent means not reported, never 0)
-        assertThat(m).doesNotContainKey("total_downloads|source:APP_STORE_BROWSE|2026-10-02")
-                .doesNotContainKey("total_downloads|source:APP_REFERRER|2026-10-02");
+        // on a covered day a source's missing row is a real 0 (Apple omits zero rows), so it still has a total
+        assertThat(m).containsEntry("total_downloads|source:APP_STORE_BROWSE|2026-10-02", 1.0)
+                .containsEntry("total_downloads|source:APP_REFERRER|2026-10-02", 2.0)
+                .containsEntry("total_downloads|source:WEB_REFERRER|2026-10-02", 0.0);
         // a day with first-time downloads but no redownloads input gets none at all
         assertThat(m).containsEntry("downloads||2026-10-01", 9.0)
                 .doesNotContainKey("total_downloads||2026-10-01")
                 .doesNotContainKey("total_downloads|source:APP_STORE_SEARCH|2026-10-01");
+    }
+
+    @Test
+    void aSourceTheOverviewDoesNotReadOneByOneIsLeftAsAppleSentIt() {
+        expectRequestAndReports();
+        expectJson(DISCOVERY_INSTANCES, "{\"data\":[]}");
+        expectJson(DOWNLOADS_INSTANCES, "{\"data\":[{\"id\":\"D\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
+        expectSegmentList("D", "https://segments.example.com/d1");
+        expectSegment("https://segments.example.com/d1", gzip(
+                "Date\tDownload Type\tSource Type\tCounts\n2026-10-02\tFirst-time download\tApp Clip\t2\n"));
+
+        Map<String, Double> m = byKey(connector.pullDaily(ctx(null), FROM, TO));
+
+        assertThat(m).containsEntry("downloads|source:APP_CLIP|2026-10-02", 2.0)
+                .doesNotContainKey("redownloads|source:APP_CLIP|2026-10-02")
+                .doesNotContainKey("downloads|source:INSTITUTIONAL_PURCHASE|2026-10-02")
+                .containsEntry("downloads|source:APP_STORE_SEARCH|2026-10-02", 0.0);
     }
 
     @Test
@@ -532,7 +554,7 @@ class AppStoreConnectChannelMetricsTest {
     // -- contract version ---------------------------------------------------------------------------------
 
     @Test
-    void thePullReportsContractVersion3SoHistoryIsReWalkedOnce() {
+    void thePullReportsContractVersion4SoHistoryIsReWalkedOnce() {
         expectRequestAndReports();
         expectJson(DISCOVERY_INSTANCES, "{\"data\":[]}");
         expectJson(DOWNLOADS_INSTANCES, "{\"data\":[{\"id\":\"D\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
@@ -542,7 +564,7 @@ class AppStoreConnectChannelMetricsTest {
 
         ChannelMetricsPull pull = connector.pull(ctx(null), FROM, TO);
 
-        assertThat(pull.contractVersion()).isEqualTo(3);
+        assertThat(pull.contractVersion()).isEqualTo(4);
         assertThat(byKey(pull.points())).containsEntry("downloads||2026-10-02", 3.0);
     }
 
