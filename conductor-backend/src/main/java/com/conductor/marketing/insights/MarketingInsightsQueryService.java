@@ -284,21 +284,28 @@ public class MarketingInsightsQueryService {
         long comments = 0;
         long shares = 0;
         long saves = 0;
+        // A destination that reported no view count (null, not zero) still adds its counters to the sums, but
+        // stays out of the rate and the median: its engagements have no views to divide by, and "unknown" is
+        // not "nobody saw it".
+        long rateEngagements = 0;
         List<Long> viewsPerTarget = new ArrayList<>(targets.size());
         List<Double> avgViewPcts = new ArrayList<>();
         for (TargetSnapshot t : targets) {
-            long targetViews = orZero(t.views());
-            views += targetViews;
+            long targetEngagements = orZero(t.likes()) + orZero(t.comments()) + orZero(t.shares()) + orZero(t.saves());
             likes += orZero(t.likes());
             comments += orZero(t.comments());
             shares += orZero(t.shares());
             saves += orZero(t.saves());
-            viewsPerTarget.add(targetViews);
+            if (t.views() != null) {
+                views += t.views();
+                rateEngagements += targetEngagements;
+                viewsPerTarget.add(t.views());
+            }
             if (t.avgViewPct() != null) {
                 avgViewPcts.add(t.avgViewPct());
             }
         }
-        Double engagementRate = views > 0 ? (double) (likes + comments + shares + saves) / views : null;
+        Double engagementRate = views > 0 ? (double) rateEngagements / views : null;
         Long medianViews = median(viewsPerTarget);
         Double avgViewPct = avgViewPcts.isEmpty() ? null
                 : avgViewPcts.stream().mapToDouble(Double::doubleValue).average().orElse(0);

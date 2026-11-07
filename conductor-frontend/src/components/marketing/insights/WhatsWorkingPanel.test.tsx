@@ -123,6 +123,71 @@ describe('WhatsWorkingPanel', () => {
     expect(screen.getByText(/Facebook doesn't report views/)).toBeInTheDocument()
   })
 
+  it('shows median views and engagements per platform, and greys out a rate on few engagements', async () => {
+    const base = insightsResponse()
+    stubApi(() =>
+      Promise.resolve(
+        insightsResponse({
+          byPlatform: [
+            base.byPlatform[0],
+            {
+              key: 'youtube',
+              label: 'YouTube',
+              posts: 4,
+              views: 452,
+              likes: 1,
+              comments: 0,
+              shares: 0,
+              saves: 0,
+              engagementRate: 0.0022,
+              medianViews: 91,
+              avgViewPct: 59.6,
+            },
+          ],
+        }),
+      ),
+    )
+    renderPanel()
+
+    expect(await screen.findAllByRole('columnheader', { name: 'Median views' })).not.toHaveLength(0)
+    expect(screen.getAllByRole('columnheader', { name: 'Engagements' })).not.toHaveLength(0)
+    expect(screen.getByText('3.4K')).toBeInTheDocument() // Instagram median views
+    expect(screen.getByText('2.8K')).toBeInTheDocument() // Instagram engagements 2200+300+120+200
+
+    const lowRate = screen.getByTitle('Fewer than 20 engagements')
+    expect(lowRate).toHaveTextContent('0.2%')
+    expect(lowRate).toHaveClass('text-muted-foreground')
+    expect(screen.getByText(/Greyed-out rates rest on fewer than 20 engagements/)).toBeInTheDocument()
+  })
+
+  it('leaves the low-sample note out when every rate rests on enough engagements', async () => {
+    stubApi(() => Promise.resolve(insightsResponse()))
+    renderPanel()
+
+    await screen.findByText('By platform')
+    expect(screen.queryByText(/Greyed-out rates/)).not.toBeInTheDocument()
+  })
+
+  it('opens and closes the "How to read these numbers" help', async () => {
+    stubApi(() => Promise.resolve(insightsResponse()))
+    renderPanel()
+
+    const toggle = await screen.findByRole('button', { name: 'How to read these numbers' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    // aria-controls points at the section even while it is closed.
+    const help = document.getElementById(toggle.getAttribute('aria-controls')!)
+    expect(help).not.toBeNull()
+    expect(help).not.toBeVisible()
+
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Why more views can mean a lower rate')).toBeVisible()
+    expect(screen.getByText(/Engagements divided by views/)).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide help' }))
+    expect(help).not.toBeVisible()
+  })
+
   it('links a top post using its own workflowSlug, not the first-Marketing-workflow guess', async () => {
     // CAMPAIGNS sorts before MARKETING (older createdAt), so the naive "first Marketing workflow"
     // guess would misroute to /marketing/campaigns/MK-101 if InsightsPost.workflowSlug were ignored.

@@ -6,7 +6,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import { TrendingUpIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -19,6 +19,7 @@ import { compactCount, count } from '@/components/marketing/destinations/Destina
 import { humanizeId, findPostsNavEntry, useSidebarWorkNav, workItemDetailPath, workItemListPath } from '@/lib/workflows'
 import { InsightsGroupTable } from './InsightsGroupTable'
 import { InsightsBestTimes } from './InsightsBestTimes'
+import { InsightsHelp, InsightsHelpToggle } from './InsightsHelp'
 import { InsightsPostList } from './InsightsPostList'
 import { TopCreativesList } from './TopCreativesList'
 import {
@@ -26,6 +27,7 @@ import {
   INSIGHTS_WINDOWS,
   engagementRateLabel,
   getMarketingInsights,
+  medianViewsLabel,
   moverDeltaLabel,
   type CreativePerformanceEntry,
   type InsightsMover,
@@ -97,6 +99,8 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
   // The server narrows coverage.platforms to the active filter, so keep the unfiltered list to stay
   // switchable (otherwise picking one platform leaves it as the only option).
   const [allPlatforms, setAllPlatforms] = useState<string[]>([])
+  const [helpOpen, setHelpOpen] = useState(false)
+  const helpId = useId()
 
   const { entries } = useSidebarWorkNav(projectId, accessToken)
   const postWorkflow = useMemo(
@@ -194,7 +198,10 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
             </option>
           ))}
         </Select>
+        <InsightsHelpToggle open={helpOpen} controls={helpId} onToggle={() => setHelpOpen((o) => !o)} />
       </div>
+
+      <InsightsHelp id={helpId} hidden={!helpOpen} />
 
       {error && <Alert variant="destructive">{error}</Alert>}
 
@@ -239,7 +246,7 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
             />
             <StatTile
               label="Median views"
-              value={data.totals.medianViews === null || data.totals.medianViews === undefined ? '—' : compactCount(data.totals.medianViews)}
+              value={medianViewsLabel(data.totals.medianViews)}
               windowLabel={windowLabel}
             />
           </div>
