@@ -44,7 +44,7 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | g
 # container start. Installed with npm's default (ephemeral) cache, then cleaned — that cache would
 # otherwise sit in the image holding tarballs for claude-code and its deps that are already
 # extracted into node_modules, pure waste.
-ARG CONDUCTOR_TOOLS_VERSION=0.11.4
+ARG CONDUCTOR_TOOLS_VERSION=0.53.1
 ENV CONDUCTOR_TOOLS_VERSION=${CONDUCTOR_TOOLS_VERSION}
 RUN npm install -g @anthropic-ai/claude-code@2.1.206 @cliangdev/conductor@${CONDUCTOR_TOOLS_VERSION} \
     && npm cache clean --force
