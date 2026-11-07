@@ -164,7 +164,7 @@ public class MarketingOverviewQueryService {
     public static final String WATCH = "WATCH";
     public static final String OFF_TRACK = "OFF_TRACK";
     public static final String TOO_EARLY = "TOO_EARLY";
-    /** A targeted metric whose data the feed stopped sending (see {@link #stoppedArriving}): not judged. */
+    /** A targeted snapshot the feed stopped sending (see {@link #stoppedArriving}): not judged. */
     public static final String STOPPED = "STOPPED";
     public static final String NO_TARGET = "NO_TARGET";
 
@@ -184,7 +184,7 @@ public class MarketingOverviewQueryService {
      *  {@code funnelOrder}: the metric's place among the in-app funnel stages (PRODUCT only), else null.
      *  {@code definition}: where the number comes from and what it counts (every catalog metric has one).
      *  {@code note}: a plain sentence about why the value reads as it does: the stored data cannot answer (see
-     *  {@link Aggregation#WINDOW_UNIQUE}), or the metric stopped arriving (see {@link #stoppedArriving}); else null.
+     *  {@link Aggregation#WINDOW_UNIQUE}), or the snapshot stopped arriving (see {@link #stoppedArriving}); else null.
      *  Internal, read by the alerts and not part of the API: {@code closeToTarget} (see
      *  {@link TargetStatus#closeToTarget()}) and {@code lastReportedOn}, the last day a STOPPED metric was reported. */
     public record MetricView(String metric, String label, Unit unit, String goodDirection, Double value, Double previous, Double change,
@@ -1109,10 +1109,10 @@ public class MarketingOverviewQueryService {
         // Only a fixed window can outrun the data: a rolling one ends where the channel's data does.
         boolean partial = ctx.fixed() && settledThrough != null && settledThrough.isBefore(ctx.fixedTo);
         ChannelData data = new ChannelData(channel, rows);
-        // an optional metric with a target stays once it stops reporting, so the stop is seen, not hidden
+        Map<String, LocalDate> reportedBefore = snapshotsBeforeLookback(ctx, channel, connectionIds, data);
+        // an optional snapshot with a target that was reported before the lookback stays, so its stop is seen
         List<Metric> visible = channel.visibleMetrics().stream()
-                .filter(m -> !m.optional() || data.hasRows(m) || targetOf(ctx, channel, m) != null).toList();
-        Map<String, LocalDate> reportedBefore = reportedBeforeLookback(ctx, channel, connectionIds, data, visible);
+                .filter(m -> !m.optional() || data.hasRows(m) || reportedBefore.containsKey(m.key())).toList();
         List<MetricView> metrics = new ArrayList<>();
         for (Metric metric : visible) {
             metrics.add(metricView(ctx, channel, data, metric, window, partial, reportedBefore));
@@ -1138,21 +1138,21 @@ public class MarketingOverviewQueryService {
     }
 
     /**
-     * For the targeted metrics with no row inside the lookback (a derived one: its parts), the last day each was
-     * reported before it, by metric key, so a metric the feed stopped sending long ago still says when it was last
-     * read (see {@link #stoppedArriving}) instead of reading as never reported. A row counts for a metric exactly as
-     * {@link ChannelData} would read it. One query, and none in the usual case of every targeted metric having rows.
+     * For the targeted snapshots (levels) with no row inside the lookback, the last day each was reported before it,
+     * by metric key, so a snapshot the feed stopped sending long ago still says when it was last read (see
+     * {@link #stoppedArriving}) instead of reading as never reported. A row counts for a level exactly as
+     * {@link ChannelData} reads it. One query, and none in the usual case of every targeted level having rows.
+     *
+     * <p>Only snapshots: a feed sends a reading for one every day, so its absence means it stopped. A flow with no
+     * rows may simply have had no events (not every feed writes zero days), so it is never called stopped.
      */
-    private Map<String, LocalDate> reportedBeforeLookback(Context ctx, MetricCatalog.Channel channel,
-                                                          Set<String> connectionIds, ChannelData data,
-                                                          List<Metric> metrics) {
+    private Map<String, LocalDate> snapshotsBeforeLookback(Context ctx, MetricCatalog.Channel channel,
+                                                           Set<String> connectionIds, ChannelData data) {
         LocalDate end = ctx.fixed() ? ctx.fixedTo : ctx.today;
-        Set<Metric> missing = new HashSet<>();
-        for (Metric metric : metrics) {
-            if (targetOf(ctx, channel, metric) != null) {
-                addUnloaded(data, metric, end, missing);
-            }
-        }
+        List<Metric> missing = channel.visibleMetrics().stream()
+                .filter(m -> m.agg() == Aggregation.LEVEL && data.latestDay(m, end) == null
+                        && targetOf(ctx, channel, m) != null)
+                .toList();
         if (missing.isEmpty()) {
             return Map.of();
         }
@@ -1162,7 +1162,7 @@ public class MarketingOverviewQueryService {
         Map<String, LocalDate> out = new HashMap<>();
         for (Metric metric : missing) {
             for (Object[] row : latest) {
-                if (metric.stored().equals(row[0]) && readsDimension(channel, metric, (String) row[1])) {
+                if (metric.stored().equals(row[0]) && readsStoredRow(channel, metric, (String) row[1])) {
                     out.merge(metric.key(), (LocalDate) row[2], (a, b) -> b.isAfter(a) ? b : a);
                 }
             }
@@ -1170,44 +1170,12 @@ public class MarketingOverviewQueryService {
         return out;
     }
 
-    /** {@code metric}, or a derived one's parts, when it has no row up to {@code end} in what was loaded. */
-    private static void addUnloaded(ChannelData data, Metric metric, LocalDate end, Set<Metric> out) {
-        if (metric.agg() == Aggregation.DERIVED) {
-            addUnloaded(data, data.component(metric.numerator()), end, out);
-            addUnloaded(data, data.component(metric.denominator()), end, out);
-        } else if (metric.agg() != Aggregation.WINDOW_UNIQUE && data.lastDay(metric, end) == null) {
-            out.add(metric);
-        }
-    }
-
     /**
-     * Whether a row of {@code dimensionKey} is one {@code metric} reads, as {@link ChannelData} reads loaded rows: its
-     * one dimension; else every dimension for a level or a per-dimension metric, but only where the channel loads
-     * dimension rows at all; else the '' total.
+     * Whether the overview would read a stored row of {@code dimensionKey} as {@code metric}'s: it loads per-dimension
+     * rows only for a channel that reads them, then applies {@link ChannelData#reads}.
      */
-    static boolean readsDimension(MetricCatalog.Channel channel, Metric metric, String dimensionKey) {
-        if (metric.dimensionKey() != null) {
-            return metric.dimensionKey().equals(dimensionKey);
-        }
-        if (dimensionKey.isEmpty()) {
-            return true;
-        }
-        return channel.usesDimensionSeries() && (metric.agg() == Aggregation.LEVEL || metric.fromDimensions());
-    }
-
-    /**
-     * The last day {@code metric} was reported up to {@code end}: from the loaded rows, else from before the lookback.
-     * A derived metric can only be computed through the earlier of its parts' last days.
-     */
-    private static LocalDate lastReported(ChannelData data, Metric metric, LocalDate end,
-                                          Map<String, LocalDate> reportedBefore) {
-        if (metric.agg() == Aggregation.DERIVED) {
-            LocalDate a = lastReported(data, data.component(metric.numerator()), end, reportedBefore);
-            LocalDate b = lastReported(data, data.component(metric.denominator()), end, reportedBefore);
-            return a == null || b == null ? null : a.isBefore(b) ? a : b;
-        }
-        LocalDate loaded = data.lastDay(metric, end);
-        return loaded != null ? loaded : reportedBefore.get(metric.key());
+    static boolean readsStoredRow(MetricCatalog.Channel channel, Metric metric, String dimensionKey) {
+        return (dimensionKey.isEmpty() || channel.usesDimensionSeries()) && ChannelData.reads(metric, dimensionKey);
     }
 
     /** The slowest connection's latest settled day before the lookback began, or null if none has one. */
@@ -1411,7 +1379,7 @@ public class MarketingOverviewQueryService {
                     .filter(m -> m.agg() == Aggregation.WINDOW_UNIQUE).toList();
             for (ChannelMetricDaily row : rows) {
                 for (Metric metric : readers.getOrDefault(row.getMetric(), List.of())) {
-                    if (reads(metric, row)) {
+                    if (reads(metric, row.getDimensionKey())) {
                         add(metric, row);
                     }
                 }
@@ -1427,13 +1395,13 @@ public class MarketingOverviewQueryService {
             return rows;
         }
 
-        /** Whether {@code row} belongs to {@code metric}: its one dimension key, or else the '' total (a level or a per-dimension metric reads them all). */
-        private static boolean reads(Metric metric, ChannelMetricDaily row) {
+        /** Whether a row of {@code dimensionKey} belongs to {@code metric}: its one dimension key, or else the '' total (a level or a per-dimension metric reads them all). */
+        static boolean reads(Metric metric, String dimensionKey) {
             if (metric.dimensionKey() != null) {
-                return metric.dimensionKey().equals(row.getDimensionKey());
+                return metric.dimensionKey().equals(dimensionKey);
             }
             // a total metric: its per-dimension rows (loaded for the channel's level series) would double count
-            return metric.agg() == Aggregation.LEVEL || metric.fromDimensions() || row.getDimensionKey().isEmpty();
+            return metric.agg() == Aggregation.LEVEL || metric.fromDimensions() || dimensionKey.isEmpty();
         }
 
         private void add(Metric metric, ChannelMetricDaily row) {
@@ -1585,15 +1553,6 @@ public class MarketingOverviewQueryService {
             };
         }
 
-        /** The latest day at or before {@code day} with a row for a flow or a level; null for a window-unique count or a ratio. */
-        LocalDate lastDay(Metric metric, LocalDate day) {
-            return switch (metric.agg()) {
-                case SUM -> daily.containsKey(metric.key()) ? daily.get(metric.key()).floorKey(day) : null;
-                case LEVEL -> latestDay(metric, day);
-                case DERIVED, WINDOW_UNIQUE -> null;
-            };
-        }
-
         /** The day of the latest snapshot of a level at or before {@code day} across its series, or null. */
         LocalDate latestDay(Metric metric, LocalDate day) {
             return levels.getOrDefault(metric.key(), Map.of()).values().stream()
@@ -1695,8 +1654,8 @@ public class MarketingOverviewQueryService {
     /**
      * @param partial the channel's settled data ends before a fixed window's last day: its flows cover fewer days
      *                than the previous window, so they carry no comparison with it
-     * @param reportedBefore for targeted metrics with no row in the lookback, the last day each was reported before
-     *                       it (see {@link #reportedBeforeLookback})
+     * @param reportedBefore for targeted levels with no row in the lookback, the last day each was reported before
+     *                       it (see {@link #snapshotsBeforeLookback})
      */
     private MetricView metricView(Context ctx, MetricCatalog.Channel channel, ChannelData data, Metric metric,
                                   Window flowWindow, boolean partial, Map<String, LocalDate> reportedBefore) {
@@ -1753,12 +1712,10 @@ public class MarketingOverviewQueryService {
         LocalDate historyStartsOn = previous == null
                 ? (metric.agg() == Aggregation.WINDOW_UNIQUE ? data.firstWindowUniqueDay(metric, ctx.days) : firstDay)
                 : null;
-        // A metric the feed stopped sending says when it was last reported, and a targeted one is not judged: a
-        // snapshot that old says where it was, not where it is, and a flow has no value left in the window. A
-        // window-unique count that cannot be read says why, and is never rebuilt from the daily counts.
-        LocalDate lastReported = asOf != null ? asOf
-                : targetView != null && (metric.agg() == Aggregation.LEVEL || value == null)
-                ? lastReported(data, metric, end, reportedBefore) : null;
+        // A snapshot the feed stopped sending says when it was last reported, and a targeted one is not judged: a
+        // reading that old says where it was, not where it is. A window-unique count that cannot be read says why,
+        // and is never rebuilt from the daily counts.
+        LocalDate lastReported = asOf != null ? asOf : reportedBefore.get(metric.key());
         boolean stopped = stoppedArriving(lastReported, flowWindow.to());
         String note = stopped ? stoppedNote(channel, lastReported, flowWindow.to())
                 : value == null ? windowUniqueReason(metric, w) : null;
@@ -1832,9 +1789,9 @@ public class MarketingOverviewQueryService {
     }
 
     /**
-     * A metric the feed stopped sending while the rest of its channel kept arriving: last reported more than
-     * {@link #LAGGING_DAYS} days before the channel's data ends. A targeted one (a snapshot, or a flow with no value
-     * left in the window) is {@link #STOPPED}, not on or off target, and the alerts report the stop.
+     * A snapshot (a level) the feed stopped sending while the rest of its channel kept arriving: last reported more
+     * than {@link #LAGGING_DAYS} days before the channel's data ends. A targeted one is {@link #STOPPED}, not on or
+     * off target, and the alerts report the stop.
      */
     public static boolean stoppedArriving(LocalDate lastReported, LocalDate channelThrough) {
         return lastReported != null && channelThrough != null

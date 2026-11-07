@@ -16,7 +16,6 @@ import com.conductor.marketing.verification.VerificationLedgerService.Ledger;
 import com.conductor.marketing.verification.VerificationLedgerService.LedgerRow;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -56,12 +55,6 @@ final class MarketingAlertConditions {
     private MarketingAlertConditions() {
     }
 
-    /** {@link #fromOverview(Overview, Ledger, String, BooleanSupplier, Set)}, without the held keys. */
-    static List<MarketingAlert> fromOverview(Overview overview, Ledger ledger, String pulledConnectionId,
-                                             BooleanSupplier pulledConnectionHealthy) {
-        return fromOverview(overview, ledger, pulledConnectionId, pulledConnectionHealthy, new HashSet<>());
-    }
-
     /**
      * Mismatches, stale channels, stopped snapshots and off-track targets from one overview.
      *
@@ -81,10 +74,11 @@ final class MarketingAlertConditions {
         }
         for (ChannelView channel : overview.channels()) {
             mismatches(channel, ledger, alerts);
-            if (isStale(channel, pulledConnectionId, pulledConnectionHealthy)) {
+            boolean stale = isStale(channel, pulledConnectionId, pulledConnectionHealthy);
+            if (stale) {
                 alerts.add(stale(channel));
             }
-            targets(channel, alerts, held);
+            targets(channel, stale, alerts, held);
         }
         return alerts;
     }
@@ -184,7 +178,7 @@ final class MarketingAlertConditions {
         } else {
             String since = channel.dataCompleteThrough() != null ? " since " + channel.dataCompleteThrough()
                     : channel.lastFetchedAt() != null ? " since " + channel.lastFetchedAt().toLocalDate() : "";
-            text = "No new " + channel.label() + " data" + since;
+            text = "No new " + channel.label() + " data" + (since.isEmpty() ? " has arrived recently" : since);
         }
         String title = channel.label() + (noData ? " has no data yet" : " data is stale");
         return new MarketingAlert(Kind.STALE.keyOf(channel.channel()), Kind.STALE, channel.channel(), title, text,
@@ -194,16 +188,18 @@ final class MarketingAlertConditions {
     // ---- off track -----------------------------------------------------------------------------------
 
     /**
-     * Per targeted metric: one that stopped arriving is reported as stopped and its off-track key held; a real miss
-     * is reported off track; anything short of a recovery ({@code closeToTarget}) holds its off-track key. In a
-     * channel gone stale as a whole, its own STALE alert covers the gap: a stopped metric there is held, not reported
-     * a second time, and nothing in it has arrived again.
+     * Per targeted metric: a snapshot that stopped arriving is reported as stopped and its off-track key held; a real
+     * miss is reported off track; anything short of a recovery ({@code closeToTarget}) holds its off-track key. While
+     * the channel's own stale alert is raised it covers the gap: a stopped snapshot there is held, not reported a
+     * second time, and nothing in it has arrived again.
+     *
+     * @param channelStale whether this evaluation raises the channel's stale alert (see {@link #isStale})
      */
-    private static void targets(ChannelView channel, List<MarketingAlert> out, Set<String> held) {
+    private static void targets(ChannelView channel, boolean channelStale, List<MarketingAlert> out,
+                                Set<String> held) {
         if (channel.metrics() == null) {
             return;
         }
-        boolean channelStale = STALE.equals(channel.status());
         for (MetricView metric : channel.metrics()) {
             if (metric.target() == null) {
                 continue;

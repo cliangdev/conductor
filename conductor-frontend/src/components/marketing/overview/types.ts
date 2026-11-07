@@ -21,8 +21,8 @@ export type MetricUnit = 'COUNT' | 'CURRENCY' | 'PERCENT' | 'POSITION' | 'RATING
 export type TargetDirection = 'UP' | 'DOWN'
 /**
  * Where a value stands against its target. TOO_EARLY: no value, or a rate on fewer than 20 observations. WATCH:
- * a small miss, or a rate miss its sample is too small to call real. STOPPED: the feed stopped sending it (last
- * reported more than a week before the rest of its channel), not judged until it arrives again (`note` says when).
+ * a small miss, or a rate miss its sample is too small to call real. STOPPED: a snapshot the feed stopped sending
+ * (last reported more than a week before the rest of its channel), not judged until it arrives again (`note` says when).
  */
 export type TargetStatus = 'ON_TRACK' | 'WATCH' | 'OFF_TRACK' | 'TOO_EARLY' | 'STOPPED' | 'NO_TARGET'
 /** COHORT: a value counts the people who first opened on that day (or in the window), followed to now. */

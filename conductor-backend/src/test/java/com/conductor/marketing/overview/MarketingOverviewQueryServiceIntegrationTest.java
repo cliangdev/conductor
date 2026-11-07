@@ -1072,7 +1072,8 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
-    void aTargetedFlowWithNoValueLeftInTheWindowHasStoppedArriving() {
+    void aTargetedFlowWithNoRowsInTheWindowIsTooEarlyNotStoppedSinceItMayHaveHadNoEvents() {
+        // not every feed writes zero days, so a flow's missing rows are no proof the feed stopped sending it
         String ads = connectFresh("apple-search-ads");
         put(ads, "apple-search-ads", "ADS", "taps", day(13), 40);
         put(ads, "apple-search-ads", "ADS", "installs", LocalDate.of(2026, 9, 20), 5);
@@ -1081,22 +1082,8 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         MetricView installs = metric(channel(overview7(), "ADS"), "installs");
 
         assertThat(installs.value()).isNull();
-        assertThat(installs.status()).isEqualTo(MarketingOverviewQueryService.STOPPED);
-        assertThat(installs.lastReportedOn()).isEqualTo(LocalDate.of(2026, 9, 20));
-        assertThat(installs.note()).isEqualTo("Last reported 2026-09-20; the rest of the Ads data runs to 2026-10-13.");
-    }
-
-    @Test
-    void aTargetedFlowLastReportedBeforeTheLoadedHistoryHasStoppedArrivingToo() {
-        String ads = connectFresh("apple-search-ads");
-        put(ads, "apple-search-ads", "ADS", "taps", day(13), 40);
-        put(ads, "apple-search-ads", "ADS", "installs", LocalDate.of(2026, 8, 20), 5);
-        service.setTarget(project.getId(), "ADS", "installs", 60.0, null, user.getId());
-
-        MetricView installs = metric(channel(overview7(), "ADS"), "installs");
-
-        assertThat(installs.status()).isEqualTo(MarketingOverviewQueryService.STOPPED);
-        assertThat(installs.lastReportedOn()).isEqualTo(LocalDate.of(2026, 8, 20));
+        assertThat(installs.status()).isEqualTo("TOO_EARLY");
+        assertThat(installs.lastReportedOn()).isNull();
     }
 
     @Test

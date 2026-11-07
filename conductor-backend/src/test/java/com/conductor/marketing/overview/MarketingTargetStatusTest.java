@@ -145,15 +145,15 @@ class MarketingTargetStatusTest {
         MetricCatalog.Channel totalsOnly = new MetricCatalog.Channel(MetricChannel.PRODUCT, "In-app", List.of(),
                 List.of(level, total), List.of(), 3);
         // a channel that loads only '' rows never reads a level's per-dimension rows (keyword ranks)
-        assertThat(MarketingOverviewQueryService.readsDimension(totalsOnly, level, "aso:recipes")).isFalse();
-        assertThat(MarketingOverviewQueryService.readsDimension(totalsOnly, level, "")).isTrue();
+        assertThat(MarketingOverviewQueryService.readsStoredRow(totalsOnly, level, "aso:recipes")).isFalse();
+        assertThat(MarketingOverviewQueryService.readsStoredRow(totalsOnly, level, "")).isTrue();
         Metric perPlatform = new Metric("followers", "Followers", Unit.COUNT, Aggregation.LEVEL, Good.UP, false,
                 false, true, null, null, null);
         MetricCatalog.Channel withDimensions = new MetricCatalog.Channel(MetricChannel.SOCIAL, "Social", List.of(),
                 List.of(perPlatform, total), List.of(), 3);
-        assertThat(MarketingOverviewQueryService.readsDimension(withDimensions, perPlatform, "instagram")).isTrue();
+        assertThat(MarketingOverviewQueryService.readsStoredRow(withDimensions, perPlatform, "instagram")).isTrue();
         // a total flow reads only the '' total, even where dimension rows are loaded
-        assertThat(MarketingOverviewQueryService.readsDimension(withDimensions, total, "instagram")).isFalse();
+        assertThat(MarketingOverviewQueryService.readsStoredRow(withDimensions, total, "instagram")).isFalse();
     }
 
     @Test

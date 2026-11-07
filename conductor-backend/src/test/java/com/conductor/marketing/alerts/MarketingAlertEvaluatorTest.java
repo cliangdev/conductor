@@ -559,17 +559,16 @@ class MarketingAlertEvaluatorTest {
     }
 
     @Test
-    void aFlowThatStoppedArrivingIsReportedWithTheDayItWasLastReported() {
-        offTrackOverview(new MetricView("installs", "Installs", Unit.COUNT, "UP", null, null, null, null, false, 0,
-                new MarketingOverviewQueryService.TargetView(60, "UP"), List.of(), null, null, false, null, "SUM",
-                MarketingOverviewQueryService.STOPPED, null, null, null, null, null, "EVENT", null, null, false,
-                LocalDate.of(2026, 9, 20)));
+    void aStoppedSnapshotIsReportedWhenTheChannelsStalenessIsOnlyThePullingConnectionsUnsavedSuccess() {
+        // the channel reads STALE only because the healthy connection that just pulled has not saved its success
+        // yet, so no channel alert is raised and the stopped snapshot must be reported on its own
+        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
+                "STALE", List.of(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", 0.0, 10,
+                        AlertFixtures.THROUGH.minusDays(17))), List.of(), CONNECTION)));
 
         evaluator.onChannelMetricsPulled(PULLED);
 
-        assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "stale:ADS:installs")
-                .containsEntry("text", "Installs was last reported 2026-09-20, while the rest of the Apple Ads data"
-                        + " runs to 2026-11-03. It is not judged against the target until it arrives again.");
+        assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "stale:ADS:mrr");
     }
 
     @Test

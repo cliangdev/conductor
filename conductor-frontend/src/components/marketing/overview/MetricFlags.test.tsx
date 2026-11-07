@@ -24,6 +24,10 @@ describe('MetricFlags', () => {
     expect(screen.getByText('Small sample')).toBeInTheDocument()
   })
 
+  it('drops the chip on a metric that stopped arriving, which is not judged at all', () => {
+    expect(metricFlags({ insufficientData: true, status: 'STOPPED' })).toEqual({ smallSample: false })
+  })
+
   it('reads the flag from a metric', () => {
     expect(metricFlags({ insufficientData: true })).toEqual({ smallSample: true })
     expect(metricFlags({})).toEqual({ smallSample: false })
