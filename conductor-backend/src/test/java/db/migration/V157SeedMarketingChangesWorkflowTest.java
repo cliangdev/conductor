@@ -75,7 +75,7 @@ class V157SeedMarketingChangesWorkflowTest {
                            || '|' || jsonb_array_length(w.definition -> 'fields')
                     FROM workflow_definitions w
                     WHERE w.project_id = '%s' AND w.definition ->> 'id' = 'MARKETING_CHANGES'
-                    """.formatted(projectA))).isEqualTo("PUBLISHED|MARKETING|true|Change|8");
+                    """.formatted(projectA))).isEqualTo("PUBLISHED|MARKETING|false|Change|8"); // V157 seeds it visible; V186 (latest) hides it
             assertThat(queryForString(connection, """
                     SELECT COUNT(*)::text FROM workflow_definition_versions v
                     JOIN workflow_definitions w ON w.id = v.workflow_definition_id
