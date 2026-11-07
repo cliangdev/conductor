@@ -12,7 +12,7 @@ import { Alert } from '@/components/ui/alert'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Select } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Tabs, type TabItem } from '@/components/ui/tabs'
+import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiErrorMessage } from '@/lib/api'
 import { compactCount, count } from '@/components/marketing/destinations/DestinationMetrics'
@@ -33,8 +33,6 @@ import {
   type InsightsWindowValue,
   type MarketingInsightsResponse,
 } from './types'
-
-const WINDOW_TABS: TabItem[] = INSIGHTS_WINDOWS.map((w) => ({ value: w, label: w }))
 
 function isInsightsWindow(value: string | null): value is InsightsWindowValue {
   return INSIGHTS_WINDOWS.includes(value as InsightsWindowValue)
@@ -165,12 +163,24 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
-        <Tabs
-          ariaLabel="Time window"
-          items={WINDOW_TABS}
-          value={activeWindow}
-          onValueChange={(v) => updateQuery({ window: v as InsightsWindowValue })}
-        />
+        {/* A segmented control, not underline Tabs: the panel sits under the list's own tab row. */}
+        <div role="radiogroup" aria-label="Time window" className="inline-flex rounded-md border border-border bg-muted p-0.5">
+          {INSIGHTS_WINDOWS.map((w) => (
+            <button
+              key={w}
+              type="button"
+              role="radio"
+              aria-checked={w === activeWindow}
+              onClick={() => updateQuery({ window: w })}
+              className={cn(
+                'rounded px-2.5 py-1 text-xs font-medium tabular-nums transition-colors',
+                w === activeWindow ? 'bg-surface text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {w}
+            </button>
+          ))}
+        </div>
         <Select
           aria-label="Platform"
           className="w-auto"

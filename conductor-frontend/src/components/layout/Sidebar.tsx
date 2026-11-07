@@ -16,7 +16,6 @@ import {
   PlusIcon,
   SearchIcon,
   SettingsIcon,
-  TrendingUpIcon,
 } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useState } from 'react'
@@ -73,12 +72,6 @@ const AREA_EXTRA_NAV: Record<
       label: 'Overview',
       icon: LayoutDashboardIcon,
       path: (projectId) => `/app/projects/${projectId}/marketing/overview`,
-    },
-    {
-      key: 'marketing-insights',
-      label: "What's working",
-      icon: TrendingUpIcon,
-      path: (projectId) => `/app/projects/${projectId}/marketing/insights`,
     },
     {
       key: 'marketing-creatives',

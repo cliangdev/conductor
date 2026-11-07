@@ -407,7 +407,7 @@ button appears to add the winning variant's headline to the Brand Kit's approved
 happens until you click it.
 
 Performance shows up in two places: the **Performance** panel on a Creative's own editor page (its
-whole lettered family, side by side), and **Marketing → What's working → Top creatives**, which
+whole lettered family, side by side), and **Marketing → Posts → What's working → Top creatives**, which
 ranks your best-performing variants across the whole project.
 
 ## 5. Video
