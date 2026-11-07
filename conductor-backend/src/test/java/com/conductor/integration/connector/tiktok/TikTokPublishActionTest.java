@@ -1073,7 +1073,7 @@ class TikTokPublishActionTest {
         verify(client).fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID);
     }
 
-    // --- Photo posts TikTok never downloads: re-open once the links are dead, never before ---
+    // --- Photo posts TikTok is slow to download: resume always waits on the recorded post ---
 
     private static final java.time.Instant NOW = java.time.Instant.parse("2026-11-07T12:00:00Z");
 
@@ -1088,33 +1088,10 @@ class TikTokPublishActionTest {
     }
 
     @Test
-    void photoPost_resumeWithExpiredLinksStuckDownloading_opensAFreshPostAndPollsThat() {
+    void photoPost_resumeAlwaysPollsTheRecordedPost_evenAfterItsLinksExpired() {
         givenPhotos("photo-a");
         givenClockAt(NOW);
-        givenPhotoCheckpoint(PUBLISH_ID, NOW.minusSeconds(60).toString());
-        when(client.fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID))
-                .thenReturn(new PublishStatus("PROCESSING_DOWNLOAD", null, null, null));
-        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn("fresh-pub");
-        when(client.fetchPublishStatus(ACCESS_TOKEN, "fresh-pub"))
-                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
-
-        ActionResult result = action.publish(photoInput("photo-a"), context());
-
-        assertThat(result.success()).isTrue();
-        @SuppressWarnings("unchecked")
-        ArgumentCaptor<List<String>> urls = ArgumentCaptor.forClass(List.class);
-        verify(client, times(1)).initPhotoPost(eq(ACCESS_TOKEN), any(), urls.capture(), anyInt());
-        assertThat(urls.getValue()).containsExactly("https://signed/photo-a");
-        assertThat(storedCheckpoint.get()).contains("fresh-pub").doesNotContain(PUBLISH_ID)
-                .contains(NOW.plusSeconds(90 * 60).toString());
-        verify(client).fetchPublishStatus(ACCESS_TOKEN, "fresh-pub");
-    }
-
-    @Test
-    void photoPost_resumeBeforeLinksExpire_keepsPollingTheExistingPost() {
-        givenPhotos("photo-a");
-        givenClockAt(NOW);
-        givenPhotoCheckpoint(PUBLISH_ID, NOW.plusSeconds(600).toString());
+        givenPhotoCheckpoint(PUBLISH_ID, NOW.minusSeconds(3600).toString());
         when(client.fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID))
                 .thenReturn(new PublishStatus("PROCESSING_DOWNLOAD", null, null, null),
                         new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
@@ -1127,53 +1104,51 @@ class TikTokPublishActionTest {
     }
 
     @Test
-    void photoPost_resumeWithExpiredLinksButAlreadyPublished_returnsOkWithoutReopening() {
+    void photoPost_checkpointWithoutLinkExpiry_stillLoadsAndResumes() throws Exception {
         givenPhotos("photo-a");
-        givenClockAt(NOW);
-        givenPhotoCheckpoint(PUBLISH_ID, NOW.minusSeconds(60).toString());
-        when(client.fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID))
-                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
-
-        ActionResult result = action.publish(photoInput("photo-a"), context());
-
-        assertThat(result.success()).isTrue();
-        verify(client, never()).initPhotoPost(anyString(), any(), any(), anyInt());
-    }
-
-    @Test
-    void photoPost_resumeWithExpiredLinksButTikTokHasTheBytes_keepsWaitingOnTheSamePost() {
-        givenPhotos("photo-a");
-        givenClockAt(NOW);
-        givenPhotoCheckpoint(PUBLISH_ID, NOW.minusSeconds(60).toString());
-        when(client.fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID))
-                .thenReturn(new PublishStatus("PROCESSING_UPLOAD", null, null, null),
-                        new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
-
-        ActionResult result = action.publish(photoInput("photo-a"), context());
-
-        assertThat(result.success()).isTrue();
-        verify(client, never()).initPhotoPost(anyString(), any(), any(), anyInt());
-    }
-
-    @Test
-    void photoPost_checkpointWrittenBeforeLinkExpiryWasRecorded_resumesWithoutReopening() throws Exception {
-        givenPhotos("photo-a");
-        givenClockAt(NOW.plusSeconds(24 * 3600));
         givenPhotoCheckpoint(PUBLISH_ID, null);
         assertThat(objectMapper.readValue(storedCheckpoint.get(), TikTokPublishAction.UploadCheckpoint.class)
                 .linksExpireAt()).isNull();
         when(client.fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID))
-                .thenReturn(new PublishStatus("PROCESSING_DOWNLOAD", null, null, null),
-                        new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
 
-        ActionResult result = action.publish(photoInput("photo-a"), context());
-
-        assertThat(result.success()).isTrue();
+        assertThat(action.publish(photoInput("photo-a"), context()).success()).isTrue();
         verify(client, never()).initPhotoPost(anyString(), any(), any(), anyInt());
     }
 
     @Test
-    void photoPost_pollTimeout_saysTheImagesWereNotDownloadedAndWhenTheLinksExpire() {
+    void photoPost_recordsLinkExpiryNoEarlierThanTheLifetimeTheSignerUsed() throws Exception {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        action.publish(photoInput("photo-a"), context());
+
+        ArgumentCaptor<Integer> minutes = ArgumentCaptor.forClass(Integer.class);
+        verify(storageService).generateSignedUrl(anyString(), minutes.capture());
+        java.time.Instant recorded = objectMapper
+                .readValue(storedCheckpoint.get(), TikTokPublishAction.UploadCheckpoint.class)
+                .linksExpireInstant();
+        assertThat(recorded).isNotNull();
+        assertThat(recorded).isAfterOrEqualTo(NOW.plus(java.time.Duration.ofMinutes(minutes.getValue())));
+    }
+
+    @Test
+    void photoLinksLiveUntil_readsOnlyAPhotoCheckpointWithAnExpiry() {
+        assertThat(TikTokPublishAction.photoLinksLiveUntil(
+                "{\"publishId\":\"p\",\"mode\":\"PHOTO\",\"linksExpireAt\":\"2026-11-07T13:30:00Z\"}"))
+                .contains(java.time.Instant.parse("2026-11-07T13:30:00Z"));
+        assertThat(TikTokPublishAction.photoLinksLiveUntil("{\"publishId\":\"p\",\"mode\":\"PHOTO\"}")).isEmpty();
+        assertThat(TikTokPublishAction.photoLinksLiveUntil(
+                "{\"publishId\":\"p\",\"linksExpireAt\":\"2026-11-07T13:30:00Z\"}")).isEmpty();
+        assertThat(TikTokPublishAction.photoLinksLiveUntil("not json")).isEmpty();
+        assertThat(TikTokPublishAction.photoLinksLiveUntil(null)).isEmpty();
+    }
+
+    @Test
+    void photoPost_pollTimeout_saysWhenTheLinksStayLiveAndWarnsAgainstAnEarlyRetry() {
         givenPhotos("photo-a");
         givenClockAt(NOW);
         action.maxPollAttempts = 3;
@@ -1183,12 +1158,39 @@ class TikTokPublishActionTest {
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining(PUBLISH_ID)
-                .hasMessageContaining("images")
-                .hasMessageContaining("3 status polls")
-                .hasMessageContaining("PROCESSING_DOWNLOAD")
-                .hasMessageContaining("13:30 UTC")
-                .satisfies(e -> assertThat(e.getMessage()).doesNotContain("upload is complete"));
+                .hasMessage("TikTok accepted photo post " + PUBLISH_ID + " but hadn't downloaded its images after "
+                        + "0 min (still PROCESSING_DOWNLOAD). Its image links stay live until Nov 7, 13:30 UTC; "
+                        + "retrying before then could post the photos twice.");
+    }
+
+    @Test
+    void photoPost_pollTimeout_inAnotherStatus_doesNotClaimNothingWasDownloaded() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        action.maxPollAttempts = 2;
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PROCESSING_UPLOAD", null, null, null));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("still PROCESSING_UPLOAD")
+                .hasMessageNotContaining("hadn't downloaded")
+                .hasMessageContaining("stay live until Nov 7, 13:30 UTC");
+    }
+
+    @Test
+    void photoPost_pollTimeout_withUnknownExpiry_omitsTheExpirySentence() {
+        givenPhotos("photo-a");
+        action.maxPollAttempts = 2;
+        givenPhotoCheckpoint(PUBLISH_ID, null);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PROCESSING_DOWNLOAD", null, null, null));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("hadn't downloaded its images")
+                .hasMessageNotContaining("stay live until");
     }
 
     @Test

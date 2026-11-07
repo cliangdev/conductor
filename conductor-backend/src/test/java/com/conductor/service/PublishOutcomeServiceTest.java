@@ -776,6 +776,107 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
     }
 
+    // --- a TikTok photo post whose image links are still live is never re-fired by a manual retry ---
+
+    @Autowired private com.conductor.repository.ActionInvocationRepository invocationRepository;
+
+    /** A failed target whose current invocation carries {@code checkpoint} (null: no invocation row at all). */
+    private PostPublishTarget failedWithCheckpoint(WorkItem owner, String platform, String checkpoint) {
+        PostPublishTarget target = target(owner, platform, PostPublishTargetState.FAILED, "@acme");
+        if (checkpoint != null) {
+            com.conductor.entity.ActionInvocation invocation = new com.conductor.entity.ActionInvocation();
+            invocation.setId(UUID.randomUUID().toString());
+            invocation.setProjectId(project.getId());
+            invocation.setConnectionId(connectionId);
+            invocation.setConnectorId("tiktok");
+            invocation.setActionId("publish_video");
+            invocation.setIdempotencyKey(target.getIdempotencyKey());
+            invocation.setInputJson("{}");
+            invocation.setStatus(com.conductor.entity.ActionInvocationStatus.FAILED);
+            invocation.setResumeCheckpoint(checkpoint);
+            invocation.setCreatedAt(OffsetDateTime.now());
+            invocationRepository.saveAndFlush(invocation);
+        }
+        setStatus(owner, "FAILED");
+        return target;
+    }
+
+    private static String photoCheckpoint(OffsetDateTime expiresAt) {
+        return "{\"publishId\":\"pub-1\",\"mode\":\"PHOTO\",\"assetIds\":[\"a\"]"
+                + (expiresAt == null ? "" : ",\"linksExpireAt\":\"" + expiresAt.toInstant() + "\"") + "}";
+    }
+
+    @Test
+    void retryOfAPhotoTargetWithLiveLinks_isRefusedWithAConflictAndLeavesTheTargetFailed() {
+        WorkItem owner = post();
+        OffsetDateTime expiresAt = OffsetDateTime.now().plusMinutes(40);
+        PostPublishTarget tiktok = failedWithCheckpoint(owner, "tiktok", photoCheckpoint(expiresAt));
+        tiktok.setErrorMessage("TikTok accepted photo post pub-1 but hadn't downloaded its images");
+        targetRepository.saveAndFlush(tiktok);
+        String keyBefore = tiktok.getIdempotencyKey();
+
+        assertThatThrownBy(() -> service.retryFailedTargets(project.getId(), owner.getId(), creator))
+                .isInstanceOf(com.conductor.exception.ConflictException.class)
+                .hasMessage("TikTok hasn't downloaded this Post's images yet; its image links stay live until "
+                        + java.time.format.DateTimeFormatter.ofPattern("MMM d, HH:mm", java.util.Locale.ROOT)
+                                .withZone(java.time.ZoneOffset.UTC).format(expiresAt)
+                        + " UTC. Retrying before then could post the photos twice.");
+
+        PostPublishTarget after = reload(tiktok);
+        assertThat(after.getState()).isEqualTo(PostPublishTargetState.FAILED);
+        assertThat(after.getIdempotencyKey()).isEqualTo(keyBefore);
+        assertThat(after.getErrorMessage()).contains("hadn't downloaded");
+    }
+
+    @Test
+    void retryWithABlockedTikTokPhotoAndAnotherFailedTarget_retriesTheOtherAndLeavesTikTokFailed() {
+        WorkItem owner = post();
+        PostPublishTarget tiktok = failedWithCheckpoint(owner, "tiktok",
+                photoCheckpoint(OffsetDateTime.now().plusMinutes(40)));
+        PostPublishTarget facebook = failedWithCheckpoint(owner, "facebook", null);
+        String tiktokKey = tiktok.getIdempotencyKey();
+
+        PublishOutcomeService.RetryResult result = service.retryFailedTargets(project.getId(), owner.getId(), creator);
+
+        assertThat(result.retried()).isEqualTo(1);
+        assertThat(reload(facebook).getState()).isEqualTo(PostPublishTargetState.PENDING);
+        assertThat(reload(tiktok).getState()).isEqualTo(PostPublishTargetState.FAILED);
+        assertThat(reload(tiktok).getIdempotencyKey()).isEqualTo(tiktokKey);
+    }
+
+    @Test
+    void retryAfterThePhotoLinksExpired_firesUnderAFreshKey() {
+        WorkItem owner = post();
+        PostPublishTarget tiktok = failedWithCheckpoint(owner, "tiktok",
+                photoCheckpoint(OffsetDateTime.now().minusMinutes(1)));
+        String keyBefore = tiktok.getIdempotencyKey();
+
+        assertThat(service.retryFailedTargets(project.getId(), owner.getId(), creator).retried()).isEqualTo(1);
+
+        assertThat(reload(tiktok).getState()).isEqualTo(PostPublishTargetState.PENDING);
+        assertThat(reload(tiktok).getIdempotencyKey()).isNotEqualTo(keyBefore);
+    }
+
+    @ParameterizedTest
+    @CsvSource(value = {
+        "VIDEO_CHECKPOINT",
+        "PHOTO_NO_EXPIRY",
+        "NO_CHECKPOINT"
+    })
+    void retryOfATikTokTargetWithNothingBlockingIt_firesAsBefore(String kind) {
+        WorkItem owner = post();
+        String checkpoint = switch (kind) {
+            case "VIDEO_CHECKPOINT" -> "{\"assetId\":\"v\",\"publishId\":\"p\",\"nextChunkIndex\":4}";
+            case "PHOTO_NO_EXPIRY" -> photoCheckpoint(null);
+            default -> null;
+        };
+        PostPublishTarget tiktok = failedWithCheckpoint(owner, "tiktok", checkpoint);
+
+        assertThat(service.retryFailedTargets(project.getId(), owner.getId(), creator).retried()).isEqualTo(1);
+
+        assertThat(reload(tiktok).getState()).isEqualTo(PostPublishTargetState.PENDING);
+    }
+
     @Test
     void retryIsRefusedForAPostThatHasBeenSentBackForReview() {
         PostPublishTarget target = publishing("instagram");
