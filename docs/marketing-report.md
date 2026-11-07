@@ -34,6 +34,8 @@ The in-app feed may send `keyword:{keywordId}:{text}` rows. The report joins its
 
 ### Changes
 
+The Changes lifecycle is not in the sidebar. Open Changes appear on Marketing Overview (only when any exist) and the full list is at `/marketing/changes`; they are written via MCP and the report skill.
+
 `reviewedInWindow` reads the Work Item's `updated_at`: a change is edited when it is reviewed. The list comes from one query that fetches the project and assignee, so it costs the same for one change as for a hundred.
 
 ## Benchmarks

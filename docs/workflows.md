@@ -1812,7 +1812,10 @@ needs no new column or component. Both are optional, top-level keys of the defin
 The built-in `MARKETING_CHANGES` lifecycle ("Change": `PLANNED -> LIVE -> REVIEWED`, or `ABANDONED`) uses all of
 this as a log of changes and what came of them: hypothesis, baseline, control, live since, outcome, verdict, lesson and
 evidence, with the due date labelled "Review on". `REVIEWED` is review-gated, so a person approves the verdict. It is
-seeded into new workspaces and (migration V157) every existing one.
+seeded into new workspaces and (migration V157) every existing one. It is hidden from the sidebar (new workspaces seed
+it with `sidebar_enabled = false`; migration V186 hid it in existing ones): open Changes show on Marketing Overview
+(an "Open changes" card, only when any exist) and the list is at `/marketing/changes`. Changes are written via MCP and
+the marketing report skill.
 
 ### System triggers (event-driven auto-transitions)
 

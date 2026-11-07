@@ -17,6 +17,7 @@ import { apiErrorMessage } from '@/lib/api'
 import { usePersistedStateAfterMount } from '@/lib/persisted'
 import { ChannelCard } from './ChannelCard'
 import { FunnelStrip } from './FunnelStrip'
+import { OpenChangesCard } from './OpenChangesCard'
 import { TargetDialog } from './TargetDialog'
 import { dataThroughSummary } from './format'
 import { useTargetEditor } from './useTargetEditor'
@@ -168,6 +169,8 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
               />
             ))}
           </div>
+
+          <OpenChangesCard projectId={projectId} />
         </>
       )}
 
