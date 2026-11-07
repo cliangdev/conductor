@@ -1136,6 +1136,22 @@ class TikTokPublishActionTest {
     }
 
     @Test
+    void photoPost_tikTokRejectsIt_clearsTheLinkExpirySoAManualRetryIsNotBlocked() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("FAILED", null, null, "file_format_check_failed"));
+
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isFalse();
+        // TikTok has abandoned the post, so its still-live links cannot publish a duplicate.
+        assertThat(TikTokPublishAction.photoLinksLiveUntil(storedCheckpoint.get())).isEmpty();
+        assertThat(storedCheckpoint.get()).contains(PUBLISH_ID);
+    }
+
+    @Test
     void photoLinksLiveUntil_readsOnlyAPhotoCheckpointWithAnExpiry() {
         assertThat(TikTokPublishAction.photoLinksLiveUntil(
                 "{\"publishId\":\"p\",\"mode\":\"PHOTO\",\"linksExpireAt\":\"2026-11-07T13:30:00Z\"}"))

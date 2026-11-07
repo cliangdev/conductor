@@ -252,10 +252,10 @@ public class TikTokPublishAction {
      * than creating a second one.
      *
      * <p>{@code linksExpireAt} (ISO-8601 instant, photo posts only) is when the signed image links handed
-     * to TikTok die. It is the rule that makes re-opening safe: once the links are dead, a publish still
-     * stuck in {@code PROCESSING_DOWNLOAD} can never fetch an image and so can never complete, which means
-     * opening a fresh post cannot produce a duplicate. It is null on checkpoints written before the field
-     * existed, which are treated as "expiry unknown" and never re-opened.
+     * to TikTok die. Until then TikTok may still fetch them and complete this post, so the manual-retry guard
+     * refuses to open a second one ({@link #photoLinksLiveUntil}). It is null on checkpoints written before
+     * the field existed, and cleared once TikTok rejects the post outright, since a post TikTok abandoned
+     * cannot complete.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record UploadCheckpoint(String assetId, String publishId, String uploadUrl,
@@ -617,7 +617,16 @@ public class TikTokPublishAction {
                     publishId, linksExpireAt == null ? "unknown" : linksExpireAt);
         }
 
-        PublishStatus status = awaitPublish(accessToken, publishId, true, linksExpireAt);
+        PublishStatus status;
+        try {
+            status = awaitPublish(accessToken, publishId, true, linksExpireAt);
+        } catch (PermanentPublishException e) {
+            // TikTok has abandoned this post, so its still-live links cannot publish a duplicate: drop the
+            // expiry so the retry guard lets a manual retry through at once.
+            saveCheckpoint(idempotencyKey, UploadCheckpoint.forPhotoPost(publishId,
+                    photos.stream().map(Asset::getId).toList(), null));
+            throw e;
+        }
         return ActionResult.ok(publishOutput(publishId, status, ctx, TikTokPermalinks.KIND_PHOTO));
     }
 
