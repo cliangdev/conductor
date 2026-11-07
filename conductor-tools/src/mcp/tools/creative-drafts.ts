@@ -478,10 +478,10 @@ function placementForAspect(width: number, height: number): string {
 /**
  * CLIP preview: the video is used as-is, so there is nothing to render and nothing to send to Conductor.
  * Each 9:16 clip is sampled (every 0.5 s and at each cut), checked for text under the platform UI, and
- * drawn with the Instagram/TikTok chrome over its early frames and cuts. No draft.json is written —
+ * drawn with the Instagram/TikTok chrome over its early frames and cuts. Only a minimal draft.json is written (for pruning) —
  * a CLIP has no commit step; once the checks pass, upload_creative_media + create_creative kind CLIP.
  */
-async function clipPreview(params: PreviewCreativeDraftParams, options: DraftToolOptions, projectRoot: string): Promise<PreviewCreativeDraftResult> {
+async function clipPreview(params: PreviewCreativeDraftParams, options: DraftToolOptions, projectRoot: string, projectId: string): Promise<PreviewCreativeDraftResult> {
   const abs = (p: string) => (isAbsolute(p) ? p : resolve(p))
   const given: Record<string, string> = params.clipPaths ? { ...params.clipPaths } : params.clipPath ? { '9x16': params.clipPath } : {}
   if (!Object.keys(given).length) {
@@ -511,6 +511,20 @@ async function clipPreview(params: PreviewCreativeDraftParams, options: DraftToo
     : join(draftsRoot(projectRoot), `${stamp(new Date())}-${slugify((params.name as string | undefined) ?? 'clip')}`)
   await mkdir(draftDir, { recursive: true })
   if (!params.draftDir) await writeFile(join(draftsRoot(projectRoot), '.gitignore'), '*\n').catch(() => {})
+  // A minimal draft.json, so pruneDrafts ages the overlay images out like any other draft. commit_creative_draft
+  // refuses it by its request.kind (a CLIP has no commit step).
+  const clipDraft: DraftFile = {
+    version: 1,
+    createdAt: new Date().toISOString(),
+    committed: false,
+    projectId,
+    full: false,
+    request: { kind: 'CLIP' },
+    localFiles: {},
+    localMedia: {},
+    specSha256: '',
+  }
+  await writeFile(join(draftDir, 'draft.json'), JSON.stringify(clipDraft, null, 2))
 
   const checks: DraftCheck[] = []
   const overlaySheets: OverlaySheet[] = []
@@ -575,7 +589,7 @@ export async function previewCreativeDraft(
   const projectRoot = options.projectRoot ?? findProjectRoot()
   await pruneDrafts(projectRoot)
 
-  if (params.kind === 'CLIP') return clipPreview(params, options, projectRoot)
+  if (params.kind === 'CLIP') return clipPreview(params, options, projectRoot, config.projectId)
 
   if (params.slidePaths && params.kind && params.kind !== 'CAROUSEL') {
     return { ok: false, rendered: false, error: `slidePaths is for kind CAROUSEL, not ${params.kind}.` }
@@ -932,6 +946,11 @@ export async function commitCreativeDraft(
 
   const draft = await readDraftFile(draftDir)
   if (!draft) throw new Error(`No draft.json found in ${draftDir} — pass the draftDir preview_creative_draft returned.`)
+  if (draft.request?.kind === 'CLIP') {
+    throw new Error(
+      'This is a CLIP preview, which has no commit step. Upload the clip with upload_creative_media, then create_creative with kind CLIP.'
+    )
+  }
   if (draft.committed) {
     throw new Error(
       `This draft was already committed${draft.creativeId ? ` (Creative ${draft.creativeId})` : ''}. ` +

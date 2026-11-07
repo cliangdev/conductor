@@ -137,3 +137,10 @@ test('safeZoneTopIntrusion: a 1px tolerance absorbs subpixel rounding', () => {
   const nodes = [{ name: 'cc-headline', rect: { top: 289.5, bottom: 600, right: 900 } }];
   assert.deepEqual(safeZoneTopIntrusion(board, nodes, { top: 290 }, '9x16'), { errors: [], warnings: [] });
 });
+
+test('safeZoneTopIntrusion: severity "warning" downgrades copy findings to warnings (saved Creatives keep rendering)', () => {
+  const nodes = [{ name: 'cc-headline', rect: { top: 240, bottom: 600, right: 900 } }];
+  const { errors, warnings } = safeZoneTopIntrusion(board, nodes, { top: 290 }, '9x16', 'warning');
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.length, 1);
+});

@@ -15,6 +15,8 @@ export interface SampleOptions {
   everySeconds?: number
   maxFrames?: number
   sceneThreshold?: number
+  /** The clip length when the caller already knows it (e.g. from probeMedia); otherwise read from ffmpeg's output. */
+  durationSeconds?: number
 }
 
 const DEDUPE_SECONDS = 0.2
@@ -33,7 +35,9 @@ export function parseDuration(log: string): number {
 
 /**
  * The times to look at: a regular grid plus each cut, merged within 0.2 s and capped. A long clip
- * widens the grid to fit the cap but always keeps 0.5 s steps before t=3s. Cuts are kept first.
+ * widens the grid to fit the cap but always keeps 0.5 s steps before t=3s. When there are still
+ * too many, every frame in the first 3 s and the final frame are kept and the rest are thinned
+ * evenly across the clip, keeping cut frames in preference to grid frames.
  */
 export function planSampleTimes(
   duration: number,
@@ -50,7 +54,7 @@ export function planSampleTimes(
   const grid = [...early]
   for (let t = EARLY_SECONDS; t <= end; t += step) grid.push(t)
   const all = [...grid.map((at) => ({ at, isCut: false })), ...cutTimes.map((at) => ({ at, isCut: true }))].sort((a, b) => a.at - b.at)
-  const out: Array<{ at: number; isCut: boolean }> = []
+  let out: Array<{ at: number; isCut: boolean }> = []
   for (const f of all) {
     const last = out[out.length - 1]
     if (last && f.at - last.at < DEDUPE_SECONDS) {
@@ -59,7 +63,35 @@ export function planSampleTimes(
     }
     out.push(f)
   }
-  return out.slice(0, maxFrames)
+  if (out.length > 0 && end - out[out.length - 1]!.at > 0.25) out.push({ at: end, isCut: false })
+  if (out.length <= maxFrames) return out
+
+  const lastFrame = out[out.length - 1]!
+  const keep = new Set(out.filter((f) => f.at < EARLY_SECONDS || f === lastFrame))
+  const rest = out.filter((f) => !keep.has(f))
+  let slots = maxFrames - keep.size
+  if (slots < 0) {
+    // Pathological: more early frames than the cap. Keep the last frame and the earliest others.
+    const early = out.filter((f) => f !== lastFrame).slice(0, maxFrames - 1)
+    return [...early, lastFrame]
+  }
+  const chosen: Array<{ at: number; isCut: boolean }> = []
+  const cutsLeft = rest.filter((f) => f.isCut)
+  const picks = evenly(cutsLeft, slots)
+  chosen.push(...picks)
+  slots -= picks.length
+  if (slots > 0) chosen.push(...evenly(rest.filter((f) => !f.isCut), slots))
+  out = [...keep, ...chosen].sort((a, b) => a.at - b.at)
+  return out
+}
+
+/** Up to `n` items spread evenly across `items` (all of them when n >= length). */
+function evenly<T>(items: T[], n: number): T[] {
+  if (n <= 0) return []
+  if (items.length <= n) return items
+  const picked: T[] = []
+  for (let i = 0; i < n; i++) picked.push(items[Math.floor(((i + 0.5) * items.length) / n)]!)
+  return picked
 }
 
 /** One frame at a time offset as a PNG. */
@@ -80,10 +112,10 @@ export async function extractFrameAt(videoPath: string, seconds: number): Promis
 export async function sampleVideoFrames(videoPath: string, options: SampleOptions = {}): Promise<SampledFrame[]> {
   const { sceneThreshold = 0.3 } = options
   const ffmpeg = await resolveFfmpegPath()
-  const probe = await runCapture(ffmpeg, ['-hide_banner', '-i', videoPath, '-f', 'null', '-'])
-  const duration = parseDuration(probe.output)
-  if (!(duration > 0)) throw new Error('could not read the clip duration')
+  // One decode pass: ffmpeg prints "Duration:" in the same stderr as the showinfo cut log.
   const scene = await runCapture(ffmpeg, ['-hide_banner', '-i', videoPath, '-vf', `select='gt(scene,${sceneThreshold})',showinfo`, '-an', '-f', 'null', '-'])
+  const duration = options.durationSeconds && options.durationSeconds > 0 ? options.durationSeconds : parseDuration(scene.output)
+  if (!(duration > 0)) throw new Error('could not read the clip duration')
   const plan = planSampleTimes(duration, parseCutTimes(scene.output), options)
   const dir = await mkdtemp(join(tmpdir(), 'conductor-frames-'))
   try {

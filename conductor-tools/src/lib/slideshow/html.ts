@@ -5,7 +5,9 @@ import type { SlideRatio, SlideshowSpec, SlideSpec } from './spec.js'
 export const FRAME_W = 1080
 export const FRAME_H: Record<SlideRatio, number> = { '9x16': 1920, '4x5': 1350 }
 /** TikTok / Reels overlay bands (px) on a 9:16 frame. */
-export const SAFE = { top: 290, bottom: 430, right: 140 } as const
+// Kept in step with lib/safe-zone/zones.ts (TOP_EDGE 290, 1920-BOTTOM_EDGE 1490, 1080-RIGHT_EDGE 918): this file is
+// compiled standalone into conductor-creative, so it cannot import them. safe-zone-check.test.ts asserts they agree.
+export const SAFE = { top: 290, bottom: 430, right: 162 } as const
 
 export const esc = (s: unknown): string =>
   String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)

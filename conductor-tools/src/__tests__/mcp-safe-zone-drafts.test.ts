@@ -28,7 +28,7 @@ import { renderDraft } from '../lib/creative-render.js'
 import { composePosterSheet } from '../lib/poster-sheet.js'
 import { probeMedia } from '../lib/media-probe.js'
 import { createCreative, uploadCreativeMedia } from '../mcp/tools/creatives.js'
-import { previewCreativeDraft, commitCreativeDraft } from '../mcp/tools/creative-drafts.js'
+import { previewCreativeDraft, commitCreativeDraft, pruneDrafts } from '../mcp/tools/creative-drafts.js'
 import { clipOverlayFrames, type OverlayWriter } from '../mcp/tools/safe-zone-pixels.js'
 
 const config: Config = { apiKey: 'k', projectId: 'proj-1', projectName: 'P', email: 'e@x.test', apiUrl: 'https://api.test' }
@@ -319,6 +319,15 @@ describe('CLIP preview', () => {
     mocked(probeMedia).mockResolvedValue({ kind: 'VIDEO', width: 1080, height: 1350, durationSeconds: 8 })
     const result = await previewCreativeDraft({ kind: 'CLIP', clipPath: clip() }, config, { projectRoot: root, ocrEngine: fakeEngine([]), sampler, overlay: fakeOverlay() })
     expect(result.ok && result.files[0]!.placementKey).toBe('4x5')
+  })
+
+  it('writes a draft.json so pruning removes the folder by age, and refuses to commit it', async () => {
+    const result = await previewCreativeDraft({ kind: 'CLIP', clipPath: clip() }, config, { projectRoot: root, ocrEngine: fakeEngine([]), sampler, overlay: fakeOverlay() })
+    const dir = result.draftDir!
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'draft.json'), 'utf8'))).toMatchObject({ committed: false, request: { kind: 'CLIP' } })
+    await expect(commitCreativeDraft({ draftDir: dir }, config, { projectRoot: root })).rejects.toThrow(/no commit step/)
+    expect(await pruneDrafts(root, new Date(Date.now() + 15 * 24 * 3600 * 1000))).toEqual([path.resolve(dir)])
+    expect(fs.existsSync(dir)).toBe(false)
   })
 
   it('asks for a clip path when none is given', async () => {

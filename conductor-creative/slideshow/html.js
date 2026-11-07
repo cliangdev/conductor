@@ -5,7 +5,9 @@ import { fontFamilyNames, isGenericFamily, resolveSlideshowStyle } from './style
 export const FRAME_W = 1080;
 export const FRAME_H = { '9x16': 1920, '4x5': 1350 };
 /** TikTok / Reels overlay bands (px) on a 9:16 frame. */
-export const SAFE = { top: 290, bottom: 430, right: 140 };
+// Kept in step with lib/safe-zone/zones.ts (TOP_EDGE 290, 1920-BOTTOM_EDGE 1490, 1080-RIGHT_EDGE 918): this file is
+// compiled standalone into conductor-creative, so it cannot import them. safe-zone-check.test.ts asserts they agree.
+export const SAFE = { top: 290, bottom: 430, right: 162 };
 export const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 /**
  * y values are % of the 9:16 frame; on 4:5 they are mapped into the centre 1350 band.

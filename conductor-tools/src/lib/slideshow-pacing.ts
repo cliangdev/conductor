@@ -85,21 +85,30 @@ export function totalSeconds(slideDurations: number[]): number {
   return round3(sum - CROSSFADE_SEC * Math.max(0, slideDurations.length - 1));
 }
 
-/** Plain-English warnings for slides held too briefly: under 0.25 s per word, or under 3 s with 2+ lines. */
+/**
+ * Plain-English warnings for slides held too briefly: under 0.25 s per word, or under 3 s with 2+ lines.
+ * The suggested time is always the reading formula's, which passes both rules. A slide so wordy that even
+ * the formula's capped time is under 0.25 s per word gets "too many words" advice instead of a time.
+ */
 export function pacingWarnings(slideDurations: number[], slides: PacingSlide[]): string[] {
   const warnings: string[] = [];
   slides.forEach((slide, i) => {
     const d = slideDurations[i];
     if (d == null) return;
     const { words, lines } = slideFacts(slide);
-    const tooFast = d < 0.25 * words;
+    const formula = readingDuration({ words, first: i === 0, detail: isDetailSlide(slide.altText) });
+    const perWord = 0.25 * words;
+    const tooWordy = perWord > formula;
+    const tooFast = d < Math.min(perWord, formula);
     const tooShortForLines = lines >= 2 && d < 3;
+    const label = `Slide ${i + 1} has ${words} word${words === 1 ? '' : 's'} on ${d} s`;
+    if (tooWordy && d < perWord) {
+      warnings.push(`${label}, too many words to read in one slide. Cut some words or split the slide.`);
+      return;
+    }
     if (!tooFast && !tooShortForLines) return;
-    const suggested = readingDuration({ words, first: i === 0, detail: isDetailSlide(slide.altText) });
     const why = tooFast ? 'under a quarter second per word' : 'under 3 seconds for two or more lines';
-    warnings.push(
-      `Slide ${i + 1} has ${words} word${words === 1 ? '' : 's'} on ${d} s, ${why}. About ${suggested} s would be easier to read.`,
-    );
+    warnings.push(`${label}, ${why}. About ${formula} s would be easier to read.`);
   });
   return warnings;
 }

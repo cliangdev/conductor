@@ -19,7 +19,7 @@ export const placements = {
     label: '9:16 TikTok and Reels',
     platform: 'tiktok',
     default: true,
-    safe: { top: 290, bottom: 430, right: 140 },
+    safe: { top: 290, bottom: 430, right: 162 },
     fit: { max: 132, min: 54, lines: 4 },
     badgeHeight: 108,
     scale: {

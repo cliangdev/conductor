@@ -200,12 +200,12 @@ export interface ClipPixelResult {
 /** Checks one 9:16 video for text under the platform UI and draws the overlay from its early frames and cuts. */
 export async function checkClipPixels(
   videoPath: string,
-  opts: PixelToolOptions & { placementKey?: string; outDir?: string; baseName?: string; uiOverlay?: UiOverlay },
+  opts: PixelToolOptions & { placementKey?: string; outDir?: string; baseName?: string; uiOverlay?: UiOverlay; durationSeconds?: number },
 ): Promise<ClipPixelResult> {
   const placementKey = opts.placementKey ?? '9x16'
   const notes: string[] = []
   let sampled: SampledFrame[] = []
-  const base = opts.sampler ?? ((p: string) => sampleVideoFrames(p))
+  const base = opts.sampler ?? ((p: string) => sampleVideoFrames(p, opts.durationSeconds ? { durationSeconds: opts.durationSeconds } : {}))
   const checks = await checkVideoFrames(videoPath, {
     placementKey,
     ...(opts.ocrEngine ? { engine: opts.ocrEngine } : {}),

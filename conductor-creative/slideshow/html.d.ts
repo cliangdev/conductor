@@ -9,7 +9,7 @@ export declare const FRAME_H: Record<SlideRatio, number>;
 export declare const SAFE: {
     readonly top: 290;
     readonly bottom: 430;
-    readonly right: 140;
+    readonly right: 162;
 };
 export declare const esc: (s: unknown) => string;
 /**

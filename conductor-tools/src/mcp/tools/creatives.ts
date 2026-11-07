@@ -472,17 +472,29 @@ export interface CreateCreativeParams extends CreativeFields {
  */
 async function withReadingDurations<T extends CreativeFields>(
   params: T,
-  kind: string | undefined
+  kind: string | undefined,
+  saved?: CreativeFields
 ): Promise<{ fields: T; pacing?: { slideDurations: number[]; slideshowDurationSeconds: number; basis: string } }> {
-  const slides = params.slides?.['9x16'] ?? params.slides?.['default']
-  const track = (params.audio as { source?: string } | undefined)?.source === 'track'
-  const existing = (params.slideshow as { slideDurations?: unknown } | undefined)?.slideDurations
-  if (kind !== 'CAROUSEL' || !track || !slides?.length || !params.slideAltText?.length || (Array.isArray(existing) && existing.length)) {
-    return { fields: params }
+  // On update, whatever the patch leaves out comes from the saved Creative (the PATCH replaces the whole
+  // slideshow object, so anything we send must carry the saved fields too).
+  const slidesMap = params.slides ?? saved?.slides
+  const slides = slidesMap?.['9x16'] ?? slidesMap?.['default']
+  const altText = params.slideAltText ?? saved?.slideAltText
+  const audio = params.audio ?? saved?.audio
+  const track = (audio as { source?: string } | undefined)?.source === 'track'
+  const patchDurations = (params.slideshow as { slideDurations?: unknown } | undefined)?.slideDurations
+  const savedDurations = (saved?.slideshow as { slideDurations?: unknown } | undefined)?.slideDurations
+  // Saved durations are kept while they still match the slide count (the backend rejects a mismatched list).
+  const hasDurations =
+    (Array.isArray(patchDurations) && patchDurations.length > 0) ||
+    (Array.isArray(savedDurations) && savedDurations.length > 0 && savedDurations.length === slides?.length)
+  if (kind !== 'CAROUSEL' || !track || !slides?.length || !altText?.length || hasDurations) {
+    // A patch that sends its own slideshow still must not drop the saved one's other fields.
+    return { fields: saved?.slideshow && params.slideshow ? { ...params, slideshow: { ...saved.slideshow, ...params.slideshow } } : params }
   }
-  const paced = await pacingFor({ count: slides.length, altText: params.slideAltText })
+  const paced = await pacingFor({ count: slides.length, altText })
   return {
-    fields: { ...params, slideshow: { ...params.slideshow, slideDurations: paced.slideDurations } },
+    fields: { ...params, slideshow: { ...saved?.slideshow, ...params.slideshow, slideDurations: paced.slideDurations } },
     pacing: { slideDurations: paced.slideDurations, slideshowDurationSeconds: paced.totalSeconds, basis: paced.basis },
   }
 }
@@ -514,12 +526,21 @@ export async function updateCreative(params: UpdateCreativeParams, config: Confi
   try {
     return await withCreativeErrors(async () => {
       let version = patch.version
-      if (version === undefined || version === null) {
-        const current = await apiGet<{ version?: number }>(url, config)
-        version = current.version
+      // Read the saved Creative unless the patch is a no-pacing patch with a known version: the pacing
+      // fallback needs its slides, alt text, audio and slideshow. A failed read only costs the fallback.
+      const touchesPacing = patch.kind !== undefined || patch.slides !== undefined || patch.slideAltText !== undefined || patch.audio !== undefined || patch.slideshow !== undefined
+      let current: (CreativeFields & { version?: number }) | undefined
+      if (version === undefined || version === null || touchesPacing) {
+        try {
+          current = await apiGet<CreativeFields & { version?: number }>(url, config)
+        } catch (err) {
+          if (version === undefined || version === null) throw err
+        }
+        if (version === undefined || version === null) version = current?.version
       }
-      // Without a kind in the patch, a track-and-slides patch is still a CAROUSEL's (only a CAROUSEL has slides).
-      const { fields, pacing } = await withReadingDurations(patch, patch.kind ?? (patch.slides ? 'CAROUSEL' : undefined))
+      // Without a kind in the patch, the saved kind decides (else slides alone mean a CAROUSEL).
+      const kind = patch.kind ?? current?.kind ?? (patch.slides ? 'CAROUSEL' : undefined)
+      const { fields, pacing } = await withReadingDurations(patch, touchesPacing ? kind : undefined, current)
       const updated = await apiPatch<Record<string, unknown>>(url, { ...fields, version }, config)
       return pacing && updated && typeof updated === 'object' ? { ...updated, ...pacing } : updated
     })
@@ -1455,6 +1476,52 @@ async function previewSheet(
   return { renderId: render.id, state: render.state, url: frame.url, image: { data: Buffer.from(bytes), mimeType }, note: motionNote }
 }
 
+/**
+ * Whether the Post has a destination that takes this Creative's 9x16 frames, mirroring the backend's
+ * CreativePlacementTargetMapper (matches / matchesVideo / carouselVideoFor). Returns true (check and block)
+ * when the targets cannot be read or the Post has none yet, since then nothing says the 9x16 frames are unused.
+ */
+async function postUsesVerticalFrames(
+  postId: string,
+  creative: { kind?: string; audio?: { source?: string } | null } | undefined,
+  presentKeys: Set<string>,
+  config: Config
+): Promise<boolean> {
+  let rows: unknown
+  try {
+    rows = await apiGet<unknown>(`${V2_PROJECT(config)}/work-items/${postId}/publish-targets`, config)
+  } catch {
+    return true
+  }
+  if (!Array.isArray(rows) || rows.length === 0) return true
+  const clip = creative?.kind === 'CLIP'
+  const track = creative?.audio?.source === 'track'
+  return rows.some((row) => {
+    const platform = String((row as { platform?: string }).platform ?? '').trim().toLowerCase()
+    const format = String((row as { format?: string | null }).format ?? 'feed').trim().toLowerCase()
+    const feed = format === 'feed' || format === ''
+    const ig = platform === 'instagram'
+    const fb = platform === 'facebook'
+    if (clip) {
+      return (
+        platform === 'tiktok' ||
+        ((ig || fb) && format === 'reel') ||
+        (fb && feed && !presentKeys.has('1x1')) ||
+        (ig && feed && !presentKeys.has('4x5')) ||
+        (platform === 'youtube' && !presentKeys.has('16x9')) ||
+        (format === 'story' && !presentKeys.has('story'))
+      )
+    }
+    // CAROUSEL: the 9x16 slide images go to TikTok and Instagram Reels; with a track the companion 9x16 video
+    // also goes to YouTube and to an Instagram or Facebook feed or Reel.
+    return (
+      platform === 'tiktok' ||
+      (ig && format === 'reel') ||
+      (track && (platform === 'youtube' || ((ig || fb) && (feed || format === 'reel'))))
+    )
+  })
+}
+
 export async function attachCreativeToPost(
   params: { creativeId: string; postId?: string; workItemId?: string; renderId?: string; ignoreSafeZone?: boolean },
   config: Config,
@@ -1505,7 +1572,15 @@ export async function attachCreativeToPost(
     ...(renders ? { knownRenders: renders } : {}),
   })
   const errors = (pixel.checks ?? []).filter((c) => c.severity === 'error')
-  if (errors.length && params.ignoreSafeZone !== true) {
+  // The check only reads 9x16 frames, so it only blocks when one of the Post's destinations uses them.
+  let blocking = errors.length > 0 && params.ignoreSafeZone !== true
+  if (blocking) {
+    const saved = creative ?? (await apiGet<Record<string, unknown>>(`${creativesBase(config)}/${params.creativeId}`, config).catch(() => undefined))
+    const render = (renders ?? []).find((r) => r.id === renderId)
+    const present = new Set<string>((render?.frames ?? []).map((f) => f.placementKey))
+    blocking = await postUsesVerticalFrames(postId, saved as { kind?: string; audio?: { source?: string } | null } | undefined, present, config)
+  }
+  if (blocking) {
     return {
       ok: false,
       code: 'SAFE_ZONE_TEXT',
@@ -1517,6 +1592,6 @@ export async function attachCreativeToPost(
     }
   }
   const attached = await apiPost<Record<string, unknown>>(`${creativesBase(config)}/${params.creativeId}/attach`, { renderId, workItemId: postId }, config)
-  const warnings = (pixel.checks ?? []).filter((c) => c.severity !== 'error' || params.ignoreSafeZone === true)
+  const warnings = (pixel.checks ?? []).filter((c) => c.severity !== 'error' || errors.length > 0)
   return warnings.length && attached && typeof attached === 'object' ? { ...attached, safeZoneChecks: warnings } : attached
 }

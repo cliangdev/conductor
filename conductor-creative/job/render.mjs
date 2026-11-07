@@ -148,6 +148,7 @@ async function renderMotionPlacement({ browser, origin, spec, placementKey, ffmp
     }, {
       creative: spec.creative,
       brand: spec.brand,
+      safeTopSeverity: spec.safeTopSeverity,
       placementKey,
       motion: spec.creative.motion,
       time: 0,
@@ -425,6 +426,7 @@ async function checkFrame({ browser, origin, spec, frame, fps, log }) {
     }, {
       creative: spec.creative,
       brand: spec.brand,
+      safeTopSeverity: spec.safeTopSeverity,
       placementKey: frame.placementKey,
       sequenceIndex: frame.index,
       ...(isMotion ? { motion, time: 0, clipStartSec: spec.creative.clipStartSec } : {}),
@@ -556,6 +558,7 @@ export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactor
         }, {
           creative: spec.creative,
           brand: spec.brand,
+      safeTopSeverity: spec.safeTopSeverity,
           placementKey: frame.placementKey,
           sequenceIndex: frame.index,
           placementKeys: spec.placements,

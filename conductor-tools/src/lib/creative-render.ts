@@ -284,7 +284,9 @@ export async function renderDraft(
   params: { spec: { creative?: { kind?: string; audio?: { source?: string } | null }; previewOnly?: boolean }; localFiles: Record<string, string>; outDir: string },
   log: (...args: unknown[]) => void = () => {}
 ): Promise<RenderDraftResult> {
-  const { spec, localFiles, outDir } = params
+  const { localFiles, outDir } = params
+  // A draft preview is where the top safe zone is enforced as an error; a saved Creative's render only warns.
+  const spec = { ...params.spec, safeTopSeverity: 'error' as const }
 
   let ffmpegPath: string | undefined
   const draftAudio = spec.creative?.audio

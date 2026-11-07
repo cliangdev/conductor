@@ -23,10 +23,17 @@ interface ZoneHit {
 
 const clampInt = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Math.round(v)))
 
-/** The pixels to read for a zone. With zoom, text outside the zone can be pushed into it, so the
- * zone is projected inward by the same factor (clamped to the image). */
+/** The pixels to read for a zone. The zoom starts at 1x, so the zone itself is always read; with zoom,
+ * text outside the zone can also be pushed into it later, so the union of the zone and its inward
+ * projection (by 1/maxScale) is read, clamped to the image. */
 function ocrRectFor(zone: SafeZone, width: number, height: number, maxScale: number | undefined): OcrRect {
-  const b = maxScale && maxScale > 1 ? projectBox(zone.rect, width, height, 1 / maxScale) : zone.rect
+  let b: PixelBox = zone.rect
+  if (maxScale && maxScale > 1) {
+    const p = projectBox(zone.rect, width, height, 1 / maxScale)
+    const x0 = Math.min(b.x, p.x)
+    const y0 = Math.min(b.y, p.y)
+    b = { x: x0, y: y0, w: Math.max(b.x + b.w, p.x + p.w) - x0, h: Math.max(b.y + b.h, p.y + p.h) - y0 }
+  }
   const left = clampInt(b.x, 0, width - 1)
   const top = clampInt(b.y, 0, height - 1)
   return {
@@ -63,8 +70,10 @@ async function zoneHits(png: Buffer, engine: OcrEngine, zoom: { maxScale: number
   for (const zone of zones) {
     const words = await engine.recognizeWords(png, ocrRectFor(zone, dim.width, dim.height, zoom?.maxScale))
     const inZone = words.filter((w) => {
-      const b = zoom?.maxScale && zoom.maxScale > 1 ? projectBox(w.box, dim.width, dim.height, zoom.maxScale) : w.box
-      return hitZones(b, [zone]).length > 0
+      // Zoom grows from 1x to maxScale, so test the word where it starts and where it ends up.
+      if (hitZones(w.box, [zone]).length > 0) return true
+      if (!(zoom?.maxScale && zoom.maxScale > 1)) return false
+      return hitZones(projectBox(w.box, dim.width, dim.height, zoom.maxScale), [zone]).length > 0
     })
     if (inZone.length) hits.push({ zone, ...mergeWords(inZone) })
   }

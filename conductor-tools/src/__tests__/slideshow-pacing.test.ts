@@ -97,6 +97,27 @@ describe('pacingWarnings', () => {
     expect(w[0]).toContain('4.6 s');
     expect(w[1]).toContain('Slide 2');
   });
+  it('never suggests a time that fails its own per-word rule', () => {
+    for (let words = 1; words <= 40; words++) {
+      const alt = `Photo. Text: "${Array.from({ length: words }, () => 'w').join(' ')}"`
+      for (const first of [true, false]) {
+        const slides = first ? [{ altText: alt }] : [{ altText: 'Photo. Text: "x"' }, { altText: alt }]
+        const i = first ? 0 : 1
+        const durations = slides.map(() => 2)
+        const w = pacingWarnings(durations, slides).find((m) => m.startsWith(`Slide ${i + 1} `))
+        const m = w && /About ([\d.]+) s/.exec(w)
+        if (m) expect(Number(m[1])).toBeGreaterThanOrEqual(0.25 * words)
+        if (words >= 22) expect(w).toContain('too many words')
+      }
+    }
+  })
+  it('does not flag a slide timed by the formula unless it is too wordy', () => {
+    const alt = (n: number) => `Photo. Text: "${Array.from({ length: n }, () => 'w').join(' ')}"`
+    const d = readingDuration({ words: 19 })
+    expect(pacingWarnings([d], [{ altText: alt(19), }]).length).toBe(0)
+    const d30 = readingDuration({ words: 30 })
+    expect(pacingWarnings([d30], [{ altText: alt(30) }])[0]).toContain('Cut some words or split the slide')
+  })
   it('is quiet for well-paced slides', () => {
     const slides = [{ altText: 'Photo. Text: "Hello there"' }];
     expect(pacingWarnings([3.5], slides)).toEqual([]);

@@ -77,6 +77,36 @@ describe('attach_creative_to_post pre-flight', () => {
     expect(apiPost).not.toHaveBeenCalled()
   })
 
+  const targetsStub = (targets: unknown, creative: Record<string, unknown> = { kind: 'CAROUSEL', version: 1 }) =>
+    mocked(apiGet).mockImplementation(async (url: string) =>
+      url.endsWith('/renders') ? renders : url.endsWith('/publish-targets') ? targets : creative
+    )
+
+  it('does not refuse a Post whose destinations are only 4x5 and 1x1', async () => {
+    targetsStub([{ platform: 'instagram', format: 'feed' }, { platform: 'facebook', format: 'feed' }])
+    mocked(apiPost).mockResolvedValue({ assets: [] })
+    const result = await attachCreativeToPost({ creativeId: 'c1', postId: 'w1' }, config, { ocrEngine: fakeEngine([word('HELLO', 100, 160)]), fetchImpl })
+    expect(apiPost).toHaveBeenCalled()
+    expect(result['code']).toBeUndefined()
+    expect((result['safeZoneChecks'] as unknown[]).length).toBeGreaterThan(0)
+  })
+
+  it('still refuses a Post with a TikTok or Reels destination', async () => {
+    for (const targets of [[{ platform: 'tiktok', format: 'feed' }], [{ platform: 'instagram', format: 'feed' }, { platform: 'instagram', format: 'reel' }]]) {
+      mocked(apiPost).mockReset()
+      targetsStub(targets)
+      const result = await attachCreativeToPost({ creativeId: 'c1', postId: 'w1' }, config, { ocrEngine: fakeEngine([word('HELLO', 100, 160)]), fetchImpl })
+      expect(result).toMatchObject({ ok: false, code: 'SAFE_ZONE_TEXT' })
+      expect(apiPost).not.toHaveBeenCalled()
+    }
+  })
+
+  it('refuses when the Post has no targets yet', async () => {
+    targetsStub([])
+    const result = await attachCreativeToPost({ creativeId: 'c1', postId: 'w1' }, config, { ocrEngine: fakeEngine([word('HELLO', 100, 160)]), fetchImpl })
+    expect(result).toMatchObject({ code: 'SAFE_ZONE_TEXT' })
+  })
+
   it('attaches with ignoreSafeZone: true and still returns the checks', async () => {
     stubCarousel()
     const result = await attachCreativeToPost({ creativeId: 'c1', postId: 'w1', ignoreSafeZone: true }, config, { ocrEngine: fakeEngine([word('HELLO', 100, 160)]), fetchImpl })
@@ -168,5 +198,37 @@ describe('create_creative / update_creative pacing', () => {
     mocked(apiPatch).mockResolvedValue({ id: 'c1' })
     await updateCreative({ creativeId: 'c1', version: 2, slides: { '9x16': ['m1', 'm2'] }, slideAltText: alt, audio: { source: 'track' } }, config)
     expect((mocked(apiPatch).mock.calls[0]![1] as any).slideshow.slideDurations).toEqual([3.5, 3])
+  })
+})
+
+describe('update_creative pacing keeps the saved slideshow', () => {
+  const url = '/api/v2/projects/proj-1/marketing/creatives/c1'
+  const alt = ['Photo. Text: "one two"', 'Photo. Text: "three"']
+  it('does not recompute saved durations or drop zoom:false', async () => {
+    mocked(apiGet).mockResolvedValue({ kind: 'CAROUSEL', version: 3, slides: { '9x16': ['m1', 'm2'] }, slideAltText: alt, audio: { source: 'track' }, slideshow: { zoom: false, slideDurations: [5, 6] } })
+    mocked(apiPatch).mockResolvedValue({ id: 'c1', version: 4 })
+    await updateCreative({ creativeId: 'c1', version: 3, slideAltText: alt }, config)
+    const body = mocked(apiPatch).mock.calls[0]![1] as Record<string, unknown>
+    expect(body['slideshow']).toBeUndefined()
+  })
+
+  it('keeps zoom:false when it does compute durations', async () => {
+    mocked(apiGet).mockResolvedValue({ kind: 'CAROUSEL', version: 3, slides: { '9x16': ['m1', 'm2'] }, slideAltText: alt, audio: { source: 'track' }, slideshow: { zoom: false } })
+    mocked(apiPatch).mockResolvedValue({ id: 'c1', version: 4 })
+    const result = await updateCreative({ creativeId: 'c1', version: 3, slideAltText: alt }, config)
+    const body = mocked(apiPatch).mock.calls[0]![1] as { slideshow: { zoom: boolean; slideDurations: number[] } }
+    expect(body.slideshow.zoom).toBe(false)
+    expect(body.slideshow.slideDurations).toHaveLength(2)
+    expect(result['slideDurations']).toHaveLength(2)
+    expect(apiGet).toHaveBeenCalledWith(url, config)
+  })
+
+  it('recomputes when the slide count no longer matches the saved durations, keeping zoom', async () => {
+    mocked(apiGet).mockResolvedValue({ kind: 'CAROUSEL', version: 3, slides: { '9x16': ['m1', 'm2'] }, slideAltText: alt, audio: { source: 'track' }, slideshow: { zoom: false, slideDurations: [5, 6] } })
+    mocked(apiPatch).mockResolvedValue({ id: 'c1', version: 4 })
+    await updateCreative({ creativeId: 'c1', version: 3, slides: { '9x16': ['m1', 'm2', 'm3'] }, slideAltText: [...alt, 'Photo. Text: "four"'] }, config)
+    const body = mocked(apiPatch).mock.calls[0]![1] as { slideshow: { zoom: boolean; slideDurations: number[] } }
+    expect(body.slideshow.zoom).toBe(false)
+    expect(body.slideshow.slideDurations).toHaveLength(3)
   })
 })

@@ -87,6 +87,7 @@ async function main() {
     // Motion presets restructure the headline (word spans): build that structure, in its final state,
     // before fitting, so the type is sized for the layout every captured frame will have.
     if (spec.motion) applyMotion(board, spec.motion, spec.motion.durationSec || 8, { durationSec: spec.motion.durationSec || 8 });
+    if (spec.safeTopSeverity === 'error') board.dataset.safeTopStrict = 'true';
     fitBoard(board, placementsReg);
     // What this spec requires on the board: a required element that did not render fails the checks.
     const expect = expectedElements(ad, spec.brand);
@@ -105,13 +106,13 @@ async function main() {
         return true;
       };
       // A motion frame is captured at 1x (video), so the photo only needs to cover the placement itself.
-      window.__assertBoard = async () => runAssertions(board, placement, spec.brand || {}, { outputScale: 1, expect });
+      window.__assertBoard = async () => runAssertions(board, placement, spec.brand || {}, { outputScale: 1, expect, safeTopSeverity: spec.safeTopSeverity });
 
       finish({ ok: true, width: placement.w, height: placement.h });
       return;
     }
 
-    const { errors, warnings, checks, width, height } = await runAssertions(board, placement, spec.brand || {}, { expect });
+    const { errors, warnings, checks, width, height } = await runAssertions(board, placement, spec.brand || {}, { expect, safeTopSeverity: spec.safeTopSeverity });
     finish({ ok: errors.length === 0, errors, warnings, checks, width, height });
   } catch (err) {
     finish({ ok: false, error: String((err && err.message) || err) });

@@ -137,6 +137,13 @@ describe('checkSlideImages', () => {
     expect(zoomed).toHaveLength(1)
     expect(zoomed[0]!.message).toContain('zoom')
   })
+  it('reads and catches text in the outer edge of the top zone when zoom is on', async () => {
+    // y=20..50 is visible on the first frames (zoom starts at 1x) and is pushed off-screen only later.
+    const eng = fakeEngine([word('EDGE', 100, 20, 200, 30)])
+    const checks = await checkSlideImages([{ path: slideFile('edge.png'), index: 1 }], { engine: eng, zoom: { maxScale: 1.06 } })
+    expect(checks).toHaveLength(1)
+    expect(checks[0]!.message).toContain('y=20')
+  })
   it('returns one safeZoneUnchecked warning when OCR is unavailable', async () => {
     const eng: OcrEngine = { recognizeWords: async () => { throw new OcrUnavailable('no wasm') } }
     const checks = await checkSlideImages([{ path: slideFile('d.png'), index: 0 }], { engine: eng })
@@ -268,4 +275,26 @@ describe.skipIf(!canDraw)('real OCR', () => {
     expect(checks[0]).toMatchObject({ severity: 'error', rule: 'safeZoneText' })
     expect(checks[0]!.atSeconds).toBeLessThan(1)
   }, 90_000)
+})
+
+describe('slideshow composer safe margins agree with the OCR zones', () => {
+  it('uses the same top, bottom and right edges as zones.ts', async () => {
+    const { SAFE } = await import('../lib/slideshow/html.js')
+    const { TOP_EDGE, BOTTOM_EDGE, RIGHT_EDGE, REF_WIDTH, REF_HEIGHT } = await import('../lib/safe-zone/zones.js')
+    expect(SAFE.top).toBe(TOP_EDGE)
+    expect(REF_HEIGHT - SAFE.bottom).toBe(BOTTOM_EDGE)
+    expect(REF_WIDTH - SAFE.right).toBe(RIGHT_EDGE)
+  })
+})
+
+describe('planSampleTimes with many cuts', () => {
+  it('keeps early frames and the end of a 45 s clip with 80 cuts, within the cap', () => {
+    const cuts = Array.from({ length: 80 }, (_, i) => 0.3 + i * 0.55)
+    const plan = planSampleTimes(45, cuts)
+    const times = plan.map((p) => p.at)
+    expect(plan.length).toBeLessThanOrEqual(60)
+    expect(times[times.length - 1]!).toBeGreaterThan(44.5)
+    for (const t of [0, 0.5, 1, 1.5, 2, 2.5]) expect(times.some((x) => Math.abs(x - t) < 0.2)).toBe(true)
+    expect(times).toEqual([...times].sort((a, b) => a - b))
+  })
 })

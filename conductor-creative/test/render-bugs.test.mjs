@@ -478,3 +478,36 @@ test('D: every layout clears the 9x16 and story top safe zone, short and long co
     }
   }
 });
+
+test('E: a default bleed 9:16 / story render with no logo (invisible lockup spacer) does not warn about the spacer', async (t) => {
+  if (skip(t)) return;
+  for (const placementKey of ['9x16', 'story']) {
+    const page = await fx.open('frame.html', { creative: { layout: 'bleed', headline: 'Ready *now*', photoUrl: PHOTOS.landscape }, brand: {}, placementKey });
+    const result = await page.evaluate(() => window.__RENDER_RESULT).finally(() => page.close());
+    assert.ok(result.checks, JSON.stringify(result));
+    assert.equal(result.checks.some((c) => c.rule === 'safeZone' && /cc-lockup/.test(c.message)), false, `${placementKey}: ${JSON.stringify(result.checks)}`);
+  }
+});
+
+test('E: copy in the top zone is an error for a draft preview (safeTopSeverity error) and only a warning otherwise', async (t) => {
+  if (skip(t)) return;
+  const run = async (safeTopSeverity) => {
+    const page = await fx.open('frame.html', { creative: { layout: 'bleed', headline: 'Ready *now*', photoUrl: PHOTOS.landscape }, brand: BRAND, placementKey: '9x16', safeTopSeverity });
+    try {
+      return await page.evaluate(async (sev) => {
+        const board = document.querySelector('.cc-board');
+        const h = board.querySelector('.cc-headline');
+        h.style.position = 'absolute';
+        h.style.top = '40px';
+        const { runAssertions } = await import('/assertions.js');
+        const { placements } = await import('/placements.js');
+        return (await runAssertions(board, placements['9x16'], window.__RENDER_SPEC__.brand, { safeTopSeverity: sev })).checks
+          .filter((c) => c.rule === 'safeZone' && /cc-headline/.test(c.message));
+      }, safeTopSeverity);
+    } finally {
+      await page.close();
+    }
+  };
+  assert.deepEqual((await run('error')).map((c) => c.severity), ['error']);
+  assert.deepEqual((await run(undefined)).map((c) => c.severity), ['warning']);
+});
