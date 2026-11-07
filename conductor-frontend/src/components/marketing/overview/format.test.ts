@@ -82,17 +82,17 @@ describe('target status', () => {
 
   it('labels each standing', () => {
     expect(targetLine(metric({ value: 100, status: 'ON_TRACK', missPct: 0, target }))).toBe('On target · Target 100')
-    expect(targetLine(metric({ value: 92, status: 'WATCH', missPct: 0.08, target }))).toBe('Close · 8% short of 100')
+    expect(targetLine(metric({ value: 92, status: 'WATCH', missPct: 0.08, target }))).toBe('Watch · 8% short of 100')
     expect(targetLine(metric({ value: 40, status: 'OFF_TRACK', missPct: 0.6, target }))).toBe('Off target · 60% short of 100')
     const prorated = { value: 200, direction: 'UP' as const, window: '28d', effectiveValue: 50 }
-    expect(targetLine(metric({ value: 40, status: 'WATCH', missPct: 0.2, target: prorated }))).toBe('Close · 20% short of 50')
+    expect(targetLine(metric({ value: 40, status: 'WATCH', missPct: 0.2, target: prorated }))).toBe('Watch · 20% short of 50')
     expect(targetLine(metric({ value: 5, status: 'TOO_EARLY', target }))).toBe('Too early · Target 100')
   })
 
   it('says "over" for a DOWN target that is missed', () => {
     const down = { value: 10, direction: 'DOWN' as const }
     expect(targetLine(metric({ goodDirection: 'DOWN', value: 11, status: 'WATCH', missPct: 0.1, target: down }))).toBe(
-      'Close · 10% over 10',
+      'Watch · 10% over 10',
     )
   })
 

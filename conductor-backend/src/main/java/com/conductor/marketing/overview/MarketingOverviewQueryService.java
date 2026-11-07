@@ -23,6 +23,7 @@ import com.conductor.integration.ingest.ChannelDimensionStateStore;
 import com.conductor.marketing.overview.MetricCatalog.Dimension;
 import com.conductor.marketing.overview.MetricCatalog.Metric;
 import com.conductor.marketing.overview.MetricCatalog.Unit;
+import com.conductor.marketing.promises.WilsonInterval;
 import com.conductor.marketing.verification.MarketingPlatformRead;
 import com.conductor.marketing.verification.MarketingPlatformReadRepository;
 import com.conductor.marketing.verification.ReconciliationBand;
@@ -105,8 +106,6 @@ public class MarketingOverviewQueryService {
     static final long MIN_SAMPLE = 20;
     /** How close a miss counts as WATCH rather than OFF_TRACK, in percent of the target, when a target does not say. */
     static final double DEFAULT_WATCH_BAND_PCT = 10;
-    /** The z of the 95% Wilson interval a rate's miss must clear to be OFF_TRACK rather than chance. */
-    static final double RATE_MISS_Z = 1.96;
     /** The period a count or currency total target is stated for when it does not say. */
     static final int DEFAULT_TARGET_WINDOW_DAYS = 28;
     /** The most days a fixed window may span. */
@@ -1616,16 +1615,21 @@ public class MarketingOverviewQueryService {
         LocalDate historyStartsOn = previous == null
                 ? (metric.agg() == Aggregation.WINDOW_UNIQUE ? data.firstWindowUniqueDay(metric, ctx.days) : firstDay)
                 : null;
-        // A window-unique count that cannot be read says why, and is never rebuilt from the daily counts.
-        String note = value == null ? windowUniqueReason(metric, w) : null;
-        // A rate with no reported sample is judged by how many it was divided over (its denominator's total).
-        Long statusSample = sample;
-        if (statusSample == null && metric.agg() == Aggregation.DERIVED
+        // A window-unique count that cannot be read says why, and is never rebuilt from the daily counts. A snapshot
+        // the feed stopped sending says when it was last read.
+        String note = value == null ? windowUniqueReason(metric, w)
+                : snapshotStopped(asOf, flowWindow.to()) ? stoppedNote(channel, asOf, flowWindow.to()) : null;
+        // A rate is divided over its denominator's total: the n of its interval, and its sample when the feed
+        // reported none.
+        Long divisor = null;
+        if (metric.agg() == Aggregation.DERIVED
                 && channel.metric(metric.denominator()).filter(c -> c.unit() == Unit.COUNT).isPresent()) {
             Double denominator = data.periodValue(channel.metric(metric.denominator()).orElseThrow(), w.from(), w.to());
-            statusSample = denominator == null ? null : Math.round(denominator);
+            divisor = denominator == null ? null : Math.round(denominator);
         }
-        TargetStatus targetStatus = targetStatus(metric, value, targetView, statusSample, ctx.days);
+        Long statusSample = sample != null ? sample : divisor;
+        TargetStatus targetStatus = targetStatus(metric, value, targetView, statusSample,
+                divisor != null ? divisor : statusSample, ctx.days);
         if (targetView != null) {
             targetView = targetView.withEffectiveValue(effectiveTarget(metric, targetView, ctx.days));
         }
@@ -1639,12 +1643,16 @@ public class MarketingOverviewQueryService {
      * Where {@code value} stands against its target. NO_TARGET with none; TOO_EARLY with no value, or for a rate
      * (a PERCENT metric or a ratio) resting on fewer than {@link #MIN_SAMPLE} observations; ON_TRACK when met in
      * the target's direction; WATCH when it misses by no more than the watch band (default
-     * {@link #DEFAULT_WATCH_BAND_PCT}%) of the target, or when it is a share with a known sample whose 95% Wilson
+     * {@link #DEFAULT_WATCH_BAND_PCT}%) of the target, or when it is a share over a known {@code n} whose 95% Wilson
      * interval still contains the target (4 of 32 against 20% is a miss chance alone makes one time in five);
      * otherwise OFF_TRACK. A count or currency total is compared
      * with its target prorated from the window the target declares (feed targets only; none means compared as stated) to {@code windowDays}.
+     *
+     * @param sample the observations behind the value, for the {@link #MIN_SAMPLE} gate
+     * @param n      what a share was divided over (its denominator's total), for the interval; null when unknown
      */
-    static TargetStatus targetStatus(Metric metric, Double value, TargetView target, Long sample, int windowDays) {
+    static TargetStatus targetStatus(Metric metric, Double value, TargetView target, Long sample, Long n,
+                                     int windowDays) {
         if (target == null) {
             return new TargetStatus("NO_TARGET", null);
         }
@@ -1664,18 +1672,34 @@ public class MarketingOverviewQueryService {
         double band = (target.watchBandPct() != null ? target.watchBandPct()
                 : metric.watchBandPct() != null ? metric.watchBandPct() : DEFAULT_WATCH_BAND_PCT) / 100;
         boolean withinBand = miss <= band + 1e-9;
-        boolean couldBeChance = metric.unit() == Unit.PERCENT && sample != null && sample > 0
-                && value >= 0 && value <= 1 && expected <= 1 && wilsonContains(value, sample, expected);
+        boolean couldBeChance = metric.unit() == Unit.PERCENT && n != null && n > 0
+                && value >= 0 && value <= 1 && expected <= 1 && wilsonContains(value, n, expected);
         return new TargetStatus(withinBand || couldBeChance ? "WATCH" : "OFF_TRACK", miss);
     }
 
-    /** Whether {@code target} lies inside the {@link #RATE_MISS_Z} Wilson score interval of {@code rate} over {@code n}. */
+    /** {@link #targetStatus(Metric, Double, TargetView, Long, Long, int)} with the sample as the interval's n. */
+    static TargetStatus targetStatus(Metric metric, Double value, TargetView target, Long sample, int windowDays) {
+        return targetStatus(metric, value, target, sample, sample, windowDays);
+    }
+
+    /** Whether {@code target} lies inside the 95% Wilson interval of {@code rate} over {@code n}. */
     static boolean wilsonContains(double rate, long n, double target) {
-        double z2 = RATE_MISS_Z * RATE_MISS_Z;
-        double denominator = 1 + z2 / n;
-        double centre = (rate + z2 / (2.0 * n)) / denominator;
-        double half = RATE_MISS_Z * Math.sqrt(rate * (1 - rate) / n + z2 / (4.0 * n * n)) / denominator;
-        return target >= centre - half && target <= centre + half;
+        WilsonInterval.Range range = WilsonInterval.of(Math.min(n, rate * n), n);
+        return target >= range.low() && target <= range.high();
+    }
+
+    /**
+     * A snapshot (a level, read as of its latest day) the feed stopped sending while the rest of its channel kept
+     * arriving: more than {@link #LAGGING_DAYS} days behind the channel's data. Its value says where the metric was,
+     * not where it is. The overview notes it and the alerts report it as stopped, not as on or off target.
+     */
+    public static boolean snapshotStopped(LocalDate asOf, LocalDate channelThrough) {
+        return asOf != null && channelThrough != null && asOf.isBefore(channelThrough.minusDays(LAGGING_DAYS));
+    }
+
+    private static String stoppedNote(MetricCatalog.Channel channel, LocalDate asOf, LocalDate channelThrough) {
+        return "Last reported " + asOf + "; the rest of the " + channel.label() + " data runs to " + channelThrough
+                + ".";
     }
 
     /**

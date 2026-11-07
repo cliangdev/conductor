@@ -11936,7 +11936,7 @@ components:
         status:
           type: string
           enum: [ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY, NO_TARGET]
-          description: Where the value stands against its target (Conductor-owned or declared by the product feed). TOO_EARLY - no value, or a rate resting on fewer than 20 observations. NO_TARGET - no target. ON_TRACK - target met. WATCH - missed by no more than the target's watchBandPct (default 10%). OFF_TRACK - missed by more. A count or currency total is compared with its target prorated to the requested window.
+          description: Where the value stands against its target (Conductor-owned or declared by the product feed). TOO_EARLY - no value, or a rate resting on fewer than 20 observations. NO_TARGET - no target. ON_TRACK - target met. WATCH - missed by no more than the target's watchBandPct (default 10%), or a rate miss whose 95% Wilson interval over its denominator still contains the target (too small a sample to call real). OFF_TRACK - missed by more. A count or currency total is compared with its target prorated to the requested window.
         missPct:
           type: number
           format: double

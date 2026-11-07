@@ -29,6 +29,7 @@ import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -146,8 +147,11 @@ public class MarketingAlertEvaluator {
 
     // ---- evaluation ----------------------------------------------------------------------------------
 
-    /** What holds now, and which kinds of condition could actually be checked this time. */
-    private record Collected(Map<String, MarketingAlert> alerts, Set<Kind> checked) {}
+    /**
+     * What holds now, which kinds of condition could actually be checked this time, and the keys that could not be
+     * judged (left as they are, neither raised nor resolved).
+     */
+    private record Collected(Map<String, MarketingAlert> alerts, Set<Kind> checked, Set<String> held) {}
 
     private void evaluate(ChannelMetricsPulledEvent event) {
         String projectId = event.projectId();
@@ -171,7 +175,7 @@ public class MarketingAlertEvaluator {
         for (MarketingAlertState state : stored.values()) {
             Kind kind = Kind.ofKey(state.getAlertKey());
             if (state.isActive() && kind != null && now.checked().contains(kind)
-                    && !now.alerts().containsKey(state.getAlertKey())) {
+                    && !now.alerts().containsKey(state.getAlertKey()) && !now.held().contains(state.getAlertKey())) {
                 try {
                     resolve(projectId, state, at);
                 } catch (RuntimeException e) {
@@ -186,6 +190,7 @@ public class MarketingAlertEvaluator {
         String projectId = event.projectId();
         Map<String, MarketingAlert> alerts = new LinkedHashMap<>();
         Set<Kind> checked = EnumSet.noneOf(Kind.class);
+        Set<String> held = new HashSet<>();
 
         Overview overview = readOverview(projectId);
         if (overview != null) {
@@ -194,6 +199,7 @@ public class MarketingAlertEvaluator {
                             () -> isHealthy(event.connectionId()))
                     .forEach(a -> alerts.putIfAbsent(a.key(), a));
             checked.addAll(EnumSet.of(Kind.MISMATCH, Kind.STALE, Kind.OFF_TRACK));
+            held.addAll(MarketingAlertConditions.heldKeys(overview));
         }
         try {
             LocalDate today = LocalDate.now(clock.withZone(ZoneOffset.UTC));
@@ -204,7 +210,7 @@ public class MarketingAlertEvaluator {
             log.warn("Marketing stop rules for project {} could not be read; their alerts are left as they are: {}",
                     projectId, e.getMessage());
         }
-        return new Collected(alerts, checked);
+        return new Collected(alerts, checked, held);
     }
 
     private Overview readOverview(String projectId) {

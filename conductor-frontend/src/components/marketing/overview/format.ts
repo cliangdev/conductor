@@ -65,7 +65,7 @@ export function targetMet(value: number | null | undefined, target: MarketingTar
 /** What a person reads for each standing; NO_TARGET has no label. */
 export const TARGET_STATUS_LABEL: Record<TargetStatus, string | null> = {
   ON_TRACK: 'On target',
-  WATCH: 'Close',
+  WATCH: 'Watch',
   OFF_TRACK: 'Off target',
   TOO_EARLY: 'Too early',
   NO_TARGET: null,

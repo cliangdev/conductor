@@ -16,8 +16,10 @@ import com.conductor.marketing.verification.VerificationLedgerService.Ledger;
 import com.conductor.marketing.verification.VerificationLedgerService.LedgerRow;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 /**
@@ -51,7 +53,7 @@ final class MarketingAlertConditions {
     }
 
     /**
-     * Mismatches, stale channels and off-track targets from one overview.
+     * Mismatches, stale channels, stopped snapshots and off-track targets from one overview.
      *
      * @param ledger the verification ledger for the same window, or null when it could not be read (a mismatch
      *               then says to trust the connector until explained)
@@ -138,12 +140,9 @@ final class MarketingAlertConditions {
      * the channel's alert stands: a healthy pull elsewhere must not drop and resolve it, only for the next pull
      * to raise it again. A connection the overview did not call LIVE counts as stale, so an unknown status never
      * excuses anything.
-     *
-     * <p>A channel none of whose feeds has ever succeeded is not stale: it never delivered, so it cannot have
-     * stopped (a connection left at setup reads STALE in the overview, with a made-up end date).
      */
     private static boolean isStale(ChannelView channel, String pulledConnectionId, BooleanSupplier healthy) {
-        if (!STALE.equals(channel.status()) || channel.lastFetchedAt() == null) {
+        if (!STALE.equals(channel.status())) {
             return false;
         }
         if (pulledConnectionId == null || channel.connections() == null) {
@@ -160,12 +159,22 @@ final class MarketingAlertConditions {
         return !(containsPulled && healthy.getAsBoolean());
     }
 
+    /**
+     * "No new data since" the last settled day. A channel none of whose feeds has ever succeeded never delivered,
+     * so it says that instead: the overview gives such a channel a stand-in end date, not a day it had data for.
+     */
     private static MarketingAlert stale(ChannelView channel) {
-        String since = channel.dataCompleteThrough() != null ? " since " + channel.dataCompleteThrough()
-                : channel.lastFetchedAt() != null ? " since " + channel.lastFetchedAt().toLocalDate() : "";
-        String text = "No new " + channel.label() + " data" + (since.isEmpty() ? " has arrived recently" : since);
-        return new MarketingAlert(Kind.STALE.keyOf(channel.channel()), Kind.STALE, channel.channel(),
-                channel.label() + " data is stale", text, List.of(), 0);
+        String text;
+        if (channel.lastFetchedAt() == null) {
+            text = channel.label() + " has not delivered any data yet. Check its connection in Integrations.";
+        } else {
+            String since = channel.dataCompleteThrough() != null ? " since " + channel.dataCompleteThrough()
+                    : " since " + channel.lastFetchedAt().toLocalDate();
+            text = "No new " + channel.label() + " data" + since;
+        }
+        String title = channel.label() + (channel.lastFetchedAt() == null ? " has no data yet" : " data is stale");
+        return new MarketingAlert(Kind.STALE.keyOf(channel.channel()), Kind.STALE, channel.channel(), title, text,
+                List.of(), 0);
     }
 
     // ---- off track -----------------------------------------------------------------------------------
@@ -175,10 +184,47 @@ final class MarketingAlertConditions {
             return;
         }
         for (MetricView metric : channel.metrics()) {
-            if (isRealOffTrack(metric) && !outdatedSnapshot(channel, metric)) {
+            if (stopped(channel, metric)) {
+                out.add(stoppedSnapshot(channel, metric));
+            } else if (isRealOffTrack(metric)) {
                 out.add(offTrack(channel, metric));
             }
         }
+    }
+
+    /**
+     * The off-track keys this overview cannot judge: targeted snapshots the feed stopped sending. Their last value
+     * says where the metric was, not where it is, so an alert already open on one is neither raised again nor
+     * resolved (it did not recover; its data stopped). The stop itself is reported as its own STALE alert.
+     */
+    static Set<String> heldKeys(Overview overview) {
+        Set<String> held = new HashSet<>();
+        if (overview == null || overview.channels() == null) {
+            return held;
+        }
+        for (ChannelView channel : overview.channels()) {
+            for (MetricView metric : channel.metrics() == null ? List.<MetricView>of() : channel.metrics()) {
+                if (stopped(channel, metric)) {
+                    held.add(Kind.OFF_TRACK.keyOf(channel.channel(), metric.metric()));
+                }
+            }
+        }
+        return held;
+    }
+
+    /** A metric with a target whose snapshot the feed stopped sending while the rest of the channel kept coming. */
+    private static boolean stopped(ChannelView channel, MetricView metric) {
+        return metric.target() != null
+                && MarketingOverviewQueryService.snapshotStopped(metric.asOf(), channel.dataCompleteThrough());
+    }
+
+    private static MarketingAlert stoppedSnapshot(ChannelView channel, MetricView metric) {
+        String text = metric.label() + " was last reported " + metric.asOf() + ", while the rest of the "
+                + channel.label() + " data runs to " + channel.dataCompleteThrough() + ". Its last value, "
+                + AlertText.value(metric.unit(), metric.value()) + ", is not judged against the target until it"
+                + " arrives again.";
+        return new MarketingAlert(Kind.STALE.keyOf(channel.channel(), metric.metric()), Kind.STALE,
+                channel.channel(), channel.label() + ": " + metric.label() + " stopped arriving", text, List.of(), 0);
     }
 
     /** OFF_TRACK, on a value, with a target, not noise, not on a thin sample, and not resting on provisional days. */
@@ -190,17 +236,6 @@ final class MarketingAlertConditions {
                 && metric.value() != null
                 && metric.target() != null
                 && !provisionalOnly(metric.series());
-    }
-
-    /**
-     * A snapshot (a level, read as of its latest day) that the feed stopped sending while the rest of the channel
-     * kept arriving: more than {@link MarketingOverviewQueryService#LAGGING_DAYS} days behind the channel's data.
-     * Its value says where the metric was, not where it is, so it is not reported as off track now.
-     */
-    private static boolean outdatedSnapshot(ChannelView channel, MetricView metric) {
-        return metric.asOf() != null && channel.dataCompleteThrough() != null
-                && metric.asOf().isBefore(channel.dataCompleteThrough()
-                .minusDays(MarketingOverviewQueryService.LAGGING_DAYS));
     }
 
     /** True only when the metric has daily values and every one of them is still provisional. */

@@ -151,7 +151,7 @@ describe('ChannelCard', () => {
         ],
       }),
     )
-    expect(screen.getByText('Close')).toBeInTheDocument()
+    expect(screen.getByText('Watch')).toBeInTheDocument()
     expect(screen.getByText(/5% short of 100/)).toBeInTheDocument()
     expect(screen.getByText('Off target')).toBeInTheDocument()
     expect(screen.getByText(/60% short of 100/)).toBeInTheDocument()

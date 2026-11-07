@@ -437,8 +437,8 @@ class MarketingAlertEvaluatorTest {
     }
 
     @Test
-    void aChannelWhoseFeedsNeverSucceededIsNotStaleBecauseItNeverDelivered() {
-        // A Search connection left at setup: the overview calls it STALE with a made-up end date, and another
+    void aChannelWhoseFeedsNeverSucceededSaysItHasNoDataYetNotSinceAMadeUpDate() {
+        // A Search connection left at setup: the overview calls it STALE with a stand-in end date, and another
         // connection's pull (here the App Store's) evaluates the project.
         ChannelView leftAtSetup = AlertFixtures.neverFetched("SEARCH", "Search",
                 connectionView("gsc-conn", "gsc", "STALE"));
@@ -446,18 +446,59 @@ class MarketingAlertEvaluatorTest {
 
         evaluator.onChannelMetricsPulled(new ChannelMetricsPulledEvent(PROJECT, "STORE", "store-conn"));
 
-        assertNothingPosted();
+        assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "stale:SEARCH")
+                .containsEntry("title", "Search has no data yet")
+                .containsEntry("text", "Search has not delivered any data yet. Check its connection in Integrations.");
     }
 
     @Test
-    void aSnapshotTheFeedStoppedSendingIsNotReportedOffTrack() {
+    void aSnapshotTheFeedStoppedSendingIsReportedAsStoppedNotOffTrack() {
         // MRR last arrived 17 days before the rest of the in-app data: where it was, not where it is.
         offTrackOverview(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
                 AlertFixtures.THROUGH.minusDays(17)));
 
         evaluator.onChannelMetricsPulled(PULLED);
 
-        assertNothingPosted();
+        assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "stale:ADS:mrr")
+                .containsEntry("alertKind", "STALE")
+                .containsEntry("title", "Apple Ads: Monthly recurring revenue stopped arriving")
+                .containsEntry("text", "Monthly recurring revenue was last reported 2026-10-17, while the rest of"
+                        + " the Apple Ads data runs to 2026-11-03. Its last value, $0.00, is not judged against the"
+                        + " target until it arrives again.");
+    }
+
+    @Test
+    void anOpenOffTrackAlertIsHeldNotResolvedWhenItsSnapshotStopsArriving() {
+        offTrackOverview(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
+                AlertFixtures.THROUGH));
+        evaluator.onChannelMetricsPulled(PULLED);
+        offTrackOverview(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
+                AlertFixtures.THROUGH.minusDays(17)));
+        clock.advance(Duration.ofHours(6));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        List<NotificationMessage> posts = allPosts(2);
+        assertThat(posts.get(0).getMetadata()).containsEntry("alertKey", "off_track:ADS:mrr");
+        assertThat(posts.get(1).getMetadata()).containsEntry("alertKey", "stale:ADS:mrr")
+                .containsEntry("alertStatus", "NEW");
+        assertThat(states.get(PROJECT, "off_track:ADS:mrr").getState()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void aStoppedSnapshotThatArrivesAgainResolvesItsStoppedAlert() {
+        offTrackOverview(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
+                AlertFixtures.THROUGH.minusDays(17)));
+        evaluator.onChannelMetricsPulled(PULLED);
+        offTrackOverview(targeted("mrr", "Monthly recurring revenue", Unit.CURRENCY, 12.0, 10, "ON_TRACK", 0.0,
+                false, false, settledSeries()));
+        clock.advance(Duration.ofHours(6));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        List<NotificationMessage> posts = allPosts(2);
+        assertThat(posts.get(1).getMetadata()).containsEntry("alertKey", "stale:ADS:mrr")
+                .containsEntry("alertStatus", "RESOLVED");
     }
 
     @Test

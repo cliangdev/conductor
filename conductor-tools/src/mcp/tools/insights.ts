@@ -370,7 +370,7 @@ function trimMetric(
     provisional: flags && windowHasProvisionalDay(m, dataCompleteThrough) ? true : null,
     smallSample: flags && m.insufficientData ? true : null,
     target: m.target ? trimTarget(m.target) : null,
-    // Standing against the target: ON_TRACK, WATCH (close), OFF_TRACK or TOO_EARLY; omitted without a target.
+    // Standing against the target: ON_TRACK, WATCH (close, or a rate miss too small a sample to call real), OFF_TRACK or TOO_EARLY; omitted without a target.
     // missPct is the shortfall as a fraction of the (prorated) target.
     status: m.status && m.status !== 'NO_TARGET' ? m.status : null,
     missPct: m.status && m.status !== 'NO_TARGET' ? round4(m.missPct) : null,

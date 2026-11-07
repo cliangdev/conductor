@@ -8,6 +8,8 @@ import com.conductor.marketing.overview.MetricCatalog.Metric;
 import com.conductor.marketing.overview.MetricCatalog.Unit;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDate;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
@@ -90,6 +92,24 @@ class MarketingTargetStatusTest {
                 null);
         assertThat(status(down, 6.0 / 20, new TargetView(0.10, "DOWN"), 20L, 28).status()).isEqualTo("OFF_TRACK");
         assertThat(status(down, 3.0 / 20, new TargetView(0.10, "DOWN"), 20L, 28).status()).isEqualTo("WATCH");
+    }
+
+    @Test
+    void theIntervalIsDrawnOnWhatTheRateWasDividedOverNotOnTheSample() {
+        // 50 paid of 1000 trials against 10%: a sample of 50 reported for the numerator must not widen the interval
+        TargetView target = new TargetView(0.10, "UP");
+        assertThat(MarketingOverviewQueryService.targetStatus(rate(), 0.05, target, 50L, 1000L, 28).status())
+                .isEqualTo("OFF_TRACK");
+        assertThat(MarketingOverviewQueryService.targetStatus(rate(), 0.05, target, 50L, 50L, 28).status())
+                .isEqualTo("WATCH");
+    }
+
+    @Test
+    void aSnapshotMoreThanAWeekBehindItsChannelHasStopped() {
+        LocalDate through = LocalDate.of(2026, 11, 4);
+        assertThat(MarketingOverviewQueryService.snapshotStopped(LocalDate.of(2026, 10, 18), through)).isTrue();
+        assertThat(MarketingOverviewQueryService.snapshotStopped(through.minusDays(7), through)).isFalse();
+        assertThat(MarketingOverviewQueryService.snapshotStopped(null, through)).isFalse();
     }
 
     @Test
