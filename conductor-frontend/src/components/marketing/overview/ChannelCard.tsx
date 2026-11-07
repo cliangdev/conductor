@@ -50,6 +50,7 @@ function MetricRow({
           <Sparkline series={metric.series} label={metric.label} />
         </div>
       </div>
+      {metric.value == null && metric.note && <p className="text-xs text-muted-foreground">{metric.note}</p>}
       <ChangeLine metric={metric} />
       {showFlags && <MetricFlags metric={metric} />}
       <TargetNote

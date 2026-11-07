@@ -256,4 +256,21 @@ class MetricCatalogDefinitionsTest {
         assertThat(def.source()).isEqualTo("Product metrics feed (product backend)");
         assertThat(def.numerator()).isEqualTo("product:trial_started");
     }
+
+    @Test
+    void aWindowUniqueMetricKnowsWhichWindowLengthsItAnswersAndSaysWhyWhenAskedForAnother() {
+        Metric visitors = metric(MetricChannel.WEB, "visitors");
+
+        assertThat(visitors.agg()).isEqualTo(Aggregation.WINDOW_UNIQUE);
+        assertThat(visitors.supportedWindowDays()).containsExactly(7, 28, 90);
+        assertThat(visitors.supportsWindowOf(28)).isTrue();
+        assertThat(visitors.supportsWindowOf(14)).isFalse();
+        assertThat(visitors.unsupportedWindowMessage())
+                .isEqualTo("Unique visitors are only available for 7, 28 or 90-day windows.");
+        // a sum answers any length
+        Metric sessions = metric(MetricChannel.WEB, "sessions");
+        assertThat(sessions.supportedWindowDays()).isEmpty();
+        assertThat(sessions.supportsWindowOf(14)).isTrue();
+        assertThat(sessions.unsupportedWindowMessage()).isNull();
+    }
 }

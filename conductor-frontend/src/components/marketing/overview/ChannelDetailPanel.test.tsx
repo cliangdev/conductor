@@ -253,11 +253,11 @@ describe('ChannelDetailPanel', () => {
     it('shows the metric note when the value is unknown', async () => {
       serve(
         detailResponse({
-          channel: channel({ metrics: [metric({ metric: 'visitors', label: 'Visitors', value: null, note: 'Unique visitors are stored for 7, 28 and 90 days' })] }),
+          channel: channel({ metrics: [metric({ metric: 'visitors', label: 'Visitors', value: null, note: 'Unique visitors are only available for 7, 28 or 90-day windows.' })] }),
         }),
       )
       render(<ChannelDetailPanel projectId="proj-1" channel="search" />)
-      expect(await screen.findByText('Unique visitors are stored for 7, 28 and 90 days')).toBeInTheDocument()
+      expect(await screen.findByText('Unique visitors are only available for 7, 28 or 90-day windows.')).toBeInTheDocument()
     })
 
     it('marks the day each change went live on the charts, from the report matching the window', async () => {

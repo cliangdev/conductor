@@ -115,8 +115,6 @@ public class MarketingOverviewQueryService {
     /** The rolling lengths the overview and the report accept; the channel detail also takes 90. */
     static final Set<Integer> ROLLING_OVERVIEW_DAYS = Set.of(7, 28);
     static final Set<Integer> ROLLING_CHANNEL_DAYS = Set.of(7, 28, 90);
-    /** Said on a window-unique metric with no value: the connector stores these distinct counts for three window lengths only. */
-    static final String WINDOW_UNIQUE_NOTE = "Unique visitors are stored for 7, 28 and 90 days";
     /**
      * A channel whose data ends more than this many days before the freshest channel's is lagging: it is marked
      * stale and no longer holds the funnel window back. Well above the normal 2-3 day lag of Search Console or
@@ -1617,7 +1615,7 @@ public class MarketingOverviewQueryService {
                 ? (metric.agg() == Aggregation.WINDOW_UNIQUE ? data.firstWindowUniqueDay(metric, ctx.days) : firstDay)
                 : null;
         // A window-unique count that cannot be read says why, and is never rebuilt from the daily counts.
-        String note = metric.agg() == Aggregation.WINDOW_UNIQUE && value == null ? WINDOW_UNIQUE_NOTE : null;
+        String note = value == null ? windowUniqueReason(metric, w) : null;
         // A rate with no reported sample is judged by how many it was divided over (its denominator's total).
         Long statusSample = sample;
         if (statusSample == null && metric.agg() == Aggregation.DERIVED
@@ -1812,6 +1810,12 @@ public class MarketingOverviewQueryService {
             // Other hints (e.g. set a conversion event) are about setup and stay.
             String reason = build.hasData() && stage.unavailableReason().startsWith("Connect")
                     ? noDataFor(build, w) : stage.unavailableReason();
+            // A distinct count with no value for this window's length says why, not "no data"
+            String windowReason = catalogMetric.map(m -> windowUniqueReason(m, w)).orElse(null);
+            boolean unsupportedLength = catalogMetric.filter(m -> !m.supportsWindowOf(windowDays(w))).isPresent();
+            if (windowReason != null && (unsupportedLength || build.hasData())) {
+                reason = windowReason;
+            }
             return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
                     reason, build.window.to(), stage.channel().name(), stage.conversionFrom());
         }
@@ -1826,6 +1830,11 @@ public class MarketingOverviewQueryService {
         if (shortened && (metric.agg() == Aggregation.SUM || metric.agg() == Aggregation.DERIVED)) {
             previous = null; // fewer days than the previous window: no comparison
         }
+        if (value == null && windowUniqueReason(metric, w) != null) {
+            // a distinct count has no value for this window; a previous one alone would read as a stage with no number
+            return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
+                    windowUniqueReason(metric, w), w.to(), stage.channel().name(), stage.conversionFrom());
+        }
         if (value == null && previous == null) {
             // connected, with data, just none in these days: say so rather than telling them to connect
             return new FunnelStageView(stage.key(), stage.label(), null, null, null, stage.channel().name(), false,
@@ -1837,6 +1846,23 @@ public class MarketingOverviewQueryService {
         return new FunnelStageView(stage.key(), stage.label(), value, previous, change,
                 stage.channel().name(), true, null, w.to(), stage.channel().name(), stage.conversionFrom(),
                 metric.basis());
+    }
+
+    private static long windowDays(Window w) {
+        return java.time.temporal.ChronoUnit.DAYS.between(w.from(), w.to()) + 1;
+    }
+
+    /**
+     * Why a window-unique metric has no value for {@code w}: its length is not one the connector stores, or the
+     * stored count for it has not arrived. Null for any other metric.
+     */
+    static String windowUniqueReason(Metric metric, Window w) {
+        if (metric.agg() != Aggregation.WINDOW_UNIQUE) {
+            return null;
+        }
+        long days = windowDays(w);
+        return metric.supportsWindowOf(days) ? "No unique " + metric.label().toLowerCase(java.util.Locale.ROOT)
+                + " count is stored for these " + days + " days yet." : metric.unsupportedWindowMessage();
     }
 
     /** Keeps {@code conversionFromKey} only where both the stage and the stage it converts from are available. */

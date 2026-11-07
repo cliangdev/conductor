@@ -259,6 +259,16 @@ describe('recordPlatformRead', () => {
     expect(out['row'].read).toMatchObject({ value: 23, conductorValue: 7, matches: false })
   })
 
+  it('passes the server\'s refusal of an unsupported window through unchanged, so the supported lengths are named', async () => {
+    const detail =
+      'WEB.visitors is a distinct count, so it can only be read over a window of 7, 28 or 90 days; this read covers 14 days'
+    mocked(apiPost).mockRejectedValue(new Error(detail))
+
+    await expect(
+      recordPlatformRead(config, { ...ok, channel: 'web', metric: 'visitors', from: '2026-10-13', to: '2026-10-26' })
+    ).rejects.toThrow(detail)
+  })
+
   it('sends no note when none was given', async () => {
     mocked(apiPost).mockResolvedValue(row())
 

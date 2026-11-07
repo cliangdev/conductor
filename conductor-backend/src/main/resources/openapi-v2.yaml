@@ -5555,7 +5555,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/VerificationRow"
         "400":
-          description: Unknown channel or metric, a metric that cannot be read directly, an invalid range or a negative value
+          description: Unknown channel or metric, a metric that cannot be read directly, an invalid range, a negative value, or a distinct count (WEB visitors) read over a window that is not 7, 28 or 90 days (the error names the supported lengths)
           content:
             application/json:
               schema:

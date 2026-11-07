@@ -329,8 +329,29 @@ class MarketingOverviewFixedWindowTest extends AbstractNoneWebIntegrationTest {
         assertThat(month.value()).isEqualTo(49.0);
         assertThat(month.note()).isNull();
         assertThat(fortnight.value()).isNull();
-        assertThat(fortnight.note()).isEqualTo(MarketingOverviewQueryService.WINDOW_UNIQUE_NOTE);
+        assertThat(fortnight.note()).isEqualTo("Unique visitors are only available for 7, 28 or 90-day windows.");
         assertThat(week.value()).isEqualTo(20.0);
+        assertThat(week.note()).isNull();
+    }
+
+    @Test
+    void theWebVisitorsFunnelStageSaysWhyItHasNoValueForAnUnstoredWindowLength() {
+        String web = connect("posthog");
+        for (LocalDate d = FROM.minusDays(40); !d.isAfter(TODAY.minusDays(1)); d = d.plusDays(1)) {
+            put(web, "posthog", "WEB", "visitors", "", d, 3, false);
+            put(web, "posthog", "WEB", "visitors_unique_28d", "", d, 49, false);
+        }
+
+        var month = overview(WINDOW).funnel().stream().filter(s -> s.key().equals("web_visitors")).findFirst().orElseThrow();
+        var fortnight = overview("2026-10-13..2026-10-26").funnel().stream()
+                .filter(s -> s.key().equals("web_visitors")).findFirst().orElseThrow();
+
+        assertThat(month.available()).isTrue();
+        assertThat(month.value()).isEqualTo(49.0);
+        assertThat(fortnight.available()).isFalse();
+        assertThat(fortnight.value()).isNull();
+        assertThat(fortnight.unavailableReason())
+                .isEqualTo("Unique visitors are only available for 7, 28 or 90-day windows.");
     }
 
     // ---- channel detail and snapshot ------------------------------------------------------------
