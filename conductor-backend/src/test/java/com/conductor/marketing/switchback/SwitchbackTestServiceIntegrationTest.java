@@ -6,6 +6,9 @@ import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
+import com.conductor.integration.ingest.ConnectorFeed;
+import com.conductor.integration.ingest.ConnectorFeedRepository;
+import com.conductor.integration.ingest.ConnectorFeedStatus;
 import com.conductor.marketing.switchback.SwitchbackTestFixture.Feeds;
 import com.conductor.marketing.switchback.SwitchbackTestService.Fields;
 import com.conductor.marketing.switchback.SwitchbackTestService.SettleOutcome;
@@ -31,6 +34,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
@@ -65,6 +69,7 @@ class SwitchbackTestServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     @Autowired private WorkflowSeeder workflowSeeder;
     @Autowired private WorkItemRepository workItemRepository;
     @Autowired private JdbcTemplate jdbc;
+    @Autowired private ConnectorFeedRepository feedRepository;
 
     private SwitchbackTestFixture fixture;
     private final List<String> projectIds = new ArrayList<>();
@@ -509,6 +514,45 @@ class SwitchbackTestServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         View later = get(running.id());
         assertThat(later.changeWorkItemId()).isEqualTo(settled.changeWorkItemId());
         assertThat(later.settledAt()).isEqualTo(settled.settledAt());
+    }
+
+    @Test
+    void anOffWeekWithNoAdsRowsSettlesOnceTheAppleAdsFeedHasPulledPastIt() {
+        // Apple returns no row for a day with no ad activity, so the off weeks have search rows and no ads rows
+        for (int i = 0; i < 4; i++) {
+            for (int d = 0; d < 7; d++) {
+                LocalDate day = FIRST_MONDAY.plusWeeks(i).plusDays(d);
+                if (i % 2 == 0) {
+                    fixture.day(feeds, day, 6, 3, false);
+                } else {
+                    fixture.searchOnly(feeds, day, 3, false);
+                }
+            }
+        }
+        View running = declareAndStart(project.getId(), "recipe app", null);
+
+        at(AFTER_LAST_WEEK).settleDue();
+        assertThat(get(running.id()).status()).isEqualTo("RUNNING");
+        assertThat(at(AFTER_LAST_WEEK).get(project.getId(), running.id()).waitingFor())
+                .contains("Apple Ads first-time downloads on 2026-10-12");
+
+        ConnectorFeed feed = new ConnectorFeed();
+        feed.setProjectId(project.getId());
+        feed.setConnectionId(feeds.adsConnectionId());
+        feed.setConnectorId("apple-search-ads");
+        feed.setIngestId("channel_metrics");
+        feed.setStatus(ConnectorFeedStatus.ACTIVE);
+        // pulled through 2 days after the last week: its final day is past what Apple may still restate
+        LocalDate pulledThrough = AFTER_LAST_WEEK.plusDays(2);
+        feed.setCursorState("{\"lastDay\":\"" + pulledThrough + "\"}");
+        feed.setLastSuccessAt(OffsetDateTime.now());
+        feedRepository.saveAndFlush(feed);
+        at(pulledThrough).settleDue();
+
+        View settled = get(running.id());
+        assertThat(settled.status()).isEqualTo("SETTLED");
+        assertThat(settled.waitingFor()).isNull();
+        assertThat(changeCount(project.getId())).isEqualTo(1);
     }
 
     @Test

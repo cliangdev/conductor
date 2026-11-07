@@ -461,7 +461,10 @@ public class AppleSearchAdsConnector implements FetchConnector, ChannelMetricsSo
 
     /** Apple restates installs (attribution windows) for a few days. */
     @Override
-    public int trailingDays() { return 3; }
+    public int trailingDays() { return TRAILING_DAYS; }
+
+    /** How many recent days Apple may still restate; readers of a "no row" day wait this long past the last pull. */
+    public static final int TRAILING_DAYS = 3;
 
     /**
      * Per-day spend, impressions, taps and installs: totals across campaigns (empty dimension key), per

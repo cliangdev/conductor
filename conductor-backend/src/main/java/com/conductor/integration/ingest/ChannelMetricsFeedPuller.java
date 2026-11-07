@@ -251,6 +251,29 @@ public class ChannelMetricsFeedPuller {
     }
 
     /**
+     * The last day a pull of this feed read successfully, when its walk had finished: every day up to it (back to
+     * wherever the connection's data begins) was asked of the platform, so a day with no stored row in that span is a
+     * day the platform reported nothing for. Null when the cursor is absent or unreadable, has no {@code lastDay}, or
+     * is mid-walk ({@code resumeFrom} set: an unfinished backfill or re-walk), because then nothing is proven.
+     */
+    public static LocalDate walkCompletedThrough(String cursor, ObjectMapper objectMapper) {
+        if (cursor == null || cursor.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode root = objectMapper.readTree(cursor);
+            JsonNode resume = root.get(CURSOR_RESUME_FROM);
+            JsonNode last = root.get(CURSOR_LAST_DAY);
+            if ((resume != null && !resume.isNull()) || last == null || last.isNull()) {
+                return null;
+            }
+            return LocalDate.parse(last.asText());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
      * Tells the marketing alert evaluator that this connection's days are stored. Sent only once the pull has
      * reached today (an unfinished backfill or re-walk is half old, half new data and would read as a mismatch)
      * and after {@link #flagStall} has written the connection's health. There is no transaction here, so the
