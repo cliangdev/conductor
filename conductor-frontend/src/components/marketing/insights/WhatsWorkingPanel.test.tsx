@@ -174,14 +174,18 @@ describe('WhatsWorkingPanel', () => {
 
     const toggle = await screen.findByRole('button', { name: 'How to read these numbers' })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
-    expect(screen.queryByText('Why more views can mean a lower rate')).not.toBeInTheDocument()
+    // aria-controls points at the section even while it is closed.
+    const help = document.getElementById(toggle.getAttribute('aria-controls')!)
+    expect(help).not.toBeNull()
+    expect(help).not.toBeVisible()
 
     fireEvent.click(toggle)
-    expect(screen.getByText('Why more views can mean a lower rate')).toBeInTheDocument()
-    expect(screen.getByText(/Engagements divided by views/)).toBeInTheDocument()
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('Why more views can mean a lower rate')).toBeVisible()
+    expect(screen.getByText(/Engagements divided by views/)).toBeVisible()
 
     fireEvent.click(screen.getByRole('button', { name: 'Hide help' }))
-    expect(screen.queryByText('Why more views can mean a lower rate')).not.toBeInTheDocument()
+    expect(help).not.toBeVisible()
   })
 
   it('links a top post using its own workflowSlug, not the first-Marketing-workflow guess', async () => {

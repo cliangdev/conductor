@@ -208,6 +208,40 @@ class MarketingInsightsQueryServiceTest {
     }
 
     @Test
+    void aDestinationThatReportedNoViewsStaysOutOfTheRateAndTheMedianButKeepsItsCounters() {
+        WorkItem postA = post("post-a", "Photo", 1, null);
+        WorkItem postB = post("post-b", "Reel", 2, null);
+        WorkItem postC = post("post-c", "Reel 2", 3, null);
+        PostPublishTarget noViews = target("t-fb", postA, "facebook", NOW.minusHours(1), "FEED");
+        PostPublishTarget igA = target("t-ig-a", postB, "instagram", NOW.minusHours(2), "FEED");
+        PostPublishTarget igB = target("t-ig-b", postC, "instagram", NOW.minusHours(3), "FEED");
+
+        givenPopulation(null, List.of(noViews, igA, igB), List.of(
+                metric("t-fb", "facebook", NOW.minusHours(1), null, 400L, 0L, 0L, null),
+                metric("t-ig-a", "instagram", NOW.minusHours(2), 3000L, 30L, 0L, 0L, 0L),
+                metric("t-ig-b", "instagram", NOW.minusHours(3), 5000L, 20L, 0L, 0L, 0L)));
+        when(workItemRepository.findAllById(any())).thenReturn(List.of(postA, postB, postC));
+
+        MarketingInsightsQueryService.Insights insights = service.compute("proj-1", InsightsWindowSpec.parse("7d"),
+                null, NOW);
+
+        MarketingInsightsQueryService.Group feed = insights.byFormat().get(0);
+        assertThat(feed.posts()).isEqualTo(3);
+        assertThat(feed.likes()).isEqualTo(450L);
+        assertThat(feed.views()).isEqualTo(8000L);
+        // 50 engagements on the 8,000 reported views, not 450 / 8,000.
+        assertThat(feed.engagementRate()).isCloseTo(50.0 / 8000, within(0.0001));
+        // The median of 3K and 5K, not of 0, 3K and 5K.
+        assertThat(feed.medianViews()).isEqualTo(4000L);
+
+        MarketingInsightsQueryService.Group facebook = insights.byPlatform().stream()
+                .filter(g -> g.key().equals("facebook")).findFirst().orElseThrow();
+        assertThat(facebook.likes()).isEqualTo(400L);
+        assertThat(facebook.engagementRate()).isNull();
+        assertThat(facebook.medianViews()).isNull();
+    }
+
+    @Test
     void aDestinationWithNoSnapshotYetIsExcludedFromGroupsButCountedInCoverage() {
         WorkItem postA = post("post-a", "Reported", 1, "caption");
         WorkItem postB = post("post-b", "Not reported yet", 2, "caption");

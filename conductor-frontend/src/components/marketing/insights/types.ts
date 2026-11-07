@@ -2,6 +2,7 @@
 // `MarketingInsightsResponse` and friends) — "What's working" across every published Post.
 
 import { apiGet } from '@/lib/api'
+import { compactCount } from '@/components/marketing/destinations/DestinationMetrics'
 import type { CreativePerformanceEntry } from '@/components/marketing/creatives/types'
 
 export type { CreativePerformanceEntry }
@@ -125,6 +126,12 @@ export const LOW_SAMPLE_ENGAGEMENTS = 20
 /** Likes + comments + shares + saves — the numerator of the engagement rate. */
 export function engagementsOf(group: InsightsGroup): number {
   return group.likes + group.comments + group.shares + group.saves
+}
+
+/** Median views as a compact count, or a dash when no destination in the group reported views. */
+export function medianViewsLabel(median: number | null | undefined): string {
+  if (median === null || median === undefined) return '—'
+  return compactCount(median)
 }
 
 /** avgViewPct already arrives as a 0..100 percentage (YouTube's average-view-percentage). */

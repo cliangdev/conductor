@@ -9,14 +9,23 @@ import { CircleHelpIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { LOW_SAMPLE_ENGAGEMENTS } from './types'
 
-export function InsightsHelpToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+export function InsightsHelpToggle({
+  open,
+  controls,
+  onToggle,
+}: {
+  open: boolean
+  /** The id of the InsightsHelp section this button shows and hides. */
+  controls: string
+  onToggle: () => void
+}) {
   return (
     <Button
       variant="ghost"
       size="sm"
       className="ml-auto gap-1.5 text-muted-foreground"
       aria-expanded={open}
-      aria-controls="insights-help"
+      aria-controls={controls}
       onClick={onToggle}
     >
       <CircleHelpIcon className="h-4 w-4" aria-hidden />
@@ -31,13 +40,14 @@ const TERMS: { term: string; body: string }[] = [
     body:
       'How many times a post was shown or played, as each platform counts it. TikTok and YouTube Shorts count a ' +
       'view after about a second of play in the feed. Instagram and Facebook count each time the post appears, ' +
-      'replays included. So a view is not quite the same thing on every platform.',
+      'replays included. So a view is not quite the same thing on every platform. When a platform reports no ' +
+      'view count for a post, the notes at the bottom of the page say so.',
   },
   {
     term: 'Median views',
     body:
       'Views for a typical post: half of the posts did better, half did worse. Unlike the total, one hit post ' +
-      'does not pull it up. This is the best measure of how far each platform carries a post.',
+      'does not pull it up, so it is the best measure of how far a typical post travels.',
   },
   {
     term: 'Engagements',
@@ -48,7 +58,8 @@ const TERMS: { term: string; body: string }[] = [
   {
     term: 'Engagement rate',
     body:
-      'Engagements divided by views: out of everyone who saw a post, the share who did something with it.',
+      'Engagements divided by views: out of everyone who saw a post, the share who did something with it. A post ' +
+      'whose platform reported no view count is left out of the rate, since there is nothing to divide by.',
   },
   {
     term: 'Avg view %',
@@ -56,10 +67,12 @@ const TERMS: { term: string; body: string }[] = [
   },
 ]
 
-export function InsightsHelp() {
+/** Stays mounted while closed (hidden) so the toggle's aria-controls always points at a real element. */
+export function InsightsHelp({ id, hidden }: { id: string; hidden: boolean }) {
   return (
     <section
-      id="insights-help"
+      id={id}
+      hidden={hidden}
       aria-label="How to read these numbers"
       className="rounded-lg border border-border bg-surface-2 p-4 text-sm"
     >
@@ -87,8 +100,10 @@ export function InsightsHelp() {
 
       <h3 className="mt-5 font-medium text-foreground">Small numbers</h3>
       <p className="mt-1 text-muted-foreground">
-        A rate built on fewer than {LOW_SAMPLE_ENGAGEMENTS} engagements is greyed out. A post with 2 views and 2
-        likes has a 100% rate, so a handful of likes either way can swing the number a lot.
+        In the By platform and By format tables, a rate built on fewer than {LOW_SAMPLE_ENGAGEMENTS} engagements
+        is greyed out, because a handful of likes either way can swing it a lot. Single posts almost always fall
+        under that line (a post with 2 views and 2 likes has a 100% rate), so read the rates in Top posts and
+        Needs a rethink as a hint, not a verdict.
       </p>
     </section>
   )

@@ -6,7 +6,7 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useState } from 'react'
 import { TrendingUpIcon } from 'lucide-react'
 import { Alert } from '@/components/ui/alert'
 import { EmptyState } from '@/components/ui/empty-state'
@@ -27,6 +27,7 @@ import {
   INSIGHTS_WINDOWS,
   engagementRateLabel,
   getMarketingInsights,
+  medianViewsLabel,
   moverDeltaLabel,
   type CreativePerformanceEntry,
   type InsightsMover,
@@ -99,6 +100,7 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
   // switchable (otherwise picking one platform leaves it as the only option).
   const [allPlatforms, setAllPlatforms] = useState<string[]>([])
   const [helpOpen, setHelpOpen] = useState(false)
+  const helpId = useId()
 
   const { entries } = useSidebarWorkNav(projectId, accessToken)
   const postWorkflow = useMemo(
@@ -196,10 +198,10 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
             </option>
           ))}
         </Select>
-        <InsightsHelpToggle open={helpOpen} onToggle={() => setHelpOpen((o) => !o)} />
+        <InsightsHelpToggle open={helpOpen} controls={helpId} onToggle={() => setHelpOpen((o) => !o)} />
       </div>
 
-      {helpOpen && <InsightsHelp />}
+      <InsightsHelp id={helpId} hidden={!helpOpen} />
 
       {error && <Alert variant="destructive">{error}</Alert>}
 
@@ -244,7 +246,7 @@ export function WhatsWorkingPanel({ projectId }: { projectId: string }) {
             />
             <StatTile
               label="Median views"
-              value={data.totals.medianViews === null || data.totals.medianViews === undefined ? '—' : compactCount(data.totals.medianViews)}
+              value={medianViewsLabel(data.totals.medianViews)}
               windowLabel={windowLabel}
             />
           </div>

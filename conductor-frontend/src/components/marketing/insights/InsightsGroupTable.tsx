@@ -10,6 +10,7 @@ import {
   avgViewPctLabel,
   engagementRateLabel,
   engagementsOf,
+  medianViewsLabel,
   type InsightsGroup,
 } from './types'
 
@@ -65,7 +66,9 @@ export function InsightsGroupTable({
               </tr>
             </thead>
             <tbody>
-              {groups.map((group) => (
+              {groups.map((group) => {
+                const lowSample = isLowSample(group)
+                return (
                 <tr key={group.key} className="border-t border-border">
                   <td className="py-1.5 pr-3 text-foreground">
                     <span className="flex items-center gap-2">
@@ -78,7 +81,7 @@ export function InsightsGroupTable({
                   <td className="py-1.5 pr-3 text-right tabular-nums text-foreground">{count(group.posts)}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums text-foreground">{compactCount(group.views)}</td>
                   <td className="py-1.5 pr-3 text-right tabular-nums text-foreground">
-                    {group.medianViews === null || group.medianViews === undefined ? '—' : compactCount(group.medianViews)}
+                    {medianViewsLabel(group.medianViews)}
                   </td>
                   <td className="py-1.5 pr-3 text-right tabular-nums text-foreground">
                     {compactCount(engagementsOf(group))}
@@ -86,12 +89,12 @@ export function InsightsGroupTable({
                   <td
                     className={cn(
                       'py-1.5 pr-3 text-right tabular-nums',
-                      isLowSample(group) ? 'text-muted-foreground' : 'text-foreground',
+                      lowSample ? 'text-muted-foreground' : 'text-foreground',
                     )}
-                    title={isLowSample(group) ? `Fewer than ${LOW_SAMPLE_ENGAGEMENTS} engagements` : undefined}
+                    title={lowSample ? `Fewer than ${LOW_SAMPLE_ENGAGEMENTS} engagements` : undefined}
                   >
                     {engagementRateLabel(group.engagementRate)}
-                    {isLowSample(group) && <span className="sr-only"> (few engagements)</span>}
+                    {lowSample && <span className="sr-only"> (few engagements)</span>}
                   </td>
                   {showAvgViewPct && (
                     <td className="py-1.5 pr-3 text-right tabular-nums text-foreground">
@@ -99,7 +102,8 @@ export function InsightsGroupTable({
                     </td>
                   )}
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
           {anyLowSample && (
