@@ -91,12 +91,13 @@ export function safeZoneIntrusion(boardRect, nodes, safe) {
   return issues;
 }
 
-/** Copy intruding on the placement's reserved top safe zone (Instagram's Reels
- * header, TikTok's tabs and search). Headline, body and CTA in the zone are
- * errors; the lockup (logo) is a warning. `ratio` names the placement in the
- * message. `severity: 'warning'` downgrades the copy findings to warnings too (saved Creatives that
- * rendered before the zone grew must keep rendering). Returns `{ errors, warnings }` message arrays. Mirrors render.js's
- * `fits()` top check for the non-lockup nodes. */
+/** Text intruding on the placement's reserved top safe zone (Instagram's Reels
+ * header, TikTok's tabs and search): headline, body and CTA starting inside it.
+ * The lockup (logo) is not text and is never checked. `ratio` names the
+ * placement in the message. `severity: 'warning'` reports the findings as
+ * warnings (saved Creatives that rendered before the zone grew must keep
+ * rendering). Returns `{ errors, warnings }` message arrays. Mirrors
+ * render.js's `fits()` top check. */
 export function safeZoneTopIntrusion(boardRect, nodes, safe, ratio, severity = 'error') {
   const out = { errors: [], warnings: [] };
   const top = (safe && safe.top) || 0;
@@ -104,10 +105,11 @@ export function safeZoneTopIntrusion(boardRect, nodes, safe, ratio, severity = '
   const h = Math.round(boardRect.bottom - boardRect.top);
   const w = Math.round(boardRect.right - boardRect.left);
   for (const { name, rect } of nodes) {
+    if (String(name).includes('cc-lockup')) continue;
     const over = boardRect.top + top - rect.top;
     if (over <= 1) continue;
     const msg = `${name} starts ${Math.round(over)}px inside the top safe zone of ${ratio || 'this placement'} (platform UI covers y < ${top}); move it below y=${top} at ${w || 1080}x${h || 1920}`;
-    (String(name).includes('cc-lockup') || severity === 'warning' ? out.warnings : out.errors).push(msg);
+    (severity === 'warning' ? out.warnings : out.errors).push(msg);
   }
   return out;
 }
@@ -175,10 +177,6 @@ export async function runAssertions(board, placement, brand, { outputScale = 2, 
   const br = rectOf(board);
 
   const nodes = [...board.querySelectorAll(CHECKED_SELECTOR)].map((n) => ({ name: n.className, rect: rectOf(n) }));
-  // The invisible lockup spacer (bleed layout) is not copy: leave it out of the top-zone check.
-  const topNodes = [...board.querySelectorAll(CHECKED_SELECTOR)]
-    .filter((n) => !n.classList.contains('cc-lockup--spacer'))
-    .map((n) => ({ name: n.className, rect: rectOf(n) }));
 
   const spill = spillDetect(br, nodes);
   if (spill.length) fail('spill', `text spill: ${spill.join('; ')}`);
@@ -190,7 +188,7 @@ export async function runAssertions(board, placement, brand, { outputScale = 2, 
   };
   const intrusion = safeZoneIntrusion(br, nodes, safe);
   if (intrusion.length) fail('safeZone', `safe-zone intrusion: ${intrusion.join('; ')}`);
-  const topZone = safeZoneTopIntrusion(br, topNodes, safe, board.dataset.ratio, safeTopSeverity === 'error' ? 'error' : 'warning');
+  const topZone = safeZoneTopIntrusion(br, nodes, safe, board.dataset.ratio, safeTopSeverity === 'error' ? 'error' : 'warning');
   if (topZone.errors.length) fail('safeZone', `safe-zone intrusion: ${topZone.errors.join('; ')}`);
   if (topZone.warnings.length) warn('safeZone', `safe-zone intrusion: ${topZone.warnings.join('; ')}`);
 

@@ -33,6 +33,7 @@ import {
   pacingFor,
   platformsFor,
   writeOverlaySheets,
+  withSharedOverlayBrowser,
   type OverlaySheet,
   type PacingResult,
   type PixelToolOptions,
@@ -535,7 +536,7 @@ async function clipPreview(params: PreviewCreativeDraftParams, options: DraftToo
       notes.push(`${clip.placement}: ${basename(clip.path)} is ${clip.width ?? '?'}x${clip.height ?? '?'}, not 9:16, so it was not checked for text under the platform UI and no overlay is drawn.`)
       continue
     }
-    const r = await checkClipPixels(clip.path, { ...options, placementKey: clip.placement, outDir: draftDir, baseName: `overlay-${clip.placement}`, uiOverlay: params.uiOverlay })
+    const r = await checkClipPixels(clip.path, { ...options, ...(clip.durationSeconds !== undefined ? { durationSeconds: clip.durationSeconds } : {}), placementKey: clip.placement, outDir: draftDir, baseName: `overlay-${clip.placement}`, uiOverlay: params.uiOverlay })
     checks.push(...r.checks)
     overlaySheets.push(...r.overlaySheets)
     notes.push(...r.notes)
@@ -584,6 +585,15 @@ export async function previewCreativeDraft(
   params: PreviewCreativeDraftParams,
   config: Config,
   options: DraftToolOptions = {}
+): Promise<PreviewCreativeDraftResult> {
+  // One browser for every overlay sheet this call draws (all platforms and placements).
+  return withSharedOverlayBrowser(options, (shared) => previewCreativeDraftInner(params, config, shared))
+}
+
+async function previewCreativeDraftInner(
+  params: PreviewCreativeDraftParams,
+  config: Config,
+  options: DraftToolOptions
 ): Promise<PreviewCreativeDraftResult> {
   const log = options.log ?? (() => {})
   const projectRoot = options.projectRoot ?? findProjectRoot()

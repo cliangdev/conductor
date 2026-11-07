@@ -126,11 +126,10 @@ test('safeZoneTopIntrusion: headline, body and CTA in the zone are errors that n
   assert.match(errors[0], /cc-headline starts 50px inside the top safe zone of 9x16 .*move it below y=290 at 1080x1920/);
 });
 
-test('safeZoneTopIntrusion: the lockup is only a warning', () => {
+test('safeZoneTopIntrusion: the lockup (logo) is never flagged, only text is', () => {
   const nodes = [{ name: 'cc-lockup cc-lockup--chip', rect: { top: 100, bottom: 200, right: 500 } }];
-  const { errors, warnings } = safeZoneTopIntrusion(board, nodes, { top: 290 }, 'story');
-  assert.equal(errors.length, 0);
-  assert.equal(warnings.length, 1);
+  assert.deepEqual(safeZoneTopIntrusion(board, nodes, { top: 290 }, 'story'), { errors: [], warnings: [] });
+  assert.deepEqual(safeZoneTopIntrusion(board, nodes, { top: 290 }, 'story', 'warning'), { errors: [], warnings: [] });
 });
 
 test('safeZoneTopIntrusion: a 1px tolerance absorbs subpixel rounding', () => {

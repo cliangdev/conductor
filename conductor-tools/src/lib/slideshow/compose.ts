@@ -34,6 +34,8 @@ export interface ComposeOptions {
   format?: 'png' | 'jpeg'
   /** JPEG quality 1-100 (default 92); ignored for png. */
   jpegQuality?: number
+  /** Re-rendering a saved slideshow: top/right safe-zone intrusions are warnings, not errors (see BuildSlideHtmlOptions). */
+  lenientSafeZone?: boolean
   log?: (message: string) => void
 }
 
@@ -199,7 +201,7 @@ export async function composeSlideshow(specInput: unknown, outDir: string, optio
       for (let i = 0; i < htmlSpec.slides.length; i++) {
         const nn = String(i + 1).padStart(2, '0')
         const htmlFile = join(out, `.slide-${ratio}-${nn}.html`)
-        await writeFile(htmlFile, buildSlideHtml(htmlSpec, i, ratio, assetBase, style))
+        await writeFile(htmlFile, buildSlideHtml(htmlSpec, i, ratio, assetBase, style, options.lenientSafeZone ? { lenientSafeZone: true } : {}))
         try {
           await page.goto(pathToFileURL(htmlFile).href)
           await page.waitForFunction('window.__READY === true', null, { timeout: 30000 })

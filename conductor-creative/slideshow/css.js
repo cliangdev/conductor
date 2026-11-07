@@ -27,6 +27,8 @@ const rgba = (c, a) => {
  * UI (notes, grid badges, week, receipt, placard, messages) use the bundled Inter, Source Serif 4 and Courier
  * Prime instead of Apple system fonts; `bundled` names the ones this slide uses, and only those are declared
  * (so a photo slide's stylesheet carries no font it never loads).
+ * `#s.legacy` (set when re-rendering a saved slide for a text edit) keeps the pre-290 text width and week
+ * spacing, so an edited slide does not re-wrap or move; new slides use the tighter values clear of the bands.
  */
 export function slideCss(assetBase, style = NATIVE_STYLE, bundled = []) {
     const bg = hex(style.boxBg), ink = hex(style.boxInk), dbg = hex(style.darkBg), dink = hex(style.darkInk), sink = hex(style.strokeInk);
@@ -43,7 +45,7 @@ html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
 .dim{position:absolute;inset:0;background:rgba(0,0,0,.28)}
 .blur{filter:blur(28px) brightness(.55) saturate(1.1);transform:scale(1.15)}
 /* native TikTok text */
-.txt{position:absolute;left:70px;right:150px;display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center;z-index:5}
+.txt{position:absolute;left:70px;right:180px;display:flex;flex-direction:column;align-items:center;gap:18px;text-align:center;z-index:5}
 .txt.full{right:70px}
 .box{display:inline;font-weight:700;font-size:var(--fs,${style.textSize}px);line-height:1.34;color:${ink};background:${bg};padding:4px 18px;border-radius:14px;-webkit-box-decoration-break:clone;box-decoration-break:clone}
 .box.dark{background:${dbg};color:${dink}}
@@ -93,7 +95,7 @@ html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
 .stack .lbl{position:absolute;left:40px;top:var(--lt,30px);z-index:5;max-width:760px}
 .stack .lbl .box{font-size:44px}
 /* tier list */
-.tier{position:absolute;left:0;right:0;top:var(--top,250px);font-family:${face},sans-serif}
+.tier{position:absolute;left:0;right:0;top:var(--top,310px);font-family:${face},sans-serif}
 .tier h2{color:#fff;font-weight:800;font-size:46px;line-height:1.2;text-align:center;padding:0 80px 26px}
 .tier .row{display:flex;min-height:150px;border-top:4px solid #000}
 .tier .row:last-child{border-bottom:4px solid #000}
@@ -101,16 +103,18 @@ html,body{width:1080px;height:var(--H);overflow:hidden;background:#111}
 .tier .v{flex:1;background:#1f1f22;color:#fff;display:flex;flex-wrap:wrap;align-items:center;gap:14px;padding:16px 22px;font-weight:700;font-size:var(--ts,40px);line-height:1.2}
 .tier .v span{background:#33333a;border-radius:12px;padding:10px 16px}
 /* week grid */
-.week{position:absolute;left:60px;right:60px;top:var(--top,260px);font-family:"Inter",sans-serif;background:#fff;border-radius:36px;padding:34px 36px;box-shadow:0 30px 80px rgba(0,0,0,.35)}
+.week{position:absolute;left:60px;right:60px;top:var(--top,310px);font-family:"Inter",sans-serif;background:#fff;border-radius:36px;padding:34px 36px;box-shadow:0 30px 80px rgba(0,0,0,.35)}
 .week h3{font-size:56px;font-weight:700;color:#1c1c1e;margin-bottom:22px}
-.week .d{display:flex;align-items:center;gap:26px;padding:20px 0;border-top:2px solid #ececf0}
+.week .d{display:flex;align-items:center;gap:26px;padding:14px 0;border-top:2px solid #ececf0}
+#s.legacy .txt:not(.full){right:150px}
+#s.legacy .week .d{padding:20px 0}
 .week .d b{flex:none;width:120px;font-size:40px;color:#8e8e93;font-weight:600;text-transform:uppercase}
 .week .d .im{flex:none;width:110px;height:110px;border-radius:20px;overflow:hidden;background:#e9e9ee;display:grid;place-items:center;font-size:56px;color:#b0b0b8}
 .week .d .im img{width:100%;height:100%;object-fit:cover}
 .week .d span{font-size:52px;line-height:1.2;color:#1c1c1e}
 .week .d.fog span{color:#8e8e93}
 /* receipt */
-.receipt{position:absolute;left:150px;right:150px;top:var(--top,250px);background:#fbfaf6;color:#222;font-family:"Courier Prime",monospace;font-size:36px;line-height:1.35;padding:46px 46px 70px;box-shadow:0 30px 80px rgba(0,0,0,.4);transform:rotate(var(--rot,-1.5deg))}
+.receipt{position:absolute;left:150px;right:150px;top:var(--top,310px);background:#fbfaf6;color:#222;font-family:"Courier Prime",monospace;font-size:36px;line-height:1.35;padding:46px 46px 70px;box-shadow:0 30px 80px rgba(0,0,0,.4);transform:rotate(var(--rot,-1.5deg))}
 .receipt::after{content:"";position:absolute;left:0;right:0;bottom:-18px;height:20px;background:linear-gradient(-45deg,transparent 12px,#fbfaf6 0) 0 0/24px 20px repeat-x,linear-gradient(45deg,transparent 12px,#fbfaf6 0) 0 0/24px 20px repeat-x}
 .receipt .c{text-align:center}
 .receipt hr{border:0;border-top:3px dashed #999;margin:18px 0}

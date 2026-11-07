@@ -558,7 +558,7 @@ export async function run({ transport, packageRoot = PACKAGE_ROOT, browserFactor
         }, {
           creative: spec.creative,
           brand: spec.brand,
-      safeTopSeverity: spec.safeTopSeverity,
+          safeTopSeverity: spec.safeTopSeverity,
           placementKey: frame.placementKey,
           sequenceIndex: frame.index,
           placementKeys: spec.placements,

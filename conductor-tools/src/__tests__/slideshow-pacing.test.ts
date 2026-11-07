@@ -39,6 +39,13 @@ describe('isDetailSlide', () => {
     expect(isDetailSlide('A turkey on a plate. Text: "Open the app screen"')).toBe(false);
     expect(isDetailSlide(undefined)).toBe(false);
   });
+  it('does not count a food photo on a table, and matches whole words only', () => {
+    expect(isDetailSlide('A roast turkey on a table')).toBe(false);
+    expect(isDetailSlide('Happy people eating an apple')).toBe(false);
+    expect(isDetailSlide('Mapping the route, a mapped trip')).toBe(false);
+    expect(isDetailSlide('A map of Italy')).toBe(true);
+    expect(isDetailSlide('A graph and a dashboard')).toBe(true);
+  });
 });
 
 describe('readingDuration', () => {

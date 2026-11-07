@@ -7,6 +7,7 @@ import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { mintPutConfirmImage } from './creatives.js'
 import {
   composeSlideshow,
+  isLegacyLayout,
   isMediaRef,
   MEDIA_REF,
   mapSpecImages,
@@ -207,6 +208,8 @@ export async function renderSlides(params: RenderSlidesParams, config: Config, o
       specDir: temp,
       format: 'jpeg',
       jpegQuality: SLIDE_JPEG_QUALITY,
+      // a spec stored before the safe-zone bands grew re-renders with the old layout, and top/right intrusions warn
+      lenientSafeZone: isLegacyLayout(spec),
       ...(style ? { style } : {}),
     })
 

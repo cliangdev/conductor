@@ -489,7 +489,7 @@ nothing), `preview_creative` (saved CAROUSEL and CLIP), the `attach_creative_to_
 
 **Pacing.** A slideshow without `slideshow.slideDurations` is timed from the words on each slide:
 `clamp(2.4 + 0.14 x words, 3.0, 4.8)` s, plus 0.5 s for the first slide and 0.5 s for a detail slide
-(alt text mentions a screen, app, chart, graph, screenshot, table or map). Words come from the `Text:`
+(alt text mentions a screen, app, chart, graph, screenshot or map). Words come from the `Text:`
 part of each `slideAltText` entry (`Text: "line one" / "line two"`, or `Text: none`), else from OCR.
 The 0.5 s cross-fade comes out of each slide's time. The preview reports the durations and the
 total, and warns when a slide gets under 0.25 s per word, or under 3 s with two or more lines. With

@@ -74,9 +74,10 @@ const CHECK_SCRIPT = String.raw`
         add('spill', 'error', label(el) + ' extends past the frame (left ' + l + ', top ' + t + ', right ' + rt + ', bottom ' + b + ' of ' + W + 'x' + H + ')');
       }
       if (M.ratio === '9x16' && !el.hasAttribute('data-spillonly')) {
-        if (t < SZ.top) add('safeZone', 'error', label(el) + ' intrudes into the top ' + SZ.top + 'px overlay band (starts at ' + t + 'px)');
+        var bandSev = M.lenientSafeZone ? 'warning' : 'error';
+        if (t < SZ.top) add('safeZone', bandSev, label(el) + ' intrudes into the top ' + SZ.top + 'px overlay band (starts at ' + t + 'px)');
         if (b > H - SZ.bottom) add('safeZone', 'error', label(el) + ' intrudes into the bottom ' + SZ.bottom + 'px overlay band (ends at ' + b + 'px, limit ' + (H - SZ.bottom) + 'px)');
-        if (el.hasAttribute('data-right') && rt > W - SZ.right) add('safeZone', 'error', label(el) + ' intrudes into the right ' + SZ.right + 'px overlay band (ends at ' + rt + 'px, limit ' + (W - SZ.right) + 'px)');
+        if (el.hasAttribute('data-right') && rt > W - SZ.right) add('safeZone', bandSev, label(el) + ' intrudes into the right ' + SZ.right + 'px overlay band (ends at ' + rt + 'px, limit ' + (W - SZ.right) + 'px)');
       }
     });
     Array.prototype.forEach.call(document.querySelectorAll('[data-ts]'), function (el) {
@@ -182,9 +183,11 @@ export function bundledFamiliesFor(sl: SlideSpec): BundledFamily[] {
   return out
 }
 
-function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio, style: ResolvedSlideshowStyle): string {
+function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio, style: ResolvedSlideshowStyle, legacy = false): string {
   const r4 = ratio === '4x5'
-  const objTop = (d: number) => (r4 ? (sl.top4 ?? 60) : (sl.top ?? d))
+  // `d` is the default top on 9:16; `old` is what it was before the top band grew to 290 (kept for re-renders so a
+  // saved slide does not move when only its text changes)
+  const objTop = (d: number, old = d) => (r4 ? (sl.top4 ?? 60) : (sl.top ?? (legacy ? old : d)))
   let html = ''
   if (sl.bg) html += `<img class="bg ${sl.blur ? 'blur' : ''} ${sl.grade ? 'grade' : ''}" src="${esc(sl.bg)}" style="object-position:${esc(sl.pos || '50% 50%')}">`
   if (sl.bgColor) html += `<div class="bg" style="background:${esc(sl.bgColor)}"></div>`
@@ -263,7 +266,7 @@ function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio, style:
     const rows = (sl.rows ?? [])
       .map((row) => `<div class="row"><div class="k" style="background:${esc(row.c)}">${esc(row.k)}</div><div class="v">${(row.items ?? []).map((x) => `<span data-ts>${esc(x)}</span>`).join('')}</div></div>`)
       .join('')
-    html += `<div class="tier" data-fg style="--top:${objTop(250)}px;${sl.ts ? `--ts:${Number(sl.ts)}px` : ''}">${sl.title ? `<h2 data-ts>${esc(sl.title)}</h2>` : ''}${rows}</div>`
+    html += `<div class="tier" data-fg style="--top:${objTop(310, 250)}px;${sl.ts ? `--ts:${Number(sl.ts)}px` : ''}">${sl.title ? `<h2 data-ts>${esc(sl.title)}</h2>` : ''}${rows}</div>`
   }
 
   if (sl.type === 'week') {
@@ -273,7 +276,7 @@ function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio, style:
           `<div class="d ${d.fog ? 'fog' : ''}"><b>${esc(d.d)}</b><div class="im">${d.img ? `<img src="${esc(d.img)}">` : esc(d.icon ?? '?')}</div><span data-ts>${esc(d.t)}</span></div>`
       )
       .join('')
-    html += `<div class="week" data-fg style="--top:${objTop(260)}px">${sl.title ? `<h3 data-ts>${esc(sl.title)}</h3>` : ''}${days}</div>`
+    html += `<div class="week" data-fg style="--top:${objTop(310, 260)}px">${sl.title ? `<h3 data-ts>${esc(sl.title)}</h3>` : ''}${days}</div>`
   }
 
   if (sl.type === 'receipt') {
@@ -281,7 +284,7 @@ function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio, style:
       .map((s) => `<div class="a">${esc(s.h)}</div>${(s.items ?? []).map((x) => `<div class="r"><span>${esc(x)}</span></div>`).join('')}`)
       .join('')
     html +=
-      `<div class="receipt" data-fg data-ts style="--top:${objTop(250)}px"><div class="c">${esc(sl.head ?? '')}</div><hr>${body}<hr>` +
+      `<div class="receipt" data-fg data-ts style="--top:${objTop(310, 250)}px"><div class="c">${esc(sl.head ?? '')}</div><hr>${body}<hr>` +
       `<div class="r"><span>ITEMS</span><span>${esc(sl.count || '')}</span></div></div>`
   }
 
@@ -319,6 +322,16 @@ function slideBody(sl: SlideSpec, spec: SlideshowSpec, ratio: SlideRatio, style:
   return html
 }
 
+export interface BuildSlideHtmlOptions {
+  /**
+   * Report top-band and right-band safeZone intrusions as warnings, not errors. For re-rendering a saved slideshow
+   * composed before those bands grew (top 220 to 290, right 140 to 162): it passed then, and a text edit must not
+   * be blocked by geometry the author never changed. The bottom band and every other check stay errors. Also keeps
+   * the pre-290 default tops of tier/week/receipt so an unedited layout renders where it was saved.
+   */
+  lenientSafeZone?: boolean
+}
+
 /**
  * The full HTML document for one slide. Pure: image sources are used as given (the composer resolves them
  * to file URLs first); `assetBase` is the URL, ending in "/", of the folder holding the bundled fonts.
@@ -328,7 +341,8 @@ export function buildSlideHtml(
   index: number,
   ratio: SlideRatio,
   assetBase: string,
-  style: ResolvedSlideshowStyle = resolveSlideshowStyle(spec.style)
+  style: ResolvedSlideshowStyle = resolveSlideshowStyle(spec.style),
+  options: BuildSlideHtmlOptions = {}
 ): string {
   const sl = spec.slides[index]
   if (!sl) throw new Error(`No slide at index ${index}`)
@@ -345,13 +359,14 @@ export function buildSlideHtml(
     fontFamily: style.fontFamily,
     firstFamily,
     needsTT,
+    ...(options.lenientSafeZone ? { lenientSafeZone: true } : {}),
     fontUrl: style.fontUrl,
     ...(bundled.length ? { bundled: bundled.map((family) => ({ family, weights: BUNDLED_FONTS[family].faces.map(([w]) => w) })) } : {}),
   }).replace(/</g, '\\u003c')
   const base = assetBase.endsWith('/') ? assetBase : `${assetBase}/`
   return (
     `<!doctype html>\n<html style="--H:${FRAME_H[ratio]}px"><head><meta charset="utf-8">${style.fontUrl ? `<link rel="stylesheet" href="${esc(style.fontUrl)}">` : ''}<style>${slideCss(base, style, bundled)}</style></head>\n` +
-    `<body><div id="s">${slideBody(sl, spec, ratio, style)}</div>\n` +
+    `<body><div id="s"${options.lenientSafeZone === true ? ' class="legacy"' : ''}>${slideBody(sl, spec, ratio, style, options.lenientSafeZone === true)}</div>\n` +
     `<script>window.__META=${meta};</script><script>${CHECK_SCRIPT}</script></body></html>\n`
   )
 }

@@ -28,5 +28,7 @@ export declare const BUNDLED_FAMILIES: BundledFamily[];
  * UI (notes, grid badges, week, receipt, placard, messages) use the bundled Inter, Source Serif 4 and Courier
  * Prime instead of Apple system fonts; `bundled` names the ones this slide uses, and only those are declared
  * (so a photo slide's stylesheet carries no font it never loads).
+ * `#s.legacy` (set when re-rendering a saved slide for a text edit) keeps the pre-290 text width and week
+ * spacing, so an edited slide does not re-wrap or move; new slides use the tighter values clear of the bands.
  */
 export declare function slideCss(assetBase: string, style?: ResolvedSlideshowStyle, bundled?: readonly BundledFamily[]): string;

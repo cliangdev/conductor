@@ -43,9 +43,9 @@ function countWords(s: string): number {
   return s.split(/\s+/).filter((t) => /[\p{L}\p{N}]/u.test(t)).length;
 }
 
-const DETAIL_RE = /\b(app screens?|screens?|screenshots?|charts?|graphs?|tables?|maps?|ui|interface|dashboards?)\b/i;
+const DETAIL_RE = /\b(app screens?|screens?|screenshots?|charts?|graphs?|maps?|ui|interface|dashboards?)\b/i;
 
-/** True when the alt text mentions something with small detail to read: a screen, screenshot, chart, graph, table, map or UI. */
+/** True when the alt text mentions something with small detail to read: a screen, screenshot, chart, graph, map or UI. */
 export function isDetailSlide(alt?: string): boolean {
   if (!alt) return false;
   // Only the picture description counts, not the words printed on it.

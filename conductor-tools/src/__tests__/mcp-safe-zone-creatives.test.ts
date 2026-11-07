@@ -94,11 +94,67 @@ describe('attach_creative_to_post pre-flight', () => {
   it('still refuses a Post with a TikTok or Reels destination', async () => {
     for (const targets of [[{ platform: 'tiktok', format: 'feed' }], [{ platform: 'instagram', format: 'feed' }, { platform: 'instagram', format: 'reel' }]]) {
       mocked(apiPost).mockReset()
-      targetsStub(targets)
+      targetsStub(targets, { kind: 'CAROUSEL', version: 1, audio: { source: 'track' } })
       const result = await attachCreativeToPost({ creativeId: 'c1', postId: 'w1' }, config, { ocrEngine: fakeEngine([word('HELLO', 100, 160)]), fetchImpl })
       expect(result).toMatchObject({ ok: false, code: 'SAFE_ZONE_TEXT' })
       expect(apiPost).not.toHaveBeenCalled()
     }
+  })
+
+  describe('which destinations use the 9x16 frames', () => {
+    const run = (targets: unknown, creative: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
+      targetsStub(targets, creative)
+      mocked(apiPost).mockResolvedValue({ assets: [] })
+      return attachCreativeToPost({ creativeId: 'c1', postId: 'w1', ...extra }, config, { ocrEngine: fakeEngine([word('HELLO', 100, 160)]), fetchImpl })
+    }
+    const track = { kind: 'CAROUSEL', version: 1, audio: { source: 'track' } }
+
+    it('does not block an Instagram feed target of a CAROUSEL with a track when carouselAs defaults to photos', async () => {
+      const result = await run([{ platform: 'instagram', format: 'feed' }], track)
+      expect(result['code']).toBeUndefined()
+      expect(apiPost).toHaveBeenCalled()
+    })
+
+    it('blocks it when the target says carouselAs video, and not when it says photos on a TikTok-free Post', async () => {
+      const blocked = await run([{ platform: 'instagram', format: 'feed', publishOptions: { carouselAs: 'video' } }], track)
+      expect(blocked).toMatchObject({ code: 'SAFE_ZONE_TEXT' })
+      mocked(apiPost).mockReset()
+      const ok = await run([{ platform: 'facebook', format: 'feed', publishOptions: { carouselAs: 'photos' } }], track)
+      expect(ok['code']).toBeUndefined()
+    })
+
+    it('blocks TikTok photos and YouTube by default, but not a TikTok-less photos choice on YouTube', async () => {
+      expect(await run([{ platform: 'tiktok', format: 'feed', publishOptions: { carouselAs: 'photos' } }], track)).toMatchObject({ code: 'SAFE_ZONE_TEXT' })
+      expect(await run([{ platform: 'youtube', format: 'feed' }], track)).toMatchObject({ code: 'SAFE_ZONE_TEXT' })
+      const ok = await run([{ platform: 'youtube', format: 'feed', publishOptions: { carouselAs: 'photos' } }], track)
+      expect(ok['code']).toBeUndefined()
+    })
+
+    it('ignores a destination with its own chosen media, which attach skips', async () => {
+      const result = await run([{ platform: 'tiktok', format: 'feed', assetIds: ['a1'] }], track)
+      expect(result['code']).toBeUndefined()
+    })
+
+    it('does not count an Instagram or Facebook feed target of a CLIP whose explicit render has a 4x5 and 1x1 cut', async () => {
+      const clipRender = {
+        id: 'r7',
+        state: 'SUCCEEDED',
+        previewOnly: false,
+        frames: [
+          { placementKey: '9x16', url: 'https://x/c.mp4', durationSeconds: 8, contentType: 'video/mp4' },
+          { placementKey: '4x5', url: 'https://x/c45.mp4', durationSeconds: 8, contentType: 'video/mp4' },
+          { placementKey: '1x1', url: 'https://x/c11.mp4', durationSeconds: 8, contentType: 'video/mp4' },
+        ],
+      }
+      mocked(apiGet).mockImplementation(async (url: string) =>
+        url.endsWith('/renders') ? [clipRender] : url.endsWith('/publish-targets') ? [{ platform: 'instagram', format: 'feed' }, { platform: 'facebook', format: 'feed' }] : { kind: 'CLIP', version: 1 }
+      )
+      mocked(apiPost).mockResolvedValue({ assets: [] })
+      const sampler = async () => [{ atSeconds: 0.5, png: fakePng(1080, 1920), isCut: false }]
+      const result = await attachCreativeToPost({ creativeId: 'c1', postId: 'w1', renderId: 'r7' }, config, { ocrEngine: fakeEngine([word('HELLO', 100, 170)]), fetchImpl, sampler })
+      expect(result['code']).toBeUndefined()
+      expect(apiPost).toHaveBeenCalled()
+    })
   })
 
   it('refuses when the Post has no targets yet', async () => {
@@ -204,6 +260,17 @@ describe('create_creative / update_creative pacing', () => {
 describe('update_creative pacing keeps the saved slideshow', () => {
   const url = '/api/v2/projects/proj-1/marketing/creatives/c1'
   const alt = ['Photo. Text: "one two"', 'Photo. Text: "three"']
+  it('an explicit empty duration list clears the saved one: timing is computed and reported, zoom kept', async () => {
+    mocked(apiGet).mockResolvedValue({ kind: 'CAROUSEL', version: 3, slides: { '9x16': ['m1', 'm2'] }, slideAltText: alt, audio: { source: 'track' }, slideshow: { zoom: false, slideDurations: [5, 6] } })
+    mocked(apiPatch).mockResolvedValue({ id: 'c1', version: 4 })
+    const result = await updateCreative({ creativeId: 'c1', version: 3, slideshow: { slideDurations: [] } }, config)
+    const body = mocked(apiPatch).mock.calls[0]![1] as { slideshow: { zoom: boolean; slideDurations: number[] } }
+    expect(body.slideshow.zoom).toBe(false)
+    expect(body.slideshow.slideDurations).not.toEqual([5, 6])
+    expect(body.slideshow.slideDurations).toHaveLength(2)
+    expect(result['slideDurations']).toEqual(body.slideshow.slideDurations)
+  })
+
   it('does not recompute saved durations or drop zoom:false', async () => {
     mocked(apiGet).mockResolvedValue({ kind: 'CAROUSEL', version: 3, slides: { '9x16': ['m1', 'm2'] }, slideAltText: alt, audio: { source: 'track' }, slideshow: { zoom: false, slideDurations: [5, 6] } })
     mocked(apiPatch).mockResolvedValue({ id: 'c1', version: 4 })
@@ -230,5 +297,45 @@ describe('update_creative pacing keeps the saved slideshow', () => {
     const body = mocked(apiPatch).mock.calls[0]![1] as { slideshow: { zoom: boolean; slideDurations: number[] } }
     expect(body.slideshow.zoom).toBe(false)
     expect(body.slideshow.slideDurations).toHaveLength(3)
+  })
+})
+
+describe('update_creative pacing: stale and kept durations', () => {
+  const alt = ['Photo. Text: "one two"', 'Photo. Text: "three"']
+  const saved = { kind: 'CAROUSEL', version: 3, slides: { '9x16': ['m1', 'm2'] }, slideAltText: alt, audio: { source: 'track' }, slideshow: { zoom: true, slideDurations: [5, 6] } }
+
+  it('drops the saved durations when the slide count changes, the patch sends its own slideshow and no alt text paces', async () => {
+    mocked(apiGet).mockResolvedValue({ ...saved, slideAltText: undefined })
+    mocked(apiPatch).mockResolvedValue({ id: 'c1', version: 4 })
+    await updateCreative({ creativeId: 'c1', version: 3, slides: { '9x16': ['m1', 'm2', 'm3'] }, slideshow: { zoom: false } }, config)
+    const body = mocked(apiPatch).mock.calls[0]![1] as { slideshow: Record<string, unknown> }
+    expect(body.slideshow).toEqual({ zoom: false })
+  })
+
+  it('keeps saved durations of the right length, and the patch own durations always win', async () => {
+    mocked(apiGet).mockResolvedValue({ ...saved, slideAltText: undefined })
+    mocked(apiPatch).mockResolvedValue({ id: 'c1', version: 4 })
+    await updateCreative({ creativeId: 'c1', version: 3, slideshow: { zoom: false } }, config)
+    expect((mocked(apiPatch).mock.calls[0]![1] as any).slideshow).toEqual({ zoom: false, slideDurations: [5, 6] })
+    await updateCreative({ creativeId: 'c1', version: 3, slides: { '9x16': ['m1', 'm2', 'm3'] }, slideshow: { slideDurations: [4, 4, 4] } }, config)
+    expect((mocked(apiPatch).mock.calls[1]![1] as any).slideshow.slideDurations).toEqual([4, 4, 4])
+  })
+
+  it('keeps the saved durations but warns when changed alt text makes a slide too short', async () => {
+    mocked(apiGet).mockResolvedValue({ ...saved, slideshow: { slideDurations: [3.5, 3] } })
+    mocked(apiPatch).mockResolvedValue({ id: 'c1', version: 4 })
+    const wordy = ['Photo. Text: "one two"', 'Photo. Text: "one two three four five six seven eight nine ten eleven twelve thirteen fourteen"']
+    const result = await updateCreative({ creativeId: 'c1', version: 3, slideAltText: wordy }, config)
+    const body = mocked(apiPatch).mock.calls[0]![1] as Record<string, unknown>
+    expect(body['slideshow']).toBeUndefined()
+    expect(result['slideDurations']).toEqual([3.5, 3])
+    expect((result['warnings'] as string[])[0]).toMatch(/Slide 2 has 14 words on 3 s/)
+  })
+
+  it('returns no warnings when the kept durations still fit the text', async () => {
+    mocked(apiGet).mockResolvedValue({ ...saved, slideshow: { slideDurations: [5, 6] } })
+    mocked(apiPatch).mockResolvedValue({ id: 'c1', version: 4 })
+    const result = await updateCreative({ creativeId: 'c1', version: 3, slideAltText: alt }, config)
+    expect(result).toEqual({ id: 'c1', version: 4 })
   })
 })

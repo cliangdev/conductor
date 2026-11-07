@@ -11,7 +11,8 @@ import {
 } from '../../lib/safe-zone/check.js'
 import { sampleVideoFrames, type SampledFrame } from '../../lib/safe-zone/frames.js'
 import type { OcrEngine } from '../../lib/safe-zone/ocr.js'
-import { overlaySheetsFor, type OverlayFrame, type OverlayPlatform } from '../../lib/safe-zone/overlay.js'
+import { overlaySheetsFor, sharedBrowser, type OverlayFrame, type OverlayPlatform } from '../../lib/safe-zone/overlay.js'
+import type { BrowserFactory } from '../../lib/creative-browser.js'
 import {
   CROSSFADE_SEC,
   isDetailSlide,
@@ -47,7 +48,7 @@ export type OverlayWriter = (
   platforms: OverlayPlatform[],
   outDir: string,
   baseName: string,
-  opts?: { maxPerSheet?: number },
+  opts?: { maxPerSheet?: number; browser?: BrowserFactory },
 ) => Promise<Array<{ platform: OverlayPlatform; file: string; bytes?: number }>>
 
 export interface PixelToolOptions {
@@ -57,6 +58,8 @@ export interface PixelToolOptions {
   sampler?: (videoPath: string) => Promise<SampledFrame[]>
   /** Overlay sheet writer override (tests). Default: Playwright. */
   overlay?: OverlayWriter
+  /** Browser launcher shared by every overlay drawn in one tool call (set by withSharedOverlayBrowser). */
+  overlayBrowser?: BrowserFactory
   /** fetch override for downloading a saved Creative's media (tests). */
   fetchImpl?: typeof fetch
 }
@@ -87,10 +90,27 @@ export async function writeOverlaySheets(
   if (!platforms.length || !frames.length) return { sheets: [] }
   try {
     const writer: OverlayWriter = opts.overlay ?? overlaySheetsFor
-    const written = await writer(frames, platforms, outDir, baseName, { maxPerSheet: OVERLAY_SLIDES_PER_SHEET })
+    const written = await writer(frames, platforms, outDir, baseName, {
+      maxPerSheet: OVERLAY_SLIDES_PER_SHEET,
+      ...(opts.overlayBrowser ? { browser: opts.overlayBrowser } : {}),
+    })
     return { sheets: written.map((w) => ({ platform: w.platform, file: w.file, placementKey })) }
   } catch (e) {
     return { sheets: [], note: `${placementKey}: could not draw the platform UI overlay (${e instanceof Error ? e.message : String(e)}).` }
+  }
+}
+
+/**
+ * Runs one tool call with a single lazily launched browser shared by all its overlay sheets (every
+ * platform and placement), closed when the call ends. A test-injected `overlay` writer is left alone.
+ */
+export async function withSharedOverlayBrowser<T, O extends PixelToolOptions>(options: O, fn: (options: O) => Promise<T>): Promise<T> {
+  if (options.overlay || options.overlayBrowser) return fn(options)
+  const shared = sharedBrowser()
+  try {
+    return await fn({ ...options, overlayBrowser: shared.factory })
+  } finally {
+    await shared.closeAll()
   }
 }
 
@@ -262,6 +282,14 @@ export interface SavedPixelResult {
  * same pixel check as the draft. Returns undefined when there is nothing to check (another kind, no 9x16
  * frames, or no render yet), with the reason in `skipped`.
  */
+/** `<tmp>/conductor-safezone/<renderId>`, emptied. The id is reduced to safe characters for the path. */
+async function freshRenderDir(renderId: string): Promise<string> {
+  const dir = join(tmpdir(), 'conductor-safezone', String(renderId).replace(/[^A-Za-z0-9_-]/g, '_') || 'render')
+  await rm(dir, { recursive: true, force: true })
+  await mkdir(dir, { recursive: true })
+  return dir
+}
+
 export async function checkSavedCreativePixels(
   creative: { kind?: string; audio?: { source?: string } | null; slideshow?: { zoom?: boolean } | null },
   render: SavedRender | undefined,
@@ -278,7 +306,12 @@ export async function checkSavedCreativePixels(
   if (!wanted.length) return { skipped: 'no 9x16 placement to check' }
 
   const fetchImpl = opts.fetchImpl ?? fetch
-  const outDir = opts.outDir ?? (opts.writeOverlay ? await mkdtemp(join(tmpdir(), 'conductor-safezone-')) : undefined)
+  // The overlay sheets' paths are returned to the caller, so a folder we created must outlive this call.
+  // It is one folder per render, emptied on each call, so repeated previews of a render never pile up;
+  // it is removed below when nothing was written into it.
+  const madeOutDir = !opts.outDir && opts.writeOverlay
+  const outDir = opts.outDir ?? (madeOutDir ? await freshRenderDir(render.id) : undefined)
+  let keepOutDir = false
   const work = await mkdtemp(join(tmpdir(), 'conductor-safezone-media-'))
   try {
     const files: Array<{ path: string; index: number }> = []
@@ -295,12 +328,14 @@ export async function checkSavedCreativePixels(
       kind === 'CAROUSEL'
         ? await checkSlidesPixels(files, { ...common, zoom })
         : await checkClipPixels(files[0]!.path, common)
+    keepOutDir = r.overlaySheets.length > 0
     return { result: { checks: r.checks, passed: !hasErrors(r.checks), overlaySheets: r.overlaySheets, notes: r.notes } }
   } catch (e) {
     const checks = [uncheckedCheck('9x16', e instanceof Error ? e.message : String(e))]
     return { result: { checks, passed: true, overlaySheets: [], notes: [] } }
   } finally {
     await rm(work, { recursive: true, force: true }).catch(() => {})
+    if (madeOutDir && outDir && !keepOutDir) await rm(outDir, { recursive: true, force: true }).catch(() => {})
   }
 }
 

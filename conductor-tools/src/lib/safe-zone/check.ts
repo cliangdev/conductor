@@ -7,8 +7,8 @@
 import { readFile } from 'node:fs/promises'
 import type { DraftCheck } from '../creative-render.js'
 import { readImageDimensions } from '../image-dimensions.js'
-import { getDefaultEngine, type OcrEngine, type OcrRect, type OcrWord } from './ocr.js'
-import { sampleVideoFrames, type SampledFrame } from './frames.js'
+import { getDefaultEngine, OcrUnavailable, type OcrEngine, type OcrRect, type OcrWord } from './ocr.js'
+import { sampleVideoFrames, type SampledFrame, type SampledFrames } from './frames.js'
 import { hitZones, projectBox, REF_WIDTH, zonesFor, type PixelBox, type SafeZone } from './zones.js'
 
 /** A top hit this early in a video (seconds) is an error; later it is a warning. */
@@ -118,6 +118,18 @@ function reasonOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
 }
 
+/** The unchecked warning for a run that did look, but could not read some slides or frames. */
+function partialUnchecked(placementKey: string, what: string): DraftCheck {
+  return {
+    placementKey,
+    rule: 'safeZoneUnchecked',
+    severity: 'warning',
+    message:
+      `The safe-zone text check could not read ${what}, so text in the platform UI zones was not looked for there. ` +
+      'Check those by eye: nothing above y=290, below y=1490, or in the right 15% column at 1080x1920.',
+  }
+}
+
 export interface SlideCheckOptions {
   placementKey?: string
   /** When the slideshow zooms (Ken Burns), boxes are pushed outward from the centre by this factor. */
@@ -129,27 +141,41 @@ export interface SlideCheckOptions {
 export async function checkSlideImages(slides: Array<{ path: string; index: number }>, options: SlideCheckOptions = {}): Promise<DraftCheck[]> {
   const { placementKey = '9x16', zoom, engine = getDefaultEngine() } = options
   const checks: DraftCheck[] = []
-  try {
-    for (const slide of slides) {
+  const failed: Array<{ index: number; reason: string }> = []
+  let read = 0
+  for (const slide of slides) {
+    let hits: ZoneHit[]
+    let width: number
+    try {
       const png = await readFile(slide.path)
       const dim = readImageDimensions(png)
       if (!dim || zonesFor(dim.width, dim.height).length === 0) continue
-      for (const hit of await zoneHits(png, engine, zoom)) {
-        const suffix = zoom ? ` once the slideshow zoom (up to ${zoom.maxScale}x) is applied` : ''
-        checks.push({
-          placementKey,
-          index: slide.index,
-          rule: 'safeZoneText',
-          severity: hit.zone.name === 'top' && slide.index === 0 ? 'error' : 'warning',
-          message: describe(`Slide ${slide.index + 1}`, hit, dim.width, suffix),
-          box: hit.box,
-          text: hit.text,
-          platforms: hit.zone.platforms,
-        })
-      }
+      width = dim.width
+      hits = await zoneHits(png, engine, zoom)
+    } catch (e) {
+      failed.push({ index: slide.index, reason: reasonOf(e) })
+      // An engine that cannot start will not start for the next slide either.
+      if (e instanceof OcrUnavailable && e.engineDown && read === 0) break
+      continue
     }
-  } catch (e) {
-    return [uncheckedCheck(placementKey, reasonOf(e))]
+    read++
+    for (const hit of hits) {
+      const suffix = zoom ? ` once the slideshow zoom (up to ${zoom.maxScale}x) is applied` : ''
+      checks.push({
+        placementKey,
+        index: slide.index,
+        rule: 'safeZoneText',
+        severity: hit.zone.name === 'top' && slide.index === 0 ? 'error' : 'warning',
+        message: describe(`Slide ${slide.index + 1}`, hit, width, suffix),
+        box: hit.box,
+        text: hit.text,
+        platforms: hit.zone.platforms,
+      })
+    }
+  }
+  if (failed.length && read === 0) return [uncheckedCheck(placementKey, failed[0]!.reason)]
+  if (failed.length) {
+    checks.push(partialUnchecked(placementKey, `slide${failed.length === 1 ? '' : 's'} ${failed.map((f) => f.index + 1).join(', ')} (${failed[0]!.reason})`))
   }
   return checks
 }
@@ -199,24 +225,49 @@ export async function checkVideoFrames(videoPath: string, options: VideoCheckOpt
       platforms: hit.zone.platforms,
     })
   }
+  let frames: SampledFrame[]
   try {
-    const frames = await sampler(videoPath)
-    for (const frame of frames) {
-      const dim = readImageDimensions(frame.png)
-      if (!dim || zonesFor(dim.width, dim.height).length === 0) return checks
-      const hits = new Map((await zoneHits(frame.png, engine, undefined)).map((h) => [h.zone.name, h]))
-      for (const name of ['top', 'bottom', 'right']) {
-        const hit = hits.get(name as SafeZone['name'])
-        const run = open.get(name)
-        if (run && (!hit || !sameText(run.lastText, hit.text))) close(name)
-        if (hit && !open.has(name)) open.set(name, { hit, atSeconds: frame.atSeconds, isCut: frame.isCut, width: dim.width, lastText: hit.text })
-        else if (hit && run) run.lastText = hit.text
-      }
-    }
-    for (const name of ['top', 'bottom', 'right']) close(name)
+    frames = await sampler(videoPath)
   } catch (e) {
     return [uncheckedCheck(placementKey, reasonOf(e))]
   }
+  // "Looked and found nothing" needs frames to have been looked at.
+  if (frames.length === 0) return [uncheckedCheck(placementKey, 'no frames could be read from the video')]
+  const failedAt: number[] = []
+  let firstReason = ''
+  let read = 0
+  for (const frame of frames) {
+    let hits: Map<SafeZone['name'], ZoneHit>
+    let width: number
+    try {
+      const dim = readImageDimensions(frame.png)
+      if (!dim) throw new Error('the frame image could not be decoded')
+      if (zonesFor(dim.width, dim.height).length === 0) break // not 9:16: nothing to check in any frame
+      width = dim.width
+      hits = new Map((await zoneHits(frame.png, engine, undefined)).map((h) => [h.zone.name, h]))
+    } catch (e) {
+      failedAt.push(frame.atSeconds)
+      firstReason ||= reasonOf(e)
+      if (e instanceof OcrUnavailable && e.engineDown && read === 0) break
+      continue
+    }
+    read++
+    for (const name of ['top', 'bottom', 'right'] as const) {
+      const hit = hits.get(name)
+      const run = open.get(name)
+      if (run && (!hit || !sameText(run.lastText, hit.text))) close(name)
+      if (hit && !open.has(name)) open.set(name, { hit, atSeconds: frame.atSeconds, isCut: frame.isCut, width, lastText: hit.text })
+      else if (hit && run) run.lastText = hit.text
+    }
+  }
+  // Open runs are always emitted, however the loop ended.
+  for (const name of ['top', 'bottom', 'right']) close(name)
+  if (failedAt.length && read === 0) return [uncheckedCheck(placementKey, firstReason)]
+  const skipped = (frames as SampledFrames).skipped ?? 0
+  if (failedAt.length) {
+    checks.push(partialUnchecked(placementKey, `${failedAt.length} frame${failedAt.length === 1 ? '' : 's'} (at ${failedAt.map((t) => `${t.toFixed(1)}s`).join(', ')}; ${firstReason})`))
+  }
+  if (skipped > 0) checks.push(partialUnchecked(placementKey, `${skipped} frame${skipped === 1 ? '' : 's'} of the video (ffmpeg could not extract ${skipped === 1 ? 'it' : 'them'})`))
   return checks.sort((a, b) => (a.atSeconds ?? 0) - (b.atSeconds ?? 0))
 }
 

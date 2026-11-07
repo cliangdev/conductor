@@ -11,6 +11,9 @@ export interface SampledFrame {
   isCut: boolean
 }
 
+/** The frames, plus how many planned frames ffmpeg could not extract (absent when none failed). */
+export type SampledFrames = SampledFrame[] & { skipped?: number }
+
 export interface SampleOptions {
   everySeconds?: number
   maxFrames?: number
@@ -44,7 +47,9 @@ export function planSampleTimes(
   cuts: number[],
   { everySeconds = 0.5, maxFrames = 60 }: SampleOptions = {},
 ): Array<{ at: number; isCut: boolean }> {
-  const end = Math.max(0, duration - 0.05)
+  // A seek past a clip's last frame start writes no image (ffmpeg still exits 0), and the last frame can
+  // begin up to one frame interval before the end; 0.25 s stays inside it down to 4 fps.
+  const end = Math.max(0, duration - 0.25)
   const early: number[] = []
   for (let t = 0; t < Math.min(EARLY_SECONDS, end + 0.001); t += 0.5) early.push(t)
   const cutTimes = cuts.filter((c) => c <= end)
@@ -109,7 +114,7 @@ export async function extractFrameAt(videoPath: string, seconds: number): Promis
 }
 
 /** Frames every `everySeconds` plus the first frame after each scene cut. */
-export async function sampleVideoFrames(videoPath: string, options: SampleOptions = {}): Promise<SampledFrame[]> {
+export async function sampleVideoFrames(videoPath: string, options: SampleOptions = {}): Promise<SampledFrames> {
   const { sceneThreshold = 0.3 } = options
   const ffmpeg = await resolveFfmpegPath()
   // One decode pass: ffmpeg prints "Duration:" in the same stderr as the showinfo cut log.
@@ -119,13 +124,20 @@ export async function sampleVideoFrames(videoPath: string, options: SampleOption
   const plan = planSampleTimes(duration, parseCutTimes(scene.output), options)
   const dir = await mkdtemp(join(tmpdir(), 'conductor-frames-'))
   try {
-    const frames: SampledFrame[] = []
+    const frames: SampledFrames = []
+    let skipped = 0
     for (let i = 0; i < plan.length; i++) {
       const out = join(dir, `f${i}.png`)
       const res = await runCapture(ffmpeg, ['-y', '-v', 'error', '-ss', plan[i]!.at.toFixed(3), '-i', videoPath, '-frames:v', '1', out])
-      if (res.code !== 0) continue
-      frames.push({ atSeconds: Number(plan[i]!.at.toFixed(3)), png: await readFile(out), isCut: plan[i]!.isCut })
+      const png = res.code === 0 ? await readFile(out).catch(() => undefined) : undefined
+      if (!png) {
+        skipped++
+        continue
+      }
+      frames.push({ atSeconds: Number(plan[i]!.at.toFixed(3)), png, isCut: plan[i]!.isCut })
     }
+    if (plan.length > 0 && frames.length === 0) throw new Error(`ffmpeg could not extract any of ${plan.length} planned frames`)
+    if (skipped > 0) frames.skipped = skipped
     return frames
   } finally {
     await rm(dir, { recursive: true, force: true })

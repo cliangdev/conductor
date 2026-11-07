@@ -474,7 +474,7 @@ async function withReadingDurations<T extends CreativeFields>(
   params: T,
   kind: string | undefined,
   saved?: CreativeFields
-): Promise<{ fields: T; pacing?: { slideDurations: number[]; slideshowDurationSeconds: number; basis: string } }> {
+): Promise<{ fields: T; pacing?: { slideDurations: number[]; slideshowDurationSeconds: number; basis: string; warnings?: string[] } }> {
   // On update, whatever the patch leaves out comes from the saved Creative (the PATCH replaces the whole
   // slideshow object, so anything we send must carry the saved fields too).
   const slidesMap = params.slides ?? saved?.slides
@@ -484,13 +484,40 @@ async function withReadingDurations<T extends CreativeFields>(
   const track = (audio as { source?: string } | undefined)?.source === 'track'
   const patchDurations = (params.slideshow as { slideDurations?: unknown } | undefined)?.slideDurations
   const savedDurations = (saved?.slideshow as { slideDurations?: unknown } | undefined)?.slideDurations
-  // Saved durations are kept while they still match the slide count (the backend rejects a mismatched list).
-  const hasDurations =
-    (Array.isArray(patchDurations) && patchDurations.length > 0) ||
-    (Array.isArray(savedDurations) && savedDurations.length > 0 && savedDurations.length === slides?.length)
+  // Saved durations are kept while they still match the slide count (the backend rejects a mismatched list;
+  // it counts the 9x16 slide list, else the default one, exactly as `slides` is picked above).
+  const patchHasDurations = Array.isArray(patchDurations) && patchDurations.length > 0
+  // An explicit empty list clears the saved one, so it is not kept (and the timing is computed when it can be).
+  const patchClears = Array.isArray(patchDurations) && patchDurations.length === 0
+  const savedKept = !patchClears && Array.isArray(savedDurations) && savedDurations.length > 0 && savedDurations.length === slides?.length
+  const hasDurations = patchHasDurations || savedKept
+  // A patch that sends its own slideshow still must not drop the saved one's other fields, but a saved
+  // duration list the new slide count no longer fits must not ride along (the patch does not replace it).
+  const mergedSlideshow = (): Record<string, unknown> | undefined => {
+    if (!saved?.slideshow || !params.slideshow) return undefined
+    const merged: Record<string, unknown> = { ...saved.slideshow, ...params.slideshow }
+    if (!patchHasDurations && !savedKept) delete merged['slideDurations']
+    return merged
+  }
   if (kind !== 'CAROUSEL' || !track || !slides?.length || !altText?.length || hasDurations) {
-    // A patch that sends its own slideshow still must not drop the saved one's other fields.
-    return { fields: saved?.slideshow && params.slideshow ? { ...params, slideshow: { ...saved.slideshow, ...params.slideshow } } : params }
+    const merged = mergedSlideshow()
+    const fields = merged ? ({ ...params, slideshow: merged } as T) : params
+    // Kept durations are not recomputed (a saved list may be hand-set), but a slide whose text changed and
+    // is now too short for its words is flagged. Alt text only: no OCR here, and slides without a "Text:"
+    // part count as unknown (no warning).
+    if (kind === 'CAROUSEL' && track && slides?.length && altText?.length && hasDurations) {
+      const kept = (patchHasDurations ? patchDurations : savedDurations) as number[]
+      if (kept.every((n) => typeof n === 'number')) {
+        const checked = await pacingFor({ count: slides.length, altText, given: kept })
+        if (checked.warnings.length) {
+          return {
+            fields,
+            pacing: { slideDurations: kept, slideshowDurationSeconds: checked.totalSeconds, basis: checked.basis, warnings: checked.warnings },
+          }
+        }
+      }
+    }
+    return { fields }
   }
   const paced = await pacingFor({ count: slides.length, altText })
   return {
@@ -1497,9 +1524,13 @@ async function postUsesVerticalFrames(
   const clip = creative?.kind === 'CLIP'
   const track = creative?.audio?.source === 'track'
   return rows.some((row) => {
-    const platform = String((row as { platform?: string }).platform ?? '').trim().toLowerCase()
-    const format = String((row as { format?: string | null }).format ?? 'feed').trim().toLowerCase()
-    const feed = format === 'feed' || format === ''
+    const r = row as { platform?: string; format?: string | null; publishOptions?: { carouselAs?: unknown } | null; assetIds?: unknown }
+    // A destination with its own chosen media is skipped by attach (CreativeAttachService leaves it as it is),
+    // so this render's frames never reach it. An empty own selection is not "chosen media": attach fills it.
+    if (Array.isArray(r.assetIds) && r.assetIds.length > 0) return false
+    const platform = String(r.platform ?? '').trim().toLowerCase()
+    const format = String(r.format ?? 'feed').trim().toLowerCase() || 'feed'
+    const feed = format === 'feed'
     const ig = platform === 'instagram'
     const fb = platform === 'facebook'
     if (clip) {
@@ -1512,13 +1543,19 @@ async function postUsesVerticalFrames(
         (format === 'story' && !presentKeys.has('story'))
       )
     }
-    // CAROUSEL: the 9x16 slide images go to TikTok and Instagram Reels; with a track the companion 9x16 video
-    // also goes to YouTube and to an Instagram or Facebook feed or Reel.
-    return (
-      platform === 'tiktok' ||
-      (ig && format === 'reel') ||
-      (track && (platform === 'youtube' || ((ig || fb) && (feed || format === 'reel'))))
-    )
+    // CAROUSEL (CreativePlacementMedia.mediaFor): with a track the target's own carouselAs option, else the
+    // default (video for TikTok, YouTube and Reels, photos for a feed post), picks the 9x16 slideshow video, on
+    // a destination that can take one (carouselVideoFor). The video's presence in the render is assumed.
+    // Otherwise the slide images go out, and the 9x16 list is only used by TikTok (carouselPlacementFor: an
+    // Instagram or Facebook feed prefers 4x5/1x1, and a Reel, story or YouTube takes no image set).
+    if (track) {
+      const raw = typeof r.publishOptions?.carouselAs === 'string' ? r.publishOptions.carouselAs.trim().toLowerCase() : ''
+      const explicit = raw === 'photos' || raw === 'video' ? raw : undefined
+      const wantsVideo = (explicit ?? (platform === 'tiktok' || platform === 'youtube' || format === 'reel' ? 'video' : 'photos')) === 'video'
+      const takesVideo = platform === 'tiktok' || platform === 'youtube' || ((ig || fb) && (feed || format === 'reel'))
+      if (wantsVideo && takesVideo) return true
+    }
+    return platform === 'tiktok'
   })
 }
 
@@ -1576,7 +1613,13 @@ export async function attachCreativeToPost(
   let blocking = errors.length > 0 && params.ignoreSafeZone !== true
   if (blocking) {
     const saved = creative ?? (await apiGet<Record<string, unknown>>(`${creativesBase(config)}/${params.creativeId}`, config).catch(() => undefined))
-    const render = (renders ?? []).find((r) => r.id === renderId)
+    // CLIP rules depend on which cuts the render has: look the render up when it was not listed above (an
+    // explicit renderId, or one just made); if that fails the set stays empty, which keeps blocking.
+    let render = (renders ?? []).find((r) => r.id === renderId)
+    if (!render && saved?.['kind'] === 'CLIP') {
+      const listed = await apiGet<RenderApiItem[]>(`${creativesBase(config)}/${params.creativeId}/renders`, config).catch(() => undefined)
+      render = Array.isArray(listed) ? listed.find((r) => r.id === renderId) : undefined
+    }
     const present = new Set<string>((render?.frames ?? []).map((f) => f.placementKey))
     blocking = await postUsesVerticalFrames(postId, saved as { kind?: string; audio?: { source?: string } | null } | undefined, present, config)
   }

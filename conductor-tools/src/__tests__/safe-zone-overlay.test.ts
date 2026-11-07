@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { composeOverlaySheet, overlayHtml, overlaySheetsFor, renderOverlayFrames } from '../lib/safe-zone/overlay.js'
+import { sharedBrowser, composeOverlaySheet, overlayHtml, overlaySheetsFor, renderOverlayFrames } from '../lib/safe-zone/overlay.js'
 import { findBrowserFactory, type BrowserFactory } from '../lib/creative-browser.js'
 
 async function probe(): Promise<BrowserFactory | null> {
@@ -52,6 +52,49 @@ describe('overlayHtml', () => {
   it('wraps to a second row after 6 columns', () => {
     const many = Array.from({ length: 8 }, (_, i) => ({ dataUrl: 'data:image/png;base64,AAAA', label: `f${i}` }))
     expect(overlayHtml(many, 'tiktok')).toContain('repeat(6,')
+  })
+})
+
+describe('one browser per call', () => {
+  it('launches once for two platforms and closes it once', async () => {
+    let launched = 0
+    let closed = 0
+    let pages = 0
+    const fakeBrowser = {
+      newPage: async () => {
+        pages++
+        return { setContent: async () => {}, screenshot: async () => Buffer.from([1]), close: async () => {} }
+      },
+      close: async () => {
+        closed++
+      },
+    }
+    const factory = (async () => {
+      launched++
+      return fakeBrowser
+    }) as unknown as BrowserFactory
+    const dir = mkdtempSync(join(tmpdir(), 'ov-one-'))
+    const png = Buffer.alloc(33)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png)
+    png.writeUInt32BE(13, 8)
+    png.write('IHDR', 12)
+    png.writeUInt32BE(1080, 16)
+    png.writeUInt32BE(1920, 20)
+    try {
+      const shared = sharedBrowser(factory)
+      await overlaySheetsFor([{ png, label: 'a' }], ['instagram', 'tiktok'], dir, 'd', { browser: shared.factory })
+      await overlaySheetsFor([{ png, label: 'a' }], ['instagram'], dir, 'e', { browser: shared.factory })
+      expect(launched).toBe(1)
+      expect(pages).toBe(3)
+      expect(closed).toBe(0)
+      await shared.closeAll()
+      expect(closed).toBe(1)
+      await overlaySheetsFor([{ png, label: 'a' }], ['instagram', 'tiktok'], dir, 'f', { browser: factory })
+      expect(launched).toBe(2)
+      expect(closed).toBe(2)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

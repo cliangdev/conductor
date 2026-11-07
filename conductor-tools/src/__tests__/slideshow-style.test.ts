@@ -27,7 +27,7 @@ describe('slideCss', () => {
     // sha256 of slideCss('file:///f/'). It last changed when the system-UI slide types moved to the bundled Inter /
     // Source Serif 4 / Courier Prime; slideshow-html-stability.test.ts shows the photo and screen slides' HTML is
     // otherwise unchanged from before.
-    expect(createHash('sha256').update(slideCss(base)).digest('hex')).toBe('ef00a9bfd17a51a7ecc2d0ec70a900aee8cbb7706d0f51c0415f280ce5d2ee3b')
+    expect(createHash('sha256').update(slideCss(base)).digest('hex')).toBe('b228bb50617dd516979a304a5bd3eef811921388016cda3821938655bdbe303e')
     expect(slideCss(base, NATIVE_STYLE)).toBe(slideCss(base))
     expect(slideCss(base, resolveSlideshowStyle())).toBe(slideCss(base))
   })

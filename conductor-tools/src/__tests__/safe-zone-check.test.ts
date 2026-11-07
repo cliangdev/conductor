@@ -298,3 +298,115 @@ describe('planSampleTimes with many cuts', () => {
     expect(times).toEqual([...times].sort((a, b) => a - b))
   })
 })
+
+describe('partial failures never turn into a pass', () => {
+  it('a per-image failure on slide 1 does not stop the check of later slides', async () => {
+    let call = 0
+    const inner = fakeEngine([word('HOOK', 100, 160)])
+    const eng: OcrEngine = {
+      async recognizeWords(png, rect) {
+        if (++call === 1) throw new OcrUnavailable('OCR failed: bad image')
+        return inner.recognizeWords(png, rect)
+      },
+    }
+    const checks = await checkSlideImages([{ path: slideFile('q1.png'), index: 0 }, { path: slideFile('q2.png'), index: 1 }], { engine: eng })
+    expect(checks.filter((c) => c.rule === 'safeZoneText')).not.toHaveLength(0)
+    expect(checks.filter((c) => c.rule === 'safeZoneUnchecked')).toHaveLength(1)
+  })
+  it('an engine that cannot start stops at slide 1 with a single unchecked warning', async () => {
+    let call = 0
+    const eng: OcrEngine = {
+      async recognizeWords() {
+        call++
+        throw new OcrUnavailable('OCR engine failed to load: no wasm', true)
+      },
+    }
+    const checks = await checkSlideImages([{ path: slideFile('r1.png'), index: 0 }, { path: slideFile('r2.png'), index: 1 }], { engine: eng })
+    expect(call).toBe(1)
+    expect(checks).toHaveLength(1)
+    expect(checks[0]).toMatchObject({ rule: 'safeZoneUnchecked' })
+  })
+  /** Fails on the Nth recognizeWords call (1-based) and after, else behaves like fakeEngine. */
+  function failingFrom(n: number, words: OcrWord[]): OcrEngine {
+    const inner = fakeEngine(words)
+    let call = 0
+    return {
+      async recognizeWords(png, rect) {
+        if (++call >= n) throw new OcrUnavailable('boom')
+        return inner.recognizeWords(png, rect)
+      },
+    }
+  }
+
+  it('keeps slide 1 error when slide 2 OCR throws, and adds one unchecked warning naming slide 2', async () => {
+    const checks = await checkSlideImages([{ path: slideFile('p1.png'), index: 0 }, { path: slideFile('p2.png'), index: 1 }], {
+      engine: failingFrom(4, [word('HOOK', 100, 160)]), // 3 zones for slide 1, then slide 2 fails
+    })
+    expect(checks.filter((c) => c.rule === 'safeZoneText' && c.severity === 'error')).toHaveLength(1)
+    const un = checks.filter((c) => c.rule === 'safeZoneUnchecked')
+    expect(un).toHaveLength(1)
+    expect(un[0]!.message).toContain('slide 2')
+    expect(checks.some((c) => c.severity === 'error')).toBe(true)
+  })
+
+  it('an engine that never runs gives the single unchecked warning', async () => {
+    const checks = await checkSlideImages([{ path: slideFile('q1.png'), index: 0 }, { path: slideFile('q2.png'), index: 1 }], { engine: failingFrom(1, []) })
+    expect(checks).toHaveLength(1)
+    expect(checks[0]!.rule).toBe('safeZoneUnchecked')
+  })
+
+  const frame = (atSeconds: number) => ({ atSeconds, png: fakePng(1080, 1920), isCut: false })
+
+  it('a later frame failing keeps earlier video checks and names the frame', async () => {
+    const checks = await checkVideoFrames('x.mp4', {
+      engine: failingFrom(4, [word('HOOK', 100, 170)]),
+      sampler: async () => [frame(0.5), frame(1)],
+    })
+    expect(checks.filter((c) => c.rule === 'safeZoneText')).toHaveLength(1)
+    const un = checks.filter((c) => c.rule === 'safeZoneUnchecked')
+    expect(un).toHaveLength(1)
+    expect(un[0]!.message).toContain('1.0s')
+  })
+
+  it('a sampler that returns no frames is unchecked, not a pass', async () => {
+    const checks = await checkVideoFrames('x.mp4', { engine: fakeEngine([]), sampler: async () => [] })
+    expect(checks).toHaveLength(1)
+    expect(checks[0]!.rule).toBe('safeZoneUnchecked')
+  })
+
+  it('frames that ffmpeg skipped add a warning saying how many', async () => {
+    const frames = Object.assign([frame(0.5)], { skipped: 2 })
+    const checks = await checkVideoFrames('x.mp4', { engine: fakeEngine([]), sampler: async () => frames })
+    expect(checks).toHaveLength(1)
+    expect(checks[0]!.rule).toBe('safeZoneUnchecked')
+    expect(checks[0]!.message).toContain('2 frames')
+  })
+
+  it('emits an open run even when a later frame is not 9:16', async () => {
+    const checks = await checkVideoFrames('x.mp4', {
+      engine: fakeEngine([word('HOOK', 100, 170)]),
+      sampler: async () => [frame(0.5), { atSeconds: 1, png: fakePng(1080, 1350), isCut: false }],
+    })
+    expect(checks.map((c) => [c.rule, c.text])).toEqual([['safeZoneText', 'HOOK']])
+  })
+})
+
+// Real ffmpeg: the end-of-clip sample must land on a frame. A seek past the last frame's start writes
+// nothing (exit 0), which once turned every clip check into "could not run".
+const realFfmpeg = await import('../lib/media-probe.js').then((m) => m.resolveFfmpegPath()).catch(() => undefined)
+describe.skipIf(!realFfmpeg)('sampleVideoFrames (real ffmpeg)', () => {
+  it('reads every planned frame of a 15 fps clip, including one near the end', async () => {
+    const { sampleVideoFrames } = await import('../lib/safe-zone/frames.js')
+    const dir = mkdtempSync(join(tmpdir(), 'sz-frames-'))
+    try {
+      const clip = join(dir, 'c.mp4')
+      execFileSync(realFfmpeg!, ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=0x203040:s=1080x1920:r=15:d=4', '-pix_fmt', 'yuv420p', clip])
+      const frames = await sampleVideoFrames(clip)
+      expect(frames.skipped).toBeUndefined()
+      expect(frames.length).toBeGreaterThan(6)
+      expect(frames[frames.length - 1]!.atSeconds).toBeGreaterThanOrEqual(3.5)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }, 60_000)
+})

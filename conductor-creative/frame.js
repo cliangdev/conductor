@@ -87,7 +87,6 @@ async function main() {
     // Motion presets restructure the headline (word spans): build that structure, in its final state,
     // before fitting, so the type is sized for the layout every captured frame will have.
     if (spec.motion) applyMotion(board, spec.motion, spec.motion.durationSec || 8, { durationSec: spec.motion.durationSec || 8 });
-    if (spec.safeTopSeverity === 'error') board.dataset.safeTopStrict = 'true';
     fitBoard(board, placementsReg);
     // What this spec requires on the board: a required element that did not render fails the checks.
     const expect = expectedElements(ad, spec.brand);

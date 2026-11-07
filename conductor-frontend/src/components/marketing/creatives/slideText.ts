@@ -6,7 +6,7 @@
 
 import { apiGet, apiPost } from '@/lib/api'
 import { buildSlideHtml } from '@cliangdev/creative-render/slideshow/html.js'
-import type { SlideRatio, SlideshowSpec } from '@cliangdev/creative-render/slideshow/spec.js'
+import { isLegacyLayout, type SlideRatio, type SlideshowSpec } from '@cliangdev/creative-render/slideshow/spec.js'
 import { resolveStyleLayers, type SlideshowStyle } from '@cliangdev/creative-render/slideshow/style.js'
 import { applyTextEdits, type TextEdit } from '@cliangdev/creative-render/slideshow/text-fields.js'
 import type { Creative, CreativeLatestRevision } from './types'
@@ -258,7 +258,8 @@ export function buildPreviewHtml(
   } catch {
     style = undefined
   }
-  return buildSlideHtml(withDisplayUrls(edited, urlFor), slideIndex, ratio, FONT_BASE, style)
+  // the same layout generation the render job uses for this spec (slideshow-render.ts)
+  return buildSlideHtml(withDisplayUrls(edited, urlFor), slideIndex, ratio, FONT_BASE, style, { lenientSafeZone: isLegacyLayout(spec) })
 }
 
 /** The ratios the Creative was rendered at (its `slides` lists); both when it names neither. */

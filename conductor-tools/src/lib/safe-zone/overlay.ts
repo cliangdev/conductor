@@ -245,11 +245,49 @@ async function withPage<T>(
 ): Promise<T> {
   const factory = opts?.browser ?? (await findBrowserFactory())
   const browser = await factory()
+  let page: import('playwright-core').Page | undefined
   try {
-    const page = await browser.newPage({ deviceScaleFactor: 1, viewport })
+    page = await browser.newPage({ deviceScaleFactor: 1, viewport })
     return await fn(page)
   } finally {
+    // The page is closed explicitly so a shared browser (whose close() is a no-op) does not accumulate pages.
+    await page?.close().catch(() => {})
     await browser.close()
+  }
+}
+
+/**
+ * One browser for many renders. `factory` launches lazily on first use (so a run that never draws
+ * launches nothing), every later call reuses that browser, and the `close()` of the browsers it hands
+ * out does nothing; call `closeAll()` once, in a finally, to really close it.
+ */
+export function sharedBrowser(base?: BrowserFactory): { factory: BrowserFactory; closeAll: () => Promise<void> } {
+  let launching: Promise<import('playwright-core').Browser> | undefined
+  const launch = (): Promise<import('playwright-core').Browser> => {
+    launching ??= (async () => (base ?? (await findBrowserFactory()))())()
+    // A failed launch is not cached: the next call may try again.
+    launching.catch(() => {
+      launching = undefined
+    })
+    return launching
+  }
+  const factory: BrowserFactory = async () => {
+    const real = await launch()
+    return new Proxy(real, {
+      get(target, prop) {
+        if (prop === 'close') return async () => {}
+        const v = Reflect.get(target, prop, target)
+        return typeof v === 'function' ? v.bind(target) : v
+      },
+    })
+  }
+  return {
+    factory,
+    closeAll: async () => {
+      const l = launching
+      launching = undefined
+      if (l) await (await l.catch(() => undefined))?.close().catch(() => {})
+    },
   }
 }
 
@@ -300,11 +338,17 @@ export async function overlaySheetsFor(
 ): Promise<Array<{ platform: OverlayPlatform; file: string; bytes: number }>> {
   await mkdir(outDir, { recursive: true })
   const results: Array<{ platform: OverlayPlatform; file: string; bytes: number }> = []
-  for (const platform of platforms) {
-    const { data } = await composeOverlaySheet(frames, platform, opts)
-    const file = join(outDir, `${baseName}-ui-${platform}.jpg`)
-    await writeFile(file, data)
-    results.push({ platform, file, bytes: data.length })
+  // One browser for every platform's sheet (unless the caller already shares one).
+  const shared = sharedBrowser(opts?.browser)
+  try {
+    for (const platform of platforms) {
+      const { data } = await composeOverlaySheet(frames, platform, { ...opts, browser: shared.factory })
+      const file = join(outDir, `${baseName}-ui-${platform}.jpg`)
+      await writeFile(file, data)
+      results.push({ platform, file, bytes: data.length })
+    }
+  } finally {
+    await shared.closeAll()
   }
   return results
 }

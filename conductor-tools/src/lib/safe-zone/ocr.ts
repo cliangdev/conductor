@@ -32,7 +32,8 @@ export interface OcrEngine {
 
 /** Thrown when the OCR engine cannot load or run. */
 export class OcrUnavailable extends Error {
-  constructor(reason: string) {
+  /** `engineDown`: the engine itself could not start (so no later image will read either). */
+  constructor(reason: string, readonly engineDown = false) {
     super(reason)
     this.name = 'OcrUnavailable'
   }
@@ -73,7 +74,7 @@ async function getWorker(): Promise<TesseractWorker> {
       await worker.setParameters({ tessedit_pageseg_mode: PSM?.SPARSE_TEXT ?? '11', user_defined_dpi: '300' })
       return worker
     } catch (e) {
-      throw new OcrUnavailable(`OCR engine failed to load: ${(e as Error).message}`)
+      throw new OcrUnavailable(`OCR engine failed to load: ${(e as Error).message}`, true)
     }
   })()
   workerPromise.catch(() => { workerPromise = undefined })

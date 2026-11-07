@@ -15,6 +15,7 @@ vi.mock('../mcp/api.js', () => ({
 }))
 vi.mock('../lib/creative-render.js', () => ({ renderCreative: vi.fn(), renderDraft: vi.fn(), renderViaApi: vi.fn() }))
 vi.mock('../lib/poster-sheet.js', () => ({ composePosterSheet: vi.fn() }))
+vi.mock('../lib/safe-zone/frames.js', async (orig) => ({ ...(await orig<typeof import('../lib/safe-zone/frames.js')>()), sampleVideoFrames: vi.fn() }))
 vi.mock('../lib/media-probe.js', () => ({ probeMedia: vi.fn(), extractPoster: vi.fn() }))
 vi.mock('../mcp/tools/creatives.js', () => ({
   createCreative: vi.fn(),
@@ -27,9 +28,10 @@ import { apiPost } from '../mcp/api.js'
 import { renderDraft } from '../lib/creative-render.js'
 import { composePosterSheet } from '../lib/poster-sheet.js'
 import { probeMedia } from '../lib/media-probe.js'
+import { sampleVideoFrames } from '../lib/safe-zone/frames.js'
 import { createCreative, uploadCreativeMedia } from '../mcp/tools/creatives.js'
 import { previewCreativeDraft, commitCreativeDraft, pruneDrafts } from '../mcp/tools/creative-drafts.js'
-import { clipOverlayFrames, type OverlayWriter } from '../mcp/tools/safe-zone-pixels.js'
+import { checkSavedCreativePixels, clipOverlayFrames, type OverlayWriter } from '../mcp/tools/safe-zone-pixels.js'
 
 const config: Config = { apiKey: 'k', projectId: 'proj-1', projectName: 'P', email: 'e@x.test', apiUrl: 'https://api.test' }
 const mocked = <T>(fn: T) => fn as unknown as ReturnType<typeof vi.fn>
@@ -383,5 +385,48 @@ describe('STILL previews', () => {
     })
     const result = await previewCreativeDraft({ headline: 'H', photoPath: photo }, config, { projectRoot: root, overlay: fakeOverlay() })
     expect(result.ok && result.overlaySheets).toBeUndefined()
+  })
+})
+
+describe('clip duration and overlay folders', () => {
+  it('passes the probed duration to the frame sampler', async () => {
+    mocked(probeMedia).mockResolvedValue({ kind: 'VIDEO', width: 1080, height: 1920, durationSeconds: 8, hasAudio: true })
+    mocked(sampleVideoFrames).mockResolvedValue([{ atSeconds: 0.5, png: fakePng(1080, 1920), isCut: false }])
+    const clip = path.join(root, 'clip.mp4')
+    fs.writeFileSync(clip, 'mp4')
+    await previewCreativeDraft({ kind: 'CLIP', clipPath: clip }, config, { projectRoot: root, ocrEngine: fakeEngine([]), overlay: fakeOverlay() })
+    expect(sampleVideoFrames).toHaveBeenCalledWith(clip, { durationSeconds: 8 })
+  })
+
+  const savedCarousel = { kind: 'CAROUSEL' as const, audio: null }
+  const render = { id: 'r', state: 'SUCCEEDED', frames: [{ placementKey: '9x16', sequenceIndex: 0, url: 'https://x.test/a.png', contentType: 'image/png' }] }
+  const fetchImpl = (async () => new Response(fakePng(1080, 1920))) as unknown as typeof fetch
+
+  it('removes the folder it made when no overlay was written, and keeps it when sheets point into it', async () => {
+    let dirNone = ''
+    const none: OverlayWriter = async (_f, _p, outDir) => {
+      dirNone = outDir
+      return []
+    }
+    await checkSavedCreativePixels(savedCarousel, render, { ocrEngine: fakeEngine([]), fetchImpl, writeOverlay: true, uiOverlay: 'instagram', overlay: none })
+    expect(dirNone).not.toBe('')
+    expect(fs.existsSync(dirNone)).toBe(false)
+
+    const out = await checkSavedCreativePixels(savedCarousel, render, { ocrEngine: fakeEngine([]), fetchImpl, writeOverlay: true, uiOverlay: 'instagram', overlay: fakeOverlay() })
+    const sheets = out.result!.overlaySheets
+    expect(sheets.length).toBeGreaterThan(0)
+    for (const s of sheets) expect(fs.existsSync(s.file)).toBe(true)
+    for (const s of sheets) fs.rmSync(path.dirname(s.file), { recursive: true, force: true })
+  })
+
+  it('reuses one folder per render, so repeated previews do not pile up', async () => {
+    const r = { ...render, id: `reuse-${process.pid}` }
+    const first = await checkSavedCreativePixels(savedCarousel, r, { ocrEngine: fakeEngine([]), fetchImpl, writeOverlay: true, uiOverlay: 'instagram', overlay: fakeOverlay() })
+    const second = await checkSavedCreativePixels(savedCarousel, r, { ocrEngine: fakeEngine([]), fetchImpl, writeOverlay: true, uiOverlay: 'instagram', overlay: fakeOverlay() })
+    const dir1 = path.dirname(first.result!.overlaySheets[0]!.file)
+    const dir2 = path.dirname(second.result!.overlaySheets[0]!.file)
+    expect(dir2).toBe(dir1)
+    expect(fs.readdirSync(dir2).length).toBe(second.result!.overlaySheets.length)
+    fs.rmSync(dir2, { recursive: true, force: true })
   })
 })
