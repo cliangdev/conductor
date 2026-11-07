@@ -77,6 +77,14 @@ beforeEach(() => {
 afterEach(() => fs.rmSync(root, { recursive: true, force: true }))
 
 describe('prepareSpecForCreative', () => {
+  it('stamps the current layout version, and keeps one the spec already names', () => {
+    const r = prepareSpecForCreative({ id: 'a', slides: [{ type: 'photo', bg: 'img/a.png' }] }, '/work/specs')
+    expect(r.ok && r.spec.layout).toBe(2)
+    const old = prepareSpecForCreative({ id: 'a', layout: 1, slides: [{ type: 'photo', bg: 'img/a.png' }] }, '/work/specs')
+    expect(old.ok && old.spec.layout).toBe(1)
+    expect(prepareSpecForCreative({ id: 'a', layout: 'x', slides: [{ type: 'photo', bg: 'img/a.png' }] }, '/work/specs').ok).toBe(false)
+  })
+
   it('resolves relative images against the spec folder and splits off resolvedStyle', () => {
     const r = prepareSpecForCreative({ id: 'a', slides: [{ type: 'photo', bg: 'img/a.png' }], resolvedStyle: { boxBg: '#fff' } }, '/work/specs')
     expect(r).toMatchObject({ ok: true, resolvedStyle: { boxBg: '#fff' } })

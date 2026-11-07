@@ -728,7 +728,8 @@ describe('CAROUSEL drafts with a music track', () => {
     if (!result.ok) return
     const body = mocked(apiPost).mock.calls[0]![1] as Record<string, any>
     expect(body.audio).toEqual({ source: 'track', trackId: 'local:audio' })
-    expect(body.slideshow).toEqual({ zoom: false })
+    // No slideDurations were passed, so the tool timed the slides (no text: 3.5 s first, 3.0 s rest).
+    expect(body.slideshow).toEqual({ zoom: false, slideDurations: [3.5, 3] })
     expect(body.previewOnly).toBe(false)
     expect(mocked(renderDraft).mock.calls[0]![0]).toMatchObject({ spec: slideshowSpec, localFiles: { audio: song } })
     expect(result.slideshowVideoPath).toBe(path.join(result.draftDir, 'slideshow-9x16.mp4'))

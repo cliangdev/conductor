@@ -105,13 +105,13 @@ async function main() {
         return true;
       };
       // A motion frame is captured at 1x (video), so the photo only needs to cover the placement itself.
-      window.__assertBoard = async () => runAssertions(board, placement, spec.brand || {}, { outputScale: 1, expect });
+      window.__assertBoard = async () => runAssertions(board, placement, spec.brand || {}, { outputScale: 1, expect, safeTopSeverity: spec.safeTopSeverity });
 
       finish({ ok: true, width: placement.w, height: placement.h });
       return;
     }
 
-    const { errors, warnings, checks, width, height } = await runAssertions(board, placement, spec.brand || {}, { expect });
+    const { errors, warnings, checks, width, height } = await runAssertions(board, placement, spec.brand || {}, { expect, safeTopSeverity: spec.safeTopSeverity });
     finish({ ok: errors.length === 0, errors, warnings, checks, width, height });
   } catch (err) {
     finish({ ok: false, error: String((err && err.message) || err) });

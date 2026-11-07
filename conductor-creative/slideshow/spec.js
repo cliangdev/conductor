@@ -9,6 +9,10 @@ export const SLIDE_TYPES = ['photo', 'screen', 'notes', 'grid', 'stack', 'tier',
 export const TEXT_STYLES = ['box', 'dark', 'stroke', 'sub'];
 export const SLIDE_RATIOS = ['9x16', '4x5'];
 export const MAX_SLIDES = 35;
+/** The current layout generation: tier/week/receipt default below the 290 px top band, text clear of the 162 px
+ * right band. A spec stored without it was composed before, and is re-rendered with the old layout. */
+export const SLIDESHOW_LAYOUT = 2;
+export const isLegacyLayout = (spec) => !(typeof spec?.layout === 'number' && spec.layout >= SLIDESHOW_LAYOUT);
 export class SlideshowSpecError extends Error {
     constructor(errors) {
         super(`Invalid slideshow spec:\n${errors.map((e) => `  - ${e}`).join('\n')}`);
@@ -31,6 +35,8 @@ export function validateSlideshowSpec(spec) {
     }
     if (spec.style !== undefined && spec.style !== null)
         errors.push(...validateSlideshowStyle(spec.style, 'spec.style'));
+    if (spec.layout !== undefined && !(Number.isInteger(spec.layout) && spec.layout >= 1))
+        errors.push('layout must be a positive whole number when given');
     if (!Array.isArray(spec.slides) || spec.slides.length === 0) {
         errors.push('slides must be a non-empty array');
         return errors;

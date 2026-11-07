@@ -12073,7 +12073,7 @@ components:
           nullable: true
           description: >-
             Seconds each 9x16 slide is shown, one entry per slide of the 9x16 list (the default list when
-            there is none), each 1-10. Defaults to 3.0 s for the first slide and 2.5 s for the rest.
+            there is none), each 1-10. Defaults to 3.5 s for the first slide and 3.0 s for the rest.
           items:
             type: number
         zoom:
@@ -12300,7 +12300,7 @@ components:
           allOf:
             - $ref: "#/components/schemas/CreativeSlideshow"
           nullable: true
-          description: The slideshow settings of a CAROUSEL creative; `zoom` is always set, `slideDurations` is absent when the defaults (3.0 s, then 2.5 s per slide) apply.
+          description: The slideshow settings of a CAROUSEL creative; `zoom` is always set, `slideDurations` is absent when the defaults (3.5 s, then 3.0 s per slide) apply.
         renderedVideo:
           allOf:
             - $ref: "#/components/schemas/CreativeRenderedVideo"

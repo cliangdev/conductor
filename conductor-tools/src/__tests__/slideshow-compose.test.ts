@@ -100,6 +100,14 @@ describe.skipIf(!hasBrowser)('composeSlideshow (real browser)', () => {
     expect(hits.every((c) => c.ratio === '9x16' && c.severity === 'error')).toBe(true)
   }, 60000)
 
+  it('fails safeZone for a text box starting above y=290 (y=14 is 269 px) and passes y=16', async () => {
+    const high = await composeSlideshow(spec([{ bg: 'photo.png', texts: [{ t: 'too high', y: 14 }] }]), join(tmp, 'out2b'), { specDir: tmp, ratios: ['9x16'] })
+    expect(high.passed).toBe(false)
+    expect(high.checks.some((c) => c.rule === 'safeZone' && c.severity === 'error' && /top 290px/.test(c.message))).toBe(true)
+    const ok = await composeSlideshow(spec([{ bg: 'photo.png', texts: [{ t: 'clear', y: 16 }] }]), join(tmp, 'out2c'), { specDir: tmp, ratios: ['9x16'] })
+    expect(ok.checks.filter((c) => c.rule === 'safeZone')).toEqual([])
+  }, 60000)
+
   it('reports a missing image and small text, and refuses web URLs', async () => {
     const res = await composeSlideshow(
       { id: 'bad', slides: [{ bg: 'missing.png', texts: [{ t: 'tiny', y: 40, fs: 30 }, { t: 'one two three four five six seven eight nine', y: 50 }] }] },

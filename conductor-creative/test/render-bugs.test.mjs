@@ -10,6 +10,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { parseHTML } from 'linkedom';
 import { chromiumReady, startBrowser, PHOTOS, BRAND, LOGO } from './browser-fixture.mjs';
 import { backgroundLayerRect, backgroundMotionState } from '../motion.js';
@@ -458,4 +459,178 @@ test('D: every 4:5 carousel card whose body is dropped warns, with its index, th
     assert.match(c.message, /stacked.*4x5/);
   }
   assert.deepEqual(calls.checks.filter((c) => c.severity === 'error'), []);
+});
+
+/* ── D: no built-in layout puts headline, body or CTA in the top safe zone (y < 290) ───────────── */
+
+test('D: every layout clears the 9x16 and story top safe zone, short and long copy alike', async (t) => {
+  if (skip(t)) return;
+  const copies = [
+    { headline: 'Ready *now*' },
+    { headline: 'A much longer headline that wraps over several lines on a tall board *today*', body: 'Supporting copy that runs to a second line so the stack grows taller.', cta: 'Start free' },
+  ];
+  for (const layout of ['stacked', 'bleed', 'card', 'split']) {
+    for (const key of ['9x16', 'story']) {
+      for (const copy of copies) {
+        const checks = await checksAfter({ layout, photoUrl: PHOTOS.portrait, ...copy }, BRAND, '', key);
+        const hits = checks.filter((c) => c.rule === 'safeZone' && c.severity === 'error' && /top safe zone/.test(c.message));
+        assert.deepEqual(hits, [], `${layout} ${key} ${copy.headline.slice(0, 12)}`);
+      }
+    }
+  }
+});
+
+test('E: a default bleed 9:16 / story render with no logo (invisible lockup spacer) does not warn about the spacer', async (t) => {
+  if (skip(t)) return;
+  for (const placementKey of ['9x16', 'story']) {
+    const page = await fx.open('frame.html', { creative: { layout: 'bleed', headline: 'Ready *now*', photoUrl: PHOTOS.landscape }, brand: {}, placementKey });
+    const result = await page.evaluate(() => window.__RENDER_RESULT).finally(() => page.close());
+    assert.ok(result.checks, JSON.stringify(result));
+    assert.equal(result.checks.some((c) => c.rule === 'safeZone' && /cc-lockup/.test(c.message)), false, `${placementKey}: ${JSON.stringify(result.checks)}`);
+  }
+});
+
+test('E: copy in the top zone is an error for a draft preview (safeTopSeverity error) and only a warning otherwise', async (t) => {
+  if (skip(t)) return;
+  const run = async (safeTopSeverity) => {
+    const page = await fx.open('frame.html', { creative: { layout: 'bleed', headline: 'Ready *now*', photoUrl: PHOTOS.landscape }, brand: BRAND, placementKey: '9x16', safeTopSeverity });
+    try {
+      return await page.evaluate(async (sev) => {
+        const board = document.querySelector('.cc-board');
+        const h = board.querySelector('.cc-headline');
+        h.style.position = 'absolute';
+        h.style.top = '40px';
+        const { runAssertions } = await import('/assertions.js');
+        const { placements } = await import('/placements.js');
+        return (await runAssertions(board, placements['9x16'], window.__RENDER_SPEC__.brand, { safeTopSeverity: sev })).checks
+          .filter((c) => c.rule === 'safeZone' && /cc-headline/.test(c.message));
+      }, safeTopSeverity);
+    } finally {
+      await page.close();
+    }
+  };
+  assert.deepEqual((await run('error')).map((c) => c.severity), ['error']);
+  assert.deepEqual((await run(undefined)).map((c) => c.severity), ['warning']);
+});
+
+test('E: no default 9:16 / story layout flags the logo lockup in the top zone', async (t) => {
+  if (skip(t)) return;
+  for (const layout of ['stacked', 'bleed', 'card', 'split']) {
+    for (const placementKey of ['9x16', 'story']) {
+      const page = await fx.open('frame.html', { creative: { layout, headline: 'Ready *now*', photoUrl: PHOTOS.portrait }, brand: BRAND, placementKey, safeTopSeverity: 'error' });
+      const result = await page.evaluate(() => window.__RENDER_RESULT).finally(() => page.close());
+      assert.equal(result.checks.some((c) => c.rule === 'safeZone' && /cc-lockup/.test(c.message)), false, `${layout} ${placementKey}`);
+    }
+  }
+});
+
+/* ── F: one fit everywhere — what is checked is what is shown and what ships ─────────────────────── */
+
+const PLACEMENTS_JSON = JSON.parse(readFileSync(new URL('../placements.json', import.meta.url), 'utf8'));
+const withTop = (top) => {
+  const reg = structuredClone(PLACEMENTS_JSON);
+  reg['9x16'].safe.top = top;
+  return reg;
+};
+const LONG = 'A much longer headline that wraps over several lines on a tall board *today* and keeps on going for a while';
+
+/* The fitted headline size (px) on frame.html (draft check: severity error; saved render: none) and sheet.html. */
+async function fittedSizes(creative, placements, after) {
+  const read = () => {
+    const b = document.querySelector('.cc-board');
+    return Number.parseFloat(b.style.getPropertyValue('--cc-h-size'));
+  };
+  const sizes = {};
+  for (const [name, pageName, extra] of [
+    ['draft', 'frame.html', { safeTopSeverity: 'error' }],
+    ['saved', 'frame.html', {}],
+    ['sheet', 'sheet.html', { placementKeys: ['9x16'] }],
+  ]) {
+    const page = await fx.open(pageName, { creative, brand: BRAND, placementKey: pageName === 'sheet.html' ? 'sheet' : '9x16', placements, ...extra });
+    try {
+      sizes[name] = await page.evaluate(read);
+      if (after) sizes[name + 'Top'] = await page.evaluate(after);
+    } finally {
+      await page.close();
+    }
+  }
+  return sizes;
+}
+
+test('F: a bottom-anchored 9:16 layout fits the same headline size, clearing the top zone, in the draft check, the sheet and the saved render', async (t) => {
+  if (skip(t)) return;
+  const creative = { layout: 'bleed', headline: LONG, photoUrl: PHOTOS.portrait };
+  const offTop = await fittedSizes(creative, withTop(0));
+  // A zone deeper than the large size reaches: only a smaller headline (starting lower) clears it.
+  const sizes = await fittedSizes(creative, withTop(640), () => {
+    const b = document.querySelector('.cc-board');
+    const k = b.getBoundingClientRect().height / b.offsetHeight; // the sheet scales the board
+    return (b.querySelector('.cc-headline').getBoundingClientRect().top - b.getBoundingClientRect().top) / k;
+  });
+  assert.equal(sizes.draft, sizes.saved);
+  assert.equal(sizes.draft, sizes.sheet);
+  assert.ok(sizes.draft < offTop.draft, `shrank below the old size ${offTop.draft}: ${sizes.draft}`);
+  for (const k of ['draftTop', 'savedTop', 'sheetTop']) assert.ok(sizes[k] >= 640 - 1.5, `${k} ${sizes[k]} clears 640`);
+});
+
+test('F: when no size clears the top zone the fit is exactly the old one (no shrink to the minimum for nothing)', async (t) => {
+  if (skip(t)) return;
+  const creative = { layout: 'bleed', headline: LONG, photoUrl: PHOTOS.portrait };
+  const old = await fittedSizes(creative, withTop(0));
+  const impossible = await fittedSizes(creative, withTop(5000));
+  assert.equal(old.draft, old.saved);
+  assert.equal(impossible.draft, old.draft);
+  assert.equal(impossible.saved, old.saved);
+  assert.equal(impossible.sheet, old.sheet);
+  assert.ok(old.draft > PLACEMENTS_JSON['9x16'].fit.min);
+});
+
+test('F: a top-anchored headline that shrinking cannot move keeps the old size', async (t) => {
+  if (skip(t)) return;
+  const page = await fx.open('frame.html', { creative: { layout: 'bleed', headline: LONG, photoUrl: PHOTOS.portrait }, brand: BRAND, placementKey: '9x16' });
+  try {
+    const [oldSize, newSize] = await page.evaluate(async () => {
+      const { fitBoard } = await import('/render.js');
+      const { placements } = await import('/placements.js');
+      const b = document.querySelector('.cc-board');
+      const h = b.querySelector('.cc-headline');
+      h.style.position = 'absolute';
+      h.style.top = '100px';
+      h.style.left = '60px';
+      h.style.right = '60px';
+      const read = () => Number.parseFloat(b.style.getPropertyValue('--cc-h-size'));
+      const zone = b.dataset.safeTop;
+      b.dataset.safeTop = '0';
+      fitBoard(b, placements);
+      const o = read();
+      b.dataset.safeTop = zone;
+      fitBoard(b, placements);
+      return [o, read()];
+    });
+    assert.equal(newSize, oldSize);
+  } finally {
+    await page.close();
+  }
+});
+
+test('F: placements with no top zone (4:5, 1:1) fit as before', async (t) => {
+  if (skip(t)) return;
+  for (const placementKey of ['4x5', '1x1']) {
+    const page = await fx.open('frame.html', { creative: { layout: 'bleed', headline: LONG, photoUrl: PHOTOS.portrait }, brand: BRAND, placementKey });
+    try {
+      const [a, b] = await page.evaluate(async () => {
+        const { fitBoard } = await import('/render.js');
+        const { placements } = await import('/placements.js');
+        const bd = document.querySelector('.cc-board');
+        const read = () => Number.parseFloat(bd.style.getPropertyValue('--cc-h-size'));
+        const first = read();
+        bd.dataset.safeTop = '0';
+        fitBoard(bd, placements);
+        return [first, read()];
+      });
+      assert.equal(a, b, placementKey);
+    } finally {
+      await page.close();
+    }
+  }
 });

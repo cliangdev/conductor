@@ -109,6 +109,8 @@ import {
   commitCreativeDraft,
   type PreviewCreativeDraftParams,
 } from './tools/creative-drafts.js'
+import type { UiOverlay } from './tools/safe-zone-pixels.js'
+import { closeOcr } from '../lib/safe-zone/ocr.js'
 import { resolveCreativeId } from '../lib/creative-id.js'
 import { deleteMedia, deleteCreative } from './tools/creative-delete.js'
 
@@ -193,7 +195,7 @@ const CREATIVE_FIELD_PROPERTIES = {
   slideAltText: {
     type: 'array',
     items: { type: 'string' },
-    description: 'CAROUSEL only: alt text per slide, index-aligned (entry N describes slide N in every placement).',
+    description: 'CAROUSEL only: alt text per slide, index-aligned (entry N describes slide N in every placement). Convention: describe the picture, then `Text: "line one" / "line two"` for the words printed on the slide (or `Text: none`). That Text part times the slides of a slideshow video.',
   },
   motion: {
     type: 'object',
@@ -230,7 +232,7 @@ const CREATIVE_FIELD_PROPERTIES = {
   },
   slideshow: {
     type: 'object',
-    description: 'CAROUSEL only: how the 9x16 slides become a video when audio.source is track. slideDurations: seconds per 9x16 slide, one entry per slide, each 1-10 (default 3 for the first, 2.5 for the rest). zoom: slow push-in on each slide, default true. Slides cross-fade for 0.5 s.',
+    description: 'CAROUSEL only: how the 9x16 slides become a video when audio.source is track. slideDurations: seconds per 9x16 slide, one entry per slide, each 1-10. Omitted: the tool times each slide from its text (clamp(2.4 + 0.14 x words, 3.0, 4.8) s, +0.5 s on the first slide, +0.5 s on an app screen or chart), and 3.5 s first / 3.0 s rest when there is no text. zoom: slow push-in on each slide, default true. Slides cross-fade for 0.5 s, out of each slide\'s time.',
     properties: {
       slideDurations: { type: 'array', items: { type: 'number' } },
       zoom: { type: 'boolean' },
@@ -1725,7 +1727,7 @@ export const TOOLS = [
   },
   {
     name: 'render_creative',
-    description: 'Render a Creative to upload-ready frames — one JPEG per placement for STILL (Playwright on this machine), or one MP4 with a poster per placement for MOTION (ffmpeg-encoded on this machine) — or a small contact sheet with previewOnly. Runs synchronously: a STILL placement takes seconds; a MOTION placement takes roughly 20s per 8s of video, so a multi-placement MOTION render can take a couple of minutes. CLIP and CAROUSEL render on the server in one call (previewOnly is refused), unless the Creative has audio that needs encoding: a CAROUSEL with a track (adds one 9x16 slideshow MP4) or a CLIP with track, mix or none (re-muxed on this machine, with ffmpeg). Returns the render id, state, frame URLs (MOTION frames also carry durationSeconds/hasAudio/posterUrl) and any warnings. Call preview_creative to actually look at the result.',
+    description: 'Render a Creative to upload-ready frames — one JPEG per placement for STILL (Playwright on this machine), or one MP4 with a poster per placement for MOTION (ffmpeg-encoded on this machine) — or a small contact sheet with previewOnly. Runs synchronously: a STILL placement takes seconds; a MOTION placement takes roughly 20s per 8s of video, so a multi-placement MOTION render can take a couple of minutes. CLIP and CAROUSEL render on the server in one call (previewOnly is refused), unless the Creative has audio that needs encoding: a CAROUSEL with a track (adds one 9x16 slideshow MP4) or a CLIP with track, mix or none (re-muxed on this machine, with ffmpeg). Returns the render id, state, frame URLs (MOTION frames also carry durationSeconds/hasAudio/posterUrl) and any warnings. For a CAROUSEL or CLIP with a 9x16 placement it also reports checks for text under the platform UI (reported only, never blocking). Call preview_creative to actually look at the result.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1739,11 +1741,12 @@ export const TOOLS = [
   },
   {
     name: 'preview_creative',
-    description: "Look at a Creative: returns its latest contact sheet as an image (rendering a fresh previewOnly one first if none exists yet). For MOTION this is three key moments across the animation, not the finished video, with a text note giving the duration and — once a full render of the current version exists — its rendered MP4 URLs. Use this to judge the actual artwork — does the headline read at a glance, is the copy sitting on the subject's face — not just the data. If the image is too large to inline it returns the URL instead, with a note saying so.",
+    description: "Look at a Creative: returns its latest contact sheet as an image (rendering a fresh previewOnly one first if none exists yet). For MOTION this is three key moments across the animation, not the finished video, with a text note giving the duration and — once a full render of the current version exists — its rendered MP4 URLs. Use this to judge the actual artwork — does the headline read at a glance, is the copy sitting on the subject's face — not just the data. If the image is too large to inline it returns the URL instead, with a note saying so. For a saved CAROUSEL or CLIP with a 9x16 placement it also downloads the 9x16 slides or video, checks them for text under the platform UI (checks, passed) and writes the Instagram/TikTok UI overlay sheets to disk (overlaySheets).",
     inputSchema: {
       type: 'object',
       properties: {
         creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
+        uiOverlay: { type: 'string', enum: ['instagram', 'tiktok', 'both', 'none'], description: 'Which platform UI sheets to write for a CAROUSEL or CLIP (default both).' },
       },
       required: ['creativeId'],
     },
@@ -1804,7 +1807,7 @@ export const TOOLS = [
   },
   {
     name: 'preview_creative_draft',
-    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. For kind CAROUSEL pass slidePaths instead of a photo (the spec.json compose_slideshow wrote beside them is kept with the draft, or pass slideshowSpecPath): it returns one contact sheet per placement (slides in order), readiness and per-slide aspect violations; with a track (audio.trackId or audioPath) it also renders the slideshow MP4 on this machine and returns its path as slideshowVideoPath. Violations come back as a structured error and nothing is rendered.",
+    description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. For kind CAROUSEL pass slidePaths instead of a photo (the spec.json compose_slideshow wrote beside them is kept with the draft, or pass slideshowSpecPath): it returns one contact sheet per placement (slides in order), readiness and per-slide aspect violations; with a track (audio.trackId or audioPath) it also renders the slideshow MP4 on this machine and returns its path as slideshowVideoPath, timing each slide from its text when slideDurations is omitted (returns slideDurations, slideshowDurationSeconds and pacing; say the total length when showing it). Finished 9:16 slides (CAROUSEL) and videos (kind CLIP, via clipPath or clipPaths: nothing is sent to Conductor, no commit; then upload_creative_media + create_creative) are read for text under the platform UI: checks with rule safeZoneText (top y<290 is an error on slide 1 and in the first 3 s) or safeZoneUnchecked (could not look); passed false means fix the files and re-preview BEFORE showing them. The image shown for them is the Instagram UI drawn over the slides or the first seconds and each cut; overlaySheets lists the Instagram and TikTok sheets on disk (uiOverlay: instagram | tiktok | both (default) | none). Violations come back as a structured error and nothing is rendered.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -1824,7 +1827,9 @@ export const TOOLS = [
           },
         },
         photoPath: { type: 'string', description: 'A photo on this machine (optional; use instead of photoId)' },
-        clipPath: { type: 'string', description: 'MOTION only: a video clip on this machine used as the background (optional; use instead of motion.background.clipMediaId)' },
+        clipPath: { type: 'string', description: 'MOTION: a video clip on this machine used as the background (optional; use instead of motion.background.clipMediaId). kind CLIP: the finished video to check (9:16 unless its aspect says otherwise).' },
+        clipPaths: { type: 'object', additionalProperties: { type: 'string' }, description: 'kind CLIP only: finished videos on this machine per placement, e.g. {"9x16": "/clips/a.mp4"}.' },
+        uiOverlay: { type: 'string', enum: ['instagram', 'tiktok', 'both', 'none'], description: 'Platform UI drawn over 9:16 frames (default both, written to disk; the Instagram sheet is the image shown for a CAROUSEL or CLIP).' },
         audioPath: { type: 'string', description: 'MOTION or CAROUSEL: an audio file on this machine used as the music track (optional; use instead of audio.trackId). For a CAROUSEL, set audio.source to track too. Committing uploads it into the library — record its source and licence.' },
         slidePaths: {
           type: 'object',
@@ -1895,11 +1900,12 @@ export const TOOLS = [
   },
   {
     name: 'attach_creative_to_post',
-    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. A CAROUSEL goes to Instagram feed (4x5), Facebook feed (1x1, else 4x5) and TikTok (9x16); Reels, Stories and YouTube cannot take its photos. A CAROUSEL with a track also has a slideshow video: per target, carouselAs (photos | video) in publish options picks which is sent (default video for TikTok and YouTube, photos for Instagram and Facebook feed). Uses the latest SUCCEEDED, non-preview render unless renderId is given (a CLIP or CAROUSEL with none is rendered first). A DRAFT Creative that passes readiness becomes READY on attach; the result's creativeState is its state afterwards and stateNote, when set, says why it stayed DRAFT. Call get_post_status (postId) to verify.",
+    description: "Attach a Creative's rendered frames to a Post as its media — placement to platform (9x16 to TikTok/Instagram Reels, 4x5 to Instagram feed, 1x1 to Facebook, story to story targets; sequence frames in order) — for every destination that has not set its own custom media. A CAROUSEL goes to Instagram feed (4x5), Facebook feed (1x1, else 4x5) and TikTok (9x16); Reels, Stories and YouTube cannot take its photos. A CAROUSEL with a track also has a slideshow video: per target, carouselAs (photos | video) in publish options picks which is sent (default video for TikTok and YouTube, photos for Instagram and Facebook feed). Uses the latest SUCCEEDED, non-preview render unless renderId is given (a CLIP or CAROUSEL with none is rendered first). A DRAFT Creative that passes readiness becomes READY on attach; the result's creativeState is its state afterwards and stateNote, when set, says why it stayed DRAFT. Call get_post_status (postId) to verify. Pre-flight for a CAROUSEL or CLIP with a 9x16 placement: the rendered pixels are read for text under the platform UI, and an error (top y<290 on slide 1 or in the first 3 s) is refused with code SAFE_ZONE_TEXT and the checks; fix the media, or pass ignoreSafeZone: true only after the person accepts it. Warnings are returned as safeZoneChecks.",
     inputSchema: {
       type: 'object',
       properties: {
         creativeId: { type: 'string', description: 'Creative id, or its display id such as 12a' },
+        ignoreSafeZone: { type: 'boolean', description: 'Attach despite a SAFE_ZONE_TEXT refusal. Only after the person has seen the checks and accepts them.' },
         postId: { type: 'string', description: "The Post's Work Item id — same value get_post_status takes as postId" },
         workItemId: { type: 'string', description: 'Deprecated alias for postId' },
         renderId: { type: 'string', description: 'A specific render to attach (optional — defaults to the latest SUCCEEDED render)' },
@@ -2956,13 +2962,18 @@ export async function runMcpServer(): Promise<void> {
           )
         }
         case 'preview_creative': {
-          const result = await previewCreative({ creativeId: params['creativeId'] as string }, config)
+          const result = await previewCreative(
+            { creativeId: params['creativeId'] as string, uiOverlay: params['uiOverlay'] as UiOverlay | undefined },
+            config
+          )
           if (result.image) {
             return imageResponse(result.image, {
               renderId: result.renderId,
               state: result.state,
               url: result.url,
               note: result.note,
+              ...(result.checks ? { checks: result.checks, passed: result.passed } : {}),
+              ...(result.overlaySheets ? { overlaySheets: result.overlaySheets } : {}),
             })
           }
           return successResponse(result)
@@ -3069,17 +3080,17 @@ export async function runMcpServer(): Promise<void> {
           return successResponse(await updateCreativeSlideText(params as unknown as UpdateCreativeSlideTextParams, config))
         }
         case 'attach_creative_to_post': {
-          return successResponse(
-            await attachCreativeToPost(
-              {
-                creativeId: params['creativeId'] as string,
-                postId: params['postId'] as string | undefined,
-                workItemId: params['workItemId'] as string | undefined,
-                renderId: params['renderId'] as string | undefined,
-              },
-              config
-            )
+          const attached = await attachCreativeToPost(
+            {
+              creativeId: params['creativeId'] as string,
+              postId: params['postId'] as string | undefined,
+              workItemId: params['workItemId'] as string | undefined,
+              renderId: params['renderId'] as string | undefined,
+              ignoreSafeZone: params['ignoreSafeZone'] as boolean | undefined,
+            },
+            config
           )
+          return attached['code'] === 'SAFE_ZONE_TEXT' ? errorResponse(attached as { error: string }) : successResponse(attached)
         }
         case 'create_experiment': {
           return successResponse(
@@ -3116,6 +3127,11 @@ export async function runMcpServer(): Promise<void> {
     }
   })
 
+  // The OCR worker (safe-zone checks) stays warm for the session and is stopped when the client disconnects,
+  // so the process can exit.
+  server.onclose = () => {
+    void closeOcr().catch(() => {})
+  }
   const transport = new StdioServerTransport()
   await server.connect(transport)
 }

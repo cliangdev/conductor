@@ -230,8 +230,8 @@ describe('CreativeEditor — music on a CAROUSEL', () => {
 
     const settings = within(panel).getByTestId('slideshow-settings')
     expect(within(settings).getByRole('switch')).toBeChecked()
-    expect(within(settings).getByLabelText('Slide 1 seconds')).toHaveAttribute('placeholder', '3')
-    expect(within(settings).getByLabelText('Slide 2 seconds')).toHaveAttribute('placeholder', '2.5')
+    expect(within(settings).getByLabelText('Slide 1 seconds')).toHaveAttribute('placeholder', '3.5')
+    expect(within(settings).getByLabelText('Slide 2 seconds')).toHaveAttribute('placeholder', '3')
     expect(within(settings).getAllByRole('spinbutton')).toHaveLength(3)
   })
 
@@ -252,7 +252,7 @@ describe('CreativeEditor — music on a CAROUSEL', () => {
     await waitFor(() => expect(apiPatch).toHaveBeenCalled())
     const body = (apiPatch as Mock).mock.calls[0][1]
     expect(body.audio).toEqual({ source: 'track', trackId: 'trk-1', volume: 1, fadeOutSec: 1 })
-    expect(body.slideshow).toEqual({ zoom: false, slideDurations: [3, 4, 2.5] })
+    expect(body.slideshow).toEqual({ zoom: false, slideDurations: [3.5, 4, 3] })
   })
 
   it('saves "No music" without a trackId and without per-slide durations', async () => {
