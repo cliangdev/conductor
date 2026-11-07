@@ -6,7 +6,9 @@ import com.conductor.entity.PublishLane;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.ConflictException;
 import com.conductor.integration.ActionResult;
+import com.conductor.integration.connector.tiktok.TikTokPublishAction;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.publish.PublishPlatform;
 import com.conductor.service.publish.tasks.PublishTaskArmer;
@@ -32,9 +34,13 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.time.OffsetDateTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -262,6 +268,11 @@ public class PublishOutcomeService {
     @Lazy
     private WorkItemService workItemService;
 
+    /** Read-only here: the retry guard peeks at a failed target's resume checkpoint. Lazy for the same cycle risk. */
+    @Autowired
+    @Lazy
+    private ActionInvocationService actionInvocationService;
+
     public PublishOutcomeService(PublishPlatformRegistry platformRegistry,
                                  PostPublishTargetRepository targetRepository,
                                  AssetService assetService,
@@ -484,6 +495,11 @@ public class PublishOutcomeService {
      * is refused unless the Post is already sitting at its failed or its scheduled status — a Post that a
      * bundle edit has sent back for review must not re-publish under an approval that no longer describes it.
      *
+     * <p>A failed TikTok <em>photo</em> target is skipped while its image links are still live: TikTok may
+     * just be slow to fetch them, and a fresh key would open a second post that publishes the photos twice.
+     * The skipped row stays {@code FAILED} untouched. When every failed target is skipped, the whole retry
+     * is refused with a {@link ConflictException} naming when the links expire.
+     *
      * <p>A Post with no failed targets is a no-op that reports the current state, which makes a double-click
      * harmless rather than an error.
      *
@@ -492,6 +508,7 @@ public class PublishOutcomeService {
      *
      * @throws EntityNotFoundException when the caller is not a member, or the Post is not in the project
      * @throws BusinessException when the Post is not in a status a retry can fire from
+     * @throws ConflictException when every failed target is a TikTok photo post whose links are still live
      */
     @Transactional
     public RetryResult retryFailedTargets(String projectId, String workItemId, User caller) {
@@ -524,8 +541,30 @@ public class PublishOutcomeService {
                     + " that failed to publish, or one still waiting to, can be re-fired.");
         }
 
-        OffsetDateTime now = OffsetDateTime.now();
+        Instant nowInstant = Instant.now();
+        List<PostPublishTarget> retryable = new java.util.ArrayList<>();
+        Instant latestLiveUntil = null;
         for (PostPublishTarget target : failed) {
+            Instant liveUntil = photoLinksLiveUntil(target, nowInstant);
+            if (liveUntil == null) {
+                retryable.add(target);
+            } else if (latestLiveUntil == null || liveUntil.isAfter(latestLiveUntil)) {
+                latestLiveUntil = liveUntil;
+            }
+        }
+        if (retryable.isEmpty()) {
+            throw new ConflictException("TikTok hasn't downloaded this Post's images yet; its image links stay "
+                    + "live until " + DateTimeFormatter.ofPattern("MMM d, HH:mm", Locale.ROOT)
+                            .withZone(ZoneOffset.UTC).format(latestLiveUntil)
+                    + " UTC. Retrying before then could post the photos twice.");
+        }
+        if (retryable.size() < failed.size()) {
+            log.info("Retry on post {} skips {} TikTok photo target(s) whose image links are still live",
+                    post.getId(), failed.size() - retryable.size());
+        }
+
+        OffsetDateTime now = OffsetDateTime.now();
+        for (PostPublishTarget target : retryable) {
             target.setState(PostPublishTargetState.PENDING);
             target.setErrorMessage(null);
             target.setErrorDetail(null);
@@ -541,12 +580,26 @@ public class PublishOutcomeService {
             CycleTimestamps.stamp(statechart, post, fromStatus, scheduledStatus, now);
             workItemRepository.save(post);
             log.info("Post {} moved {} -> {} while {} retried target(s) are in flight",
-                    post.getId(), fromStatus, scheduledStatus, failed.size());
+                    post.getId(), fromStatus, scheduledStatus, retryable.size());
         }
         // The re-fired rows are PENDING again with fresh fire times: give each its timed request, as
         // entering the scheduled status does, rather than leaving them to the sweep.
         publishTaskArmer.armPost(post);
-        return new RetryResult(post, sorted(targetRepository.findAllByWorkItemId(post.getId())), failed.size());
+        return new RetryResult(post, sorted(targetRepository.findAllByWorkItemId(post.getId())), retryable.size());
+    }
+
+    /**
+     * When a failed TikTok photo target's image links expire, if that is still in the future; null when the
+     * target may be retried (not TikTok, no checkpoint, not a photo post, expiry unknown or already past).
+     */
+    private Instant photoLinksLiveUntil(PostPublishTarget target, Instant now) {
+        if (!"tiktok".equals(target.getPlatform()) || target.getIdempotencyKey() == null) {
+            return null;
+        }
+        return actionInvocationService.readCheckpoint(target.getIdempotencyKey())
+                .flatMap(TikTokPublishAction::photoLinksLiveUntil)
+                .filter(now::isBefore)
+                .orElse(null);
     }
 
     /**

@@ -123,6 +123,8 @@ public class TikTokClient {
     public static final String STATUS_SENT_TO_INBOX = "SEND_TO_USER_INBOX";
     /** Publish status TikTok reports when it has given up on the post. */
     public static final String STATUS_FAILED = "FAILED";
+    /** TikTok is still fetching a photo post's images (PULL_FROM_URL). */
+    public static final String STATUS_PROCESSING_DOWNLOAD = "PROCESSING_DOWNLOAD";
 
     /**
      * TikTok error codes that mean "try again later" rather than "this request is wrong". Deliberately a
@@ -265,8 +267,18 @@ public class TikTokClient {
     /** What {@code video/init} hands back: the id the publish is tracked under, and where bytes go. */
     public record UploadSession(String publishId, String uploadUrl) {}
 
-    /** One reading of {@code status/fetch}. */
-    public record PublishStatus(String status, String postId, String shareUrl, String failReason) {
+    /**
+     * One reading of {@code status/fetch}. {@code downloadedBytes}/{@code uploadedBytes} are TikTok's own
+     * progress counters and {@code logId} is its request id (quote it to TikTok support); all three are
+     * nullable because TikTok omits them freely.
+     */
+    public record PublishStatus(String status, String postId, String shareUrl, String failReason,
+                                Long downloadedBytes, Long uploadedBytes, String logId) {
+
+        /** A reading with no progress counters or log id. */
+        public PublishStatus(String status, String postId, String shareUrl, String failReason) {
+            this(status, postId, shareUrl, failReason, null, null, null);
+        }
 
         public boolean complete() {
             return STATUS_PUBLISH_COMPLETE.equalsIgnoreCase(status);
@@ -546,7 +558,8 @@ public class TikTokClient {
             throw new TikTokApiException("TikTok status fetch returned no publish status", null, false);
         }
         PublishStatusData data = body.data();
-        return new PublishStatus(data.status(), firstPostId(data), data.shareUrl(), data.failReason());
+        return new PublishStatus(data.status(), firstPostId(data), data.shareUrl(), data.failReason(),
+                data.downloadedBytes(), data.uploadedBytes(), body.error() != null ? body.error().logId() : null);
     }
 
     private static String firstPostId(PublishStatusData data) {
@@ -715,6 +728,8 @@ public class TikTokClient {
     record PublishStatusData(@JsonProperty("status") String status,
                              @JsonProperty("fail_reason") String failReason,
                              @JsonProperty("share_url") String shareUrl,
+                             @JsonProperty("downloaded_bytes") Long downloadedBytes,
+                             @JsonProperty("uploaded_bytes") Long uploadedBytes,
                              @JsonProperty("publicaly_available_post_id") List<String> publicalyAvailablePostId,
                              @JsonProperty("publicly_available_post_id") List<String> publiclyAvailablePostId) {}
 

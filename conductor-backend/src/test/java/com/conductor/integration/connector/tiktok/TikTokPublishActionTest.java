@@ -1073,6 +1073,154 @@ class TikTokPublishActionTest {
         verify(client).fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID);
     }
 
+    // --- Photo posts TikTok is slow to download: resume always waits on the recorded post ---
+
+    private static final java.time.Instant NOW = java.time.Instant.parse("2026-11-07T12:00:00Z");
+
+    private void givenClockAt(java.time.Instant instant) {
+        action.clock = java.time.Clock.fixed(instant, java.time.ZoneOffset.UTC);
+    }
+
+    private void givenPhotoCheckpoint(String publishId, String linksExpireAt) {
+        storedCheckpoint.set("{\"publishId\":\"" + publishId + "\",\"mode\":\"PHOTO\","
+                + "\"assetIds\":[\"photo-a\"]"
+                + (linksExpireAt == null ? "" : ",\"linksExpireAt\":\"" + linksExpireAt + "\"") + "}");
+    }
+
+    @Test
+    void photoPost_resumeAlwaysPollsTheRecordedPost_evenAfterItsLinksExpired() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        givenPhotoCheckpoint(PUBLISH_ID, NOW.minusSeconds(3600).toString());
+        when(client.fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID))
+                .thenReturn(new PublishStatus("PROCESSING_DOWNLOAD", null, null, null),
+                        new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isTrue();
+        verify(client, never()).initPhotoPost(anyString(), any(), any(), anyInt());
+        verify(client, times(2)).fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID);
+    }
+
+    @Test
+    void photoPost_checkpointWithoutLinkExpiry_stillLoadsAndResumes() throws Exception {
+        givenPhotos("photo-a");
+        givenPhotoCheckpoint(PUBLISH_ID, null);
+        assertThat(objectMapper.readValue(storedCheckpoint.get(), TikTokPublishAction.UploadCheckpoint.class)
+                .linksExpireAt()).isNull();
+        when(client.fetchPublishStatus(ACCESS_TOKEN, PUBLISH_ID))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        assertThat(action.publish(photoInput("photo-a"), context()).success()).isTrue();
+        verify(client, never()).initPhotoPost(anyString(), any(), any(), anyInt());
+    }
+
+    @Test
+    void photoPost_recordsLinkExpiryNoEarlierThanTheLifetimeTheSignerUsed() throws Exception {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        action.publish(photoInput("photo-a"), context());
+
+        ArgumentCaptor<Integer> minutes = ArgumentCaptor.forClass(Integer.class);
+        verify(storageService).generateSignedUrl(anyString(), minutes.capture());
+        java.time.Instant recorded = objectMapper
+                .readValue(storedCheckpoint.get(), TikTokPublishAction.UploadCheckpoint.class)
+                .linksExpireInstant();
+        assertThat(recorded).isNotNull();
+        assertThat(recorded).isAfterOrEqualTo(NOW.plus(java.time.Duration.ofMinutes(minutes.getValue())));
+    }
+
+    @Test
+    void photoPost_tikTokRejectsIt_clearsTheLinkExpirySoAManualRetryIsNotBlocked() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("FAILED", null, null, "file_format_check_failed"));
+
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isFalse();
+        // TikTok has abandoned the post, so its still-live links cannot publish a duplicate.
+        assertThat(TikTokPublishAction.photoLinksLiveUntil(storedCheckpoint.get())).isEmpty();
+        assertThat(storedCheckpoint.get()).contains(PUBLISH_ID);
+    }
+
+    @Test
+    void photoLinksLiveUntil_readsOnlyAPhotoCheckpointWithAnExpiry() {
+        assertThat(TikTokPublishAction.photoLinksLiveUntil(
+                "{\"publishId\":\"p\",\"mode\":\"PHOTO\",\"linksExpireAt\":\"2026-11-07T13:30:00Z\"}"))
+                .contains(java.time.Instant.parse("2026-11-07T13:30:00Z"));
+        assertThat(TikTokPublishAction.photoLinksLiveUntil("{\"publishId\":\"p\",\"mode\":\"PHOTO\"}")).isEmpty();
+        assertThat(TikTokPublishAction.photoLinksLiveUntil(
+                "{\"publishId\":\"p\",\"linksExpireAt\":\"2026-11-07T13:30:00Z\"}")).isEmpty();
+        assertThat(TikTokPublishAction.photoLinksLiveUntil("not json")).isEmpty();
+        assertThat(TikTokPublishAction.photoLinksLiveUntil(null)).isEmpty();
+    }
+
+    @Test
+    void photoPost_pollTimeout_saysWhenTheLinksStayLiveAndWarnsAgainstAnEarlyRetry() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        action.maxPollAttempts = 3;
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PROCESSING_DOWNLOAD", null, null, null));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("TikTok accepted photo post " + PUBLISH_ID + " but hadn't downloaded its images after "
+                        + "0 min (still PROCESSING_DOWNLOAD). Its image links stay live until Nov 7, 13:30 UTC; "
+                        + "retrying before then could post the photos twice.");
+    }
+
+    @Test
+    void photoPost_pollTimeout_inAnotherStatus_doesNotClaimNothingWasDownloaded() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        action.maxPollAttempts = 2;
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PROCESSING_UPLOAD", null, null, null));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("still PROCESSING_UPLOAD")
+                .hasMessageNotContaining("hadn't downloaded")
+                .hasMessageContaining("stay live until Nov 7, 13:30 UTC");
+    }
+
+    @Test
+    void photoPost_pollTimeout_withUnknownExpiry_omitsTheExpirySentence() {
+        givenPhotos("photo-a");
+        action.maxPollAttempts = 2;
+        givenPhotoCheckpoint(PUBLISH_ID, null);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PROCESSING_DOWNLOAD", null, null, null));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("hadn't downloaded its images")
+                .hasMessageNotContaining("stay live until");
+    }
+
+    @Test
+    void videoPost_pollTimeout_keepsItsOwnMessage() {
+        stubHappyPath();
+        action.maxPollAttempts = 2;
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PROCESSING_UPLOAD", null, null, null));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(schedulerInput(), context()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("upload is complete, so a retry resumes the wait");
+    }
+
     @Test
     void photoPost_namesTheUrlPrefixPrerequisiteWhenTikTokWillNotFetchTheImages() {
         givenPhotos("photo-a");

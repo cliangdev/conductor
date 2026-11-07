@@ -4023,6 +4023,16 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: >-
+            Every failed target is a TikTok photo post whose image links are still live, so TikTok may
+            yet download them and a retry could post the photos twice. The detail names when the links
+            expire. When only some failed targets are in that state, the others are retried and the
+            TikTok ones stay FAILED untouched (the 200 response's `retriedCount` shows how many fired).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /projects/{projectId}/marketing/budget:
     get:
