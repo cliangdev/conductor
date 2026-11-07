@@ -85,20 +85,33 @@ final class AlertFixtures {
     }
 
     /**
-     * A targeted level the overview judged STOPPED: last reported on {@code asOf}, more than a week behind its
-     * channel. A null {@code value} is one last reported before the loaded history.
+     * A targeted level the overview judged STOPPED: last reported on {@code lastReported}, more than a week behind
+     * its channel. A null {@code value} is one last reported before the loaded history (no snapshot is loaded, so
+     * no {@code asOf}).
      */
-    static MetricView stoppedLevel(String key, String label, Double value, double target, LocalDate asOf) {
+    static MetricView stoppedLevel(String key, String label, Double value, double target, LocalDate lastReported) {
         return new MetricView(key, label, Unit.CURRENCY, "UP", value, null, null, null, false, 0,
-                new TargetView(target, "UP"), settledSeries(), null, asOf, false, null, "LEVEL",
-                MarketingOverviewQueryService.STOPPED, null, null, null, null, null, "EVENT");
+                new TargetView(target, "UP"), settledSeries(), null, value == null ? null : lastReported, false,
+                null, "LEVEL", MarketingOverviewQueryService.STOPPED, null, null, null, null, null, "EVENT", null,
+                null, false, lastReported);
     }
 
-    /** A rate the overview judged WATCH only because its sample is too small to call the miss real. */
-    static MetricView watchByChance(String key, String label, double value, double target, double missPct) {
-        return new MetricView(key, label, Unit.PERCENT, "UP", value, null, null, null, false, 0,
-                new TargetView(target, "UP"), settledSeries(), null, null, false, null, "DERIVED", "WATCH", missPct,
-                32L, null, null, null, "EVENT", null, null, true);
+    /**
+     * A WATCH the overview did not call close to target: a rate whose miss only its sample excuses, or a miss at
+     * the edge of the watch band.
+     */
+    static MetricView watchNotClose(String key, String label, Unit unit, double value, double target,
+                                    double missPct) {
+        return new MetricView(key, label, unit, "UP", value, null, null, null, false, 0,
+                new TargetView(target, "UP"), settledSeries(), null, null, false, null, "SUM", "WATCH", missPct,
+                32L, null, null, null, "EVENT", null, null, false, null);
+    }
+
+    /** A WATCH within half the watch band: close enough to count as recovered. */
+    static MetricView watchClose(String key, String label, Unit unit, double value, double target, double missPct) {
+        return new MetricView(key, label, unit, "UP", value, null, null, null, false, 0,
+                new TargetView(target, "UP"), settledSeries(), null, null, false, null, "SUM", "WATCH", missPct,
+                null, null, null, null, "EVENT", null, null, true, null);
     }
 
     static ChannelView liveChannel(String channel, String label, List<MetricView> metrics) {

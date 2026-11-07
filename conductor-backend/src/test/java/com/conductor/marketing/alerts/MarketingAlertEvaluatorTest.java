@@ -548,6 +548,31 @@ class MarketingAlertEvaluatorTest {
     }
 
     @Test
+    void aStoppedMetricInAChannelThatIsStaleAsAWholeIsCoveredByTheChannelsAlertNotPostedTwice() {
+        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
+                "STALE", List.of(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", 0.0, 10,
+                        AlertFixtures.THROUGH.minusDays(17))), List.of(), "other-conn")));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "stale:ADS");
+    }
+
+    @Test
+    void aFlowThatStoppedArrivingIsReportedWithTheDayItWasLastReported() {
+        offTrackOverview(new MetricView("installs", "Installs", Unit.COUNT, "UP", null, null, null, null, false, 0,
+                new MarketingOverviewQueryService.TargetView(60, "UP"), List.of(), null, null, false, null, "SUM",
+                MarketingOverviewQueryService.STOPPED, null, null, null, null, null, "EVENT", null, null, false,
+                LocalDate.of(2026, 9, 20)));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "stale:ADS:installs")
+                .containsEntry("text", "Installs was last reported 2026-09-20, while the rest of the Apple Ads data"
+                        + " runs to 2026-11-03. It is not judged against the target until it arrives again.");
+    }
+
+    @Test
     void aStoppedSnapshotThatArrivesAgainResolvesItsStoppedAlert() {
         offTrackOverview(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", 0.0, 10,
                 AlertFixtures.THROUGH.minusDays(17)));
@@ -580,8 +605,8 @@ class MarketingAlertEvaluatorTest {
     void anOpenOffTrackRateThatTurnsWatchOnlyByChanceIsHeldNotResolved() {
         offTrackOverview(offTrack("install_retention_d1", "Day-1 return rate", Unit.PERCENT, 0.12, 0.20, 0.4));
         evaluator.onChannelMetricsPulled(PULLED);
-        offTrackOverview(AlertFixtures.watchByChance("install_retention_d1", "Day-1 return rate", 0.125, 0.20,
-                0.375));
+        offTrackOverview(AlertFixtures.watchNotClose("install_retention_d1", "Day-1 return rate", Unit.PERCENT,
+                0.125, 0.20, 0.375));
         clock.advance(Duration.ofHours(6));
 
         evaluator.onChannelMetricsPulled(PULLED);
@@ -595,7 +620,8 @@ class MarketingAlertEvaluatorTest {
         for (int day = 0; day < 4; day++) {
             offTrackOverview(day % 2 == 0
                     ? offTrack("paywall_reach", "Paywall reach", Unit.PERCENT, 20.0 / 28, 0.85, 0.16)
-                    : AlertFixtures.watchByChance("paywall_reach", "Paywall reach", 21.0 / 29, 0.85, 0.15));
+                    : AlertFixtures.watchNotClose("paywall_reach", "Paywall reach", Unit.PERCENT, 21.0 / 29, 0.85,
+                            0.15));
             evaluator.onChannelMetricsPulled(PULLED);
             clock.advance(Duration.ofDays(1));
         }
@@ -604,11 +630,24 @@ class MarketingAlertEvaluatorTest {
     }
 
     @Test
-    void anOpenOffTrackRateThatComesWithinTheBandResolves() {
+    void aCountFlippingAcrossTheWatchBandsEdgePostsOnce() {
+        for (int day = 0; day < 4; day++) {
+            offTrackOverview(day % 2 == 0
+                    ? offTrack("installs", "Installs", Unit.COUNT, 89.6, 100, 0.104)
+                    : AlertFixtures.watchNotClose("installs", "Installs", Unit.COUNT, 90.2, 100, 0.098));
+            evaluator.onChannelMetricsPulled(PULLED);
+            clock.advance(Duration.ofDays(1));
+        }
+
+        assertThat(onlyPost().getMetadata()).containsEntry("alertStatus", "NEW");
+    }
+
+    @Test
+    void anOpenOffTrackRateThatComesCloseToItsTargetResolves() {
         offTrackOverview(offTrack("install_retention_d1", "Day-1 return rate", Unit.PERCENT, 0.12, 0.20, 0.4));
         evaluator.onChannelMetricsPulled(PULLED);
-        offTrackOverview(targeted("install_retention_d1", "Day-1 return rate", Unit.PERCENT, 0.19, 0.20, "WATCH",
-                0.05, false, false, settledSeries()));
+        offTrackOverview(AlertFixtures.watchClose("install_retention_d1", "Day-1 return rate", Unit.PERCENT, 0.195,
+                0.20, 0.025));
         clock.advance(Duration.ofHours(6));
 
         evaluator.onChannelMetricsPulled(PULLED);

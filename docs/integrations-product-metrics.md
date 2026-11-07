@@ -222,7 +222,7 @@ gets a standing:
 | `WATCH` | Watch | Missed by no more than `watchBandPct` (default 10%) of the target, or a `PERCENT` rate whose miss is too small a sample to call real: the target is still inside the 95% Wilson interval drawn over the rate's denominator. |
 | `OFF_TRACK` | Off target | Missed by more. |
 | `TOO_EARLY` | Too early | There is no value yet, or the metric is a rate (`PERCENT` unit or `RATIO`) resting on fewer than 20 observations. |
-| `STOPPED` | Stopped arriving | A snapshot (`LEVEL`) your feed last sent more than 7 days before the rest of its data. It is not judged until it arrives again; the metric's note says when it was last reported. |
+| `STOPPED` | Stopped arriving | A metric your feed last sent more than 7 days before the rest of its data: a snapshot (`LEVEL`), or a flow with no value left in the window. It is not judged until it arrives again; the metric's note says when it was last reported. |
 | `NO_TARGET` | no label | The metric has no target. |
 
 `missPct` is the shortfall as a fraction of the target (0.05 is 5% short; 0 when met). A **count or currency

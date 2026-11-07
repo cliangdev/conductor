@@ -22,7 +22,7 @@ fractions (0.12 = 12%). The payload drops null and empty fields, except `window.
 null or `sources` are all unconnected, say so and stop: there is nothing to report on yet.
 
 Statuses: `ON_TRACK`, `WATCH` (close, or a rate miss too small a sample to call real), `OFF_TRACK`, `TOO_EARLY` (no value, or a rate on fewer than 20
-observations), `STOPPED` (a snapshot the feed stopped sending: not judged, so never rank it as a miss; name it as a
+observations), `STOPPED` (a metric the feed stopped sending: not judged, so never rank it as a miss; name it as a
 data gap to fix), `NO_TARGET`. Rows with `derived` or a `note` carry a caveat: repeat it.
 
 ## Step 2 — Benchmarks

@@ -372,7 +372,7 @@ function trimMetric(
     smallSample: flags && m.insufficientData ? true : null,
     target: m.target ? trimTarget(m.target) : null,
     // Standing against the target: ON_TRACK; WATCH (close, or a rate miss too small a sample to call real); OFF_TRACK;
-    // TOO_EARLY; STOPPED (a snapshot that stopped arriving, not judged; `note` says when it was last reported).
+    // TOO_EARLY; STOPPED (the feed stopped sending it, so it is not judged; `note` says when it was last reported).
     // Omitted without a target.
     // missPct is the shortfall as a fraction of the (prorated) target.
     status: m.status && m.status !== 'NO_TARGET' ? m.status : null,

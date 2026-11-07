@@ -1,5 +1,6 @@
 package com.conductor.marketing.overview;
 
+import com.conductor.integration.MetricChannel;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.TargetStatus;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.TargetView;
 import com.conductor.marketing.overview.MetricCatalog.Aggregation;
@@ -9,6 +10,7 @@ import com.conductor.marketing.overview.MetricCatalog.Unit;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
@@ -85,10 +87,8 @@ class MarketingTargetStatusTest {
         // Rexipe's day-1 return: 4 of 32 against 20%; at a true 20%, 4 or fewer happens about one time in five
         TargetStatus dayOne = status(rate(), 4.0 / 32, new TargetView(0.20, "UP"), 32L, 28);
         assertThat(dayOne.status()).isEqualTo("WATCH");
-        assertThat(dayOne.byChance()).isTrue();
+        assertThat(dayOne.closeToTarget()).isFalse();
         assertThat(dayOne.missPct()).isCloseTo(0.375, within(1e-9));
-        // a miss inside the band is a plain WATCH, whatever the sample
-        assertThat(status(rate(), 0.19, new TargetView(0.20, "UP"), 32L, 28).byChance()).isFalse();
         // the same rate on 400 installs is a real miss
         assertThat(status(rate(), 50.0 / 400, new TargetView(0.20, "UP"), 400L, 28).status()).isEqualTo("OFF_TRACK");
         // a DOWN rate too: 6 of 20 cancelled against a 10% ceiling is real, 3 of 20 could be chance
@@ -109,12 +109,51 @@ class MarketingTargetStatusTest {
     }
 
     @Test
-    void aSnapshotMoreThanAWeekBehindItsChannelHasStopped() {
+    void onlyAMetOrHalfBandMissIsCloseToTargetSoAnOpenAlertDoesNotResolveAtTheBandsEdge() {
+        TargetView target = new TargetView(100, "UP");
+        assertThat(status(count(Good.UP), 100.0, target, null, 28).closeToTarget()).isTrue();
+        assertThat(status(count(Good.UP), 95.0, target, null, 28).closeToTarget()).isTrue();
+        TargetStatus edge = status(count(Good.UP), 92.0, target, null, 28);
+        assertThat(edge.status()).isEqualTo("WATCH");
+        assertThat(edge.closeToTarget()).isFalse();
+        assertThat(status(count(Good.UP), 80.0, target, null, 28).closeToTarget()).isFalse();
+        assertThat(status(count(Good.UP), null, target, null, 28).closeToTarget()).isFalse();
+    }
+
+    @Test
+    void aRateOverFewerThanTwentyIsTooEarlyWhateverSampleTheFeedReported() {
+        // a feed sample of 50 must not let a ratio over 3 through to an interval that spans nearly everything
+        TargetView target = new TargetView(0.20, "UP");
+        assertThat(MarketingOverviewQueryService.targetStatus(rate(), 0.10, target, 50L, 3L, 28).status())
+                .isEqualTo("TOO_EARLY");
+    }
+
+    @Test
+    void aMetricLastReportedMoreThanAWeekBeforeItsChannelHasStoppedArriving() {
         LocalDate through = LocalDate.of(2026, 11, 4);
-        assertThat(MarketingOverviewQueryService.snapshotStopped(LocalDate.of(2026, 10, 18), through)).isTrue();
-        assertThat(MarketingOverviewQueryService.snapshotStopped(through.minusDays(7), through)).isFalse();
-        assertThat(MarketingOverviewQueryService.snapshotStopped(null, through)).isFalse();
-        assertThat(MarketingOverviewQueryService.snapshotStopped(LocalDate.of(2026, 10, 18), null)).isFalse();
+        assertThat(MarketingOverviewQueryService.stoppedArriving(LocalDate.of(2026, 10, 18), through)).isTrue();
+        assertThat(MarketingOverviewQueryService.stoppedArriving(through.minusDays(7), through)).isFalse();
+        assertThat(MarketingOverviewQueryService.stoppedArriving(null, through)).isFalse();
+        assertThat(MarketingOverviewQueryService.stoppedArriving(LocalDate.of(2026, 10, 18), null)).isFalse();
+    }
+
+    @Test
+    void aRowFromBeforeTheHistoryCountsForAMetricOnlyWhereTheOverviewWouldReadIt() {
+        Metric level = new Metric("rank", "Rank", Unit.COUNT, Aggregation.LEVEL, Good.UP, false, false, false, null,
+                null, null);
+        Metric total = count(Good.UP);
+        MetricCatalog.Channel totalsOnly = new MetricCatalog.Channel(MetricChannel.PRODUCT, "In-app", List.of(),
+                List.of(level, total), List.of(), 3);
+        // a channel that loads only '' rows never reads a level's per-dimension rows (keyword ranks)
+        assertThat(MarketingOverviewQueryService.readsDimension(totalsOnly, level, "aso:recipes")).isFalse();
+        assertThat(MarketingOverviewQueryService.readsDimension(totalsOnly, level, "")).isTrue();
+        Metric perPlatform = new Metric("followers", "Followers", Unit.COUNT, Aggregation.LEVEL, Good.UP, false,
+                false, true, null, null, null);
+        MetricCatalog.Channel withDimensions = new MetricCatalog.Channel(MetricChannel.SOCIAL, "Social", List.of(),
+                List.of(perPlatform, total), List.of(), 3);
+        assertThat(MarketingOverviewQueryService.readsDimension(withDimensions, perPlatform, "instagram")).isTrue();
+        // a total flow reads only the '' total, even where dimension rows are loaded
+        assertThat(MarketingOverviewQueryService.readsDimension(withDimensions, total, "instagram")).isFalse();
     }
 
     @Test

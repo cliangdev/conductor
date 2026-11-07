@@ -1065,9 +1065,50 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
         MetricView followers = metric(channel(overview7(), "SOCIAL"), "followers");
 
         assertThat(followers.value()).isNull();
-        assertThat(followers.asOf()).isEqualTo(LocalDate.of(2026, 8, 20));
+        assertThat(followers.asOf()).isNull();
+        assertThat(followers.lastReportedOn()).isEqualTo(LocalDate.of(2026, 8, 20));
         assertThat(followers.status()).isEqualTo(MarketingOverviewQueryService.STOPPED);
         assertThat(followers.note()).startsWith("Last reported 2026-08-20;");
+    }
+
+    @Test
+    void aTargetedFlowWithNoValueLeftInTheWindowHasStoppedArriving() {
+        String ads = connectFresh("apple-search-ads");
+        put(ads, "apple-search-ads", "ADS", "taps", day(13), 40);
+        put(ads, "apple-search-ads", "ADS", "installs", LocalDate.of(2026, 9, 20), 5);
+        service.setTarget(project.getId(), "ADS", "installs", 60.0, null, user.getId());
+
+        MetricView installs = metric(channel(overview7(), "ADS"), "installs");
+
+        assertThat(installs.value()).isNull();
+        assertThat(installs.status()).isEqualTo(MarketingOverviewQueryService.STOPPED);
+        assertThat(installs.lastReportedOn()).isEqualTo(LocalDate.of(2026, 9, 20));
+        assertThat(installs.note()).isEqualTo("Last reported 2026-09-20; the rest of the Ads data runs to 2026-10-13.");
+    }
+
+    @Test
+    void aTargetedFlowLastReportedBeforeTheLoadedHistoryHasStoppedArrivingToo() {
+        String ads = connectFresh("apple-search-ads");
+        put(ads, "apple-search-ads", "ADS", "taps", day(13), 40);
+        put(ads, "apple-search-ads", "ADS", "installs", LocalDate.of(2026, 8, 20), 5);
+        service.setTarget(project.getId(), "ADS", "installs", 60.0, null, user.getId());
+
+        MetricView installs = metric(channel(overview7(), "ADS"), "installs");
+
+        assertThat(installs.status()).isEqualTo(MarketingOverviewQueryService.STOPPED);
+        assertThat(installs.lastReportedOn()).isEqualTo(LocalDate.of(2026, 8, 20));
+    }
+
+    @Test
+    void aTargetedFlowNeverReportedIsTooEarlyNotStopped() {
+        String ads = connectFresh("apple-search-ads");
+        put(ads, "apple-search-ads", "ADS", "taps", day(13), 40);
+        service.setTarget(project.getId(), "ADS", "installs", 60.0, null, user.getId());
+
+        MetricView installs = metric(channel(overview7(), "ADS"), "installs");
+
+        assertThat(installs.status()).isEqualTo("TOO_EARLY");
+        assertThat(installs.note()).isNull();
     }
 
     // ---- RE-99 T3.1: definitions, window-unique visitors, per-source conversion, new metrics ------------
