@@ -11658,7 +11658,7 @@ components:
         dataCompleteThrough:
           type: string
           format: date
-          description: The channel's window ends here, the latest day with non-provisional data across its connections (never later than yesterday; yesterday when there is none). In a fixed window it is never later than the window's last day.
+          description: The channel's window ends here, the latest day with non-provisional data across its connections (never later than yesterday). With none (`noDataYet`), a stand-in two days back that is not a day the channel has data for. In a fixed window it is never later than the window's last day.
         channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT."}
         label: {type: string}
         status:
@@ -11666,6 +11666,9 @@ components:
           enum: [LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH]
           description: MISMATCH means a second source disagrees with this channel's own connector - the product metrics feed's reference figure (ad spend and installs, store downloads and downloads of record) or a direct platform read - outside the band of 1 unit for counts under 50 and 2% above that and for money; see `mismatches`. STALE also covers a feed that keeps running while this channel's data ends more than 7 days before the freshest channel's; such a channel no longer holds the funnel window back and its funnel stages are unavailable ("No Web data since Sep 10").
         lastFetchedAt: {type: string, format: date-time, nullable: true}
+        noDataYet:
+          type: boolean
+          description: Set to true only for a connected channel that has never had a complete day of data; `dataCompleteThrough` is then a stand-in, not a day it has data for.
         targetsEditable:
           type: boolean
           description: False when the channel's targets are owned by its connection (PRODUCT), so a target cannot be set or cleared here.
@@ -11914,7 +11917,7 @@ components:
           type: string
           format: date
           nullable: true
-          description: For a level metric (followers etc.), the day of the snapshot `value` reads, the latest at or before today whatever the flow window; `previous` is the snapshot one window earlier. Null for flow metrics and when no snapshot exists.
+          description: For a level metric (followers etc.), the day of the snapshot `value` reads, the latest at or before today whatever the flow window; `previous` is the snapshot one window earlier. A snapshot last reported before the loaded history keeps that day here with a null `value`. Null for flow metrics and when no snapshot exists.
         historyStartsOn:
           type: string
           format: date
@@ -11935,13 +11938,13 @@ components:
           description: PRODUCT only - the metric's place among the in-app funnel stages (1 first); null for a metric that is not a stage.
         status:
           type: string
-          enum: [ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY, NO_TARGET]
-          description: Where the value stands against its target (Conductor-owned or declared by the product feed). TOO_EARLY - no value, or a rate resting on fewer than 20 observations. NO_TARGET - no target. ON_TRACK - target met. WATCH - missed by no more than the target's watchBandPct (default 10%), or a rate miss whose 95% Wilson interval over its denominator still contains the target (too small a sample to call real). OFF_TRACK - missed by more. A count or currency total is compared with its target prorated to the requested window.
+          enum: [ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY, STOPPED, NO_TARGET]
+          description: Where the value stands against its target (Conductor-owned or declared by the product feed). STOPPED - a snapshot (`asOf`) more than 7 days behind the rest of the channel's data, so not judged against its target until it arrives again; `note` says when it was last reported. TOO_EARLY - no value, or a rate resting on fewer than 20 observations. NO_TARGET - no target. ON_TRACK - target met. WATCH - missed by no more than the target's watchBandPct (default 10%), or a rate miss whose 95% Wilson interval over its denominator still contains the target (too small a sample to call real). OFF_TRACK - missed by more. A count or currency total is compared with its target prorated to the requested window.
         missPct:
           type: number
           format: double
           nullable: true
-          description: How far short of the (prorated) target the value is, as a fraction of the target (0.05 is 5%); 0 when the target is met. Null with NO_TARGET, TOO_EARLY or a zero target.
+          description: How far short of the (prorated) target the value is, as a fraction of the target (0.05 is 5%); 0 when the target is met. Null with NO_TARGET, TOO_EARLY, STOPPED or a zero target.
         sampleSize:
           type: integer
           format: int64
@@ -11972,7 +11975,7 @@ components:
         note:
           type: string
           nullable: true
-          description: Set only when `value` is null because the stored data cannot answer, for example a unique-visitor count asked for a window length that is not stored (7, 28 and 90 days are). The value is never rebuilt from daily counts.
+          description: Why the value reads as it does. Set when a snapshot stopped arriving ("Last reported 2026-10-18; the rest of the In-app data runs to 2026-11-04."), or when `value` is null because the stored data cannot answer, for example a unique-visitor count asked for a window length that is not stored (7, 28 and 90 days are; the value is never rebuilt from daily counts). Null otherwise.
         provisionalDays:
           type: integer
           description: Number of provisional days after the channel's dataCompleteThrough that appear at the end of the series. Values and changes exclude them.
@@ -12889,7 +12892,7 @@ components:
         channel: {type: string, description: "WEB, SEARCH, SOCIAL, STORE, ADS or PRODUCT."}
         connector: {type: string, nullable: true, description: "The connected connector id(s); null when none is connected."}
         status: {type: string, description: "LIVE, STALE, MISMATCH, NOT_CONNECTED or COMING_SOON."}
-        dataCompleteThrough: {type: string, format: date, nullable: true}
+        dataCompleteThrough: {type: string, format: date, nullable: true, description: "The source's last complete day; null when it is not connected or has no complete day of data yet."}
         lastFetchedAt: {type: string, format: date-time, nullable: true}
         timeZone: {type: string, nullable: true, description: "The time zone that decides which day a row of this channel belongs to (Apple Ads: UTC). Null when the connector does not state one."}
         searchTermTimeZone: {type: string, nullable: true, description: "Apple Ads only: search-term rows are days in the org's report time zone (ORTZ), which is not the zone of every other Apple Ads row."}
@@ -12905,7 +12908,7 @@ components:
         value: {type: number, format: double, nullable: true}
         previous: {type: number, format: double, nullable: true}
         target: {type: number, format: double, nullable: true}
-        status: {type: string, description: "ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY or NO_TARGET."}
+        status: {type: string, description: "ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY, STOPPED or NO_TARGET, as on the overview's metric."}
         missPct: {type: number, format: double, nullable: true}
         sampleSize: {type: integer, format: int64, nullable: true}
         goodDirection: {type: string, enum: [UP, DOWN]}
@@ -13017,7 +13020,7 @@ components:
         value: {type: number, format: double, nullable: true}
         target: {type: number, format: double, nullable: true}
         targetWindow: {type: string, nullable: true, description: "The period a count or currency target is stated for, e.g. \"28d\"."}
-        status: {type: string}
+        status: {type: string, description: "ON_TRACK, WATCH, OFF_TRACK, TOO_EARLY, STOPPED or NO_TARGET, as on the overview's metric."}
         missPct: {type: number, format: double, nullable: true}
         basis: {type: string, nullable: true, description: "What the number counts, or \"2 of 30\" for a ratio with no description."}
         sampleSize: {type: integer, format: int64, nullable: true}

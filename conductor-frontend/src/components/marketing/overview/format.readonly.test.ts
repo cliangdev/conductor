@@ -61,6 +61,14 @@ describe('dataThroughSummary', () => {
     expect(dataThroughSummary(channels, null)).toBe('Sep 18')
   })
 
+  it('never counts the stand-in day of a channel with no data yet', () => {
+    const channels = [
+      channel({ label: 'Search', status: 'STALE', dataCompleteThrough: '2026-11-05', noDataYet: true }),
+      channel({ label: 'App Store', status: 'STALE', dataCompleteThrough: '2026-10-14' }),
+    ]
+    expect(dataThroughSummary(channels, null)).toBe('Oct 14')
+  })
+
   it('falls back to the window end with nothing reporting', () => {
     expect(dataThroughSummary([], '2026-10-14')).toBe('Oct 14')
   })

@@ -24,8 +24,9 @@ class MarketingTargetStatusTest {
         return new Metric("r", "R", Unit.PERCENT, Aggregation.DERIVED, Good.UP, false, false, false, "a", "b", null);
     }
 
+    /** A rate here is divided over its sample, so the sample is also the interval's n. */
     private static TargetStatus status(Metric metric, Double value, TargetView target, Long sample, int days) {
-        return MarketingOverviewQueryService.targetStatus(metric, value, target, sample, days);
+        return MarketingOverviewQueryService.targetStatus(metric, value, target, sample, sample, days);
     }
 
     @Test
@@ -84,7 +85,10 @@ class MarketingTargetStatusTest {
         // Rexipe's day-1 return: 4 of 32 against 20%; at a true 20%, 4 or fewer happens about one time in five
         TargetStatus dayOne = status(rate(), 4.0 / 32, new TargetView(0.20, "UP"), 32L, 28);
         assertThat(dayOne.status()).isEqualTo("WATCH");
+        assertThat(dayOne.byChance()).isTrue();
         assertThat(dayOne.missPct()).isCloseTo(0.375, within(1e-9));
+        // a miss inside the band is a plain WATCH, whatever the sample
+        assertThat(status(rate(), 0.19, new TargetView(0.20, "UP"), 32L, 28).byChance()).isFalse();
         // the same rate on 400 installs is a real miss
         assertThat(status(rate(), 50.0 / 400, new TargetView(0.20, "UP"), 400L, 28).status()).isEqualTo("OFF_TRACK");
         // a DOWN rate too: 6 of 20 cancelled against a 10% ceiling is real, 3 of 20 could be chance
@@ -110,6 +114,7 @@ class MarketingTargetStatusTest {
         assertThat(MarketingOverviewQueryService.snapshotStopped(LocalDate.of(2026, 10, 18), through)).isTrue();
         assertThat(MarketingOverviewQueryService.snapshotStopped(through.minusDays(7), through)).isFalse();
         assertThat(MarketingOverviewQueryService.snapshotStopped(null, through)).isFalse();
+        assertThat(MarketingOverviewQueryService.snapshotStopped(LocalDate.of(2026, 10, 18), null)).isFalse();
     }
 
     @Test

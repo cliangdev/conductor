@@ -1,6 +1,7 @@
 package com.conductor.marketing.alerts;
 
 import com.conductor.marketing.budget.BudgetPacingService.TrippedRule;
+import com.conductor.marketing.overview.MarketingOverviewQueryService;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.ChannelView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.ConnectionView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.MetricView;
@@ -61,8 +62,17 @@ final class AlertFixtures {
                 true, List.of(), null);
     }
 
-    /** A channel left at setup: its feeds never succeeded, so it has no fetch time and no data of its own. */
-    static ChannelView neverFetched(String channel, String label, ConnectionView... connections) {
+    /**
+     * A channel left at setup: no complete day of data, ever, and its feeds never succeeded. Its
+     * {@code dataCompleteThrough} is the overview's stand-in, not a day it has data for.
+     */
+    static ChannelView noDataYet(String channel, String label, ConnectionView... connections) {
+        return new ChannelView(channel, label, "STALE", null, List.of(connections), null, List.of(), THROUGH, null,
+                true, List.of(), null, true);
+    }
+
+    /** A stale channel with data whose feed has no recorded success (recreated, or its rows came another way). */
+    static ChannelView staleWithNoFetchTime(String channel, String label, ConnectionView... connections) {
         return new ChannelView(channel, label, "STALE", null, List.of(connections), null, List.of(), THROUGH, null,
                 true, List.of(), null);
     }
@@ -72,6 +82,23 @@ final class AlertFixtures {
         return new MetricView(key, label, Unit.CURRENCY, "UP", value, null, null, null, false, 0,
                 new TargetView(target, "UP"), settledSeries(), null, asOf, false, null, "LEVEL", "OFF_TRACK", 1.0,
                 null, null, null, null, "EVENT");
+    }
+
+    /**
+     * A targeted level the overview judged STOPPED: last reported on {@code asOf}, more than a week behind its
+     * channel. A null {@code value} is one last reported before the loaded history.
+     */
+    static MetricView stoppedLevel(String key, String label, Double value, double target, LocalDate asOf) {
+        return new MetricView(key, label, Unit.CURRENCY, "UP", value, null, null, null, false, 0,
+                new TargetView(target, "UP"), settledSeries(), null, asOf, false, null, "LEVEL",
+                MarketingOverviewQueryService.STOPPED, null, null, null, null, null, "EVENT");
+    }
+
+    /** A rate the overview judged WATCH only because its sample is too small to call the miss real. */
+    static MetricView watchByChance(String key, String label, double value, double target, double missPct) {
+        return new MetricView(key, label, Unit.PERCENT, "UP", value, null, null, null, false, 0,
+                new TargetView(target, "UP"), settledSeries(), null, null, false, null, "DERIVED", "WATCH", missPct,
+                32L, null, null, null, "EVENT", null, null, true);
     }
 
     static ChannelView liveChannel(String channel, String label, List<MetricView> metrics) {

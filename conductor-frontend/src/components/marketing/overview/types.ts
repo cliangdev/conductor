@@ -21,9 +21,10 @@ export type MetricUnit = 'COUNT' | 'CURRENCY' | 'PERCENT' | 'POSITION' | 'RATING
 export type TargetDirection = 'UP' | 'DOWN'
 /**
  * Where a value stands against its target. TOO_EARLY: no value, or a rate on fewer than 20 observations. WATCH:
- * a small miss, or a rate miss its sample is too small to call real.
+ * a small miss, or a rate miss its sample is too small to call real. STOPPED: a snapshot more than a week behind
+ * the rest of its channel, not judged until it arrives again (`note` says when it was last reported).
  */
-export type TargetStatus = 'ON_TRACK' | 'WATCH' | 'OFF_TRACK' | 'TOO_EARLY' | 'NO_TARGET'
+export type TargetStatus = 'ON_TRACK' | 'WATCH' | 'OFF_TRACK' | 'TOO_EARLY' | 'STOPPED' | 'NO_TARGET'
 /** COHORT: a value counts the people who first opened on that day (or in the window), followed to now. */
 export type MetricBasis = 'EVENT' | 'COHORT'
 
@@ -71,7 +72,7 @@ export interface MarketingTarget {
   source?: string | null
   /** The period a count or currency total target is stated for, e.g. "28d"; absent means the target is compared as stated. */
   window?: string | null
-  /** A miss within this percent of the target reads as Close; absent means 10. */
+  /** A miss within this percent of the target reads as Watch; absent means 10. */
   watchBandPct?: number | null
   /** The target the value was judged against in the requested window (prorated when the target has a window). */
   effectiveValue?: number | null
@@ -171,6 +172,8 @@ export interface OverviewChannel {
   status: ChannelStatus
   lastFetchedAt?: string | null
   dataCompleteThrough?: string | null
+  /** True for a connected channel with no complete day of data yet: `dataCompleteThrough` is then a stand-in. */
+  noDataYet?: boolean
   /** False when the channel's connection owns its targets (In-app): they cannot be set or cleared here. */
   targetsEditable?: boolean
   /** The largest gap of `mismatches`, kept for older readers. */

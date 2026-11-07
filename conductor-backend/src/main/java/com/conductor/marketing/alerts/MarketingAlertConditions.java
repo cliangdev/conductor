@@ -32,6 +32,11 @@ import java.util.function.BooleanSupplier;
  * on too small a sample) is never OFF_TRACK, so it falls out by construction and is also checked explicitly. The
  * overview already compares only settled days for mismatches and stop rules, so provisional days cannot make
  * either.
+ *
+ * <p><b>What never resolves.</b> An open off-track alert resolves only on evidence the metric recovered: its
+ * target met, or a miss inside the watch band. A rate whose miss only its sample size excuses (a WATCH by chance),
+ * a value too early to judge or missing, and a snapshot that stopped arriving are each held: neither raised again
+ * nor resolved. Otherwise a rate on the interval's edge would resolve and re-raise as the window rolls.
  */
 final class MarketingAlertConditions {
 
@@ -48,8 +53,16 @@ final class MarketingAlertConditions {
     private static final String LIVE = "LIVE";
     private static final String OFF_TRACK = "OFF_TRACK";
     private static final String TOO_EARLY = "TOO_EARLY";
+    private static final String ON_TRACK = "ON_TRACK";
+    private static final String WATCH = "WATCH";
 
     private MarketingAlertConditions() {
+    }
+
+    /** {@link #fromOverview(Overview, Ledger, String, BooleanSupplier, Set)}, without the held keys. */
+    static List<MarketingAlert> fromOverview(Overview overview, Ledger ledger, String pulledConnectionId,
+                                             BooleanSupplier pulledConnectionHealthy) {
+        return fromOverview(overview, ledger, pulledConnectionId, pulledConnectionHealthy, new HashSet<>());
     }
 
     /**
@@ -60,9 +73,11 @@ final class MarketingAlertConditions {
      * @param pulledConnectionId the connection whose pull triggered this evaluation, or null
      * @param pulledConnectionHealthy whether that connection's health is fine; asked at most once and only when a
      *                                stale channel contains it and no other connection in it is stale
+     * @param held receives the keys this overview cannot judge (see the class comment): an alert open on one is
+     *             neither raised again nor resolved
      */
     static List<MarketingAlert> fromOverview(Overview overview, Ledger ledger, String pulledConnectionId,
-                                             BooleanSupplier pulledConnectionHealthy) {
+                                             BooleanSupplier pulledConnectionHealthy, Set<String> held) {
         List<MarketingAlert> alerts = new ArrayList<>();
         if (overview == null || overview.channels() == null) {
             return alerts;
@@ -72,7 +87,7 @@ final class MarketingAlertConditions {
             if (isStale(channel, pulledConnectionId, pulledConnectionHealthy)) {
                 alerts.add(stale(channel));
             }
-            offTrack(channel, alerts);
+            targets(channel, alerts, held);
         }
         return alerts;
     }
@@ -160,69 +175,65 @@ final class MarketingAlertConditions {
     }
 
     /**
-     * "No new data since" the last settled day. A channel none of whose feeds has ever succeeded never delivered,
-     * so it says that instead: the overview gives such a channel a stand-in end date, not a day it had data for.
+     * "No new data since" the last settled day. A channel with no complete day of data, ever, says that instead:
+     * the overview gives it a stand-in end date, not a day it had data for.
      */
     private static MarketingAlert stale(ChannelView channel) {
+        boolean noData = Boolean.TRUE.equals(channel.noDataYet());
         String text;
-        if (channel.lastFetchedAt() == null) {
-            text = channel.label() + " has not delivered any data yet. Check its connection in Integrations.";
+        if (noData) {
+            text = channel.label() + " has not delivered a complete day of data yet. Check its connection in"
+                    + " Integrations.";
         } else {
             String since = channel.dataCompleteThrough() != null ? " since " + channel.dataCompleteThrough()
-                    : " since " + channel.lastFetchedAt().toLocalDate();
+                    : channel.lastFetchedAt() != null ? " since " + channel.lastFetchedAt().toLocalDate() : "";
             text = "No new " + channel.label() + " data" + since;
         }
-        String title = channel.label() + (channel.lastFetchedAt() == null ? " has no data yet" : " data is stale");
+        String title = channel.label() + (noData ? " has no data yet" : " data is stale");
         return new MarketingAlert(Kind.STALE.keyOf(channel.channel()), Kind.STALE, channel.channel(), title, text,
                 List.of(), 0);
     }
 
     // ---- off track -----------------------------------------------------------------------------------
 
-    private static void offTrack(ChannelView channel, List<MarketingAlert> out) {
+    /**
+     * Per targeted metric: a snapshot that stopped arriving is reported as stopped and its off-track key held; a
+     * real miss is reported off track; anything short of a recovery holds its off-track key. A whole channel gone
+     * stale holds its stopped-snapshot keys too: its own STALE alert covers them, and nothing has arrived again.
+     */
+    private static void targets(ChannelView channel, List<MarketingAlert> out, Set<String> held) {
         if (channel.metrics() == null) {
             return;
         }
         for (MetricView metric : channel.metrics()) {
-            if (stopped(channel, metric)) {
+            if (metric.target() == null) {
+                continue;
+            }
+            String offTrackKey = Kind.OFF_TRACK.keyOf(channel.channel(), metric.metric());
+            if (MarketingOverviewQueryService.STOPPED.equals(metric.status())) {
                 out.add(stoppedSnapshot(channel, metric));
+                held.add(offTrackKey);
             } else if (isRealOffTrack(metric)) {
                 out.add(offTrack(channel, metric));
+            } else if (!recovered(metric)) {
+                held.add(offTrackKey);
+            }
+            if (STALE.equals(channel.status())) {
+                held.add(Kind.STALE.keyOf(channel.channel(), metric.metric()));
             }
         }
     }
 
-    /**
-     * The off-track keys this overview cannot judge: targeted snapshots the feed stopped sending. Their last value
-     * says where the metric was, not where it is, so an alert already open on one is neither raised again nor
-     * resolved (it did not recover; its data stopped). The stop itself is reported as its own STALE alert.
-     */
-    static Set<String> heldKeys(Overview overview) {
-        Set<String> held = new HashSet<>();
-        if (overview == null || overview.channels() == null) {
-            return held;
-        }
-        for (ChannelView channel : overview.channels()) {
-            for (MetricView metric : channel.metrics() == null ? List.<MetricView>of() : channel.metrics()) {
-                if (stopped(channel, metric)) {
-                    held.add(Kind.OFF_TRACK.keyOf(channel.channel(), metric.metric()));
-                }
-            }
-        }
-        return held;
-    }
-
-    /** A metric with a target whose snapshot the feed stopped sending while the rest of the channel kept coming. */
-    private static boolean stopped(ChannelView channel, MetricView metric) {
-        return metric.target() != null
-                && MarketingOverviewQueryService.snapshotStopped(metric.asOf(), channel.dataCompleteThrough());
+    /** Evidence the metric is back on course: its target met, or a miss inside the watch band (not one by chance). */
+    private static boolean recovered(MetricView metric) {
+        return ON_TRACK.equals(metric.status()) || (WATCH.equals(metric.status()) && !metric.watchByChance());
     }
 
     private static MarketingAlert stoppedSnapshot(ChannelView channel, MetricView metric) {
         String text = metric.label() + " was last reported " + metric.asOf() + ", while the rest of the "
-                + channel.label() + " data runs to " + channel.dataCompleteThrough() + ". Its last value, "
-                + AlertText.value(metric.unit(), metric.value()) + ", is not judged against the target until it"
-                + " arrives again.";
+                + channel.label() + " data runs to " + channel.dataCompleteThrough() + ". "
+                + (metric.value() != null ? "Its last value, " + AlertText.value(metric.unit(), metric.value())
+                + ", is" : "It is") + " not judged against the target until it arrives again.";
         return new MarketingAlert(Kind.STALE.keyOf(channel.channel(), metric.metric()), Kind.STALE,
                 channel.channel(), channel.label() + ": " + metric.label() + " stopped arriving", text, List.of(), 0);
     }

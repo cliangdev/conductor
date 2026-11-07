@@ -437,10 +437,10 @@ class MarketingAlertEvaluatorTest {
     }
 
     @Test
-    void aChannelWhoseFeedsNeverSucceededSaysItHasNoDataYetNotSinceAMadeUpDate() {
+    void aChannelWithNoDataYetSaysSoNotSinceAMadeUpDate() {
         // A Search connection left at setup: the overview calls it STALE with a stand-in end date, and another
         // connection's pull (here the App Store's) evaluates the project.
-        ChannelView leftAtSetup = AlertFixtures.neverFetched("SEARCH", "Search",
+        ChannelView leftAtSetup = AlertFixtures.noDataYet("SEARCH", "Search",
                 connectionView("gsc-conn", "gsc", "STALE"));
         when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(leftAtSetup));
 
@@ -448,13 +448,26 @@ class MarketingAlertEvaluatorTest {
 
         assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "stale:SEARCH")
                 .containsEntry("title", "Search has no data yet")
-                .containsEntry("text", "Search has not delivered any data yet. Check its connection in Integrations.");
+                .containsEntry("text", "Search has not delivered a complete day of data yet. Check its connection in"
+                        + " Integrations.");
     }
 
     @Test
-    void aSnapshotTheFeedStoppedSendingIsReportedAsStoppedNotOffTrack() {
+    void aStaleChannelWithDataButNoRecordedFetchSaysSinceItsLastDayNotThatItHasNoData() {
+        ChannelView stale = AlertFixtures.staleWithNoFetchTime("SEARCH", "Search",
+                connectionView("gsc-conn", "gsc", "STALE"));
+        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(stale));
+
+        evaluator.onChannelMetricsPulled(new ChannelMetricsPulledEvent(PROJECT, "STORE", "store-conn"));
+
+        assertThat(onlyPost().getMetadata()).containsEntry("title", "Search data is stale")
+                .containsEntry("text", "No new Search data since 2026-11-03");
+    }
+
+    @Test
+    void aSnapshotTheOverviewCallsStoppedIsReportedAsStoppedNotOffTrack() {
         // MRR last arrived 17 days before the rest of the in-app data: where it was, not where it is.
-        offTrackOverview(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
+        offTrackOverview(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", 0.0, 10,
                 AlertFixtures.THROUGH.minusDays(17)));
 
         evaluator.onChannelMetricsPulled(PULLED);
@@ -472,7 +485,7 @@ class MarketingAlertEvaluatorTest {
         offTrackOverview(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
                 AlertFixtures.THROUGH));
         evaluator.onChannelMetricsPulled(PULLED);
-        offTrackOverview(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
+        offTrackOverview(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", 0.0, 10,
                 AlertFixtures.THROUGH.minusDays(17)));
         clock.advance(Duration.ofHours(6));
 
@@ -486,8 +499,57 @@ class MarketingAlertEvaluatorTest {
     }
 
     @Test
-    void aStoppedSnapshotThatArrivesAgainResolvesItsStoppedAlert() {
+    void aStoppedSnapshotAgedOutOfTheLoadedHistoryKeepsBothAlertsOpenAndPostsNothingMore() {
         offTrackOverview(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
+                AlertFixtures.THROUGH));
+        evaluator.onChannelMetricsPulled(PULLED);
+        offTrackOverview(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", 0.0, 10,
+                AlertFixtures.THROUGH.minusDays(17)));
+        clock.advance(Duration.ofHours(6));
+        evaluator.onChannelMetricsPulled(PULLED);
+        // months later: no value is loaded any more, only the day it was last reported
+        offTrackOverview(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", null, 10,
+                LocalDate.of(2026, 8, 1)));
+        clock.advance(Duration.ofDays(60));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        assertThat(allPosts(2)).extracting(m -> m.getMetadata().get("alertStatus")).containsExactly("NEW", "NEW");
+        assertThat(states.get(PROJECT, "off_track:ADS:mrr").getState()).isEqualTo("ACTIVE");
+        assertThat(states.get(PROJECT, "stale:ADS:mrr").getState()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void aStoppedSnapshotWithNoValueLoadedSaysWhenItWasLastReported() {
+        offTrackOverview(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", null, 10,
+                LocalDate.of(2026, 8, 1)));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        assertThat(onlyPost().getMetadata()).containsEntry("text", "Monthly recurring revenue was last reported"
+                + " 2026-08-01, while the rest of the Apple Ads data runs to 2026-11-03. It is not judged against the"
+                + " target until it arrives again.");
+    }
+
+    @Test
+    void aStoppedSnapshotAlertIsHeldWhileItsWholeChannelIsStale() {
+        offTrackOverview(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", 0.0, 10,
+                AlertFixtures.THROUGH.minusDays(17)));
+        evaluator.onChannelMetricsPulled(PULLED);
+        // the rest of the channel stops too, so the snapshot is no longer behind it: nothing has arrived again
+        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
+                "STALE", List.of(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
+                        AlertFixtures.THROUGH.minusDays(17))), List.of(), "other-conn")));
+        clock.advance(Duration.ofHours(6));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        assertThat(states.get(PROJECT, "stale:ADS:mrr").getState()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void aStoppedSnapshotThatArrivesAgainResolvesItsStoppedAlert() {
+        offTrackOverview(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", 0.0, 10,
                 AlertFixtures.THROUGH.minusDays(17)));
         evaluator.onChannelMetricsPulled(PULLED);
         offTrackOverview(targeted("mrr", "Monthly recurring revenue", Unit.CURRENCY, 12.0, 10, "ON_TRACK", 0.0,
@@ -502,13 +564,86 @@ class MarketingAlertEvaluatorTest {
     }
 
     @Test
-    void aSnapshotWithinAWeekOfTheChannelsDataIsStillReportedOffTrack() {
+    void whetherASnapshotStoppedIsTheOverviewsCallNotTheAlertsOwnDateMath() {
+        // the overview judged it, so an old asOf alone does not make it stopped
         offTrackOverview(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
-                AlertFixtures.THROUGH.minusDays(MarketingOverviewQueryService.LAGGING_DAYS)));
+                AlertFixtures.THROUGH.minusDays(17)));
 
         evaluator.onChannelMetricsPulled(PULLED);
 
         assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "off_track:ADS:mrr");
+    }
+
+    // ---- hysteresis: an open off-track alert resolves only on a recovery ------------------------------
+
+    @Test
+    void anOpenOffTrackRateThatTurnsWatchOnlyByChanceIsHeldNotResolved() {
+        offTrackOverview(offTrack("install_retention_d1", "Day-1 return rate", Unit.PERCENT, 0.12, 0.20, 0.4));
+        evaluator.onChannelMetricsPulled(PULLED);
+        offTrackOverview(AlertFixtures.watchByChance("install_retention_d1", "Day-1 return rate", 0.125, 0.20,
+                0.375));
+        clock.advance(Duration.ofHours(6));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        onlyPost();
+        assertThat(states.get(PROJECT, "off_track:ADS:install_retention_d1").getState()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void aRateFlippingBetweenOffTrackAndWatchByChancePostsOnce() {
+        for (int day = 0; day < 4; day++) {
+            offTrackOverview(day % 2 == 0
+                    ? offTrack("paywall_reach", "Paywall reach", Unit.PERCENT, 20.0 / 28, 0.85, 0.16)
+                    : AlertFixtures.watchByChance("paywall_reach", "Paywall reach", 21.0 / 29, 0.85, 0.15));
+            evaluator.onChannelMetricsPulled(PULLED);
+            clock.advance(Duration.ofDays(1));
+        }
+
+        assertThat(onlyPost().getMetadata()).containsEntry("alertStatus", "NEW");
+    }
+
+    @Test
+    void anOpenOffTrackRateThatComesWithinTheBandResolves() {
+        offTrackOverview(offTrack("install_retention_d1", "Day-1 return rate", Unit.PERCENT, 0.12, 0.20, 0.4));
+        evaluator.onChannelMetricsPulled(PULLED);
+        offTrackOverview(targeted("install_retention_d1", "Day-1 return rate", Unit.PERCENT, 0.19, 0.20, "WATCH",
+                0.05, false, false, settledSeries()));
+        clock.advance(Duration.ofHours(6));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        assertThat(allPosts(2).get(1).getMetadata()).containsEntry("alertStatus", "RESOLVED");
+    }
+
+    @Test
+    void anOpenOffTrackAlertIsHeldWhileItsValueIsTooEarlyNoiseOrMissing() {
+        offTrackOverview(offTrack("installs", "Installs", Unit.COUNT, 80, 100, 0.2));
+        evaluator.onChannelMetricsPulled(PULLED);
+        for (MetricView unjudged : List.of(
+                targeted("installs", "Installs", Unit.COUNT, null, 100, "TOO_EARLY", null, false, false, List.of()),
+                targeted("installs", "Installs", Unit.COUNT, 80.0, 100, "OFF_TRACK", 0.2, true, false, settledSeries()),
+                targeted("installs", "Installs", Unit.COUNT, 80.0, 100, "OFF_TRACK", 0.2, false, false,
+                        provisionalOnlySeries()))) {
+            offTrackOverview(unjudged);
+            clock.advance(Duration.ofHours(6));
+            evaluator.onChannelMetricsPulled(PULLED);
+        }
+
+        onlyPost();
+        assertThat(states.get(PROJECT, "off_track:ADS:installs").getState()).isEqualTo("ACTIVE");
+    }
+
+    @Test
+    void anOpenOffTrackAlertWhoseTargetIsClearedResolves() {
+        offTrackOverview(offTrack("installs", "Installs", Unit.COUNT, 80, 100, 0.2));
+        evaluator.onChannelMetricsPulled(PULLED);
+        offTrackOverview();
+        clock.advance(Duration.ofHours(6));
+
+        evaluator.onChannelMetricsPulled(PULLED);
+
+        assertThat(allPosts(2).get(1).getMetadata()).containsEntry("alertStatus", "RESOLVED");
     }
 
     @Test

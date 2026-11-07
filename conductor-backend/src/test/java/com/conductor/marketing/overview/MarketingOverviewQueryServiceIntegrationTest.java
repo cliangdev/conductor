@@ -652,13 +652,25 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
 
         assertThat(view.status()).isEqualTo("STALE");
         assertThat(view.dataCompleteThrough()).isEqualTo(LocalDate.of(2026, 8, 10));
+        assertThat(view.noDataYet()).isNull();
     }
 
     @Test
-    void aConnectedChannelWithNoRowsAtAllKeepsTheTwoDayFallback() {
+    void aConnectedChannelWithNoRowsAtAllKeepsTheTwoDayFallbackAndSaysItHasNoDataYet() {
         connectFresh("posthog");
 
-        assertThat(channel(overview7(), "WEB").dataCompleteThrough()).isEqualTo(day(13));
+        ChannelView view = channel(overview7(), "WEB");
+
+        assertThat(view.dataCompleteThrough()).isEqualTo(day(13));
+        assertThat(view.noDataYet()).isTrue();
+    }
+
+    @Test
+    void aChannelWithSettledDataHasData() {
+        String web = connectFresh("posthog");
+        put(web, "posthog", "WEB", "visitors", day(13), 5);
+
+        assertThat(channel(overview7(), "WEB").noDataYet()).isNull();
     }
 
     @Test
@@ -1009,6 +1021,53 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
                 MetricCatalog.channel("SOCIAL").orElseThrow(), 7, TODAY, NOW).dimensions().get(0);
         assertThat(platforms.rows()).extracting(r -> r.key())
                 .containsExactlyInAnyOrder("instagram", "facebook", "youtube");
+    }
+
+    @Test
+    void aTargetedSnapshotTheFeedStoppedSendingIsStoppedNotJudgedAndSaysWhenItWasLastReported() {
+        String meta = connectFresh("meta");
+        put(meta, "meta", "SOCIAL", "website_clicks", "instagram", day(13), 4, false);
+        // ten days behind the flows: more than a week
+        put(meta, "meta", "SOCIAL", "followers", "instagram", day(3), 50, false);
+        service.setTarget(project.getId(), "SOCIAL", "followers", 1000.0, null, user.getId());
+
+        MetricView followers = metric(channel(overview7(), "SOCIAL"), "followers");
+
+        assertThat(followers.value()).isEqualTo(50.0);
+        assertThat(followers.asOf()).isEqualTo(day(3));
+        assertThat(followers.status()).isEqualTo(MarketingOverviewQueryService.STOPPED);
+        assertThat(followers.missPct()).isNull();
+        assertThat(followers.note()).isEqualTo("Last reported 2026-10-03; the rest of the Social data runs to 2026-10-13.");
+    }
+
+    @Test
+    void aSnapshotWithinAWeekOfItsChannelIsStillJudged() {
+        String meta = connectFresh("meta");
+        put(meta, "meta", "SOCIAL", "website_clicks", "instagram", day(13), 4, false);
+        put(meta, "meta", "SOCIAL", "followers", "instagram", day(6), 50, false);
+        service.setTarget(project.getId(), "SOCIAL", "followers", 1000.0, null, user.getId());
+
+        MetricView followers = metric(channel(overview7(), "SOCIAL"), "followers");
+
+        assertThat(followers.status()).isEqualTo("OFF_TRACK");
+        assertThat(followers.note()).isNull();
+    }
+
+    @Test
+    void aSnapshotLastReportedBeforeTheLoadedHistoryKeepsThatDayAndStaysStopped() {
+        String meta = connectFresh("meta");
+        put(meta, "meta", "SOCIAL", "website_clicks", "instagram", day(13), 4, false);
+        // the 7-day overview loads 42 days of history, back to Sep 3
+        put(meta, "meta", "SOCIAL", "followers", "instagram", LocalDate.of(2026, 8, 12), 40, false);
+        put(meta, "meta", "SOCIAL", "followers", "facebook", LocalDate.of(2026, 8, 20), 50, false);
+        service.setTarget(project.getId(), "SOCIAL", "followers", 1000.0, null, user.getId());
+
+        MetricView followers = metric(channel(overview7(), "SOCIAL"), "followers");
+
+        assertThat(followers.value()).isNull();
+        assertThat(followers.asOf()).isEqualTo(LocalDate.of(2026, 8, 20));
+        assertThat(followers.status()).isEqualTo(MarketingOverviewQueryService.STOPPED);
+        assertThat(followers.note()).startsWith("Last reported 2026-08-20;");
     }
 
     // ---- RE-99 T3.1: definitions, window-unique visitors, per-source conversion, new metrics ------------

@@ -203,10 +203,10 @@ export function ChannelDetailPanel({
     );
   }
 
-  const detailsThrough = dataThroughLabel(
-    null,
-    channel?.dataCompleteThrough ?? data?.window.to,
-  );
+  // a channel with no data yet has only a stand-in end date, so it claims none
+  const detailsThrough = channel?.noDataYet
+    ? null
+    : dataThroughLabel(null, channel?.dataCompleteThrough ?? data?.window.to);
 
   return (
     <>

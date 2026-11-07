@@ -52,9 +52,18 @@ describe('ChannelCard', () => {
     expect(screen.getByText(reason)).toBeInTheDocument()
   })
 
-  it('shows no note on a metric that has a value', () => {
-    renderCard(channel({ metrics: [metric({ metric: 'visitors', label: 'Visitors', value: 49, note: 'stale note' })] }))
-    expect(screen.queryByText('stale note')).not.toBeInTheDocument()
+  it('shows when a snapshot that stopped arriving was last reported, beside its last value', () => {
+    const note = 'Last reported 2026-10-18; the rest of the In-app data runs to 2026-11-04.'
+    renderCard(channel({ metrics: [metric({ metric: 'mrr', label: 'MRR', unit: 'CURRENCY', value: 0, asOf: '2026-10-18', status: 'STOPPED', note, target: { value: 10, direction: 'UP' } })] }))
+    expect(screen.getByText(note)).toBeInTheDocument()
+    expect(screen.getByText('Stopped arriving')).toBeInTheDocument()
+    expect(screen.queryByText('Off target')).not.toBeInTheDocument()
+  })
+
+  it('says a stale channel with no data yet has none, not since a stand-in day', () => {
+    renderCard(channel({ status: 'STALE', dataCompleteThrough: '2026-09-18', noDataYet: true }))
+    expect(screen.getByText('No data yet. Check the connection in Integrations.')).toBeInTheDocument()
+    expect(screen.queryByText(/No new data since/)).not.toBeInTheDocument()
   })
 
   it('colours a good change green and a bad change red', () => {
@@ -141,7 +150,7 @@ describe('ChannelCard', () => {
     expect(screen.queryByText(/% there/)).not.toBeInTheDocument()
   })
 
-  it('reads the status the server judged: Close, Off target, Too early', () => {
+  it('reads the status the server judged: Watch, Off target, Too early', () => {
     renderCard(
       channel({
         metrics: [

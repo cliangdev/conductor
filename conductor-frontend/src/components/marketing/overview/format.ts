@@ -68,15 +68,20 @@ export const TARGET_STATUS_LABEL: Record<TargetStatus, string | null> = {
   WATCH: 'Watch',
   OFF_TRACK: 'Off target',
   TOO_EARLY: 'Too early',
+  STOPPED: 'Stopped arriving',
   NO_TARGET: null,
 }
 
-/** Status colour comes from the status ramp tokens (green done, amber progress, red failed); Too early stays neutral. */
+/**
+ * Status colour comes from the status ramp tokens (green done, amber progress, red failed); Too early stays
+ * neutral, and Stopped arriving is amber: nothing is judged, but the feed needs a look.
+ */
 export const TARGET_STATUS_CLASS: Record<TargetStatus, string> = {
   ON_TRACK: 'text-status-done',
   WATCH: 'text-status-progress',
   OFF_TRACK: 'text-status-failed',
   TOO_EARLY: 'text-muted-foreground',
+  STOPPED: 'text-status-progress',
   NO_TARGET: 'text-muted-foreground',
 }
 
@@ -162,7 +167,8 @@ export function dataThroughLabel(min: string | null | undefined, to: string | nu
  */
 export function dataThroughSummary(channels: OverviewChannel[], fallbackTo: string | null | undefined): string | null {
   const reportingAll = channels
-    .filter((c) => (c.status === 'LIVE' || c.status === 'STALE' || c.status === 'MISMATCH') && c.dataCompleteThrough)
+    // a channel with no data yet has only a stand-in end date
+    .filter((c) => (c.status === 'LIVE' || c.status === 'STALE' || c.status === 'MISMATCH') && c.dataCompleteThrough && !c.noDataYet)
   // A stale channel is left out of the funnel window, so it must not set the header's earliest day either
   // (unless every reporting channel is stale).
   const current = reportingAll.filter((c) => c.status !== 'STALE')
