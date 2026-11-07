@@ -51,6 +51,20 @@ describe('OverviewPanel', () => {
     expect(screen.getByRole('link', { name: 'Changes' })).toHaveAttribute('href', '/app/projects/proj-1/marketing/changes')
   })
 
+  it('puts open changes above the funnel', async () => {
+    ;(apiGet as Mock).mockImplementation((path: string) =>
+      Promise.resolve(
+        path.includes('/work-items')
+          ? [{ id: 'c1', displayId: 'MKT-1', title: 'Shorter hook', status: 'LIVE', dueOn: '2000-01-02' }]
+          : overviewResponse(),
+      ),
+    )
+    render(<OverviewPanel projectId="proj-1" />)
+    await screen.findByRole('region', { name: 'Open changes' })
+    const names = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
+    expect(names.indexOf('Open changes')).toBeLessThan(names.indexOf('Funnel'))
+  })
+
   it('shows the funnel and the five channel cards in order, defaulting to 28d', async () => {
     render(<OverviewPanel projectId="proj-1" />)
     expect(await screen.findByRole('region', { name: 'Funnel' })).toBeInTheDocument()

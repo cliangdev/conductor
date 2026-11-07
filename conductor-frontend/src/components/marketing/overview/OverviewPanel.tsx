@@ -165,6 +165,9 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
 
       {data && (
         <>
+          {/* First: overdue reviews are the one thing on this page someone has to act on. */}
+          <OpenChangesCard projectId={projectId} />
+
           {nothingConnected ? (
             <EmptyState
               icon={PlugIcon}
@@ -196,8 +199,6 @@ export function OverviewPanel({ projectId }: { projectId: string }) {
               />
             ))}
           </div>
-
-          <OpenChangesCard projectId={projectId} />
         </>
       )}
 
