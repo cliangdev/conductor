@@ -21,7 +21,6 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Clock;
-import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -33,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Tells a person, in Discord, when marketing data needs them: a figure two sources disagree on, a channel that
@@ -63,17 +63,21 @@ import java.util.concurrent.ConcurrentHashMap;
  * repeated; with no channel to send to it is still recorded, which is why setting a channel up later does not
  * replay every standing condition.
  *
- * <h2>Debounce</h2>
- * A workspace's connections pull one after another, and each pull asks the same whole-workspace question, so a
- * workspace is evaluated at most once in {@link #DEBOUNCE}. It is kept in memory (no timers): a restart only
- * costs one extra evaluation, and the stored fingerprints keep that from posting anything twice.
+ * <h2>Every pull is evaluated</h2>
+ * A workspace's connections pull one after another, and a daily feed pulls once in 24 hours, so a pull whose
+ * evaluation is skipped is a state that stays unseen until that feed's next pull. Every pull therefore evaluates
+ * the whole workspace and the stored state always reflects the latest one. Nothing is rate-limited here:
+ * the stored fingerprints already make Discord quiet (a condition posts once when new, once when it moves
+ * meaningfully, once when resolved, whatever the number of evaluations), and the cost of another evaluation is a
+ * handful of short reads. Evaluations of one workspace run one at a time ({@link #locks}, in memory, no timers),
+ * because two overlapping ones could each read "nothing stored" and post the same new condition twice; a pull
+ * that finds another running simply waits its turn and then reads the data that is current by then.
  */
 @Component
 public class MarketingAlertEvaluator {
 
     private static final Logger log = LoggerFactory.getLogger(MarketingAlertEvaluator.class);
 
-    static final Duration DEBOUNCE = Duration.ofMinutes(10);
     private static final String STATUS_NEW = "NEW";
     private static final String STATUS_CHANGED = "CHANGED";
     private static final String STATUS_RESOLVED = "RESOLVED";
@@ -86,7 +90,8 @@ public class MarketingAlertEvaluator {
     private final ConnectionRepository connections;
     private final TransactionTemplate tx;
     private final Clock clock;
-    private final Map<String, Instant> lastEvaluated = new ConcurrentHashMap<>();
+    /** One lock per workspace, so its evaluations never overlap; one small entry per workspace ever pulled. */
+    private final Map<String, ReentrantLock> locks = new ConcurrentHashMap<>();
 
     @Autowired
     public MarketingAlertEvaluator(MarketingOverviewQueryService overviewService,
@@ -127,30 +132,15 @@ public class MarketingAlertEvaluator {
      */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void onChannelMetricsPulled(ChannelMetricsPulledEvent event) {
+        ReentrantLock lock = locks.computeIfAbsent(event.projectId(), id -> new ReentrantLock());
+        lock.lock();
         try {
-            if (!claimEvaluation(event.projectId())) {
-                log.debug("Marketing alerts for project {} were evaluated within the last {}; skipping",
-                        event.projectId(), DEBOUNCE);
-                return;
-            }
             evaluate(event);
         } catch (RuntimeException e) {
             log.warn("Marketing alert evaluation for project {} failed: {}", event.projectId(), e.getMessage(), e);
+        } finally {
+            lock.unlock();
         }
-    }
-
-    /** True for the one caller that may evaluate this workspace now; later callers within the debounce get false. */
-    private boolean claimEvaluation(String projectId) {
-        Instant now = clock.instant();
-        boolean[] claimed = {false};
-        lastEvaluated.compute(projectId, (id, last) -> {
-            if (last == null || !last.plus(DEBOUNCE).isAfter(now)) {
-                claimed[0] = true;
-                return now;
-            }
-            return last;
-        });
-        return claimed[0];
     }
 
     // ---- evaluation ----------------------------------------------------------------------------------
