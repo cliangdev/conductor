@@ -665,6 +665,20 @@ class MarketingReportReferenceWindowTest extends AbstractNoneWebIntegrationTest 
     }
 
     @Test
+    void aCustomRangeOfAnUnstoredLengthHasNoWebVisitorsAndTheWebRowSaysWhy() {
+        f.seedReferenceStore(connect(ASC), 30);
+        seedWeb(connect("posthog"), true);
+
+        Report report = service.report(f.project.getId(), "2026-10-13..2026-10-26", REF_TODAY, REF_NOW);
+        AcquisitionRow web = row(report, "web_referrer");
+
+        // never the sum of the daily uniques (60): a person who returns on three days is one visitor
+        assertThat(web.reachLabel()).isNotEqualTo("Web visitors");
+        assertThat(web.reach()).isNull(); // unknown, not 60 and not 0: no referrer impressions were seeded
+        assertThat(web.note()).isEqualTo("Unique visitors are only available for 7, 28 or 90-day windows.");
+    }
+
+    @Test
     void theSocialRowCountsTikTokFollowersAndShowsLikesWhenTheyExist() {
         String social = connect("tiktok");
         f.put(social, "tiktok", "SOCIAL", "followers", "tiktok", REF_TO, 120);

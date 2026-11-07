@@ -84,6 +84,12 @@ class PostHogChannelMetricsTest {
     }
 
     @Test
+    void storesDistinctCountsForExactlyTheWindowsTheCatalogAnswers() {
+        assertThat(PostHogChannelMetrics.WINDOW_DAYS)
+                .isEqualTo(com.conductor.marketing.overview.MetricCatalog.WINDOW_UNIQUE_DAYS);
+    }
+
+    @Test
     void declaresItselfAWebSourceWithTheDocumentedWindows() {
         assertThat(connector.channel()).isEqualTo(MetricChannel.WEB);
         assertThat(connector.backfillDays()).isEqualTo(90);

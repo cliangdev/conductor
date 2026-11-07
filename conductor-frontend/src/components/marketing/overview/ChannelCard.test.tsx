@@ -46,6 +46,17 @@ describe('ChannelCard', () => {
     expect(screen.getByText(/not available yet/)).toBeInTheDocument()
   })
 
+  it('says why a metric has no value instead of showing a bare placeholder', () => {
+    const reason = 'Unique visitors are only available for 7, 28 or 90-day windows.'
+    renderCard(channel({ metrics: [metric({ metric: 'visitors', label: 'Visitors', value: null, note: reason })] }))
+    expect(screen.getByText(reason)).toBeInTheDocument()
+  })
+
+  it('shows no note on a metric that has a value', () => {
+    renderCard(channel({ metrics: [metric({ metric: 'visitors', label: 'Visitors', value: 49, note: 'stale note' })] }))
+    expect(screen.queryByText('stale note')).not.toBeInTheDocument()
+  })
+
   it('colours a good change green and a bad change red', () => {
     renderCard(
       channel({

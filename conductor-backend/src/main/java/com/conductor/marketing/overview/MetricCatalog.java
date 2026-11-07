@@ -35,6 +35,19 @@ public final class MetricCatalog {
      */
     public enum Aggregation { SUM, LEVEL, DERIVED, WINDOW_UNIQUE }
 
+    /**
+     * The window lengths, in days, a {@link Aggregation#WINDOW_UNIQUE} metric is stored for. The PostHog
+     * connector writes exactly these ({@code PostHogChannelMetrics.WINDOW_DAYS}; a test keeps the two equal).
+     */
+    public static final List<Integer> WINDOW_UNIQUE_DAYS = List.of(7, 28, 90);
+
+    /** "7, 28 or 90" */
+    public static String describeWindowDays(List<Integer> days) {
+        List<String> parts = days.stream().map(String::valueOf).toList();
+        return parts.size() < 2 ? String.join("", parts)
+                : String.join(", ", parts.subList(0, parts.size() - 1)) + " or " + parts.get(parts.size() - 1);
+    }
+
     /** Which way a move reads as good news; also the default direction of a target. */
     public enum Good { UP, DOWN }
 
@@ -135,6 +148,31 @@ public final class MetricCatalog {
 
         public boolean cohort() {
             return "COHORT".equals(basis);
+        }
+
+        /**
+         * The window lengths, in days, this metric can be answered for when it is not a sum of days: the stored
+         * lengths of a {@link Aggregation#WINDOW_UNIQUE} metric. Empty when any length works.
+         */
+        public List<Integer> supportedWindowDays() {
+            return agg == Aggregation.WINDOW_UNIQUE ? WINDOW_UNIQUE_DAYS : List.of();
+        }
+
+        /** Whether the metric has a value for a window of {@code days} days. */
+        public boolean supportsWindowOf(long days) {
+            return agg != Aggregation.WINDOW_UNIQUE || WINDOW_UNIQUE_DAYS.contains((int) days);
+        }
+
+        /**
+         * Why the metric has no value for a window length it does not support, e.g. "Unique visitors are only
+         * available for 7, 28 or 90-day windows."; null when every length works.
+         */
+        public String unsupportedWindowMessage() {
+            if (agg != Aggregation.WINDOW_UNIQUE) {
+                return null;
+            }
+            return "Unique " + label.toLowerCase(java.util.Locale.ROOT) + " are only available for "
+                    + describeWindowDays(WINDOW_UNIQUE_DAYS) + "-day windows.";
         }
 
         /** The stored metric whose rows this one reads: its own key unless {@code storedKey} points elsewhere. */

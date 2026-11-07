@@ -556,12 +556,16 @@ public class MarketingReportService {
         Double actions = tapSessions != null ? tapSessions : clicks != null ? clicks : webRef.get("page_views");
         String actionsLabel = tapSessions != null ? CONVERSION_SESSIONS_LABEL
                 : clicks != null ? "Conversion clicks" : "Page views";
+        // No visitors for this window (a distinct count is stored for fixed lengths only): the metric says why,
+        // and the row falls back to impressions under its own label rather than to a summed daily count.
+        MetricView visitorsMetric = webLive ? metric(channels, MetricChannel.WEB, "visitors") : null;
+        String noVisitorsReason = visitors == null && visitorsMetric != null ? visitorsMetric.note() : null;
         return row("web_referrer", "Web referrer", status,
                 visitors != null ? visitors : webRef.get("impressions"),
                 visitors != null ? "Web visitors" : "Impressions", actions, actionsLabel, webRef.get("downloads"),
                 null, false,
                 visitors != null ? "Reach and actions are the website's own; installs are App Store downloads "
-                        + "that came from a web referrer." : null);
+                        + "that came from a web referrer." : noVisitorsReason);
     }
 
     /** What the organic search figures turned out to be; {@code derivation} only when they were computed. */

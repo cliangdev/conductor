@@ -373,12 +373,26 @@ class VerificationLedgerServiceIntegrationTest extends AbstractNoneWebIntegratio
         put(web, "posthog", "WEB", "visitors_unique_7d", "", TO, 20, false);
 
         RecordedRow month = read("WEB", "visitors", FROM, TO, 49, "PostHog");
-        RecordedRow fortnight = read("WEB", "visitors", TO.minusDays(13), TO, 30, "PostHog");
+        RecordedRow week = read("WEB", "visitors", TO.minusDays(6), TO, 20, "PostHog");
 
         assertThat(month.row().platformRead().conductorValueOverReadDays()).isEqualTo(49.0);
         assertThat(month.row().verdict()).isEqualTo(Verdict.BOTH);
-        assertThat(fortnight.row().platformRead().conductorValueOverReadDays()).isNull();
-        assertThat(fortnight.row().verdict()).isEqualTo(Verdict.UNCHECKED);
+        assertThat(week.row().platformRead().conductorValueOverReadDays()).isEqualTo(20.0);
+    }
+
+    @Test
+    void aVisitorsReadOverAWindowOfAnUnstoredLengthIsRefusedAndNamesTheStoredLengths() {
+        web = connect("posthog");
+        put(web, "posthog", "WEB", "visitors_unique_28d", "", TO, 49, false);
+
+        assertThatThrownBy(() -> read("WEB", "visitors", TO.minusDays(13), TO, 30, "PostHog"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("7, 28 or 90 days")
+                .hasMessageContaining("14 days");
+        // nothing was stored: the read could never be reconciled
+        assertThat(service.reads(project.getId(), "WEB", "visitors", null)).isEmpty();
+        // a sum is read over any length
+        assertThat(read("WEB", "sessions", TO.minusDays(13), TO, 30, "PostHog").row().platformRead()).isNotNull();
     }
 
     @Test

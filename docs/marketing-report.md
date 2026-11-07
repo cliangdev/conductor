@@ -70,6 +70,12 @@ The traffic-source rows (`app_store_search`, `app_store_browse`, `web_referrer`)
 
 ### Web and social
 
+**Web visitors are a distinct count, not a sum.** A person who returns on three days is one visitor, so `WEB.visitors` is never the sum of the daily counts. The PostHog connector stores one unique count per window length (`visitors_unique_7d`, `_28d`, `_90d`, each on the window's last day), and the metric (`MetricCatalog.WINDOW_UNIQUE_DAYS`, aggregation `WINDOW_UNIQUE`) answers only a window of exactly 7, 28 or 90 days. For any other window (a custom range of 14 days, say) the value is null and the metric's `note` says why: "Unique visitors are only available for 7, 28 or 90-day windows." The same reason shows in three more places, never a bare blank:
+
+- the overview funnel stage `web_visitors` is unavailable, with that reason as `unavailableReason`;
+- the `web_referrer` row falls back to impressions (labelled "Impressions") and carries the reason as its `note`;
+- the verification ledger refuses a platform read of `WEB.visitors` over any other length with a 400 that names the supported lengths ("WEB.visitors is a distinct count, so it can only be read over a window of 7, 28 or 90 days; this read covers 14 days"), because such a read could never be reconciled. `record_platform_read` relays that sentence.
+
 The `web_referrer` row's `actions`, and the funnel stage `web_conversion_clicks`, count `conversion_sessions` (label "Sessions with an App Store tap") when the web connection reports them, else `conversion_clicks` as before. The funnel stage's note gives the share of sessions ("12 of 68 sessions"). The `social` row's `reach` is followers across Meta, YouTube and TikTok, and `likes` is the accounts' total likes (TikTok), null when none is reported.
 
 ### In-app outcomes by keyword

@@ -236,6 +236,14 @@ public class VerificationLedgerService {
             throw new BusinessException(channel.name() + "." + metric.key() + " is a ratio of two other metrics;"
                     + " read its parts directly instead");
         }
+        // A distinct count is stored for a few window lengths only; a read of any other length could never be
+        // reconciled, so it is refused rather than stored.
+        long readDays = ChronoUnit.DAYS.between(from, to) + 1;
+        if (!metric.supportsWindowOf(readDays)) {
+            throw new BusinessException(channel.name() + "." + metric.key() + " is a distinct count, so it can only"
+                    + " be read over a window of " + MetricCatalog.describeWindowDays(metric.supportedWindowDays())
+                    + " days; this read covers " + readDays + " days");
+        }
 
         OffsetDateTime recordedAt = now.truncatedTo(ChronoUnit.MICROS);
         String id = UUID.randomUUID().toString();
