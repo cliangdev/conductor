@@ -509,6 +509,10 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(PublishOutcomeService.isPermanentAuthFailure(
                 "TikTok video init failed with HTTP 401: {\"error\":{\"code\":\"access_token_invalid\"}}"))
                 .isTrue();
+        // the same failure surfacing while polling a photo post's status
+        assertThat(PublishOutcomeService.isPermanentAuthFailure(
+                "TikTok status fetch failed with HTTP 401: {\"error\":{\"code\":\"access_token_invalid\"}}"))
+                .isTrue();
     }
 
     @Test

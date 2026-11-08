@@ -1294,13 +1294,60 @@ class TikTokPublishActionTest {
         givenPhotos("photo-a");
         givenClockAt(NOW);
         when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
-        when(client.fetchPublishStatus(anyString(), anyString())).thenThrow(new IllegalStateException("tiktok 503"));
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenThrow(new TikTokClient.TikTokApiException("tiktok 503", "internal", true));
 
         ActionResult result = action.publish(photoInput("photo-a"), context());
 
         assertThat(result.success()).isTrue();
         assertThat(result.output()).containsEntry("platform_pending", Boolean.TRUE)
                 .containsEntry("publish_id", PUBLISH_ID);
+    }
+
+    @Test
+    void photoPost_transientTikTokErrorOrTransportErrorWhilePolling_withLiveLinks_isPending() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenThrow(new TikTokClient.TikTokApiException("rate limited", "rate_limit_exceeded", true));
+
+        assertThat(action.publish(photoInput("photo-a"), context()).output())
+                .containsEntry("platform_pending", Boolean.TRUE);
+
+        org.mockito.Mockito.doThrow(new org.springframework.web.client.ResourceAccessException("connection reset"))
+                .when(client).fetchPublishStatus(anyString(), anyString());
+
+        assertThat(action.publish(photoInput("photo-a"), context()).output())
+                .containsEntry("platform_pending", Boolean.TRUE);
+    }
+
+    @Test
+    void photoPost_accessTokenInvalidWhilePolling_withLiveLinks_failsSoTheAuthPathFires() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenThrow(new TikTokClient.TikTokApiException(
+                        "TikTok status fetch failed with HTTP 401: access_token_invalid", "access_token_invalid", false));
+
+        // not parked: the action's own contract turns a permanent TikTok error into a failed result, which
+        // PublishOutcomeService classifies as a permanent auth failure (connection marked unhealthy)
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("access_token_invalid");
+    }
+
+    @Test
+    void photoPost_unclassifiedErrorWhilePolling_withLiveLinks_stillThrows() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString())).thenThrow(new IllegalStateException("boom"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
+                .isInstanceOf(IllegalStateException.class).hasMessage("boom");
     }
 
     @Test

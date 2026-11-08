@@ -546,6 +546,14 @@ public class TikTokPublishAction {
                 + " after " + elapsedSeconds / 60 + " min (still " + lastStatus + ")." + expiry);
     }
 
+    private static boolean isTransientReadFailure(RuntimeException e) {
+        if (e instanceof TikTokApiException api) {
+            return api.isTransient();
+        }
+        return e instanceof org.springframework.web.client.ResourceAccessException
+                || e instanceof java.io.UncheckedIOException;
+    }
+
     /** True while the signed image links handed to TikTok can still be fetched. */
     private boolean photoLinksLive(java.time.Instant linksExpireAt) {
         return linksExpireAt != null && clock.instant().isBefore(linksExpireAt);
@@ -714,9 +722,11 @@ public class TikTokPublishAction {
                     photos.stream().map(Asset::getId).toList(), null, initAt));
             throw e;
         } catch (RuntimeException e) {
-            // A status read that keeps failing (TikTok 5xx) while the links are live must not strand the
-            // target as FAILED with a retry refused until they expire: park it for the verdict check.
-            if (!photoLinksLive(linksExpireAt)) {
+            // A transient status-read failure (TikTok 5xx, rate limit, transport error) while the links are
+            // live must not strand the target as FAILED with a retry refused until they expire: park it for
+            // the verdict check. Anything else (access_token_invalid, scope_not_authorized, other permanent
+            // TikTok errors) rethrows so the failure path can flag the connection for reconnection.
+            if (!isTransientReadFailure(e) || !photoLinksLive(linksExpireAt)) {
                 throw e;
             }
             log.warn("TikTok photo post {} status poll failed ({}); leaving it pending for the verdict check",
