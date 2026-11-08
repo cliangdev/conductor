@@ -108,6 +108,19 @@ class CloudTasksPublishTaskSchedulerTest {
     }
 
     @Test
+    void schedule_tiktokVerdictRoutesToItsOwnPath_carryingTheStep() {
+        CloudTasksPublishTaskScheduler scheduler = scheduler("https://b");
+        PublishTask first = PublishTask.tiktokVerdict("t-4", FIRE, FIRE, 2);
+
+        assertThat(scheduler.url(first)).isEqualTo("https://b/internal/v1/publish-targets/t-4/tiktok_verdict"
+                + "?fireTime=" + FIRE.toEpochSecond() + "&attempt=2");
+        // each step of the chain is its own Cloud Task, so the queue keeps them all
+        assertThat(CloudTasksPublishTaskScheduler.taskName(first, FIRE))
+                .isNotEqualTo(CloudTasksPublishTaskScheduler.taskName(PublishTask.tiktokVerdict("t-4", FIRE, FIRE, 3), FIRE))
+                .startsWith("tiktok_verdict-t-4-a2-");
+    }
+
+    @Test
     void schedule_capsDeliveryUnderCloudTasksCeiling_whenNotBeforeIsMonthsOut() {
         when(runTokenService.generatePublishTaskToken(anyString(), any(Instant.class))).thenReturn("tok");
         OffsetDateTime before = OffsetDateTime.now();

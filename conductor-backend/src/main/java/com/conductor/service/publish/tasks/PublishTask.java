@@ -14,7 +14,8 @@ import java.util.Objects;
  *                  longer matches the row is stale — the Post was rescheduled and a fresh task exists — and
  *                  is dropped on arrival rather than acted on.
  * @param notBefore when the task should be delivered
- * @param attempt   for {@link PublishTaskKind#CONFIRM}, the {@code attempts} count the row is expected to
+ * @param attempt   for {@link PublishTaskKind#PERMALINK} and {@link PublishTaskKind#TIKTOK_VERDICT}, the
+ *                  zero-based step of the chain. For {@link PublishTaskKind#CONFIRM}, the {@code attempts} count the row is expected to
  *                  hold when the task arrives; a mismatch means another confirmation chain owns the row and
  *                  this one ends. Zero for the other kinds.
  */
@@ -44,6 +45,11 @@ public record PublishTask(PublishTaskKind kind, String targetId, OffsetDateTime 
     public static PublishTask permalink(String targetId, OffsetDateTime fireTime, OffsetDateTime notBefore,
                                         int attempt) {
         return new PublishTask(PublishTaskKind.PERMALINK, targetId, fireTime, notBefore, attempt);
+    }
+
+    public static PublishTask tiktokVerdict(String targetId, OffsetDateTime fireTime, OffsetDateTime notBefore,
+                                            int step) {
+        return new PublishTask(PublishTaskKind.TIKTOK_VERDICT, targetId, fireTime, notBefore, step);
     }
 
     /** The fire-time snapshot as it travels in the task URL: epoch seconds. */

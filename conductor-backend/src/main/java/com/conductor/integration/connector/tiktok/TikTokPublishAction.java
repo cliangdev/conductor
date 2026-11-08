@@ -115,10 +115,22 @@ public class TikTokPublishAction {
     static final int MAX_PHOTO_TITLE_CHARS = 90;
 
     /**
-     * Signed-read lifetime for a photo post's images. TikTok may fetch them up to an hour after init, so
-     * the links outlive that with room to spare.
+     * Default signed-read lifetime for a photo post's images ({@code conductor.integrations.tiktok.
+     * photo-link-lifetime}). TikTok fetches them on its own schedule and a download backlog has been seen to
+     * delay the fetch by a day, so the links have to outlive a stalled queue, not just a normal fetch.
      */
-    private static final int PHOTO_URL_EXPIRY_MINUTES = 90;
+    static final java.time.Duration DEFAULT_PHOTO_LINK_LIFETIME = java.time.Duration.ofHours(48);
+    /** GCS V4 signed URLs live at most 7 days; stay five minutes under so signing never refuses. */
+    static final java.time.Duration MAX_PHOTO_LINK_LIFETIME =
+            java.time.Duration.ofDays(7).minusMinutes(5);
+
+    /** The configured lifetime, clamped to what storage can sign; a missing or non-positive value is the default. */
+    static java.time.Duration clampPhotoLinkLifetime(java.time.Duration configured) {
+        if (configured == null || configured.isZero() || configured.isNegative()) {
+            return DEFAULT_PHOTO_LINK_LIFETIME;
+        }
+        return configured.compareTo(MAX_PHOTO_LINK_LIFETIME) > 0 ? MAX_PHOTO_LINK_LIFETIME : configured;
+    }
 
     static final String OUTPUT_POST_ID = "post_id";
     static final String OUTPUT_PERMALINK = "permalink";
@@ -153,6 +165,8 @@ public class TikTokPublishAction {
     private final VideoRangeReader rangeReader;
     /** Signs read URLs for a photo post, which TikTok fetches rather than receiving as bytes. */
     private final StorageService storageService;
+    /** How long the signed image links handed to TikTok stay valid; see {@link #clampPhotoLinkLifetime}. */
+    private final java.time.Duration photoLinkLifetime;
 
     /**
      * Opens a stream over exactly one byte range of a stored object. The seam that keeps this class off
@@ -175,9 +189,11 @@ public class TikTokPublishAction {
                                ObjectMapper objectMapper,
                                Storage storage,
                                StorageService storageService,
-                               @Value("${gcp.storage.bucket-name}") String bucketName) {
+                               @Value("${gcp.storage.bucket-name}") String bucketName,
+                               @Value("${conductor.integrations.tiktok.photo-link-lifetime:PT48H}")
+                               java.time.Duration photoLinkLifetime) {
         this(new TikTokClient(), assetRepository, targetRepository, actionInvocationService, objectMapper,
-                gcsRangeReader(storage, bucketName), storageService);
+                gcsRangeReader(storage, bucketName), storageService, photoLinkLifetime);
     }
 
     TikTokPublishAction(TikTokClient client, AssetRepository assetRepository,
@@ -185,6 +201,16 @@ public class TikTokPublishAction {
                         ActionInvocationService actionInvocationService,
                         ObjectMapper objectMapper, VideoRangeReader rangeReader,
                         StorageService storageService) {
+        this(client, assetRepository, targetRepository, actionInvocationService, objectMapper, rangeReader,
+                storageService, DEFAULT_PHOTO_LINK_LIFETIME);
+    }
+
+    TikTokPublishAction(TikTokClient client, AssetRepository assetRepository,
+                        PostPublishTargetRepository targetRepository,
+                        ActionInvocationService actionInvocationService,
+                        ObjectMapper objectMapper, VideoRangeReader rangeReader,
+                        StorageService storageService, java.time.Duration photoLinkLifetime) {
+        this.photoLinkLifetime = clampPhotoLinkLifetime(photoLinkLifetime);
         this.client = client;
         this.assetRepository = assetRepository;
         this.targetRepository = targetRepository;
@@ -256,11 +282,14 @@ public class TikTokPublishAction {
      * refuses to open a second one ({@link #photoLinksLiveUntil}). It is null on checkpoints written before
      * the field existed, and cleared once TikTok rejects the post outright, since a post TikTok abandoned
      * cannot complete.
+     *
+     * <p>{@code initAt} (ISO-8601 instant, photo posts only) is when TikTok accepted the init call, so the
+     * late-verdict check can say how late TikTok was. Null on checkpoints written before the field existed.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record UploadCheckpoint(String assetId, String publishId, String uploadUrl,
                             long videoSize, long chunkSize, int totalChunkCount, int nextChunkIndex,
-                            String mode, List<String> assetIds, String linksExpireAt) {
+                            String mode, List<String> assetIds, String linksExpireAt, String initAt) {
 
         static final String MODE_PHOTO = "PHOTO";
 
@@ -268,13 +297,37 @@ public class TikTokPublishAction {
         UploadCheckpoint(String assetId, String publishId, String uploadUrl, long videoSize, long chunkSize,
                          int totalChunkCount, int nextChunkIndex) {
             this(assetId, publishId, uploadUrl, videoSize, chunkSize, totalChunkCount, nextChunkIndex,
-                    null, null, null);
+                    null, null, null, null);
         }
 
         static UploadCheckpoint forPhotoPost(String publishId, List<String> assetIds,
                                              java.time.Instant linksExpireAt) {
+            return forPhotoPost(publishId, assetIds, linksExpireAt, null);
+        }
+
+        static UploadCheckpoint forPhotoPost(String publishId, List<String> assetIds,
+                                             java.time.Instant linksExpireAt, java.time.Instant initAt) {
             return new UploadCheckpoint(null, publishId, null, 0, 0, 0, 0, MODE_PHOTO, assetIds,
-                    linksExpireAt == null ? null : linksExpireAt.toString());
+                    linksExpireAt == null ? null : linksExpireAt.toString(),
+                    initAt == null ? null : initAt.toString());
+        }
+
+        /** The same checkpoint with the link expiry cleared: TikTok abandoned the post, a retry is safe. */
+        UploadCheckpoint withLinksReleased() {
+            return new UploadCheckpoint(assetId, publishId, uploadUrl, videoSize, chunkSize, totalChunkCount,
+                    nextChunkIndex, mode, assetIds, null, initAt);
+        }
+
+        /** The parsed init time, or null when unknown or unparseable. */
+        java.time.Instant initInstant() {
+            if (initAt == null || initAt.isBlank()) {
+                return null;
+            }
+            try {
+                return java.time.Instant.parse(initAt);
+            } catch (java.time.format.DateTimeParseException e) {
+                return null;
+            }
         }
 
         /** The parsed link expiry, or null when unknown (old checkpoint) or unparseable. */
@@ -481,8 +534,10 @@ public class TikTokPublishAction {
         }
         boolean stillDownloading = TikTokClient.STATUS_PROCESSING_DOWNLOAD.equalsIgnoreCase(lastStatus);
         String expiry = photoLinksExpireAt == null ? ""
-                : " Its image links stay live until " + formatUtc(photoLinksExpireAt)
-                        + "; retrying before then could post the photos twice.";
+                : " TikTok hasn't downloaded the images yet. Its image links stay live until "
+                        + formatUtc(photoLinksExpireAt) + ", and Conductor keeps checking with TikTok until then: "
+                        + "this destination switches to Published if TikTok posts it. Retrying before then "
+                        + "could post the photos twice.";
         throw new IllegalStateException("TikTok accepted photo post " + publishId + " but "
                 + (stillDownloading ? "hadn't downloaded its images" : "hadn't finished with its images")
                 + " after " + elapsedSeconds / 60 + " min (still " + lastStatus + ")." + expiry);
@@ -574,6 +629,7 @@ public class TikTokPublishAction {
                 ? existing.publishId()
                 : null;
         java.time.Instant linksExpireAt = publishId == null ? null : existing.linksExpireInstant();
+        java.time.Instant initAt = publishId == null ? null : existing.initInstant();
 
         if (publishId == null) {
             String publicBase = text(input.get(PublishInputBuilder.INPUT_PUBLIC_MEDIA_BASE_URL));
@@ -582,7 +638,7 @@ public class TikTokPublishAction {
                     .toList();
             // Read after signing: each link was minted at or before this instant, so its real expiry is at
             // or before the recorded one and the retry guard never lets a retry through while a link lives.
-            linksExpireAt = clock.instant().plus(PHOTO_URL_EXPIRY_MINUTES, java.time.temporal.ChronoUnit.MINUTES);
+            linksExpireAt = clock.instant().plus(photoLinkLifetime);
             int coverIndex = resolvePhotoCoverIndex(input, photos.size());
             log.info("TikTok photo post init: {} images (assets {}), cover {}, hosts {}, links expire {}",
                     photos.size(), photos.stream().map(p -> p.getId() + ":" + p.getContentType()).toList(),
@@ -608,10 +664,15 @@ public class TikTokPublishAction {
                     throw e;
                 }
             }
+            initAt = clock.instant();
             saveCheckpoint(idempotencyKey, UploadCheckpoint.forPhotoPost(publishId,
-                    photos.stream().map(Asset::getId).toList(), linksExpireAt));
+                    photos.stream().map(Asset::getId).toList(), linksExpireAt, initAt));
             log.info("TikTok photo post {} opened with {} images, links expire {}", publishId, photos.size(),
                     linksExpireAt);
+            // Greppable against the media proxy's access logs, which show the storage object and X-Goog-Date.
+            log.info("TikTok photo post {} images: {} initAt={} linksExpireAt={}", publishId,
+                    photos.stream().map(p -> p.getId() + "->" + basename(p.getGcsPath())).toList(),
+                    initAt, linksExpireAt);
         } else {
             log.info("TikTok photo post {} resuming: already opened, polling for its outcome (links expire {})",
                     publishId, linksExpireAt == null ? "unknown" : linksExpireAt);
@@ -624,7 +685,7 @@ public class TikTokPublishAction {
             // TikTok has abandoned this post, so its still-live links cannot publish a duplicate: drop the
             // expiry so the retry guard lets a manual retry through at once.
             saveCheckpoint(idempotencyKey, UploadCheckpoint.forPhotoPost(publishId,
-                    photos.stream().map(Asset::getId).toList(), null));
+                    photos.stream().map(Asset::getId).toList(), null, initAt));
             throw e;
         }
         return ActionResult.ok(publishOutput(publishId, status, ctx, TikTokPermalinks.KIND_PHOTO));
@@ -656,9 +717,16 @@ public class TikTokPublishAction {
         }
     }
 
-    /** A read URL for one image, minted now — TikTok fetches it during the init call. */
+    private static String basename(String gcsPath) {
+        return gcsPath == null ? "?" : gcsPath.substring(gcsPath.lastIndexOf('/') + 1);
+    }
+
+    /**
+     * A read URL for one image, signed now for the full lifetime - never from the shared URL cache, which
+     * could hand back a link with a quarter of its life gone and so make the recorded expiry a lie.
+     */
     private String signedUrl(Asset photo) {
-        String url = storageService.generateSignedUrl(photo.getGcsPath(), PHOTO_URL_EXPIRY_MINUTES);
+        String url = storageService.generateFreshSignedUrl(photo.getGcsPath(), photoLinkLifetime);
         if (url == null || url.isBlank()) {
             throw new PermanentPublishException("Could not sign a read URL for image " + photo.getId());
         }

@@ -327,19 +327,63 @@ public class PublishOutcomeService {
     }
 
     /**
+     * TikTok published a photo post that Conductor had already given up on (the target is FAILED): records
+     * the success through the ordinary path (which also rolls the Post up, FAILED included) and, when TikTok
+     * gave no link yet, starts the PERMALINK follow-up chain exactly as a normal publish without one does.
+     *
+     * @return true when this call is what moved the row; false when it is no longer FAILED
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean recordLatePublish(String targetId, String publishId, String platformPostId, String permalink,
+                                     String kind) {
+        PostPublishTarget target = find(targetId);
+        if (target == null || target.getState() != PostPublishTargetState.FAILED) {
+            return false;
+        }
+        boolean moved = applySuccess(target, platformPostId, permalink);
+        if (moved && (permalink == null || permalink.isBlank())) {
+            startPermalinkFollowUp(target, publishId, kind);
+        }
+        return moved;
+    }
+
+    /**
+     * Replaces the message of a target that is still {@code FAILED} (the late-verdict chain learning more
+     * about why). A row that has moved on - retried, published, revoked - is left alone.
+     *
+     * @return true when the message was replaced
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean reviseFailureMessage(String targetId, String message) {
+        PostPublishTarget target = find(targetId);
+        if (target == null || target.getState() != PostPublishTargetState.FAILED) {
+            return false;
+        }
+        target.setErrorMessage(message);
+        target.setErrorDetail(null);
+        targetRepository.save(target);
+        return true;
+    }
+
+    /**
      * The platform published the post but gave no link yet (TikTok issues the id after moderation). The row
      * stays PUBLISHED; the handle to ask again with is kept on it and a bounded chain of PERMALINK tasks is
      * armed. When the link arrives it lands through {@link #recordSuccess}, so the permalink and the
      * destination Asset take the same path as any outcome.
      */
     private void startPermalinkFollowUp(PostPublishTarget target, Map<String, Object> output) {
-        String publishId = stringValue(output, PermalinkFollowUp.OUTPUT_PUBLISH_ID_KEY);
-        if (!Boolean.TRUE.equals(output.get(PermalinkFollowUp.OUTPUT_PENDING_KEY)) || publishId == null
-                || (target.getPermalink() != null && !target.getPermalink().isBlank())) {
+        if (!Boolean.TRUE.equals(output.get(PermalinkFollowUp.OUTPUT_PENDING_KEY))) {
             return;
         }
-        target.setResumeCheckpoint(new PermalinkFollowUp(publishId, stringValue(output,
-                PermalinkFollowUp.OUTPUT_KIND_KEY)).toJson());
+        startPermalinkFollowUp(target, stringValue(output, PermalinkFollowUp.OUTPUT_PUBLISH_ID_KEY),
+                stringValue(output, PermalinkFollowUp.OUTPUT_KIND_KEY));
+    }
+
+    private void startPermalinkFollowUp(PostPublishTarget target, String publishId, String kind) {
+        if (publishId == null || (target.getPermalink() != null && !target.getPermalink().isBlank())) {
+            return;
+        }
+        target.setResumeCheckpoint(new PermalinkFollowUp(publishId, kind).toJson());
         targetRepository.save(target);
         publishTaskArmer.armPermalinkFollowUp(target);
         log.info("Target {} published on {} without a link; following up on publish {}", target.getId(),
@@ -593,7 +637,8 @@ public class PublishOutcomeService {
      * target may be retried (not TikTok, no checkpoint, not a photo post, expiry unknown or already past).
      */
     private Instant photoLinksLiveUntil(PostPublishTarget target, Instant now) {
-        if (!"tiktok".equals(target.getPlatform()) || target.getIdempotencyKey() == null) {
+        if (!"tiktok".equals(target.getPlatform()) || target.getIdempotencyKey() == null
+                || actionInvocationService == null) {
             return null;
         }
         return actionInvocationService.readCheckpoint(target.getIdempotencyKey())
@@ -730,7 +775,12 @@ public class PublishOutcomeService {
         }
         Statechart statechart = statechartFor(post);
         String scheduledStatus = scheduledStatus(statechart);
-        if (!scheduledStatus.equals(post.getCurrentStatus())) {
+        // A Post already rolled up to its failed status is revisited too: a TikTok photo target that failed
+        // while TikTok still held its images can be published late, and then the Post must follow it. From
+        // there only "every target published" moves it; a still-failed set leaves it where it is.
+        boolean fromFailed = !scheduledStatus.equals(post.getCurrentStatus()) && statechart != null
+                && failedStatus(statechart).filter(post.getCurrentStatus()::equals).isPresent();
+        if (!scheduledStatus.equals(post.getCurrentStatus()) && !fromFailed) {
             return;
         }
 
@@ -743,6 +793,9 @@ public class PublishOutcomeService {
         }
         boolean everyTargetPublished = counted.stream()
                 .allMatch(t -> t.getState() == PostPublishTargetState.PUBLISHED);
+        if (fromFailed && !everyTargetPublished) {
+            return;
+        }
 
         if (statechart == null) {
             log.warn("Post {} finished publishing but its workflow could not be resolved; status left at {}",
@@ -996,7 +1049,20 @@ public class PublishOutcomeService {
             connectionHealthService.reportPublishAuthFailure(target.getConnectionId(), errorMessage);
         }
         rollUp(target);
+        armTikTokVerdictIfLinksLive(target);
         return true;
+    }
+
+    /**
+     * A TikTok photo post that failed while TikTok could still download its images may yet be published
+     * (its download queue has stalled for a day before draining): arm the bounded late-verdict chain so
+     * Conductor learns of it. Nothing is armed once the links are dead or were released.
+     */
+    private void armTikTokVerdictIfLinksLive(PostPublishTarget target) {
+        Instant liveUntil = photoLinksLiveUntil(target, Instant.now());
+        if (liveUntil != null) {
+            publishTaskArmer.armTikTokVerdict(target, liveUntil);
+        }
     }
 
     /**

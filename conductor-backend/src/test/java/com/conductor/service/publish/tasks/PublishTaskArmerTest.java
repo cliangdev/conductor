@@ -54,6 +54,50 @@ class PublishTaskArmerTest {
         return t;
     }
 
+    // ---- late TikTok verdict chain ----
+
+    @Test
+    void verdictCadence_is15Min_30Min_thenHourly_andEndsAtLinkExpiryPlus70Min() {
+        java.time.Instant expiry = now.plusHours(40).toInstant();
+        assertThat(PublishTaskArmer.nextVerdictAt(0, now, expiry)).contains(now.plusMinutes(15));
+        assertThat(PublishTaskArmer.nextVerdictAt(1, now, expiry)).contains(now.plusMinutes(30));
+        assertThat(PublishTaskArmer.nextVerdictAt(2, now, expiry)).contains(now.plusHours(1));
+        assertThat(PublishTaskArmer.nextVerdictAt(7, now, expiry)).contains(now.plusHours(1));
+
+        // the last slot is pulled in to expiry + 70 min rather than overshooting it
+        OffsetDateTime nearEnd = OffsetDateTime.ofInstant(expiry.plus(Duration.ofMinutes(40)), now.getOffset());
+        assertThat(PublishTaskArmer.nextVerdictAt(5, nearEnd, expiry))
+                .contains(OffsetDateTime.ofInstant(expiry.plus(Duration.ofMinutes(70)), now.getOffset()));
+        // once that last check has come, the chain ends
+        OffsetDateTime atEnd = OffsetDateTime.ofInstant(expiry.plus(Duration.ofMinutes(70)), now.getOffset());
+        assertThat(PublishTaskArmer.nextVerdictAt(6, atEnd, expiry)).isEmpty();
+        assertThat(PublishTaskArmer.nextVerdictAt(6, atEnd.plusMinutes(5), expiry)).isEmpty();
+    }
+
+    @Test
+    void armTikTokVerdict_schedulesTheFirstCheckAgainstTheFireTimeSnapshot() {
+        OffsetDateTime fire = now.minusHours(1);
+        PostPublishTarget t = target("t", "tiktok", PublishLane.APP_MANAGED, PostPublishTargetState.FAILED, fire);
+
+        assertThat(armer.armTikTokVerdict(t, now.plusHours(40).toInstant())).isTrue();
+
+        org.mockito.ArgumentCaptor<PublishTask> task = org.mockito.ArgumentCaptor.forClass(PublishTask.class);
+        org.mockito.Mockito.verify(scheduler).scheduleAfterCommit(task.capture());
+        assertThat(task.getValue().kind()).isEqualTo(PublishTaskKind.TIKTOK_VERDICT);
+        assertThat(task.getValue().fireTime()).isEqualTo(fire);
+        assertThat(task.getValue().attempt()).isZero();
+        assertThat(task.getValue().notBefore()).isBetween(now.plusMinutes(14), now.plusMinutes(16));
+    }
+
+    @Test
+    void armTikTokVerdict_armsNothingOnceTheChainWindowIsOver() {
+        PostPublishTarget t = target("t", "tiktok", PublishLane.APP_MANAGED, PostPublishTargetState.FAILED, now);
+
+        assertThat(armer.armTikTokVerdict(t, now.minusHours(2).toInstant())).isFalse();
+
+        org.mockito.Mockito.verifyNoInteractions(scheduler);
+    }
+
     @Test
     void pendingAppManaged_dispatchesAtFireTime() {
         OffsetDateTime fire = now.plusHours(3);

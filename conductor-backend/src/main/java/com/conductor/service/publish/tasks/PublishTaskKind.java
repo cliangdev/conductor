@@ -12,7 +12,13 @@ public enum PublishTaskKind {
      * Ask the platform again for the link of a target that published without one (TikTok fills in a post's
      * id only after moderation, and only for public posts). Bounded; see {@link PublishTaskHandler}.
      */
-    PERMALINK;
+    PERMALINK,
+    /**
+     * Ask TikTok whether a photo post whose publish attempt gave up (FAILED, with its image links still
+     * live) has since been published, or definitively failed. Bounded by the links' expiry; see
+     * {@link PublishTaskHandler}.
+     */
+    TIKTOK_VERDICT;
 
     /** The path segment under {@code /internal/v1/publish-targets/{id}/} that carries this kind. */
     public String pathSegment() {

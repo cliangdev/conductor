@@ -1126,13 +1126,73 @@ class TikTokPublishActionTest {
 
         action.publish(photoInput("photo-a"), context());
 
-        ArgumentCaptor<Integer> minutes = ArgumentCaptor.forClass(Integer.class);
-        verify(storageService).generateSignedUrl(anyString(), minutes.capture());
+        ArgumentCaptor<java.time.Duration> lifetime = ArgumentCaptor.forClass(java.time.Duration.class);
+        verify(storageService).generateFreshSignedUrl(anyString(), lifetime.capture());
         java.time.Instant recorded = objectMapper
                 .readValue(storedCheckpoint.get(), TikTokPublishAction.UploadCheckpoint.class)
                 .linksExpireInstant();
+        assertThat(lifetime.getValue()).isEqualTo(java.time.Duration.ofHours(48));
         assertThat(recorded).isNotNull();
-        assertThat(recorded).isAfterOrEqualTo(NOW.plus(java.time.Duration.ofMinutes(minutes.getValue())));
+        assertThat(recorded).isAfterOrEqualTo(NOW.plus(lifetime.getValue()));
+    }
+
+    @Test
+    void photoPost_signsFreshLinks_neverFromTheSharedUrlCache() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        action.publish(photoInput("photo-a"), context());
+
+        verify(storageService, never()).generateSignedUrl(anyString(), anyInt());
+        verify(storageService).generateFreshSignedUrl(eq("assets/photo-a.jpg"), any(java.time.Duration.class));
+    }
+
+    @Test
+    void photoPost_recordsWhenTikTokAcceptedItSoALateVerdictCanSayHowLateItWas() throws Exception {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        action.publish(photoInput("photo-a"), context());
+
+        assertThat(objectMapper.readValue(storedCheckpoint.get(), TikTokPublishAction.UploadCheckpoint.class)
+                .initInstant()).isEqualTo(NOW);
+    }
+
+    @Test
+    void photoLinkLifetime_isClampedToWhatStorageCanSign() {
+        java.time.Duration max = java.time.Duration.ofDays(7).minusMinutes(5);
+        assertThat(TikTokPublishAction.clampPhotoLinkLifetime(java.time.Duration.ofDays(30))).isEqualTo(max);
+        assertThat(TikTokPublishAction.clampPhotoLinkLifetime(java.time.Duration.ofHours(6)))
+                .isEqualTo(java.time.Duration.ofHours(6));
+        assertThat(TikTokPublishAction.clampPhotoLinkLifetime(null)).isEqualTo(java.time.Duration.ofHours(48));
+        assertThat(TikTokPublishAction.clampPhotoLinkLifetime(java.time.Duration.ZERO))
+                .isEqualTo(java.time.Duration.ofHours(48));
+    }
+
+    @Test
+    void photoPost_usesTheConfiguredLifetimeForSigningAndTheRecordedExpiry() throws Exception {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        TikTokPublishAction custom = new TikTokPublishAction(client, assetRepository, targetRepository,
+                actionInvocationService, objectMapper, (path, offset, length) -> new ByteArrayInputStream(new byte[0]),
+                storageService, java.time.Duration.ofDays(30));
+        custom.pollIntervalMillis = 0L;
+        custom.clock = java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        custom.publish(photoInput("photo-a"), context());
+
+        java.time.Duration max = java.time.Duration.ofDays(7).minusMinutes(5);
+        verify(storageService).generateFreshSignedUrl(anyString(), eq(max));
+        assertThat(TikTokPublishAction.photoLinksLiveUntil(storedCheckpoint.get())).contains(NOW.plus(max));
     }
 
     @Test
@@ -1175,8 +1235,10 @@ class TikTokPublishActionTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("TikTok accepted photo post " + PUBLISH_ID + " but hadn't downloaded its images after "
-                        + "0 min (still PROCESSING_DOWNLOAD). Its image links stay live until Nov 7, 13:30 UTC; "
-                        + "retrying before then could post the photos twice.");
+                        + "0 min (still PROCESSING_DOWNLOAD). TikTok hasn't downloaded the images yet. Its image "
+                        + "links stay live until Nov 9, 12:00 UTC, and Conductor keeps checking with TikTok until "
+                        + "then: this destination switches to Published if TikTok posts it. Retrying before then "
+                        + "could post the photos twice.");
     }
 
     @Test
@@ -1192,7 +1254,7 @@ class TikTokPublishActionTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("still PROCESSING_UPLOAD")
                 .hasMessageNotContaining("hadn't downloaded")
-                .hasMessageContaining("stay live until Nov 7, 13:30 UTC");
+                .hasMessageContaining("stay live until Nov 9, 12:00 UTC");
     }
 
     @Test
@@ -1264,7 +1326,7 @@ class TikTokPublishActionTest {
             asset.setSizeBytes(2048L);
             asset.setCreatedAt(OffsetDateTime.parse("2026-08-01T09:00:00Z"));
             photos.add(asset);
-            when(storageService.generateSignedUrl(eq("assets/" + id + ".jpg"), anyInt()))
+            when(storageService.generateFreshSignedUrl(eq("assets/" + id + ".jpg"), any(java.time.Duration.class)))
                     .thenReturn("https://signed/" + id);
         }
         when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(photos);

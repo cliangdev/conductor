@@ -487,6 +487,33 @@ offer (`FORMAT_UNSUPPORTED`) is refused outright, at selection rather than at th
 > `{host}/media/…` links. Without the setting every photo post fails naming this; video posts are
 > unaffected, since they upload their bytes.
 
+**TikTok photo links outlive a TikTok backlog.** The links in those `{host}/media/…` URLs are signed storage
+links that TikTok may fetch long after init: on 2026-11-07/08 TikTok's photo download queue stalled for about
+a day and then drained in init order, and every fetch hit an expired 90-minute link (502) before the queue
+caught up. Links now live for `conductor.integrations.tiktok.photo-link-lifetime` (an ISO-8601 duration,
+default `PT48H`, clamped to 7 days minus 5 minutes, the GCS V4 cap). They are signed fresh, never from the
+shared signed-URL cache, so the lifetime recorded on the invocation checkpoint (`linksExpireAt`) is true.
+While a failed photo target's links are live, a manual retry is refused (it could post the photos twice).
+
+**Late verdict check.** A photo publish attempt polls TikTok for about 10 minutes, three times, and then the
+target is `FAILED` ("TikTok hasn't downloaded the images yet… Conductor keeps checking until …"). If its links
+are still live, a bounded chain of `TIKTOK_VERDICT` Cloud Tasks (`/internal/v1/publish-targets/{id}/tiktok_verdict`,
+modelled on the PERMALINK follow-up, honouring `conductor.post-publish.enabled`) asks TikTok `status/fetch` for
+the recorded `publish_id`: 15 min, 30 min, then hourly, last check at `linksExpireAt` + 70 min (TikTok's
+one-hour download window after a fetch starts). Per check:
+
+- `PUBLISH_COMPLETE`: the target moves `FAILED → PUBLISHED` through `recordSuccess` and a Post rolled up to
+  its failed status follows it to published once every target has published; with no link yet the PERMALINK
+  follow-up starts. A WARN logs how late TikTok was.
+- `FAILED`: the target stays failed, its message becomes TikTok's reason, the checkpoint's link expiry is
+  cleared so a retry is allowed at once, and the chain stops.
+- still processing: re-armed; after the last check the message says TikTok never downloaded the images and a
+  retry is now safe.
+
+A task for a target that is no longer `FAILED`, or that was retried since (its fire time changed), does nothing.
+Log lines carry `publish_id`: `TikTok photo post <id> images: <assetId->object>… initAt=… linksExpireAt=…`
+(match the media proxy's access logs by object and `X-Goog-Date`) and one `TikTok verdict check` line per check.
+
 ## Options
 
 `publishOptions` is a per-target bag, read only against that target's own platform (and, where noted,

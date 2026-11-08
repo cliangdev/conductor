@@ -471,6 +471,33 @@ paths:
         "401":
           description: Missing or invalid publish task token
 
+  /publish-targets/{targetId}/tiktok_verdict:
+    post:
+      tags: [publish-internal]
+      summary: Ask TikTok whether a failed photo post was published after all
+      description: >
+        Cloud Tasks' HTTP target for a TIKTOK_VERDICT publish task. A TikTok photo post is fetched by TikTok
+        from signed links, and its download queue can stall for hours; when Conductor's publish attempt gives
+        up the target is FAILED while TikTok may still publish later. Armed when such a target fails, then on
+        a cadence of 15 min, 30 min and hourly until the links expire plus 70 minutes. Reads the status of
+        the publish id recorded on the failed attempt's checkpoint: PUBLISH_COMPLETE moves the target to
+        PUBLISHED, FAILED replaces its message with TikTok's reason and allows a retry, anything else
+        re-arms until the last check. `attempt` is the zero-based step. A no-op 200 when the row is no longer
+        FAILED, was retried (its fire time no longer matches `fireTime`), or has no live photo links
+        recorded.
+      operationId: checkTikTokPhotoVerdict
+      security:
+        - publishTaskToken: []
+      parameters:
+        - $ref: "#/components/parameters/TargetId"
+        - $ref: "#/components/parameters/FireTime"
+        - $ref: "#/components/parameters/Attempt"
+      responses:
+        "200":
+          description: Delivered - published, failed, re-armed, or nothing left to do
+        "401":
+          description: Missing or invalid publish task token
+
   /scheduler/jobs/{job}:
     post:
       tags: [scheduler-internal]
