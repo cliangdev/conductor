@@ -485,6 +485,23 @@ class MarketingOverviewQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     }
 
     @Test
+    void anOptionalTargetedMetricThatStoppedReportingStaysInTheAlertsViewOnly() {
+        String web = connectFresh("posthog");
+        put(web, "posthog", "WEB", "sessions", day(10), 1);
+        // conversion_sessions (optional) has a target but no rows: the card hides it, the alerts still see it
+        service.setTarget(project.getId(), "WEB", "conversion_sessions", 50.0, null, user.getId());
+
+        java.util.List<String> page = channel(service.overview(project.getId(), "7d", TODAY, NOW), "WEB").metrics()
+                .stream().map(MetricView::metric).toList();
+        MetricView alerts = metric(channel(service.overviewWithEveryMetric(project.getId(), "7d", TODAY, NOW),
+                "WEB"), "conversion_sessions");
+
+        assertThat(page).doesNotContain("conversion_sessions");
+        assertThat(alerts.value()).isNull();
+        assertThat(alerts.status()).isEqualTo("TOO_EARLY");
+    }
+
+    @Test
     void funnelStagesAreOrderedAndUnavailableOnesCarryTheirReason() {
         String web = connectFresh("posthog");
         put(web, "posthog", "WEB", "visitors", day(10), 40);
