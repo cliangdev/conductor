@@ -25,12 +25,14 @@ class WorkflowFailureCircuitBreakerTest {
 
     @Mock com.conductor.repository.WorkflowDefinitionRepository workflowRepository;
     @Mock SignalBus signalBus;
+    @Mock com.conductor.repository.WorkflowStepRunRepository stepRunRepository;
 
     WorkflowFailureCircuitBreaker breaker;
 
     @BeforeEach
     void setUp() {
-        breaker = new WorkflowFailureCircuitBreaker(workflowRepository, signalBus);
+        breaker = new WorkflowFailureCircuitBreaker(workflowRepository, signalBus, stepRunRepository,
+                new com.fasterxml.jackson.databind.ObjectMapper());
     }
 
     private WorkflowDefinition workflow(int consecutiveFailures) {
@@ -135,5 +137,48 @@ class WorkflowFailureCircuitBreakerTest {
         assertThat(wf.isEnabled()).isTrue();
         assertThat(wf.getAutoPausedAt()).isNull();
         verify(signalBus, never()).publish(org.mockito.ArgumentMatchers.any());
+    }
+
+    private WorkflowRun isolatedLibrarianRun(WorkflowDefinition wf, String id) {
+        wf.setName("knowledge-librarian");
+        WorkflowRun run = run(wf, WorkflowRunStatus.FAILED, id);
+        run.setEventPayload("{\"sourceIds\":\"src-1\",\"isolatedRetry\":true}");
+        return run;
+    }
+
+    @Test
+    void anIsolatedLibrarianRetryThatFailedInTheAgent_isNotCounted() {
+        WorkflowDefinition wf = workflow(WorkflowFailureCircuitBreaker.TRIP_THRESHOLD - 1);
+        org.mockito.Mockito.when(stepRunRepository.findFirstFailureReasonByRunId("run-solo"))
+                .thenReturn(java.util.List.of("CLAUDE_AGENT_ERROR"));
+
+        breaker.recordOutcome(isolatedLibrarianRun(wf, "run-solo"));
+
+        assertThat(wf.getConsecutiveFailures()).isEqualTo(WorkflowFailureCircuitBreaker.TRIP_THRESHOLD - 1);
+        assertThat(wf.isEnabled()).isTrue();
+        verify(signalBus, never()).publish(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
+    void anIsolatedLibrarianRetryThatFailedToLaunch_stillCounts() {
+        WorkflowDefinition wf = workflow(WorkflowFailureCircuitBreaker.TRIP_THRESHOLD - 1);
+        org.mockito.Mockito.when(stepRunRepository.findFirstFailureReasonByRunId("run-solo"))
+                .thenReturn(java.util.List.of("CLAUDE_LAUNCH_ERROR"));
+
+        breaker.recordOutcome(isolatedLibrarianRun(wf, "run-solo"));
+
+        assertThat(wf.isEnabled()).isFalse();
+    }
+
+    @Test
+    void aBatchLibrarianRunThatFailedInTheAgent_stillCounts() {
+        WorkflowDefinition wf = workflow(1);
+        wf.setName("knowledge-librarian");
+        WorkflowRun run = run(wf, WorkflowRunStatus.FAILED, "run-batch");
+        run.setEventPayload("{\"sourceIds\":\"a,b,c\"}");
+
+        breaker.recordOutcome(run);
+
+        assertThat(wf.getConsecutiveFailures()).isEqualTo(2);
     }
 }

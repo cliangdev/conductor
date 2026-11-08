@@ -5,6 +5,7 @@ import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
 import com.conductor.repository.WorkflowDefinitionRepository;
 import com.conductor.repository.WorkflowRunRepository;
+import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.service.ProjectSettingsService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,6 +57,16 @@ public class KnowledgeIngestScheduler {
     int batchSize = 10;
     /** Total attempts before a stuck PROCESSING source is dead-lettered. */
     static final int MAX_ATTEMPTS = 5;
+    /**
+     * Step failure reasons that mean the agent itself ran and failed on the batch (out of turns, or out
+     * of time), as opposed to the run never getting that far (launch, credentials, rate limit, dispatch).
+     * Only these mark a source {@code isolateOnRetry}, and only these exempt an isolated run from the
+     * workflow circuit breaker -- see {@code WorkflowFailureCircuitBreaker}. The librarian is pinned to
+     * the claude-code runtime, whose agent error covers {@code error_max_turns}.
+     */
+    public static final Set<String> AGENT_FAILURE_REASONS = Set.of("CLAUDE_AGENT_ERROR", "CLAUDE_TIMEOUT");
+    /** Event-payload flag on a run dispatched for one {@code isolateOnRetry} source. */
+    public static final String ISOLATED_RETRY_PAYLOAD_KEY = "isolatedRetry";
     private static final Set<WorkflowRunStatus> TERMINAL_FAILED_STATUSES =
             Set.of(WorkflowRunStatus.FAILED, WorkflowRunStatus.CANCELLED, WorkflowRunStatus.LOCAL_PICKUP_TIMEOUT);
 
@@ -67,6 +78,7 @@ public class KnowledgeIngestScheduler {
     private final ProjectSettingsService projectSettingsService;
     private final WorkflowDefinitionRepository workflowRepository;
     private final WorkflowRunRepository workflowRunRepository;
+    private final WorkflowStepRunRepository stepRunRepository;
     private final LibrarianDispatchService dispatchService;
     private final boolean enabled;
 
@@ -79,12 +91,14 @@ public class KnowledgeIngestScheduler {
                                     ProjectSettingsService projectSettingsService,
                                     WorkflowDefinitionRepository workflowRepository,
                                     WorkflowRunRepository workflowRunRepository,
+                                    WorkflowStepRunRepository stepRunRepository,
                                     LibrarianDispatchService dispatchService,
                                     @Value("${conductor.knowledge.ingest-scheduler.enabled:true}") boolean enabled) {
         this.sourceRepository = sourceRepository;
         this.projectSettingsService = projectSettingsService;
         this.workflowRepository = workflowRepository;
         this.workflowRunRepository = workflowRunRepository;
+        this.stepRunRepository = stepRunRepository;
         this.dispatchService = dispatchService;
         this.enabled = enabled;
     }
@@ -144,11 +158,11 @@ public class KnowledgeIngestScheduler {
                 continue; // this lane is busy; other lanes are unaffected
             }
             try {
-                List<String> claimedIds = self.claimBatchInNewTx(projectId, domain, now);
-                if (claimedIds.isEmpty()) {
+                Claim claim = self.claimBatchInNewTx(projectId, domain, now);
+                if (claim.sourceIds().isEmpty()) {
                     continue;
                 }
-                dispatchService.dispatch(projectId, domain, claimedIds);
+                dispatchService.dispatch(projectId, domain, claim.sourceIds(), claim.isolated());
             } catch (Exception e) {
                 // One lane's failure is that lane's alone. The sources it claimed stay PROCESSING with
                 // no run behind them, which is exactly what the stale-PROCESSING sweep resurrects (with
@@ -182,19 +196,36 @@ public class KnowledgeIngestScheduler {
                 .orElse(false);
     }
 
+    /** The sources one dispatch claimed; {@code isolated} when it is a single {@code isolateOnRetry} source. */
+    public record Claim(List<String> sourceIds, boolean isolated) {
+        static final Claim NONE = new Claim(List.of(), false);
+    }
+
+    /**
+     * Claims the lane's due sources, oldest first. A source whose earlier run failed inside the agent
+     * ({@code isolateOnRetry}) goes alone when it is the oldest due: re-batching it with the same
+     * batch-mates replays the same failure (e.g. running out of turns on one long page) and takes them
+     * all to DEAD. Otherwise the batch is the due sources without that flag, so isolated sources never
+     * split a batch of fresh ones and a transient outage (which doesn't set the flag) never turns a
+     * batch into serial single-source runs.
+     */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public List<String> claimBatchInNewTx(String projectId, String domain, OffsetDateTime now) {
+    public Claim claimBatchInNewTx(String projectId, String domain, OffsetDateTime now) {
         List<KnowledgeSource> due = sourceRepository.findDuePendingForProjectAndDomain(projectId, domain, now, batchSize);
         if (due.isEmpty()) {
-            return List.of();
+            return Claim.NONE;
         }
-        List<String> ids = new ArrayList<>(due.size());
-        for (KnowledgeSource source : due) {
+        boolean isolated = due.get(0).isIsolateOnRetry();
+        List<KnowledgeSource> claimed = isolated
+                ? List.of(due.get(0))
+                : due.stream().filter(source -> !source.isIsolateOnRetry()).toList();
+        List<String> ids = new ArrayList<>(claimed.size());
+        for (KnowledgeSource source : claimed) {
             source.setStatus(KnowledgeSourceStatus.PROCESSING);
             ids.add(source.getId());
         }
-        sourceRepository.saveAll(due);
-        return ids;
+        sourceRepository.saveAll(claimed);
+        return new Claim(ids, isolated);
     }
 
     // ---- sweep: resurrect or dead-letter stuck PROCESSING sources ----
@@ -226,6 +257,14 @@ public class KnowledgeIngestScheduler {
         return TERMINAL_FAILED_STATUSES.contains(run.getStatus()) || run.getStartedAt().isBefore(cutoff);
     }
 
+    private boolean runFailedInAgent(String runId) {
+        if (runId == null) {
+            return false;
+        }
+        return stepRunRepository.findFirstFailureReasonByRunId(runId).stream()
+                .anyMatch(AGENT_FAILURE_REASONS::contains);
+    }
+
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void resurrectOrDeadInNewTx(String sourceId) {
         sourceRepository.findById(sourceId).ifPresent(source -> {
@@ -234,6 +273,9 @@ public class KnowledgeIngestScheduler {
             }
             int attempts = source.getAttempts() + 1;
             source.setAttempts(attempts);
+            if (!source.isIsolateOnRetry() && runFailedInAgent(source.getProcessingRunId())) {
+                source.setIsolateOnRetry(true);
+            }
             if (attempts >= MAX_ATTEMPTS) {
                 source.setStatus(KnowledgeSourceStatus.DEAD);
                 source.setErrorMessage("Exceeded " + MAX_ATTEMPTS + " processing attempts (last run: "

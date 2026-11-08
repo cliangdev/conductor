@@ -96,6 +96,13 @@ public class LibrarianDispatchService {
      * retries it once provisioning has landed.
      */
     public void dispatch(String projectId, String domain, List<String> sourceIds) {
+        dispatch(projectId, domain, sourceIds, false);
+    }
+
+    /** As {@link #dispatch(String, String, List)}; {@code isolatedRetry} marks a run for one source whose
+     *  earlier run failed inside the agent, so the circuit breaker doesn't count that source's failure
+     *  against the whole librarian (see {@code WorkflowFailureCircuitBreaker}). */
+    public void dispatch(String projectId, String domain, List<String> sourceIds, boolean isolatedRetry) {
         if (sourceIds == null || sourceIds.isEmpty()) {
             return;
         }
@@ -125,7 +132,7 @@ public class LibrarianDispatchService {
         }
 
         String agentSlug = resolveAgentSlug(projectId, domain);
-        String payloadJson = buildPayload(projectId, domain, agentSlug, sourceIds);
+        String payloadJson = buildPayload(projectId, domain, agentSlug, sourceIds, isolatedRetry);
         WorkflowRun run = workflowTriggerService.fireTrigger(workflow.get().getId(), "workflow_dispatch", payloadJson);
         self.recordRunIdInNewTx(sourceIds, run.getId());
         log.info("Dispatched knowledge-librarian run {} for project {} domain={} agent={} ({} source(s))",
@@ -151,13 +158,17 @@ public class LibrarianDispatchService {
         return KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG;
     }
 
-    private String buildPayload(String projectId, String domain, String agentSlug, List<String> sourceIds) {
+    private String buildPayload(String projectId, String domain, String agentSlug, List<String> sourceIds,
+                                boolean isolatedRetry) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("type", "workflow_dispatch");
         payload.put("projectId", projectId);
         payload.put("sourceIds", String.join(",", sourceIds));
         payload.put("agentSlug", agentSlug);
         payload.put("domain", domain != null ? domain : "");
+        if (isolatedRetry) {
+            payload.put(KnowledgeIngestScheduler.ISOLATED_RETRY_PAYLOAD_KEY, true);
+        }
         try {
             return objectMapper.writeValueAsString(payload);
         } catch (Exception e) {

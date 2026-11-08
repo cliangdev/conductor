@@ -202,7 +202,25 @@ class LibrarianDispatchServiceTest {
         String payload = payloadCaptor.getValue();
         assertThat(payload).contains("\"agentSlug\":\"" + KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG + "\"");
         assertThat(payload).contains("\"domain\":\"\"");
+        assertThat(payload).doesNotContain(KnowledgeIngestScheduler.ISOLATED_RETRY_PAYLOAD_KEY);
         verify(domainRepository, never()).findByProjectIdAndSlug(anyString(), anyString());
+    }
+
+    @Test
+    void isolatedRetry_isFlaggedInThePayload() {
+        when(workflowRepository.findByProjectIdAndName(PROJECT_ID, KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME))
+                .thenReturn(Optional.of(workflow()));
+        when(agentRepository.existsByProjectIdAndSlug(PROJECT_ID, KnowledgeWorkflowProvisioner.LIBRARIAN_AGENT_SLUG))
+                .thenReturn(true);
+        WorkflowRun run = new WorkflowRun();
+        run.setId("run-1");
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        when(workflowTriggerService.fireTrigger(eq(WORKFLOW_ID), eq("workflow_dispatch"), payloadCaptor.capture())).thenReturn(run);
+        when(sourceRepository.findAllById(anyList())).thenReturn(List.of());
+
+        service.dispatch(PROJECT_ID, null, List.of("src-1"), true);
+
+        assertThat(payloadCaptor.getValue()).contains("\"isolatedRetry\":true");
     }
 
     @Test

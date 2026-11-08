@@ -186,6 +186,21 @@ class KnowledgeIngestionServiceIntegrationTest extends AbstractNoneWebIntegratio
     }
 
     @Test
+    void retryDeadSourcesKeepsTheIsolateFlag_soARecoveredSourceIsStillClaimedAlone() {
+        KnowledgeSource dead = newSourceWithStatus(projectId, KnowledgeSourceStatus.DEAD);
+        dead.setAttempts(5);
+        dead.setIsolateOnRetry(true);
+        sourceRepository.save(dead);
+
+        ingestionService.retryDeadSources(projectId);
+
+        KnowledgeSource reloaded = sourceRepository.findById(dead.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(KnowledgeSourceStatus.PENDING);
+        assertThat(reloaded.getAttempts()).isZero();
+        assertThat(reloaded.isIsolateOnRetry()).isTrue();
+    }
+
+    @Test
     void retryDeadSourcesLeavesOtherStatusesUntouched() {
         KnowledgeSource pending = newSourceWithStatus(projectId, KnowledgeSourceStatus.PENDING);
         KnowledgeSource processed = newSourceWithStatus(projectId, KnowledgeSourceStatus.PROCESSED);

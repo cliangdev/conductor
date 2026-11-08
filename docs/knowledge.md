@@ -114,7 +114,10 @@ for the generalist/unclassified lane; the concurrency unit is `(project, lane)`,
 
 1. **Dispatch.** For each project with `knowledge_enabled` and any due `PENDING` source (`nextAttemptAt`
    null or past), the scheduler enumerates every lane with due work and, for each lane not already busy,
-   claims up to 10 oldest sources *in that lane* into `PROCESSING` (`REQUIRES_NEW` transaction), then fires
+   claims up to 10 oldest sources *in that lane* into `PROCESSING` (`REQUIRES_NEW` transaction) — except
+   for sources flagged `isolate_on_retry` (see the sweep): when the oldest due source has the flag it is
+   claimed alone and the run's payload carries `isolatedRetry: true`; otherwise the batch leaves flagged
+   sources out — then fires
    a `knowledge-librarian` run via `LibrarianDispatchService` — a `workflow_dispatch` trigger carrying
    `sourceIds` (comma-joined), `projectId`, `agentSlug`, and `domain` (`""` for the null lane) as top-level
    event-payload fields (`${{ event.sourceIds }}` etc.), not `workflow_dispatch` `inputs` (see
@@ -162,7 +165,12 @@ for the generalist/unclassified lane; the concurrency unit is `(project, lane)`,
 5. **Sweep.** Every tick, any source still `PROCESSING` whose run is missing, terminally
    failed/cancelled/timed-out, or has simply run longer than 30 minutes is resurrected: attempts++, back to
    `PENDING` with exponential backoff (`60s * 2^attempts`), or — at 5 attempts — `DEAD` with an error
-   message. If the librarian workflow isn't provisioned yet, or its stored YAML has drifted from the
+   message. If the run failed inside the agent (step reason `CLAUDE_AGENT_ERROR`, which covers
+   `error_max_turns`, or `CLAUDE_TIMEOUT`), the sweep also sets `isolate_on_retry`, so that source is
+   retried alone from then on and can't take its batch-mates to `DEAD`. A launch, credential or rate-limit
+   failure doesn't set it, so an outage never turns a batch into serial single-source runs. An isolated
+   run that fails inside the agent is not counted by the workflow circuit breaker: that failure belongs
+   to the one source (its attempts, then `DEAD`), not to every lane. If the librarian workflow isn't provisioned yet, or its stored YAML has drifted from the
    current classpath template (e.g. a project enabled before per-lane `agent: ${{ event.agentSlug }}`
    shipped), dispatch self-heals via `KnowledgeWorkflowProvisioner.provision` (which refreshes drifted
    system-workflow YAML in place) before retrying; if that still fails, the claimed batch is released
@@ -172,7 +180,9 @@ Source lifecycle: `PENDING → PROCESSING → PROCESSED` (filed) or `→ SKIPPED
 not filed, with a reason) — **both terminal, both intentional; a skip is not a failure.** The failure
 path is `PENDING → PROCESSING → PENDING` (retried, backoff) `→ … → DEAD` (exhausted). `DEAD` isn't
 necessarily final — an admin can reset a project's dead sources back to `PENDING` via
-[`POST /sources/retry`](#rest-endpoints) after fixing the underlying cause. `SKIPPED` is deliberately
+[`POST /sources/retry`](#rest-endpoints) after fixing the underlying cause. The retry resets
+`attempts` but keeps `isolate_on_retry`, so a source that died in the agent is still retried alone.
+`SKIPPED` is deliberately
 **not** resettable that way: it was a judgment the librarian reached, not a failure to recover from.
 
 ---
