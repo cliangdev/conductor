@@ -724,13 +724,25 @@ export async function resolveWorkflowByAreaNoun(
   nounSeg: string,
   token: string,
 ): Promise<WorkflowDefinitionDto | undefined> {
-  const list = await fetchSidebarWorkflows(projectId, token)
+  const matches = matchAreaNoun(areaSeg, nounSeg)
+  const shown = (await fetchSidebarWorkflows(projectId, token)).find(matches)
+  if (shown) return shown
+  // A Workflow hidden from the sidebar (Marketing Changes, Tasks) is still linked to from elsewhere, e.g. the
+  // Marketing overview's Open changes card: its pages must open, they are only left out of the nav.
+  return (await listPublishedLifecycleWorkflows(projectId, token)).find(matches)
+}
+
+function matchAreaNoun(areaSeg: string, nounSeg: string): (wf: WorkflowDefinitionDto) => boolean {
   const area = areaSeg.toLowerCase()
   const noun = nounSeg.toLowerCase()
-  return list.find(
-    (wf) =>
-      wf.area?.toLowerCase() === area &&
-      pluralizeNoun(wf.noun ?? wf.name).toLowerCase() === noun,
+  return (wf) => wf.area?.toLowerCase() === area && pluralizeNoun(wf.noun ?? wf.name).toLowerCase() === noun
+}
+
+/** Every published lifecycle Workflow, including the ones hidden from the sidebar. */
+function listPublishedLifecycleWorkflows(projectId: string, token: string): Promise<WorkflowDefinitionDto[]> {
+  return apiGet<WorkflowDefinitionDto[]>(
+    `/api/v1/projects/${projectId}/workflows?lifecycle=true&state=PUBLISHED`,
+    token,
   )
 }
 
@@ -753,12 +765,9 @@ export function useWorkflowByAreaNoun(
     if (!projectId || !area || !noun) return { status: 'loading' }
     const cached = sidebarListCache.get(projectId)
     if (!cached) return { status: 'loading' }
-    const wf = cached.find(
-      (w) =>
-        w.area?.toLowerCase() === area.toLowerCase() &&
-        pluralizeNoun(w.noun ?? w.name).toLowerCase() === noun.toLowerCase(),
-    )
-    return wf ? { status: 'ready', workflow: wf } : { status: 'notfound' }
+    const wf = cached.find(matchAreaNoun(area, noun))
+    // Not in the sidebar may still be a hidden Workflow: the effect below looks it up before saying not found.
+    return wf ? { status: 'ready', workflow: wf } : { status: 'loading' }
   })
 
   useEffect(() => {
@@ -780,12 +789,19 @@ export function useWorkflowByAreaNoun(
     const unsubscribe = subscribeSidebarCache(projectId, () => {
       const fresh = getSidebarCacheEntry(projectId)
       if (cancelled || !fresh) return
-      const wf = fresh.find(
-        (w) =>
-          w.area?.toLowerCase() === area.toLowerCase() &&
-          pluralizeNoun(w.noun ?? w.name).toLowerCase() === noun.toLowerCase(),
-      )
-      setResolution(wf ? { status: 'ready', workflow: wf } : { status: 'notfound' })
+      const wf = fresh.find(matchAreaNoun(area, noun))
+      if (wf) {
+        setResolution({ status: 'ready', workflow: wf })
+        return
+      }
+      // gone from the sidebar list: it may be hidden rather than removed, so look it up again
+      resolveWorkflowByAreaNoun(projectId, area, noun, token)
+        .then((found) => {
+          if (!cancelled) setResolution(found ? { status: 'ready', workflow: found } : { status: 'notfound' })
+        })
+        .catch(() => {
+          if (!cancelled) setResolution({ status: 'notfound' })
+        })
     })
     return () => {
       cancelled = true

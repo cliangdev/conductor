@@ -234,6 +234,18 @@ describe('resolveWorkflowByAreaNoun', () => {
     expect(groups[0][1].map((e) => e.slug)).toEqual(['MARKETING', 'MARKETING_CHANGES'])
   })
 
+  it('opens a Workflow hidden from the sidebar, such as Marketing Changes, from all published lifecycle Workflows', async () => {
+    const posts = wf({ id: 'wf-p', name: 'MARKETING', slug: 'MARKETING', noun: 'Post', area: 'MARKETING' })
+    const changes = wf({ id: 'wf-c', name: 'MARKETING_CHANGES', slug: 'MARKETING_CHANGES', noun: 'Change', area: 'MARKETING' })
+    ;(apiGet as ReturnType<typeof vi.fn>).mockImplementation((url: string) =>
+      Promise.resolve(url.includes('sidebar=true') ? [posts] : [posts, changes]),
+    )
+
+    expect((await resolveWorkflowByAreaNoun('proj-hidden', 'marketing', 'changes', 'token'))?.slug)
+      .toBe('MARKETING_CHANGES')
+    expect(apiGet).toHaveBeenCalledWith('/api/v1/projects/proj-hidden/workflows?lifecycle=true&state=PUBLISHED', 'token')
+  })
+
   it('returns undefined when no workflow matches the area/noun pair', async () => {
     (apiGet as ReturnType<typeof vi.fn>).mockResolvedValue([wf({})])
     expect(await resolveWorkflowByAreaNoun('proj-c', 'marketing', 'campaigns', 'token')).toBeUndefined()
