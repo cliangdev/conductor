@@ -42,7 +42,9 @@ key's role is too weak (403), when the key is wrong (401) and when the app id is
   as 0: for the total, and for each of `APP_STORE_SEARCH`, `APP_STORE_BROWSE`, `APP_REFERRER` and
   `WEB_REFERRER`, the sources the overview and the report read one by one (per-source conversion, the
   organic search split). Other sources keep only the rows Apple sent; a day no report covers stays empty.
-  Contract version 4 added the per-source zeros, so the feed re-walks its history once.
+  A report covers the day before each instance's processing date, and every day an instance carries rows for:
+  the history Apple ships in a new request's first instances has no instance per day. Contract version 4 added
+  the per-source zeros and version 5 the carried days, each making the feed re-walk its history once.
 - A day's rows are the sum of all segments of the report instance. When several instances carry the
   same report date, the one with the latest processing date wins.
 - **Campaign tokens.** It also reads **App Downloads Detailed** from the same request and stores first-time
@@ -55,7 +57,7 @@ key's role is too weak (403), when the key is wrong (401) and when the app id is
   publishes a day and for a day with no sales, so a 404 on a day at least three days old (Pacific, Apple's report
   zone) counts as a covered day with zero downloads, and a recent 404 writes nothing. A Sales failure never fails
   the Analytics part of a pull.
-- Reports contract version 3; a version change makes the feed re-read its 90-day history once.
+- Reports contract version 5; a version change makes the feed re-read its 90-day history once.
 
 ## Gotchas
 

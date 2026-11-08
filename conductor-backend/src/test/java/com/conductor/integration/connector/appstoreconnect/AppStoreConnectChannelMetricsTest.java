@@ -500,7 +500,7 @@ class AppStoreConnectChannelMetricsTest {
                         + "2026-10-02\tRedownload\tApp Store Search\t4\n"
                         + "2026-10-02\tFirst-time download\tApp Store Browse\t1\n"
                         + "2026-10-02\tRedownload\tApp Referrer\t2\n"
-                        // 2026-10-01 has first-time rows only and no processed instance that covers it
+                        // 2026-10-01 has no instance of its own: it arrives inside D, as a request's history does
                         + "2026-10-01\tFirst-time download\tApp Store Search\t9\n"));
 
         Map<String, Double> m = byKey(connector.pullDaily(ctx(null), FROM, TO));
@@ -514,10 +514,46 @@ class AppStoreConnectChannelMetricsTest {
         assertThat(m).containsEntry("total_downloads|source:APP_STORE_BROWSE|2026-10-02", 1.0)
                 .containsEntry("total_downloads|source:APP_REFERRER|2026-10-02", 2.0)
                 .containsEntry("total_downloads|source:WEB_REFERRER|2026-10-02", 0.0);
-        // a day with first-time downloads but no redownloads input gets none at all
+        // a day carried inside another day's instance is covered too: its missing rows are zeros, not gaps
         assertThat(m).containsEntry("downloads||2026-10-01", 9.0)
-                .doesNotContainKey("total_downloads||2026-10-01")
-                .doesNotContainKey("total_downloads|source:APP_STORE_SEARCH|2026-10-01");
+                .containsEntry("redownloads||2026-10-01", 0.0)
+                .containsEntry("total_downloads||2026-10-01", 9.0)
+                .containsEntry("total_downloads|source:APP_STORE_SEARCH|2026-10-01", 9.0)
+                .containsEntry("downloads|source:APP_STORE_BROWSE|2026-10-01", 0.0);
+    }
+
+    @Test
+    void aRequestsHistoryArrivingInOneInstanceIsCoveredDayByDaySoPerSourceSumsKeepEveryDay() {
+        expectRequestAndReports();
+        // A new request's first instance ships the history before it; those days have no instance of their own.
+        // Sep 30 had search impressions but no search downloads; Oct 1 a search download but no redownload.
+        expectJson(DISCOVERY_INSTANCES, "{\"data\":[{\"id\":\"A\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
+        expectSegmentList("A", "https://segments.example.com/a1");
+        expectSegment("https://segments.example.com/a1", gzip(
+                "Date\tEvent\tSource Type\tCounts\tUnique Counts\n"
+                        + "2026-09-30\tImpression\tApp Store Search\t300\t250\n"
+                        + "2026-10-01\tImpression\tApp Store Search\t280\t240\n"
+                        + "2026-10-02\tImpression\tApp Store Search\t310\t260\n"));
+        expectJson(DOWNLOADS_INSTANCES, "{\"data\":[{\"id\":\"D\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
+        expectSegmentList("D", "https://segments.example.com/d1");
+        expectSegment("https://segments.example.com/d1", gzip(
+                "Date\tDownload Type\tSource Type\tCounts\n"
+                        + "2026-09-30\tRedownload\tApp Referrer\t1\n"
+                        + "2026-10-01\tFirst-time download\tApp Store Search\t2\n"
+                        + "2026-10-02\tFirst-time download\tApp Store Search\t1\n"
+                        + "2026-10-02\tRedownload\tApp Store Search\t1\n"));
+
+        Map<String, Double> m = byKey(connector.pullDaily(ctx(null), LocalDate.of(2026, 9, 29), TO));
+
+        server.verify();
+        assertThat(m).containsEntry("downloads|source:APP_STORE_SEARCH|2026-09-30", 0.0)
+                .containsEntry("total_downloads|source:APP_STORE_SEARCH|2026-09-30", 0.0)
+                .containsEntry("total_downloads|source:APP_STORE_SEARCH|2026-10-01", 2.0)
+                .containsEntry("total_downloads|source:APP_STORE_SEARCH|2026-10-02", 2.0)
+                .containsEntry("page_views|source:APP_STORE_SEARCH|2026-09-30", 0.0)
+                .containsEntry("impressions_unique|source:APP_STORE_SEARCH|2026-10-01", 240.0);
+        // a day neither report carries is still left alone
+        assertThat(m.keySet()).noneMatch(k -> k.endsWith("|2026-09-29"));
     }
 
     @Test
@@ -554,7 +590,7 @@ class AppStoreConnectChannelMetricsTest {
     // -- contract version ---------------------------------------------------------------------------------
 
     @Test
-    void thePullReportsContractVersion4SoHistoryIsReWalkedOnce() {
+    void thePullReportsContractVersion5SoHistoryIsReWalkedOnce() {
         expectRequestAndReports();
         expectJson(DISCOVERY_INSTANCES, "{\"data\":[]}");
         expectJson(DOWNLOADS_INSTANCES, "{\"data\":[{\"id\":\"D\",\"attributes\":{\"processingDate\":\"2026-10-03\"}}]}");
@@ -564,7 +600,7 @@ class AppStoreConnectChannelMetricsTest {
 
         ChannelMetricsPull pull = connector.pull(ctx(null), FROM, TO);
 
-        assertThat(pull.contractVersion()).isEqualTo(4);
+        assertThat(pull.contractVersion()).isEqualTo(5);
         assertThat(byKey(pull.points())).containsEntry("downloads||2026-10-02", 3.0);
     }
 

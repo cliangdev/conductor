@@ -77,10 +77,12 @@ public class AppStoreConnectConnector implements FetchConnector, ChannelMetricsS
     /**
      * Version 2: {@code total_downloads} exists. Version 3: {@code campaign_downloads} (per campaign token, from
      * the App Downloads Detailed report) exists. Version 4: a covered day stores 0 for each of
-     * {@link #ZERO_FILLED_SOURCES} that has no row, as the day total already did. The version differing from the
-     * one in the feed cursor makes the puller re-walk the backfill window once, so stored history gets it too.
+     * {@link #ZERO_FILLED_SOURCES} that has no row, as the day total already did. Version 5: a day that arrives only
+     * inside another day's instance (the history in a request's first instances) is covered too, so it gets those
+     * zeros. The version differing from the one in the feed cursor makes the puller re-walk the backfill window once,
+     * so stored history gets it too.
      */
-    static final int CONTRACT_VERSION = 4;
+    static final int CONTRACT_VERSION = 5;
     /**
      * The sources the overview and the report read one by one (the per-source conversion rates, the organic search
      * split). Apple's TSVs omit zero rows, so on a day a report covers, one of these with no row for a metric really
