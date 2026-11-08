@@ -315,7 +315,7 @@ process.exit(0);`,
 }
 
 async function testMcpConfigUsesPinnedToolsVersionWhenSet() {
-  console.log('test: CONDUCTOR_TOOLS_VERSION pins the npx spec and appears in the start line');
+  console.log('test: CONDUCTOR_TOOLS_VERSION runs the image\'s own conductor binary and appears in the start line');
   const binDir = mkdtempSync(path.join(tmpdir(), 'claude-bin-'));
   writeFakeClaude(
     binDir,
@@ -326,7 +326,7 @@ process.exit(0);`,
   const env = baseEnv({
     binDir,
     port,
-    extra: { CONDUCTOR_MCP_ENABLED: 'true', CONDUCTOR_API_KEY: 'proj-api-key', CONDUCTOR_TOOLS_VERSION: '0.11.4' },
+    extra: { CONDUCTOR_MCP_ENABLED: 'true', CONDUCTOR_API_KEY: 'proj-api-key', CONDUCTOR_TOOLS_VERSION: '0.53.2' },
   });
   const { code } = await runEntrypoint(env);
   server.close();
@@ -338,11 +338,16 @@ process.exit(0);`,
 
   assert(code === 0, `exit code is 0 (got ${code})`);
   assert(
-    config?.mcpServers?.conductor?.args?.includes('@cliangdev/conductor@0.11.4'),
-    'mcp-config.json pins the exact CONDUCTOR_TOOLS_VERSION spec',
+    config?.mcpServers?.conductor?.command === 'conductor'
+      && JSON.stringify(config?.mcpServers?.conductor?.args) === JSON.stringify(['mcp']),
+    'mcp-config.json runs the globally installed conductor binary, not a second npx copy',
   );
   assert(
-    allLoggedLines.some((l) => l.includes('conductor-tools 0.11.4')),
+    config?.mcpServers?.conductor?.env?.CONDUCTOR_SKIP_PLUGIN_REFRESH === '1',
+    'the MCP server is told never to rewrite a checked-out repository\'s .claude assets',
+  );
+  assert(
+    allLoggedLines.some((l) => l.includes('conductor-tools 0.53.2')),
     'the start line reports the pinned conductor-tools version',
   );
 }

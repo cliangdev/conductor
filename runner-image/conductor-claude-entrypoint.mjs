@@ -243,22 +243,23 @@ function writeMcpConfig(env) {
   if (!env.CONDUCTOR_API_KEY) {
     throw new ConfigError('CONDUCTOR_API_KEY is required when CONDUCTOR_MCP_ENABLED is true');
   }
-  // CONDUCTOR_TOOLS_VERSION is baked into the dedicated claude-runner image (see
-  // Dockerfile.claude-runner) so its pre-warmed npx cache and this invocation agree on the exact
-  // same package spec — no network resolution at job start, no drift from what was pinned at
-  // image-build time. Absent on the general-purpose image, which always resolves latest.
-  const pkgSpec = env.CONDUCTOR_TOOLS_VERSION
-    ? `@cliangdev/conductor@${env.CONDUCTOR_TOOLS_VERSION}`
-    : '@cliangdev/conductor';
+  // CONDUCTOR_TOOLS_VERSION is set by the dedicated claude-runner image (see Dockerfile.claude-runner),
+  // which installs exactly that CLI globally: run its `conductor` binary directly, so there is one copy of
+  // the package, no network resolution at job start and no drift. Absent on the general-purpose image,
+  // which resolves the latest through npx.
+  const server = env.CONDUCTOR_TOOLS_VERSION
+    ? { command: 'conductor', args: ['mcp'] }
+    : { command: 'npx', args: ['-y', '@cliangdev/conductor', 'mcp'] };
   const config = {
     mcpServers: {
       conductor: {
-        command: 'npx',
-        args: ['-y', pkgSpec, 'mcp'],
+        ...server,
         env: {
           CONDUCTOR_API_KEY: env.CONDUCTOR_API_KEY,
           CONDUCTOR_API_URL: env.CONDUCTOR_API_URL,
           CONDUCTOR_PROJECT_ID: env.CONDUCTOR_PROJECT_ID,
+          // never rewrite the .claude assets of a repository the step checked out
+          CONDUCTOR_SKIP_PLUGIN_REFRESH: '1',
         },
       },
     },

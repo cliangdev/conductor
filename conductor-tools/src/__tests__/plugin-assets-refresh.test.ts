@@ -48,6 +48,17 @@ describe('refreshInstalledPluginAssets', () => {
     return { assetSrcDir, globalClaudeDir: globalDir, localClaudeDir: localDir, currentVersion, log }
   }
 
+  it('does nothing when CONDUCTOR_SKIP_PLUGIN_REFRESH is set, even for an outdated install', () => {
+    // a workflow container sets it, so a checked-out repository is never rewritten by the MCP server
+    installPluginAssets(localDir, assetSrcDir)
+    fs.writeFileSync(path.join(localDir, PRD_REL_PATH), 'edited by the repo', 'utf8')
+
+    refreshInstalledPluginAssets({ ...opts('99.0.0'), env: { CONDUCTOR_SKIP_PLUGIN_REFRESH: '1' } })
+
+    expect(logs).toEqual([])
+    expect(fs.readFileSync(path.join(localDir, PRD_REL_PATH), 'utf8')).toBe('edited by the repo')
+  })
+
   it('does nothing when no install exists at either location', () => {
     refreshInstalledPluginAssets(opts('1.0.0'))
 

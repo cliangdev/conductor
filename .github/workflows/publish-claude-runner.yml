@@ -1,8 +1,15 @@
 name: Publish Claude Runner Image
 
-# Publishes only when the dedicated claude-code image actually changes — no manual tag needed
-# (contrast with Publish Runner Image, which is tag-triggered for the general-purpose image).
+# Publishes when the dedicated claude-code image changes, and after every CLI release: the image installs
+# conductor-tools/package.json's exact CLI version, so its MCP tools never fall behind the CLI (it once sat
+# at 0.11.4 while workflows listed tools from 0.53). No manual tag needed (contrast with Publish Runner
+# Image, which is tag-triggered for the general-purpose image).
 on:
+  # After the CLI is published to npm.
+  workflow_run:
+    workflows: ['Release CLI']
+    types: [completed]
+    branches: [main]
   push:
     branches: [main]
     paths:
@@ -25,6 +32,8 @@ env:
 
 jobs:
   build-and-push:
+    # A workflow_run fires for failed/cancelled releases too; only a successful release has a new CLI.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -34,6 +43,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7
+        with:
+          # For workflow_run: the exact commit the release built, not whatever main is by now.
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
 
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v6
@@ -47,9 +59,46 @@ jobs:
           node runner-image/runner-protocol.selftest.mjs
           node runner-image/entrypoint.selftest.mjs
 
+      - name: Resolve the CLI version to install
+        id: cli
+        env:
+          STRICT: ${{ github.event_name == 'workflow_run' }}
+        run: |
+          VERSION=$(node -p "require('./conductor-tools/package.json').version")
+          # The release publishes to npm before this runs (workflow_run), but the registry can lag a moment,
+          # and a push that only touches the image may name a version not released yet: that push builds the
+          # latest published CLI as validation only and pushes nothing; the post-release run publishes.
+          FOUND=""
+          PUBLISH=true
+          for attempt in $(seq 1 30); do
+            if npm view "@cliangdev/conductor@${VERSION}" version >/dev/null 2>&1; then
+              FOUND=1
+              break
+            fi
+            echo "@cliangdev/conductor@${VERSION} not on npm yet (attempt ${attempt}/30)"
+            if [ "$STRICT" != "true" ] && [ "$attempt" -ge 3 ]; then
+              break
+            fi
+            sleep 20
+          done
+          if [ -z "$FOUND" ]; then
+            if [ "$STRICT" = "true" ]; then
+              echo "::error::@cliangdev/conductor@${VERSION} never appeared on npm"
+              exit 1
+            fi
+            echo "::notice::@cliangdev/conductor@${VERSION} is not on npm yet; building the latest published CLI for validation only (nothing is pushed)."
+            VERSION=$(npm view @cliangdev/conductor version)
+            PUBLISH=false
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "publish=${PUBLISH}" >> "$GITHUB_OUTPUT"
+
       - name: Short SHA
         id: sha
-        run: echo "short=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+        env:
+          # The commit that was checked out above, which is not GITHUB_SHA on workflow_run.
+          BUILT_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+        run: echo "short=${BUILT_SHA::7}" >> $GITHUB_OUTPUT
 
       - name: Log in to GHCR
         uses: docker/login-action@v4.6.0
@@ -63,8 +112,10 @@ jobs:
         with:
           context: runner-image
           file: runner-image/Dockerfile.claude-runner
-          push: true
+          push: ${{ steps.cli.outputs.publish == 'true' }}
           platforms: linux/amd64
+          build-args: |
+            CONDUCTOR_TOOLS_VERSION=${{ steps.cli.outputs.version }}
           tags: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.sha.outputs.short }}
@@ -81,22 +132,22 @@ jobs:
       # Gated to the canonical repo: WIF_PROVIDER/WIF_SERVICE_ACCOUNT are cliangdev/conductor-only
       # secrets, absent (and rightly so) on any fork.
       - name: Authenticate to Google Cloud
-        if: github.repository == 'cliangdev/conductor'
+        if: github.repository == 'cliangdev/conductor' && steps.cli.outputs.publish == 'true'
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093  # v3
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
 
       - name: Set up gcloud
-        if: github.repository == 'cliangdev/conductor'
+        if: github.repository == 'cliangdev/conductor' && steps.cli.outputs.publish == 'true'
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db  # v3
 
       - name: Configure Docker for Artifact Registry
-        if: github.repository == 'cliangdev/conductor'
+        if: github.repository == 'cliangdev/conductor' && steps.cli.outputs.publish == 'true'
         run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 
       - name: Mirror into Conductor's own Artifact Registry
-        if: github.repository == 'cliangdev/conductor'
+        if: github.repository == 'cliangdev/conductor' && steps.cli.outputs.publish == 'true'
         run: |
           AR_IMAGE=us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/conductor/claude-runner
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
