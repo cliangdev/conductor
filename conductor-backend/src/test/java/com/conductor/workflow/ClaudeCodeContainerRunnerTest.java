@@ -191,46 +191,6 @@ class ClaudeCodeContainerRunnerTest {
     }
 
     @Test
-    void conductorMcp_raisesClaudeCodesMcpResultCap_soALongWikiPageReadsInOneCall() {
-        stubHappyCredentialsAndLaunch();
-        when(runTokenService.generateMcpToken(anyString(), anyString(), anyInt())).thenReturn("mcp-token");
-
-        StepResult result = runner.run(context(Map.of()), new ClaudeCodeContainerRunner.ClaudeCodeInvocation(
-                "File these sources", null, null, null, true, null, "agent", List.of(), Map.of()));
-
-        assertThat(result.getStatus()).isEqualTo(WorkflowStepStatus.SUCCESS);
-        ArgumentCaptor<ContainerTask> taskCaptor = ArgumentCaptor.forClass(ContainerTask.class);
-        verify(launcher).startExecution(any(CloudRunTarget.class), taskCaptor.capture());
-        assertThat(taskCaptor.getValue().env())
-                .containsEntry("MAX_MCP_OUTPUT_TOKENS", String.valueOf(ClaudeCodeContainerRunner.MAX_MCP_OUTPUT_TOKENS));
-    }
-
-    @Test
-    void stepEnv_overridesTheMcpResultCap() {
-        stubHappyCredentialsAndLaunch();
-        when(runTokenService.generateMcpToken(anyString(), anyString(), anyInt())).thenReturn("mcp-token");
-
-        runner.run(context(Map.of()), new ClaudeCodeContainerRunner.ClaudeCodeInvocation(
-                "File these sources", null, null, null, true, null, "agent", List.of(),
-                Map.of("MAX_MCP_OUTPUT_TOKENS", "120000")));
-
-        ArgumentCaptor<ContainerTask> taskCaptor = ArgumentCaptor.forClass(ContainerTask.class);
-        verify(launcher).startExecution(any(CloudRunTarget.class), taskCaptor.capture());
-        assertThat(taskCaptor.getValue().env()).containsEntry("MAX_MCP_OUTPUT_TOKENS", "120000");
-    }
-
-    @Test
-    void withoutConductorMcp_theMcpResultCapIsLeftAlone() {
-        stubHappyCredentialsAndLaunch();
-
-        runner.run(context(Map.of()), invocation(List.of(), Map.of()));
-
-        ArgumentCaptor<ContainerTask> taskCaptor = ArgumentCaptor.forClass(ContainerTask.class);
-        verify(launcher).startExecution(any(CloudRunTarget.class), taskCaptor.capture());
-        assertThat(taskCaptor.getValue().env()).doesNotContainKey("MAX_MCP_OUTPUT_TOKENS");
-    }
-
-    @Test
     void launcherThrowsGenericException_failsWithClaudeLaunchError() {
         when(credentialService.resolveApiKey(PROJECT_ID, "claude-code")).thenReturn(Optional.of("cc-oauth-xyz"));
         when(runTokenService.generateRunToken(anyString(), anyInt())).thenReturn("run-token");

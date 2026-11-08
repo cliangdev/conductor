@@ -95,6 +95,13 @@ public class KnowledgeSource {
     @Column(name = "error_message", columnDefinition = "TEXT")
     private String errorMessage;
 
+    /** True once a librarian run for this source failed inside the agent itself (it ran out of turns or
+     *  time), not in launching or dispatching it. Such a source is claimed on its own from then on, and
+     *  {@code KnowledgeSourceRepository#retryDeadSources} keeps the flag so a recovered source is still
+     *  retried alone. */
+    @Column(name = "isolate_on_retry", nullable = false)
+    private boolean isolateOnRetry;
+
     /** Set alongside {@code status = SKIPPED} -- why the librarian judged this source not worth a
      *  page, e.g. "duplicate of existing page" or "not material". Null for every other status. */
     @Column(name = "skip_reason", columnDefinition = "TEXT")
@@ -175,6 +182,9 @@ public class KnowledgeSource {
 
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+
+    public boolean isIsolateOnRetry() { return isolateOnRetry; }
+    public void setIsolateOnRetry(boolean isolateOnRetry) { this.isolateOnRetry = isolateOnRetry; }
 
     public String getSkipReason() { return skipReason; }
     public void setSkipReason(String skipReason) { this.skipReason = skipReason; }

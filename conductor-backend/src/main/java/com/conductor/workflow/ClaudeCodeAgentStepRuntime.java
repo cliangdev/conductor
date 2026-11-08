@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -21,6 +22,10 @@ import java.util.Optional;
  */
 @Component
 public class ClaudeCodeAgentStepRuntime implements AgentStepRuntime {
+
+    static final String WIKI_READ_TOOL_ID = "knowledge:read_knowledge_pages";
+    static final String MCP_OUTPUT_CAP_ENV = "MAX_MCP_OUTPUT_TOKENS";
+    static final int WIKI_READ_MCP_OUTPUT_TOKENS = 60_000;
 
     private final ClaudeCodeContainerRunner runner;
     private final AgentToolRegistry toolRegistry;
@@ -58,7 +63,7 @@ public class ClaudeCodeAgentStepRuntime implements AgentStepRuntime {
 
         ClaudeCodeContainerRunner.ClaudeCodeInvocation inv = new ClaudeCodeContainerRunner.ClaudeCodeInvocation(
                 prompt, allowedTools, agent.maxToolTurns(), call.timeoutMinutes(), conductorMcp,
-                call.outputSchema(), "agent", call.credentials(), call.extraEnv());
+                call.outputSchema(), "agent", call.credentials(), envFor(agent, call.extraEnv()));
         try {
             return runner.run(context, inv);
         } catch (Exception e) {
@@ -66,6 +71,25 @@ public class ClaudeCodeAgentStepRuntime implements AgentStepRuntime {
             // orchestrator doesn't catch, so the job run would hang RUNNING until stuck-job recovery.
             return StepResult.failed("Agent run failed: " + e.getMessage(), e.getMessage());
         }
+    }
+
+    /**
+     * An agent that reads wiki pages gets a larger cap on one MCP tool result. Claude Code refuses a
+     * result over 25,000 tokens by default, and one ~100 KB page (~28k tokens) came back as an error:
+     * the librarian then spent most of its turns extracting the saved result and reading it in
+     * chunks. The librarian reads one page per call, so the cap only has to fit the longest single
+     * page: 60,000 tokens is roughly 200 KB of Markdown. Scoped to agents bound to
+     * {@code read_knowledge_pages} rather than every container step; a step's own {@code with.env}
+     * value wins. The real bound belongs in that tool's output (follow-up).
+     */
+    private static Map<String, String> envFor(AgentExecutionService.AgentDefinition agent, Map<String, String> stepEnv) {
+        if (!agent.toolIds().contains(WIKI_READ_TOOL_ID)
+                || (stepEnv != null && stepEnv.containsKey(MCP_OUTPUT_CAP_ENV))) {
+            return stepEnv;
+        }
+        Map<String, String> env = stepEnv == null ? new LinkedHashMap<>() : new LinkedHashMap<>(stepEnv);
+        env.put(MCP_OUTPUT_CAP_ENV, String.valueOf(WIKI_READ_MCP_OUTPUT_TOKENS));
+        return env;
     }
 
     /** Same {@code ## Context} JSON block {@link AgentExecutionService} appends to the api runtime's

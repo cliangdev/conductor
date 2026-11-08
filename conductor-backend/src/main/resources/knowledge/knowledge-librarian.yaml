@@ -43,9 +43,13 @@ jobs:
             (filed) or `skipped` (reviewed, deliberately not filed, with a reason). Skipping is a
             normal outcome -- see _curation.md for the bar.
 
-            Long pages: read a page you expect to be long on its own (one path per
-            read_knowledge_pages call). Don't grow a page that is already over about 60 KB: put the
-            new material on a focused page next to it and add a one-line link from the long page.
+            Long pages: always pass one path per read_knowledge_pages call (several calls in one
+            turn is fine); a multi-page read can exceed the tool-result limit. A page whose `content`
+            is over about 60,000 characters (roughly 600 lines) is long: don't add to it. Put the new
+            material on a new, focused page in the same directory that links back to the long page,
+            and leave the long page unchanged. Every write sends a page's full content, so editing a
+            long page only to add a link costs a full rewrite. Edit a long page only to correct
+            something it states wrongly.
 
             Return a short JSON summary:
             {"pagesWritten": <int>, "sourcesFiled": <int>, "sourcesSkipped": <int>}.

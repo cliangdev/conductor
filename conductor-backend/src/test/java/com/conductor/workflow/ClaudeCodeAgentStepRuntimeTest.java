@@ -222,4 +222,41 @@ class ClaudeCodeAgentStepRuntimeTest {
 
         assertThat(result).isSameAs(expected);
     }
+
+    private Map<String, String> envSentToRunner(List<String> toolIds, Map<String, String> stepEnv) {
+        for (String toolId : toolIds) {
+            when(toolRegistry.claudeCodeToolName(toolId))
+                    .thenReturn(Optional.of("mcp__conductor__" + toolId.substring(toolId.indexOf(':') + 1)));
+        }
+        when(runner.run(any(), any())).thenReturn(StepResult.success("ok", Map.of()));
+        runtime.run(context(), new AgentStepRuntime.AgentStepCall(
+                definition(toolIds, 40), "task", Map.of(), null, null, List.of(), stepEnv));
+        ArgumentCaptor<ClaudeCodeContainerRunner.ClaudeCodeInvocation> captor =
+                ArgumentCaptor.forClass(ClaudeCodeContainerRunner.ClaudeCodeInvocation.class);
+        verify(runner).run(any(), captor.capture());
+        return captor.getValue().extraEnv();
+    }
+
+    @Test
+    void anAgentThatReadsWikiPages_getsAnMcpResultCapThatFitsOneLongPage() {
+        Map<String, String> env = envSentToRunner(
+                List.of("knowledge:read_knowledge_pages", "knowledge:write_knowledge_pages"), Map.of("MY_VAR", "x"));
+
+        assertThat(env).containsEntry("MAX_MCP_OUTPUT_TOKENS", "60000").containsEntry("MY_VAR", "x");
+    }
+
+    @Test
+    void theStepsOwnMcpResultCap_wins() {
+        Map<String, String> env = envSentToRunner(
+                List.of("knowledge:read_knowledge_pages"), Map.of("MAX_MCP_OUTPUT_TOKENS", "30000"));
+
+        assertThat(env).containsEntry("MAX_MCP_OUTPUT_TOKENS", "30000");
+    }
+
+    @Test
+    void anAgentThatDoesNotReadWikiPages_keepsClaudeCodesDefaultCap() {
+        Map<String, String> env = envSentToRunner(List.of("knowledge:search_knowledge"), Map.of());
+
+        assertThat(env).doesNotContainKey("MAX_MCP_OUTPUT_TOKENS");
+    }
 }

@@ -4,13 +4,18 @@ import com.conductor.creative.CreativeWorkflowProvisioner;
 import com.conductor.entity.WorkflowDefinition;
 import com.conductor.entity.WorkflowRun;
 import com.conductor.entity.WorkflowRunStatus;
+import com.conductor.knowledge.KnowledgeIngestScheduler;
+import com.conductor.knowledge.KnowledgeWorkflowProvisioner;
 import com.conductor.repository.WorkflowDefinitionRepository;
+import com.conductor.repository.WorkflowStepRunRepository;
 import com.conductor.signal.Signal;
 import com.conductor.signal.SignalBus;
 import com.conductor.signal.SignalOrigin;
 import com.conductor.signal.SignalTypes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -49,11 +54,17 @@ public class WorkflowFailureCircuitBreaker {
 
     private final WorkflowDefinitionRepository workflowRepository;
     private final SignalBus signalBus;
+    private final WorkflowStepRunRepository stepRunRepository;
+    private final ObjectMapper objectMapper;
 
     public WorkflowFailureCircuitBreaker(WorkflowDefinitionRepository workflowRepository,
-                                          SignalBus signalBus) {
+                                          SignalBus signalBus,
+                                          WorkflowStepRunRepository stepRunRepository,
+                                          ObjectMapper objectMapper) {
         this.workflowRepository = workflowRepository;
         this.signalBus = signalBus;
+        this.stepRunRepository = stepRunRepository;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -78,6 +89,12 @@ public class WorkflowFailureCircuitBreaker {
         // Never auto-pause the render workflow: failures here are a missing daemon or a bad Creative, and a
         // paused workflow would refuse every later Render click until someone found the toggle.
         if (CreativeWorkflowProvisioner.RENDER_WORKFLOW_NAME.equals(workflow.getName())) {
+            return;
+        }
+
+        if (isIsolatedLibrarianAgentFailure(run)) {
+            log.info("Not counting run {} toward the circuit breaker: the librarian failed on the one source "
+                    + "it was retrying alone, which the knowledge sweep moves toward DEAD on its own", run.getId());
             return;
         }
 
@@ -108,6 +125,29 @@ public class WorkflowFailureCircuitBreaker {
                     new SignalOrigin("workflow", workflow.getId())), log);
         }
         workflowRepository.save(workflow);
+    }
+
+    /**
+     * A knowledge-librarian run for one source retried alone (see {@code KnowledgeIngestScheduler})
+     * that failed inside the agent. That failure belongs to the source -- it counts toward the source's
+     * own attempts and DEAD -- not to the librarian as a whole, so it must not pause every lane. A
+     * launch, credential or rate-limit failure on the same run still counts.
+     */
+    private boolean isIsolatedLibrarianAgentFailure(WorkflowRun run) {
+        if (!KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME.equals(run.getWorkflow().getName())
+                || run.getEventPayload() == null) {
+            return false;
+        }
+        try {
+            JsonNode payload = objectMapper.readTree(run.getEventPayload());
+            if (!payload.path(KnowledgeIngestScheduler.ISOLATED_RETRY_PAYLOAD_KEY).asBoolean(false)) {
+                return false;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        return stepRunRepository.findFirstFailureReasonByRunId(run.getId()).stream()
+                .anyMatch(KnowledgeIngestScheduler.AGENT_FAILURE_REASONS::contains);
     }
 
     private void clearPauseMarkers(WorkflowDefinition workflow) {

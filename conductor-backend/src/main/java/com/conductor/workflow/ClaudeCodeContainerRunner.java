@@ -73,9 +73,6 @@ public class ClaudeCodeContainerRunner {
     private static final int DEFAULT_TIMEOUT_MINUTES = 30;
     private static final int MAX_TIMEOUT_MINUTES = 120;
     private static final List<String> CONTAINER_COMMAND = List.of("conductor-claude-entrypoint");
-    /** Claude Code's cap on one MCP tool result (its default is 25,000). 80,000 tokens fits a batch
-     *  read of several ~100 KB wiki pages and still leaves most of the context window free. */
-    static final int MAX_MCP_OUTPUT_TOKENS = 80_000;
 
     private static final CloudRunStepRunner.Reasons REASONS = new CloudRunStepRunner.Reasons(
             "CLAUDE_LAUNCH_ERROR", "CLAUDE_TIMEOUT", "CLAUDE_CREDENTIAL_ERROR",
@@ -236,11 +233,6 @@ public class ClaudeCodeContainerRunner {
 
         if (conductorMcp) {
             env.put("CONDUCTOR_API_KEY", conductorApiKey);
-            // Claude Code refuses an MCP result over 25k tokens by default, so one long wiki page
-            // (~100 KB of Markdown) came back as an error and the agent spent its turn budget
-            // extracting the saved result and reading it in chunks. Set before applyExtraEnv so a
-            // step's own env: can still override it.
-            env.put("MAX_MCP_OUTPUT_TOKENS", String.valueOf(MAX_MCP_OUTPUT_TOKENS));
         }
         // Subscription auth only, on every runtime this runner launches — never ANTHROPIC_API_KEY.
         env.put("CLAUDE_CODE_OAUTH_TOKEN", oauthToken);
