@@ -4,6 +4,7 @@ import com.conductor.entity.Asset;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.ForbiddenException;
 import com.conductor.generated.v2.api.WorkItemsApi;
 import com.conductor.generated.v2.model.WorkItemExternalLink;
 import com.conductor.generated.v2.model.AvailableTransition;
@@ -15,9 +16,11 @@ import com.conductor.generated.v2.model.WorkItemProgress;
 import com.conductor.generated.v2.model.WorkItemAssignee;
 import com.conductor.generated.v2.model.WorkItemResponse;
 import com.conductor.generated.v2.model.ReviewerResponse;
+import com.conductor.security.ProjectScopedPrincipal;
 import com.conductor.service.PriorityScale;
 import com.conductor.service.ProgressRollup;
 import com.conductor.service.ProjectActor;
+import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.ReviewerService;
 import com.conductor.service.WorkItemCriteriaService;
 import com.conductor.service.WorkItemDependencyService;
@@ -73,6 +76,7 @@ public class WorkItemController implements WorkItemsApi {
     private final WorkItemCriteriaService criteriaService;
     private final WorkItemHealthService healthService;
     private final ThroughputForecastService forecastService;
+    private final ProjectSecurityService projectSecurityService;
 
     public WorkItemController(WorkItemService workItemService,
                               WorkItemWorkflowService workItemWorkflowService,
@@ -83,7 +87,9 @@ public class WorkItemController implements WorkItemsApi {
                               WorkItemDependencyService dependencyService,
                               WorkItemCriteriaService criteriaService,
                               WorkItemHealthService healthService,
-                              ThroughputForecastService forecastService) {
+                              ThroughputForecastService forecastService,
+                              ProjectSecurityService projectSecurityService) {
+        this.projectSecurityService = projectSecurityService;
         this.healthService = healthService;
         this.forecastService = forecastService;
         this.hierarchyService = hierarchyService;
@@ -159,12 +165,12 @@ public class WorkItemController implements WorkItemsApi {
                                                                 String assigneeId, Boolean withProgress,
                                                                 String sort, Boolean ready, Boolean blocked,
                                                                 Boolean stale) {
-        User caller = currentUser();
+        // Reads take a member or a project-scoped machine credential (a workflow run's MCP token, a project API key).
+        projectSecurityService.requireProjectAccess(projectId);
         List<WorkItem> items = workItemService.listWorkItemEntities(projectId,
                 new WorkItemService.ListFilter(type, status, workflow, tag, dueBefore, parentId, rootId,
                         milestoneId, priority == null ? null : PriorityScale.parse(priority.getValue()),
-                        assigneeId, sort),
-                caller);
+                        assigneeId, sort));
         // "Posts using this Creative / Media": narrow the already project-scoped, access-checked list.
         Set<String> using = listEnricher.idsUsing(projectId, creativeId, mediaId);
         if (using != null) {
@@ -235,16 +241,16 @@ public class WorkItemController implements WorkItemsApi {
     @Override
     @Transactional(readOnly = true)
     public ResponseEntity<WorkItemResponse> getWorkItem(String projectId, String workItemId) {
-        User caller = currentUser();
-        WorkItem item = workItemService.getWorkItemEntity(projectId, workItemId, caller);
+        projectSecurityService.requireProjectAccess(projectId);
+        WorkItem item = workItemService.getWorkItemEntity(projectId, workItemId);
         return ResponseEntity.ok(singleResponse(projectId, item));
     }
 
     @Override
     @Transactional(readOnly = true)
     public ResponseEntity<WorkItemResponse> getWorkItemByDisplayId(String projectId, String displayId) {
-        User caller = currentUser();
-        WorkItem item = workItemService.resolveByDisplayId(projectId, displayId, caller);
+        projectSecurityService.requireProjectAccess(projectId);
+        WorkItem item = workItemService.resolveByDisplayId(projectId, displayId);
         return ResponseEntity.ok(singleResponse(projectId, item));
     }
 
@@ -442,16 +448,24 @@ public class WorkItemController implements WorkItemsApi {
         return response;
     }
 
+    /**
+     * The person calling, for the endpoints that act as one (create, change, delete, transitions). A project-scoped
+     * machine credential can read Work Items here (list, get) but not act as a person: a clear 403, not a 500.
+     */
     private User currentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         Object principal = auth != null ? auth.getPrincipal() : null;
-        if (!(principal instanceof User)) {
-            log.warn("currentUser() expected User principal but got {} (auth type={})",
-                    principal == null ? "null" : principal.getClass().getName(),
-                    auth == null ? "null" : auth.getClass().getSimpleName());
-            throw new ClassCastException("Expected User principal but got: " +
-                    (principal == null ? "null" : principal.getClass().getName()));
+        if (principal instanceof User user) {
+            return user;
         }
-        return (User) principal;
+        if (auth instanceof ProjectScopedPrincipal) {
+            throw new ForbiddenException("This needs a person's sign-in; a project or workflow credential can only "
+                    + "read Work Items here");
+        }
+        log.warn("currentUser() expected User principal but got {} (auth type={})",
+                principal == null ? "null" : principal.getClass().getName(),
+                auth == null ? "null" : auth.getClass().getSimpleName());
+        throw new ClassCastException("Expected User principal but got: " +
+                (principal == null ? "null" : principal.getClass().getName()));
     }
 }

@@ -73,6 +73,8 @@ class WorkItemPatchBodyTest {
     @MockitoBean
     private com.conductor.service.ThroughputForecastService forecastService;
     @MockitoBean
+    private com.conductor.service.ProjectSecurityService projectSecurityService;
+    @MockitoBean
     private JwtService jwtService;
     @MockitoBean
     private UserRepository userRepository;

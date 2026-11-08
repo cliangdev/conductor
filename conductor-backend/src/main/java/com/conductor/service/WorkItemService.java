@@ -543,6 +543,12 @@ public class WorkItemService {
         return findWorkItemInProject(projectId, workItemId);
     }
 
+    /** {@link #getWorkItemEntity(String, String, User)} for a caller that passed {@link ProjectSecurityService#requireProjectAccess}. */
+    @Transactional(readOnly = true)
+    public WorkItem getWorkItemEntity(String projectId, String workItemId) {
+        return findWorkItemInProject(projectId, workItemId);
+    }
+
     /**
      * List Work Item entities in a project with the standard optional type/status/workflow filters.
      * Used by the v2 controller.
@@ -601,6 +607,16 @@ public class WorkItemService {
     @Transactional(readOnly = true)
     public List<WorkItem> listWorkItemEntities(String projectId, ListFilter filter, User caller) {
         verifyReadAccess(projectId, caller.getId());
+        return listWorkItemEntities(projectId, filter);
+    }
+
+    /**
+     * {@link #listWorkItemEntities(String, ListFilter, User)} for a caller that has already passed {@link
+     * ProjectSecurityService#requireProjectAccess}: a member, or a project-scoped machine credential of this project
+     * (a project API key, or a workflow run's MCP token).
+     */
+    @Transactional(readOnly = true)
+    public List<WorkItem> listWorkItemEntities(String projectId, ListFilter filter) {
         String parent = blankToNull(filter.parentId());
         String rootId = blankToNull(filter.rootId());
         Set<String> subtree = null;
@@ -704,6 +720,12 @@ public class WorkItemService {
     @Transactional(readOnly = true)
     public WorkItem resolveByDisplayId(String projectId, String displayId, User caller) {
         verifyReadAccess(projectId, caller.getId());
+        return resolveByDisplayId(projectId, displayId);
+    }
+
+    /** {@link #resolveByDisplayId(String, String, User)} for a caller that passed {@link ProjectSecurityService#requireProjectAccess}. */
+    @Transactional(readOnly = true)
+    public WorkItem resolveByDisplayId(String projectId, String displayId) {
         Integer sequenceNumber = parseSequenceNumber(displayId);
         if (sequenceNumber == null) {
             throw new EntityNotFoundException("Work Item not found");
