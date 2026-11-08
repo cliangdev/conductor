@@ -30,6 +30,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -46,6 +47,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class WorkItemControllerListTest {
 
     private static final String URL = "/api/v2/projects/proj-1/work-items";
+    private static final String RUN_TOKEN_OWN = "eyJrun-own";
+    private static final String RUN_TOKEN_OTHER = "eyJrun-other";
 
     @Autowired private MockMvc mockMvc;
 
@@ -75,7 +78,13 @@ class WorkItemControllerListTest {
         when(jwtService.validateToken("valid-token")).thenReturn(true);
         when(jwtService.getUserIdFromToken("valid-token")).thenReturn("user-1");
         when(userRepository.findById("user-1")).thenReturn(Optional.of(user));
-        when(workItemService.listWorkItemEntitiesForCaller(any(), any(WorkItemService.ListFilter.class))).thenReturn(List.of());
+        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(true);
+        // a workflow run's MCP token for this project, and one for another project
+        when(runTokenService.parseMcpToken(RUN_TOKEN_OWN))
+                .thenReturn(Optional.of(new RunTokenService.McpTokenClaims("proj-1", "run-1")));
+        when(runTokenService.parseMcpToken(RUN_TOKEN_OTHER))
+                .thenReturn(Optional.of(new RunTokenService.McpTokenClaims("proj-2", "run-2")));
+        when(workItemService.listWorkItemEntities(any(), any(WorkItemService.ListFilter.class))).thenReturn(List.of());
         when(workItemService.unresolvedCommentCounts(anyList())).thenReturn(Map.of());
         when(workItemService.externalLinks(anyList())).thenReturn(Map.of());
         when(reviewerService.reviewersByWorkItem(anyList())).thenReturn(Map.of());
@@ -97,17 +106,50 @@ class WorkItemControllerListTest {
     }
 
     @Test
+    void aWorkflowRunTokenListsItsOwnProjectsItems() throws Exception {
+        // the weekly growth review's Claude Code step lists changes with a run-scoped MCP token, not a person
+        mockMvc.perform(get(URL).param("workflow", "MARKETING_CHANGES").header("Authorization", "Bearer " + RUN_TOKEN_OWN))
+                .andExpect(status().isOk());
+
+        assertThat(listFilter().workflow()).isEqualTo("MARKETING_CHANGES");
+    }
+
+    @Test
+    void aWorkflowRunTokenForAnotherProjectIsRefusedBeforeTheServiceIsAsked() throws Exception {
+        mockMvc.perform(get(URL).header("Authorization", "Bearer " + RUN_TOKEN_OTHER))
+                .andExpect(status().isForbidden());
+
+        verify(workItemService, never()).listWorkItemEntities(any(), any(WorkItemService.ListFilter.class));
+    }
+
+    @Test
+    void aPersonWhoIsNotAMemberIsRefused() throws Exception {
+        when(projectMemberRepository.existsByProjectIdAndUserId("proj-1", "user-1")).thenReturn(false);
+
+        mockMvc.perform(get(URL).header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void aWorkflowRunTokenCannotActAsAPersonAndGetsA403NotA500() throws Exception {
+        mockMvc.perform(delete(URL + "/wi-1").header("Authorization", "Bearer " + RUN_TOKEN_OWN))
+                .andExpect(status().isForbidden());
+
+        verify(workItemService, never()).deleteWorkItem(any(), any(), any(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
     void dueBefore_withABadDate_returns400AndNeverReachesTheService() throws Exception {
         mockMvc.perform(get(URL).param("dueBefore", "next tuesday").header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isBadRequest());
 
-        verify(workItemService, never()).listWorkItemEntitiesForCaller(any(), any(WorkItemService.ListFilter.class));
+        verify(workItemService, never()).listWorkItemEntities(any(), any(WorkItemService.ListFilter.class));
     }
 
     /** The filter the controller handed the service for the one list call this test made. */
     private WorkItemService.ListFilter listFilter() {
         ArgumentCaptor<WorkItemService.ListFilter> filter = ArgumentCaptor.forClass(WorkItemService.ListFilter.class);
-        verify(workItemService).listWorkItemEntitiesForCaller(eq("proj-1"), filter.capture());
+        verify(workItemService).listWorkItemEntities(eq("proj-1"), filter.capture());
         return filter.getValue();
     }
 
@@ -142,7 +184,7 @@ class WorkItemControllerListTest {
         mockMvc.perform(get(URL).param("priority", "P9").header("Authorization", "Bearer valid-token"))
                 .andExpect(status().isBadRequest());
 
-        verify(workItemService, never()).listWorkItemEntitiesForCaller(any(), any(WorkItemService.ListFilter.class));
+        verify(workItemService, never()).listWorkItemEntities(any(), any(WorkItemService.ListFilter.class));
     }
 
     @Test

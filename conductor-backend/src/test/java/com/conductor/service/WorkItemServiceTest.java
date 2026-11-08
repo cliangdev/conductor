@@ -443,45 +443,6 @@ class WorkItemServiceTest {
     }
 
     @Test
-    void aWorkflowRunTokenListsItsOwnProjectsItemsThroughTheMachineAccessCheck() {
-        // the weekly growth review's Claude Code step lists changes with a run-scoped MCP token, not a User
-        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
-                new com.conductor.security.WorkflowRunAuthenticationToken("proj-1", "run-1"));
-        try {
-            when(projectRepository.existsById("proj-1")).thenReturn(true);
-            when(workItemRepository.findByProjectFiltered("proj-1", null, null, "MARKETING_CHANGES", null, null, false,
-                    null, null, null)).thenReturn(List.of(testIssue));
-
-            List<WorkItem> results = workItemService.listWorkItemEntitiesForCaller("proj-1",
-                    WorkItemService.ListFilter.withoutHierarchy(null, null, "MARKETING_CHANGES", null, null));
-
-            assertThat(results).containsExactly(testIssue);
-            verify(projectSecurityService).requireProjectAccess("proj-1");
-            verify(projectSecurityService, never()).isProjectMember(any(), any());
-        } finally {
-            org.springframework.security.core.context.SecurityContextHolder.clearContext();
-        }
-    }
-
-    @Test
-    void aPersonListingItemsIsStillCheckedAsAMember() {
-        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
-                new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(caller, null,
-                        List.of()));
-        try {
-            when(projectRepository.existsById("proj-1")).thenReturn(true);
-            when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(false);
-
-            assertThatThrownBy(() -> workItemService.listWorkItemEntitiesForCaller("proj-1",
-                    WorkItemService.ListFilter.withoutHierarchy(null, null, null, null, null)))
-                    .isInstanceOf(ForbiddenException.class);
-            verify(projectSecurityService, never()).requireProjectAccess(any());
-        } finally {
-            org.springframework.security.core.context.SecurityContextHolder.clearContext();
-        }
-    }
-
-    @Test
     void listIssuesFiltersByStatus() {
         when(projectRepository.existsById("proj-1")).thenReturn(true);
         when(projectSecurityService.isProjectMember("proj-1", "user-1")).thenReturn(true);
