@@ -14,6 +14,7 @@ import com.conductor.service.publish.PublishPlatform;
 import com.conductor.service.publish.tasks.PublishTaskArmer;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.service.publish.PermalinkFollowUp;
+import com.conductor.service.publish.PlatformPending;
 import com.conductor.service.publish.PermalinkPostIds;
 import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.repository.WorkItemRepository;
@@ -317,6 +318,10 @@ public class PublishOutcomeService {
         if (Boolean.TRUE.equals(output.get(AWAITING_HUMAN_OUTPUT_KEY))) {
             return applyAwaitingHuman(target, stringValue(output, HANDOFF_NOTE_OUTPUT_KEY));
         }
+        PlatformPending pending = PlatformPending.fromOutput(output).orElse(null);
+        if (pending != null) {
+            return applyPlatformPending(target, pending);
+        }
         PublishPlatform platform = platformFor(target.getPlatform());
         String platformPostId = platform == null ? null : stringValue(output, platform.publish().postIdOutputKey());
         boolean moved = applySuccess(target, platformPostId, stringValue(output, PERMALINK_OUTPUT_KEY));
@@ -327,19 +332,99 @@ public class PublishOutcomeService {
     }
 
     /**
+     * TikTok published a photo post that was waiting as {@code HANDED_OFF} (accepted, images not yet
+     * downloaded): records the success through the ordinary path (which also rolls the Post up) and, when
+     * TikTok gave no link yet, starts the PERMALINK follow-up chain exactly as a normal publish without one.
+     *
+     * @return true when this call is what moved the row; false when it is no longer waiting
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean recordLatePublish(String targetId, String publishId, String platformPostId, String permalink,
+                                     String kind) {
+        PostPublishTarget target = find(targetId);
+        if (target == null || target.getState() != PostPublishTargetState.HANDED_OFF) {
+            return false;
+        }
+        target.setResumeCheckpoint(null);
+        boolean moved = applySuccess(target, platformPostId, permalink);
+        if (moved && (permalink == null || permalink.isBlank())) {
+            startPermalinkFollowUp(target, publishId, kind);
+        }
+        return moved;
+    }
+
+    /**
+     * The late-verdict chain's failure: TikTok rejected a waiting photo post, or never downloaded its images
+     * before the links expired. Moves the {@code HANDED_OFF} row to {@code FAILED} through the ordinary
+     * failure path (attempt count, roll-up, the Post's failure notification) and drops the pending marker.
+     * The invocation's own checkpoint is already gone, so the retry guard sees no live links and a retry is
+     * allowed at once.
+     *
+     * @return true when this call is what moved the row; false when it is no longer waiting
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public boolean recordVerdictFailure(String targetId, String message) {
+        PostPublishTarget target = find(targetId);
+        if (target == null || target.getState() != PostPublishTargetState.HANDED_OFF) {
+            return false;
+        }
+        target.setResumeCheckpoint(null);
+        boolean moved = applyFailure(target, message, false);
+        if (moved) {
+            // Our own plain-words message, not a platform error to condense: keep every sentence.
+            target.setErrorMessage(message);
+            target.setErrorDetail(null);
+            targetRepository.save(target);
+        }
+        return moved;
+    }
+
+    /**
+     * TikTok accepted a photo post and has not published it: not a failure, and not yet a success. The row
+     * waits as {@code HANDED_OFF} (counted in flight by the roll-up, so the Post stays scheduled and nothing
+     * announces a failure), carrying a plain note where an error would go and the handle the verdict check
+     * needs, and the bounded {@code TIKTOK_VERDICT} chain is armed.
+     */
+    private boolean applyPlatformPending(PostPublishTarget target, PlatformPending pending) {
+        if (target.getState() == PostPublishTargetState.REVOKED
+                || target.getState() == PostPublishTargetState.PUBLISHED) {
+            log.warn("Target {} is {}; ignoring a late \"pending\" report", target.getId(), target.getState());
+            return false;
+        }
+        target.setState(PostPublishTargetState.HANDED_OFF);
+        target.setResumeCheckpoint(pending.toJson());
+        target.setErrorMessage("TikTok accepted the post and is downloading the images (queued at TikTok). "
+                + "Conductor checks until "
+                + DateTimeFormatter.ofPattern("MMM d, HH:mm", Locale.ROOT).withZone(ZoneOffset.UTC)
+                        .format(pending.linksExpireAt().plus(PublishTaskArmer.VERDICT_GRACE))
+                + " UTC and will mark it published or failed.");
+        target.setErrorDetail(null);
+        targetRepository.save(target);
+        publishTaskArmer.armTikTokVerdict(target, pending.linksExpireAt());
+        log.info("Target {} on {} accepted by the platform as publish_id={}, outcome pending until {}",
+                target.getId(), target.getPlatform(), pending.publishId(), pending.linksExpireAt());
+        return true;
+    }
+
+    /**
      * The platform published the post but gave no link yet (TikTok issues the id after moderation). The row
      * stays PUBLISHED; the handle to ask again with is kept on it and a bounded chain of PERMALINK tasks is
      * armed. When the link arrives it lands through {@link #recordSuccess}, so the permalink and the
      * destination Asset take the same path as any outcome.
      */
     private void startPermalinkFollowUp(PostPublishTarget target, Map<String, Object> output) {
-        String publishId = stringValue(output, PermalinkFollowUp.OUTPUT_PUBLISH_ID_KEY);
-        if (!Boolean.TRUE.equals(output.get(PermalinkFollowUp.OUTPUT_PENDING_KEY)) || publishId == null
-                || (target.getPermalink() != null && !target.getPermalink().isBlank())) {
+        if (!Boolean.TRUE.equals(output.get(PermalinkFollowUp.OUTPUT_PENDING_KEY))) {
             return;
         }
-        target.setResumeCheckpoint(new PermalinkFollowUp(publishId, stringValue(output,
-                PermalinkFollowUp.OUTPUT_KIND_KEY)).toJson());
+        startPermalinkFollowUp(target, stringValue(output, PermalinkFollowUp.OUTPUT_PUBLISH_ID_KEY),
+                stringValue(output, PermalinkFollowUp.OUTPUT_KIND_KEY));
+    }
+
+    private void startPermalinkFollowUp(PostPublishTarget target, String publishId, String kind) {
+        if (publishId == null || (target.getPermalink() != null && !target.getPermalink().isBlank())) {
+            return;
+        }
+        target.setResumeCheckpoint(new PermalinkFollowUp(publishId, kind).toJson());
         targetRepository.save(target);
         publishTaskArmer.armPermalinkFollowUp(target);
         log.info("Target {} published on {} without a link; following up on publish {}", target.getId(),
@@ -593,7 +678,8 @@ public class PublishOutcomeService {
      * target may be retried (not TikTok, no checkpoint, not a photo post, expiry unknown or already past).
      */
     private Instant photoLinksLiveUntil(PostPublishTarget target, Instant now) {
-        if (!"tiktok".equals(target.getPlatform()) || target.getIdempotencyKey() == null) {
+        if (!"tiktok".equals(target.getPlatform()) || target.getIdempotencyKey() == null
+                || actionInvocationService == null) {
             return null;
         }
         return actionInvocationService.readCheckpoint(target.getIdempotencyKey())

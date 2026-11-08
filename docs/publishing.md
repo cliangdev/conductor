@@ -487,6 +487,42 @@ offer (`FORMAT_UNSUPPORTED`) is refused outright, at selection rather than at th
 > `{host}/media/…` links. Without the setting every photo post fails naming this; video posts are
 > unaffected, since they upload their bytes.
 
+**TikTok photo links outlive a TikTok backlog.** The links in those `{host}/media/…` URLs are signed storage
+links that TikTok may fetch long after init: on 2026-11-07/08 TikTok's photo download queue stalled for about
+a day and then drained in init order, and every fetch hit an expired 90-minute link (502) before the queue
+caught up. Links now live for `conductor.integrations.tiktok.photo-link-lifetime` (an ISO-8601 duration,
+default `PT48H`, clamped to 7 days minus 5 minutes, the GCS V4 cap). They are signed fresh, never from the
+shared signed-URL cache, so the lifetime recorded on the invocation checkpoint (`linksExpireAt`) is true.
+While a failed photo target's links are live, a manual retry is refused (it could post the photos twice).
+
+**Waiting as Handed off, and the late verdict check.** A photo publish attempt polls TikTok for about 10
+minutes. If TikTok has not published or rejected the post by then and the image links are still live, the
+attempt does **not** fail: it returns a success-shaped result flagged `platform_pending` (with the `publish_id`,
+`post_kind`, `links_expire_at`, `init_at`), so the action invocation completes with no further attempt. A status
+read that keeps erroring while the links are live is treated the same way. `PublishOutcomeService` then parks
+the target as `HANDED_OFF` (in flight, so the Post stays Scheduled and nothing announces a failure) with a plain
+note ("TikTok accepted the post and is downloading the images (queued at TikTok). Conductor checks until … UTC
+and will mark it published or failed."), keeps the handle on the row's `resume_checkpoint` (the invocation's own
+checkpoint is wiped on success), and arms a bounded chain of `TIKTOK_VERDICT` Cloud Tasks
+(`/internal/v1/publish-targets/{id}/tiktok_verdict`, modelled on the PERMALINK follow-up, honouring
+`conductor.post-publish.enabled`): 15 min, 30 min, then hourly, last check at `linksExpireAt` + 70 min (TikTok's
+one-hour download window after a fetch starts). Per check:
+
+- `PUBLISH_COMPLETE`: `HANDED_OFF → PUBLISHED` through the ordinary success path (Post rolls up; no link yet
+  starts the PERMALINK follow-up). A WARN logs how late TikTok was.
+- `FAILED`: the target goes `FAILED` with TikTok's reason in plain words and a retry is allowed at once.
+- still processing: re-armed; after the last check the target goes `FAILED` with "TikTok never downloaded the
+  images before the links expired. A retry is safe now."
+
+A real TikTok failure (`FAILED`, a `fail_reason`, a permanent rejection) and a video post still fail in the
+action as before. A task for a target that is no longer `HANDED_OFF`, or was retried since (its fire time
+changed), does nothing. Only native-lane `HANDED_OFF` rows are touched by the confirmation poller and revoked on
+unschedule; a TikTok API row is neither (the post is already at TikTok and cannot be taken back), and the retry
+action ignores it while it waits. A `FAILED` photo target with live links from before this behaviour is still
+refused a retry until its links expire.
+Log lines carry `publish_id`: `TikTok photo post <id> images: <assetId->object>… initAt=… linksExpireAt=…`
+(match the media proxy's access logs by object and `X-Goog-Date`) and one `TikTok verdict check` line per check.
+
 ## Options
 
 `publishOptions` is a per-target bag, read only against that target's own platform (and, where noted,

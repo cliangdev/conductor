@@ -4,6 +4,8 @@ import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetState;
 import com.conductor.entity.PublishLane;
 import com.conductor.integration.connector.tiktok.TikTokPermalinkFollowUp;
+import com.conductor.integration.connector.tiktok.TikTokPhotoVerdictCheck;
+import com.conductor.integration.connector.tiktok.TikTokClient;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.service.PublishOutcomeService;
 import com.conductor.service.publish.PermalinkFollowUp;
@@ -63,6 +65,7 @@ public class PublishTaskHandler {
     private final PublishTaskScheduler scheduler;
     private final PublishOutcomeService outcomeService;
     private final TikTokPermalinkFollowUp tikTokPermalinkFollowUp;
+    private final TikTokPhotoVerdictCheck tikTokPhotoVerdictCheck;
     private final boolean dispatchEnabled;
     private final boolean handoffEnabled;
     private final boolean confirmEnabled;
@@ -75,6 +78,7 @@ public class PublishTaskHandler {
                               PublishTaskScheduler scheduler,
                               PublishOutcomeService outcomeService,
                               TikTokPermalinkFollowUp tikTokPermalinkFollowUp,
+                              TikTokPhotoVerdictCheck tikTokPhotoVerdictCheck,
                               @Value("${conductor.post-publish.enabled:true}") boolean dispatchEnabled,
                               @Value("${conductor.native-handoff.enabled:true}") boolean handoffEnabled,
                               @Value("${conductor.native-publish-confirmation.enabled:true}")
@@ -87,6 +91,7 @@ public class PublishTaskHandler {
         this.scheduler = scheduler;
         this.outcomeService = outcomeService;
         this.tikTokPermalinkFollowUp = tikTokPermalinkFollowUp;
+        this.tikTokPhotoVerdictCheck = tikTokPhotoVerdictCheck;
         this.dispatchEnabled = dispatchEnabled;
         this.handoffEnabled = handoffEnabled;
         this.confirmEnabled = confirmEnabled;
@@ -104,7 +109,9 @@ public class PublishTaskHandler {
         }
         // A PERMALINK follow-up is guarded by the row's state and its stored publish handle instead: it
         // runs after the row has published, and a reschedule cannot make its answer wrong.
-        if (task.kind() != PublishTaskKind.PERMALINK && !task.matchesFireTime(target.getFireTime())) {
+        // A TIKTOK_VERDICT runs on a FAILED row and does its own staleness check (a retry restamps the fire time).
+        if (task.kind() != PublishTaskKind.PERMALINK && task.kind() != PublishTaskKind.TIKTOK_VERDICT
+                && !task.matchesFireTime(target.getFireTime())) {
             log.info("{} for publish target {} is stale (armed for {}, row now fires at {}); dropping",
                     task.kind(), task.targetId(), task.fireTime(), target.getFireTime());
             return;
@@ -114,6 +121,7 @@ public class PublishTaskHandler {
             case HANDOFF -> handoff(task, target, now);
             case CONFIRM -> confirm(task, target, now);
             case PERMALINK -> permalink(task, target, now);
+            case TIKTOK_VERDICT -> tiktokVerdict(task, target, now);
         }
     }
 
@@ -251,6 +259,98 @@ public class PublishTaskHandler {
         }
         rearm(PublishTask.permalink(target.getId(), task.fireTime(),
                 now.plus(PublishTaskArmer.PERMALINK_BACKOFF.get(next)), next));
+    }
+
+    /**
+     * Asks TikTok what became of a photo post it accepted but had not published. The row must still be
+     * {@code HANDED_OFF} under the fire time the chain was armed for and still carry its pending marker.
+     *
+     * <ul>
+     *   <li>PUBLISH_COMPLETE: the publish is recorded; a missing link starts the PERMALINK chain.</li>
+     *   <li>FAILED: the target fails with TikTok's reason in plain words; a retry is allowed at once.</li>
+     *   <li>anything else: re-armed on the cadence; after the last check (links expiry + 70 min) the target
+     *       fails saying TikTok never downloaded the images and a retry is safe.</li>
+     * </ul>
+     */
+    private void tiktokVerdict(PublishTask task, PostPublishTarget target, OffsetDateTime now) {
+        if (!dispatchEnabled) {
+            log.info("TIKTOK_VERDICT for publish target {} ignored: conductor.post-publish.enabled is false",
+                    target.getId());
+            return;
+        }
+        if (target.getFireTime() != null && !task.matchesFireTime(target.getFireTime())) {
+            log.info("TIKTOK_VERDICT for publish target {} is stale (armed for {}, row now fires at {}); dropping",
+                    target.getId(), task.fireTime(), target.getFireTime());
+            return;
+        }
+        if (target.getState() != PostPublishTargetState.HANDED_OFF) {
+            log.debug("TIKTOK_VERDICT for publish target {} has nothing to do: row is {}", target.getId(),
+                    target.getState());
+            return;
+        }
+        TikTokPhotoVerdictCheck.Pending pending = tikTokPhotoVerdictCheck.pending(target).orElse(null);
+        if (pending == null) {
+            log.info("TikTok verdict chain for target {} stopped: no pending TikTok post on the row",
+                    target.getId());
+            return;
+        }
+        TikTokPhotoVerdictCheck.Reading reading = null;
+        try {
+            reading = tikTokPhotoVerdictCheck.read(target, pending.publishId());
+        } catch (Exception e) {
+            log.warn("TikTok verdict check {} for publish_id={} (target {}) failed: {}", task.attempt(),
+                    pending.publishId(), target.getId(), e.getMessage());
+        }
+        if (reading != null) {
+            TikTokClient.PublishStatus status = reading.status();
+            log.info("TikTok verdict check {} publish_id={} target={} status={} failReason={} downloadedBytes={} "
+                            + "logId={} minutesSinceInit={} minutesUntilLinksExpire={}", task.attempt(),
+                    pending.publishId(), target.getId(), status.status(), status.failReason(),
+                    status.downloadedBytes(), status.logId(),
+                    pending.initAt() == null ? "unknown" : Duration.between(pending.initAt(), now.toInstant()).toMinutes(),
+                    Duration.between(now.toInstant(), pending.linksExpireAt()).toMinutes());
+            if (status.complete()) {
+                verdictPublished(target, pending, reading, now);
+                return;
+            }
+            if (status.failed()) {
+                String reason = status.failReason() == null || status.failReason().isBlank()
+                        ? "no reason given" : status.failReason().replace('_', ' ');
+                outcomeService.recordVerdictFailure(target.getId(),
+                        "TikTok did not publish the photo post: " + reason + ". A retry is safe now.");
+                log.info("TikTok verdict chain for target {} stopped: TikTok failed publish_id={} ({})",
+                        target.getId(), pending.publishId(), status.failReason());
+                return;
+            }
+        }
+        int next = task.attempt() + 1;
+        Optional<OffsetDateTime> nextAt = PublishTaskArmer.nextVerdictAt(next, now, pending.linksExpireAt());
+        if (nextAt.isPresent()) {
+            rearm(PublishTask.tiktokVerdict(target.getId(), task.fireTime(), nextAt.get(), next));
+            return;
+        }
+        outcomeService.recordVerdictFailure(target.getId(),
+                "TikTok never downloaded the images before the links expired. A retry is safe now.");
+        log.info("TikTok verdict chain for target {} stopped: publish_id={} still unfinished after the last check",
+                target.getId(), pending.publishId());
+    }
+
+    private void verdictPublished(PostPublishTarget target, TikTokPhotoVerdictCheck.Pending pending,
+                                  TikTokPhotoVerdictCheck.Reading reading, OffsetDateTime now) {
+        boolean moved = outcomeService.recordLatePublish(target.getId(), pending.publishId(), reading.postId(),
+                reading.permalink(), "photo");
+        String late = pending.initAt() == null ? "late" : formatLateness(Duration.between(pending.initAt(), now.toInstant())) + " after init";
+        if (moved) {
+            log.warn("TikTok published photo post {} {} (target {}); the destination is now Published",
+                    pending.publishId(), late, target.getId());
+        } else {
+            log.info("TikTok published photo post {} {} but target {} is no longer waiting; nothing recorded",
+                    pending.publishId(), late, target.getId());
+        }
+    }
+
+    private static String formatLateness(Duration d) {
+        return d.toHours() + "h" + String.format("%02d", d.toMinutesPart()) + "m";
     }
 
     private static boolean arrivedEarly(OffsetDateTime fireTime, OffsetDateTime now) {

@@ -1126,13 +1126,73 @@ class TikTokPublishActionTest {
 
         action.publish(photoInput("photo-a"), context());
 
-        ArgumentCaptor<Integer> minutes = ArgumentCaptor.forClass(Integer.class);
-        verify(storageService).generateSignedUrl(anyString(), minutes.capture());
+        ArgumentCaptor<java.time.Duration> lifetime = ArgumentCaptor.forClass(java.time.Duration.class);
+        verify(storageService).generateFreshSignedUrl(anyString(), lifetime.capture());
         java.time.Instant recorded = objectMapper
                 .readValue(storedCheckpoint.get(), TikTokPublishAction.UploadCheckpoint.class)
                 .linksExpireInstant();
+        assertThat(lifetime.getValue()).isEqualTo(java.time.Duration.ofHours(48));
         assertThat(recorded).isNotNull();
-        assertThat(recorded).isAfterOrEqualTo(NOW.plus(java.time.Duration.ofMinutes(minutes.getValue())));
+        assertThat(recorded).isAfterOrEqualTo(NOW.plus(lifetime.getValue()));
+    }
+
+    @Test
+    void photoPost_signsFreshLinks_neverFromTheSharedUrlCache() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        action.publish(photoInput("photo-a"), context());
+
+        verify(storageService, never()).generateSignedUrl(anyString(), anyInt());
+        verify(storageService).generateFreshSignedUrl(eq("assets/photo-a.jpg"), any(java.time.Duration.class));
+    }
+
+    @Test
+    void photoPost_recordsWhenTikTokAcceptedItSoALateVerdictCanSayHowLateItWas() throws Exception {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        action.publish(photoInput("photo-a"), context());
+
+        assertThat(objectMapper.readValue(storedCheckpoint.get(), TikTokPublishAction.UploadCheckpoint.class)
+                .initInstant()).isEqualTo(NOW);
+    }
+
+    @Test
+    void photoLinkLifetime_isClampedToWhatStorageCanSign() {
+        java.time.Duration max = java.time.Duration.ofDays(7).minusMinutes(5);
+        assertThat(TikTokPublishAction.clampPhotoLinkLifetime(java.time.Duration.ofDays(30))).isEqualTo(max);
+        assertThat(TikTokPublishAction.clampPhotoLinkLifetime(java.time.Duration.ofHours(6)))
+                .isEqualTo(java.time.Duration.ofHours(6));
+        assertThat(TikTokPublishAction.clampPhotoLinkLifetime(null)).isEqualTo(java.time.Duration.ofHours(48));
+        assertThat(TikTokPublishAction.clampPhotoLinkLifetime(java.time.Duration.ZERO))
+                .isEqualTo(java.time.Duration.ofHours(48));
+    }
+
+    @Test
+    void photoPost_usesTheConfiguredLifetimeForSigningAndTheRecordedExpiry() throws Exception {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        TikTokPublishAction custom = new TikTokPublishAction(client, assetRepository, targetRepository,
+                actionInvocationService, objectMapper, (path, offset, length) -> new ByteArrayInputStream(new byte[0]),
+                storageService, java.time.Duration.ofDays(30));
+        custom.pollIntervalMillis = 0L;
+        custom.clock = java.time.Clock.fixed(NOW, java.time.ZoneOffset.UTC);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280002", null, null));
+
+        custom.publish(photoInput("photo-a"), context());
+
+        java.time.Duration max = java.time.Duration.ofDays(7).minusMinutes(5);
+        verify(storageService).generateFreshSignedUrl(anyString(), eq(max));
+        assertThat(TikTokPublishAction.photoLinksLiveUntil(storedCheckpoint.get())).contains(NOW.plus(max));
     }
 
     @Test
@@ -1164,7 +1224,7 @@ class TikTokPublishActionTest {
     }
 
     @Test
-    void photoPost_pollTimeout_saysWhenTheLinksStayLiveAndWarnsAgainstAnEarlyRetry() {
+    void photoPost_pollTimeout_withLiveLinks_returnsPendingInsteadOfThrowing() {
         givenPhotos("photo-a");
         givenClockAt(NOW);
         action.maxPollAttempts = 3;
@@ -1172,15 +1232,21 @@ class TikTokPublishActionTest {
         when(client.fetchPublishStatus(anyString(), anyString()))
                 .thenReturn(new PublishStatus("PROCESSING_DOWNLOAD", null, null, null));
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("TikTok accepted photo post " + PUBLISH_ID + " but hadn't downloaded its images after "
-                        + "0 min (still PROCESSING_DOWNLOAD). Its image links stay live until Nov 7, 13:30 UTC; "
-                        + "retrying before then could post the photos twice.");
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        // success-shaped, so the invocation completes: no automatic re-attempt and no re-poll
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("platform_pending", Boolean.TRUE)
+                .containsEntry("publish_id", PUBLISH_ID)
+                .containsEntry("post_kind", "photo")
+                .containsEntry("links_expire_at", NOW.plus(java.time.Duration.ofHours(48)).toString())
+                .containsEntry("init_at", NOW.toString())
+                .doesNotContainKeys("permalink", "post_id");
+        verify(client, times(3)).fetchPublishStatus(anyString(), anyString());
     }
 
     @Test
-    void photoPost_pollTimeout_inAnotherStatus_doesNotClaimNothingWasDownloaded() {
+    void photoPost_pollTimeout_inAnotherNonTerminalStatus_isPendingToo() {
         givenPhotos("photo-a");
         givenClockAt(NOW);
         action.maxPollAttempts = 2;
@@ -1188,15 +1254,29 @@ class TikTokPublishActionTest {
         when(client.fetchPublishStatus(anyString(), anyString()))
                 .thenReturn(new PublishStatus("PROCESSING_UPLOAD", null, null, null));
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("still PROCESSING_UPLOAD")
-                .hasMessageNotContaining("hadn't downloaded")
-                .hasMessageContaining("stay live until Nov 7, 13:30 UTC");
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("platform_pending", Boolean.TRUE);
     }
 
     @Test
-    void photoPost_pollTimeout_withUnknownExpiry_omitsTheExpirySentence() {
+    void photoPost_pollTimeout_afterTheLinksExpired_stillThrows() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        action.maxPollAttempts = 2;
+        givenPhotoCheckpoint(PUBLISH_ID, NOW.minusSeconds(60).toString());
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PROCESSING_DOWNLOAD", null, null, null));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("hadn't downloaded its images")
+                .hasMessageContaining("image links expired at Nov 7, 11:59 UTC");
+    }
+
+    @Test
+    void photoPost_pollTimeout_withUnknownExpiry_stillThrows() {
         givenPhotos("photo-a");
         action.maxPollAttempts = 2;
         givenPhotoCheckpoint(PUBLISH_ID, null);
@@ -1206,7 +1286,79 @@ class TikTokPublishActionTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("hadn't downloaded its images")
-                .hasMessageNotContaining("stay live until");
+                .hasMessageNotContaining("expired at");
+    }
+
+    @Test
+    void photoPost_statusReadKeepsFailing_withLiveLinks_isPendingNotFailed() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenThrow(new TikTokClient.TikTokApiException("tiktok 503", "internal", true));
+
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("platform_pending", Boolean.TRUE)
+                .containsEntry("publish_id", PUBLISH_ID);
+    }
+
+    @Test
+    void photoPost_transientTikTokErrorOrTransportErrorWhilePolling_withLiveLinks_isPending() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenThrow(new TikTokClient.TikTokApiException("rate limited", "rate_limit_exceeded", true));
+
+        assertThat(action.publish(photoInput("photo-a"), context()).output())
+                .containsEntry("platform_pending", Boolean.TRUE);
+
+        org.mockito.Mockito.doThrow(new org.springframework.web.client.ResourceAccessException("connection reset"))
+                .when(client).fetchPublishStatus(anyString(), anyString());
+
+        assertThat(action.publish(photoInput("photo-a"), context()).output())
+                .containsEntry("platform_pending", Boolean.TRUE);
+    }
+
+    @Test
+    void photoPost_accessTokenInvalidWhilePolling_withLiveLinks_failsSoTheAuthPathFires() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenThrow(new TikTokClient.TikTokApiException(
+                        "TikTok status fetch failed with HTTP 401: access_token_invalid", "access_token_invalid", false));
+
+        // not parked: the action's own contract turns a permanent TikTok error into a failed result, which
+        // PublishOutcomeService classifies as a permanent auth failure (connection marked unhealthy)
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("access_token_invalid");
+    }
+
+    @Test
+    void photoPost_unclassifiedErrorWhilePolling_withLiveLinks_stillThrows() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString())).thenThrow(new IllegalStateException("boom"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
+                .isInstanceOf(IllegalStateException.class).hasMessage("boom");
+    }
+
+    @Test
+    void photoPost_statusReadFails_afterTheLinksExpired_stillThrows() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        givenPhotoCheckpoint(PUBLISH_ID, NOW.minusSeconds(60).toString());
+        when(client.fetchPublishStatus(anyString(), anyString())).thenThrow(new IllegalStateException("tiktok 503"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
+                .isInstanceOf(IllegalStateException.class).hasMessage("tiktok 503");
     }
 
     @Test
@@ -1264,7 +1416,7 @@ class TikTokPublishActionTest {
             asset.setSizeBytes(2048L);
             asset.setCreatedAt(OffsetDateTime.parse("2026-08-01T09:00:00Z"));
             photos.add(asset);
-            when(storageService.generateSignedUrl(eq("assets/" + id + ".jpg"), anyInt()))
+            when(storageService.generateFreshSignedUrl(eq("assets/" + id + ".jpg"), any(java.time.Duration.class)))
                     .thenReturn("https://signed/" + id);
         }
         when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(photos);

@@ -59,6 +59,12 @@ public class PublishInternalController implements PublishInternalApi {
                 attempt == null ? 0 : attempt));
     }
 
+    @Override
+    public ResponseEntity<Void> checkTikTokPhotoVerdict(String targetId, Long fireTime, Integer attempt) {
+        return fire(new PublishTask(PublishTaskKind.TIKTOK_VERDICT, targetId, at(fireTime), OffsetDateTime.now(),
+                attempt == null ? 0 : attempt));
+    }
+
     private ResponseEntity<Void> fire(PublishTask task) {
         if (!validatePublishTaskToken(task.targetId())) {
             return ResponseEntity.status(401).build();

@@ -228,6 +228,39 @@ class GcpStorageServiceTest {
     }
 
     @Test
+    void generateFreshSignedUrl_signsEveryCallForTheFullLifetime_andBypassesTheCache() throws MalformedURLException {
+        MutableClock clock = new MutableClock();
+        GcpStorageService svc = new GcpStorageService(storage, BUCKET_NAME, clock);
+        java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+        org.mockito.Mockito.when(storage.signUrl(any(BlobInfo.class), any(Long.class), eq(TimeUnit.SECONDS),
+                        any(Storage.SignUrlOption[].class)))
+                .thenAnswer(inv -> new URL("https://storage.googleapis.com/b/o?sig=" + n.incrementAndGet()));
+
+        String first = svc.generateFreshSignedUrl("a/b.png", java.time.Duration.ofHours(48));
+        String second = svc.generateFreshSignedUrl("a/b.png", java.time.Duration.ofHours(48));
+
+        assertThat(second).isNotEqualTo(first);
+        verify(storage, times(2)).signUrl(any(BlobInfo.class), eq(48L * 3600), eq(TimeUnit.SECONDS),
+                any(Storage.SignUrlOption[].class));
+    }
+
+    @Test
+    void generateFreshSignedUrl_doesNotReuseOrFeedTheSharedCache() throws MalformedURLException {
+        MutableClock clock = new MutableClock();
+        GcpStorageService svc = new GcpStorageService(storage, BUCKET_NAME, clock);
+        stubSignUrlDistinctPerCall();
+        org.mockito.Mockito.lenient().when(storage.signUrl(any(BlobInfo.class), any(Long.class),
+                        eq(TimeUnit.SECONDS), any(Storage.SignUrlOption[].class)))
+                .thenReturn(new URL("https://storage.googleapis.com/b/o?fresh=1"));
+
+        String cached = svc.generateSignedUrl("a/b.png", 60);
+        svc.generateFreshSignedUrl("a/b.png", java.time.Duration.ofMinutes(60));
+
+        // a fresh signing neither replaced nor evicted the cached 60-minute URL
+        assertThat(svc.generateSignedUrl("a/b.png", 60)).isEqualTo(cached);
+    }
+
+    @Test
     void generateSignedUrl_reusesUrlWithinWindowAndResignsAfterIt() throws MalformedURLException {
         MutableClock clock = new MutableClock();
         GcpStorageService svc = new GcpStorageService(storage, BUCKET_NAME, clock);

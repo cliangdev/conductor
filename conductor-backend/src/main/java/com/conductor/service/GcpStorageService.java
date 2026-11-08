@@ -185,6 +185,19 @@ public class GcpStorageService implements StorageService {
         return signed;
     }
 
+    /** Signs a new URL every call and leaves the reuse cache alone: the caller relies on the full lifetime. */
+    @Override
+    public String generateFreshSignedUrl(String gcsPath, java.time.Duration lifetime) {
+        long startNanos = System.nanoTime();
+        try {
+            BlobInfo blobInfo = BlobInfo.newBuilder(BlobId.of(bucketName, gcsPath)).build();
+            return storage.signUrl(blobInfo, lifetime.toSeconds(), TimeUnit.SECONDS,
+                    Storage.SignUrlOption.withV4Signature()).toString();
+        } finally {
+            RequestStats.recordSignedUrl(System.nanoTime() - startNanos);
+        }
+    }
+
     private void evictSignedUrls(String gcsPath) {
         urlCache.keySet().removeIf(k -> k.gcsPath().equals(gcsPath));
     }

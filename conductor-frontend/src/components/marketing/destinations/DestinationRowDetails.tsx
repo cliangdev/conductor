@@ -217,8 +217,11 @@ export function DestinationRowDetails({
 
       {target.errorMessage && !awaiting && (
         <div>
-          <p className="text-sm text-status-failed">{target.errorMessage}</p>
-          <ShowDetails detail={target.errorDetail} message={target.errorMessage} />
+          {/* A handed-off row's message is a progress note (TikTok still downloading), not an error. */}
+          <p className={target.state === 'HANDED_OFF' ? 'text-sm text-muted-foreground' : 'text-sm text-status-failed'}>
+            {target.errorMessage}
+          </p>
+          {target.state !== 'HANDED_OFF' && <ShowDetails detail={target.errorDetail} message={target.errorMessage} />}
         </div>
       )}
 

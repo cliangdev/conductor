@@ -71,6 +71,12 @@ class LocalStorageServiceTest {
     }
 
     @Test
+    void generateFreshSignedUrlPointsAtTheSameLocalFile() {
+        assertThat(localStorageService.generateFreshSignedUrl("proj/issues/doc.md", java.time.Duration.ofHours(48)))
+                .isEqualTo(localStorageService.generateSignedUrl("proj/issues/doc.md", 15));
+    }
+
+    @Test
     void generateSignedUrlContainsLocalFilesPrefix() {
         String url = localStorageService.generateSignedUrl("proj/issues/doc.md", 15);
         assertThat(url).contains("/api/v1/local-files/");

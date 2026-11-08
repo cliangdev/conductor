@@ -87,6 +87,11 @@ public class LocalStorageService implements StorageService {
     }
 
     @Override
+    public String generateFreshSignedUrl(String gcsPath, java.time.Duration lifetime) {
+        return generateSignedUrl(gcsPath, (int) Math.min(Integer.MAX_VALUE, lifetime.toMinutes()));
+    }
+
+    @Override
     public void delete(String gcsPath) {
         try {
             Path target = storagePath.resolve(gcsPath);

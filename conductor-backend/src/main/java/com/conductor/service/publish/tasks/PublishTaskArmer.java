@@ -111,6 +111,51 @@ public class PublishTaskArmer {
     public static final List<Duration> PERMALINK_BACKOFF = List.of(Duration.ofMinutes(2), Duration.ofMinutes(5),
             Duration.ofMinutes(10), Duration.ofMinutes(15), Duration.ofMinutes(15), Duration.ofMinutes(15));
 
+    /**
+     * How long past the image links' expiry the late-verdict chain keeps asking: TikTok documents that after
+     * it starts fetching it works for up to an hour, and a fetch can begin on the very last second a link
+     * lives.
+     */
+    public static final Duration VERDICT_GRACE = Duration.ofMinutes(70);
+
+    /** Delay before check number {@code step} (zero-based): 15 min, 30 min, then hourly. */
+    static Duration verdictDelay(int step) {
+        return step == 0 ? Duration.ofMinutes(15) : step == 1 ? Duration.ofMinutes(30) : Duration.ofHours(1);
+    }
+
+    /**
+     * When check number {@code step} should run, given that it is {@code now}: the cadence's next slot,
+     * pulled in to the last check at {@code linksExpireAt + 70 min}. Empty when that last check has already
+     * come (within a minute of it), so the chain ends.
+     */
+    public static Optional<OffsetDateTime> nextVerdictAt(int step, OffsetDateTime now, java.time.Instant linksExpireAt) {
+        OffsetDateTime deadline = OffsetDateTime.ofInstant(linksExpireAt.plus(VERDICT_GRACE), now.getOffset());
+        if (!now.isBefore(deadline.minusMinutes(1))) {
+            return Optional.empty();
+        }
+        OffsetDateTime at = now.plus(verdictDelay(step));
+        return Optional.of(at.isAfter(deadline) ? deadline : at);
+    }
+
+    /**
+     * Starts the late-verdict chain for a TikTok photo target that was just parked as HANDED_OFF while its
+     * image links are still live. Safe inside a transaction.
+     *
+     * @return true when a first check was armed
+     */
+    public boolean armTikTokVerdict(PostPublishTarget target, java.time.Instant linksExpireAt) {
+        OffsetDateTime now = OffsetDateTime.now();
+        Optional<OffsetDateTime> first = nextVerdictAt(0, now, linksExpireAt);
+        if (first.isEmpty()) {
+            return false;
+        }
+        scheduler.scheduleAfterCommit(PublishTask.tiktokVerdict(target.getId(),
+                target.getFireTime() == null ? now : target.getFireTime(), first.get(), 0));
+        log.info("Armed the TikTok verdict chain for target {}: first check {}, last check {}", target.getId(),
+                first.get(), linksExpireAt.plus(VERDICT_GRACE));
+        return true;
+    }
+
     /** Starts the PERMALINK chain for a target that published without a link. Safe inside a transaction. */
     public void armPermalinkFollowUp(PostPublishTarget target) {
         OffsetDateTime now = OffsetDateTime.now();

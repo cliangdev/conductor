@@ -11,6 +11,14 @@ public interface StorageService {
      */
     void copy(String sourceGcsPath, String destinationGcsPath);
     String generateSignedUrl(String gcsPath, int expiryMinutes);
+
+    /**
+     * A signed read URL minted now and valid for exactly {@code lifetime}, never reused from a cache.
+     * {@link #generateSignedUrl} may hand back a URL it signed up to 75% of its lifetime ago; use this when
+     * the caller records or promises the expiry (a third party fetching the link on its own schedule).
+     * Backends cap the lifetime (GCS V4: 7 days).
+     */
+    String generateFreshSignedUrl(String gcsPath, java.time.Duration lifetime);
     /**
      * Deletes an object. Idempotent: a missing object is success. A real backend failure (auth,
      * network, quota) propagates as a runtime exception so callers cleaning up a stored reference can
