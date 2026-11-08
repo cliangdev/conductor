@@ -497,6 +497,8 @@ export interface RefreshOptions {
   /** Override for tests; production callers omit this and let it resolve from `cwd`. */
   localClaudeDir?: string
   cwd?: string
+  /** Override for tests; production callers omit this and get `process.env`. */
+  env?: NodeJS.ProcessEnv
 }
 
 /**
@@ -509,9 +511,16 @@ export interface RefreshOptions {
  *
  * Single implementation shared by the MCP server (`mcp/index.ts`) and `conductor start`
  * (`commands/start.ts`) startup — call this instead of duplicating the check.
+ *
+ * `CONDUCTOR_SKIP_PLUGIN_REFRESH` (any non-empty value) turns it off: a workflow container sets it, so a
+ * repository a step checked out is never rewritten by the MCP server starting inside it.
  */
 export function refreshInstalledPluginAssets(opts: RefreshOptions = {}): void {
   const log = opts.log ?? (() => {})
+  const env = opts.env ?? process.env
+  if (env['CONDUCTOR_SKIP_PLUGIN_REFRESH']) {
+    return
+  }
   try {
     const assetSrcDir = opts.assetSrcDir ?? getAssetSrcDir()
     const currentVersion = opts.currentVersion ?? getPackageVersion()
