@@ -300,13 +300,9 @@ class PublishTaskHandlerTest {
 
     // ---- late TikTok verdict (photo post that failed while TikTok still held its images) -----------
 
-    private static final OffsetDateTime NO_TIME = null;
-
     private PostPublishTarget failedPhoto() {
-        PostPublishTarget t = row("tiktok", PublishLane.APP_MANAGED, PostPublishTargetState.FAILED,
-                now.minusHours(2));
-        t.setIdempotencyKey("key-1");
-        return t;
+        // a TikTok photo target parked as HANDED_OFF while TikTok downloads its images
+        return row("tiktok", PublishLane.APP_MANAGED, PostPublishTargetState.HANDED_OFF, now.minusHours(2));
     }
 
     private void givenPending(PostPublishTarget t, java.time.Instant initAt, java.time.Instant expiresAt) {
@@ -348,7 +344,7 @@ class PublishTaskHandlerTest {
     }
 
     @Test
-    void verdict_whenTikTokFailedIt_replacesTheMessageReleasesTheLinksAndStops() {
+    void verdict_whenTikTokFailedIt_failsTheTargetWithTikToksReasonAndStops() {
         PostPublishTarget t = failedPhoto();
         givenPending(t, now.minusHours(3).toInstant(), now.plusHours(40).toInstant());
         when(verdictCheck.read(t, "pub-1")).thenReturn(reading("FAILED", "picture_size_check_failed", null, null));
@@ -356,9 +352,8 @@ class PublishTaskHandlerTest {
         handler.handle(PublishTask.tiktokVerdict("t-1", t.getFireTime(), now, 0), now);
 
         ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
-        verify(outcomeService).reviseFailureMessage(eq("t-1"), message.capture());
-        assertThat(message.getValue()).contains("picture size check failed").contains("safe to retry");
-        verify(verdictCheck).releaseLinks(t);
+        verify(outcomeService).recordVerdictFailure(eq("t-1"), message.capture());
+        assertThat(message.getValue()).contains("picture size check failed").contains("retry is safe");
         verify(scheduler, never()).scheduleAfterCommit(any());
     }
 
@@ -376,7 +371,7 @@ class PublishTaskHandlerTest {
         assertThat(next.getValue().attempt()).isEqualTo(1);
         assertThat(next.getValue().fireTime()).isEqualTo(t.getFireTime());
         assertThat(next.getValue().notBefore()).isEqualTo(now.plusMinutes(30));
-        verify(outcomeService, never()).reviseFailureMessage(anyString(), anyString());
+        verify(outcomeService, never()).recordVerdictFailure(anyString(), anyString());
     }
 
     @Test
@@ -391,7 +386,7 @@ class PublishTaskHandlerTest {
     }
 
     @Test
-    void verdict_pastTheLastCheck_saysTikTokNeverDownloadedAndARetryIsSafe() {
+    void verdict_pastTheLastCheck_failsTheTargetSayingTikTokNeverDownloadedAndARetryIsSafe() {
         PostPublishTarget t = failedPhoto();
         java.time.Instant expiry = now.minusMinutes(70).toInstant();
         givenPending(t, now.minusHours(49).toInstant(), expiry);
@@ -400,8 +395,9 @@ class PublishTaskHandlerTest {
         handler.handle(PublishTask.tiktokVerdict("t-1", t.getFireTime(), now, 9), now);
 
         ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
-        verify(outcomeService).reviseFailureMessage(eq("t-1"), message.capture());
-        assertThat(message.getValue()).contains("never downloaded the images").contains("safe to retry");
+        verify(outcomeService).recordVerdictFailure(eq("t-1"), message.capture());
+        assertThat(message.getValue()).isEqualTo(
+                "TikTok never downloaded the images before the links expired. A retry is safe now.");
         verify(scheduler, never()).scheduleAfterCommit(any());
     }
 
@@ -410,10 +406,13 @@ class PublishTaskHandlerTest {
         // retried: the row is PENDING again under a restamped fire time
         PostPublishTarget t = row("tiktok", PublishLane.APP_MANAGED, PostPublishTargetState.PENDING, now.plusMinutes(1));
         handler.handle(PublishTask.tiktokVerdict("t-1", now.minusHours(2), now, 1), now);
-        // retried and failed again: FAILED, but under a different fire time than the chain was armed for
-        t.setState(PostPublishTargetState.FAILED);
+        // retried and parked again: HANDED_OFF, but under a different fire time than the chain was armed for
+        t.setState(PostPublishTargetState.HANDED_OFF);
         handler.handle(PublishTask.tiktokVerdict("t-1", now.minusHours(2), now, 1), now);
-        // published already
+        // failed or published already
+        t.setState(PostPublishTargetState.FAILED);
+        t.setFireTime(now.minusHours(2));
+        handler.handle(PublishTask.tiktokVerdict("t-1", now.minusHours(2), now, 1), now);
         t.setState(PostPublishTargetState.PUBLISHED);
         t.setFireTime(now.minusHours(2));
         handler.handle(PublishTask.tiktokVerdict("t-1", now.minusHours(2), now, 1), now);
@@ -423,7 +422,7 @@ class PublishTaskHandlerTest {
     }
 
     @Test
-    void verdict_whenTheLinksWereReleased_stopsWithoutAskingTikTok() {
+    void verdict_whenTheRowCarriesNoPendingPost_stopsWithoutAskingTikTok() {
         PostPublishTarget t = failedPhoto();
         when(verdictCheck.pending(t)).thenReturn(Optional.empty());
 

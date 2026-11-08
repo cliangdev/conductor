@@ -1224,7 +1224,7 @@ class TikTokPublishActionTest {
     }
 
     @Test
-    void photoPost_pollTimeout_saysWhenTheLinksStayLiveAndWarnsAgainstAnEarlyRetry() {
+    void photoPost_pollTimeout_withLiveLinks_returnsPendingInsteadOfThrowing() {
         givenPhotos("photo-a");
         givenClockAt(NOW);
         action.maxPollAttempts = 3;
@@ -1232,17 +1232,21 @@ class TikTokPublishActionTest {
         when(client.fetchPublishStatus(anyString(), anyString()))
                 .thenReturn(new PublishStatus("PROCESSING_DOWNLOAD", null, null, null));
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("TikTok accepted photo post " + PUBLISH_ID + " but hadn't downloaded its images after "
-                        + "0 min (still PROCESSING_DOWNLOAD). TikTok hasn't downloaded the images yet. Its image "
-                        + "links stay live until Nov 9, 12:00 UTC, and Conductor keeps checking with TikTok until "
-                        + "then: this destination switches to Published if TikTok posts it. Retrying before then "
-                        + "could post the photos twice.");
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        // success-shaped, so the invocation completes: no automatic re-attempt and no re-poll
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("platform_pending", Boolean.TRUE)
+                .containsEntry("publish_id", PUBLISH_ID)
+                .containsEntry("post_kind", "photo")
+                .containsEntry("links_expire_at", NOW.plus(java.time.Duration.ofHours(48)).toString())
+                .containsEntry("init_at", NOW.toString())
+                .doesNotContainKeys("permalink", "post_id");
+        verify(client, times(3)).fetchPublishStatus(anyString(), anyString());
     }
 
     @Test
-    void photoPost_pollTimeout_inAnotherStatus_doesNotClaimNothingWasDownloaded() {
+    void photoPost_pollTimeout_inAnotherNonTerminalStatus_isPendingToo() {
         givenPhotos("photo-a");
         givenClockAt(NOW);
         action.maxPollAttempts = 2;
@@ -1250,15 +1254,29 @@ class TikTokPublishActionTest {
         when(client.fetchPublishStatus(anyString(), anyString()))
                 .thenReturn(new PublishStatus("PROCESSING_UPLOAD", null, null, null));
 
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("still PROCESSING_UPLOAD")
-                .hasMessageNotContaining("hadn't downloaded")
-                .hasMessageContaining("stay live until Nov 9, 12:00 UTC");
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("platform_pending", Boolean.TRUE);
     }
 
     @Test
-    void photoPost_pollTimeout_withUnknownExpiry_omitsTheExpirySentence() {
+    void photoPost_pollTimeout_afterTheLinksExpired_stillThrows() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        action.maxPollAttempts = 2;
+        givenPhotoCheckpoint(PUBLISH_ID, NOW.minusSeconds(60).toString());
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PROCESSING_DOWNLOAD", null, null, null));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("hadn't downloaded its images")
+                .hasMessageContaining("image links expired at Nov 7, 11:59 UTC");
+    }
+
+    @Test
+    void photoPost_pollTimeout_withUnknownExpiry_stillThrows() {
         givenPhotos("photo-a");
         action.maxPollAttempts = 2;
         givenPhotoCheckpoint(PUBLISH_ID, null);
@@ -1268,7 +1286,32 @@ class TikTokPublishActionTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("hadn't downloaded its images")
-                .hasMessageNotContaining("stay live until");
+                .hasMessageNotContaining("expired at");
+    }
+
+    @Test
+    void photoPost_statusReadKeepsFailing_withLiveLinks_isPendingNotFailed() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        when(client.initPhotoPost(anyString(), any(), any(), anyInt())).thenReturn(PUBLISH_ID);
+        when(client.fetchPublishStatus(anyString(), anyString())).thenThrow(new IllegalStateException("tiktok 503"));
+
+        ActionResult result = action.publish(photoInput("photo-a"), context());
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.output()).containsEntry("platform_pending", Boolean.TRUE)
+                .containsEntry("publish_id", PUBLISH_ID);
+    }
+
+    @Test
+    void photoPost_statusReadFails_afterTheLinksExpired_stillThrows() {
+        givenPhotos("photo-a");
+        givenClockAt(NOW);
+        givenPhotoCheckpoint(PUBLISH_ID, NOW.minusSeconds(60).toString());
+        when(client.fetchPublishStatus(anyString(), anyString())).thenThrow(new IllegalStateException("tiktok 503"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> action.publish(photoInput("photo-a"), context()))
+                .isInstanceOf(IllegalStateException.class).hasMessage("tiktok 503");
     }
 
     @Test

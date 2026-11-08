@@ -138,8 +138,8 @@ public class PublishTaskArmer {
     }
 
     /**
-     * Starts the late-verdict chain for a TikTok photo target that just failed while its image links are
-     * still live. Safe inside a transaction.
+     * Starts the late-verdict chain for a TikTok photo target that was just parked as HANDED_OFF while its
+     * image links are still live. Safe inside a transaction.
      *
      * @return true when a first check was armed
      */

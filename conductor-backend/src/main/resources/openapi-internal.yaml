@@ -477,14 +477,13 @@ paths:
       summary: Ask TikTok whether a failed photo post was published after all
       description: >
         Cloud Tasks' HTTP target for a TIKTOK_VERDICT publish task. A TikTok photo post is fetched by TikTok
-        from signed links, and its download queue can stall for hours; when Conductor's publish attempt gives
-        up the target is FAILED while TikTok may still publish later. Armed when such a target fails, then on
-        a cadence of 15 min, 30 min and hourly until the links expire plus 70 minutes. Reads the status of
-        the publish id recorded on the failed attempt's checkpoint: PUBLISH_COMPLETE moves the target to
-        PUBLISHED, FAILED replaces its message with TikTok's reason and allows a retry, anything else
-        re-arms until the last check. `attempt` is the zero-based step. A no-op 200 when the row is no longer
-        FAILED, was retried (its fire time no longer matches `fireTime`), or has no live photo links
-        recorded.
+        from signed links, and its download queue can stall for hours; when Conductor's status polling runs
+        out the target waits as HANDED_OFF while TikTok may still publish. Armed when the target is parked,
+        then on a cadence of 15 min, 30 min and hourly until the links expire plus 70 minutes. Reads the
+        status of the publish id kept on the row: PUBLISH_COMPLETE moves the target to PUBLISHED, FAILED (or
+        no download by the last check) moves it to FAILED with a plain reason and allows a retry, anything
+        else re-arms. `attempt` is the zero-based step. A no-op 200 when the row is no longer HANDED_OFF,
+        was retried (its fire time no longer matches `fireTime`), or carries no pending TikTok post.
       operationId: checkTikTokPhotoVerdict
       security:
         - publishTaskToken: []

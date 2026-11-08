@@ -262,14 +262,14 @@ public class PublishTaskHandler {
     }
 
     /**
-     * Asks TikTok what became of a photo post Conductor gave up on. The row must still be FAILED under the
-     * fire time the chain was armed for (a manual retry restamps it and moves the row on, which ends the
-     * chain), and its checkpoint must still hold live photo links.
+     * Asks TikTok what became of a photo post it accepted but had not published. The row must still be
+     * {@code HANDED_OFF} under the fire time the chain was armed for and still carry its pending marker.
      *
      * <ul>
-     *   <li>PUBLISH_COMPLETE: the late publish is recorded; a missing link starts the PERMALINK chain.</li>
-     *   <li>FAILED: TikTok's reason replaces the message and the links are released so a retry is allowed.</li>
-     *   <li>anything else: re-armed on the cadence; after the last check the message says a retry is safe.</li>
+     *   <li>PUBLISH_COMPLETE: the publish is recorded; a missing link starts the PERMALINK chain.</li>
+     *   <li>FAILED: the target fails with TikTok's reason in plain words; a retry is allowed at once.</li>
+     *   <li>anything else: re-armed on the cadence; after the last check (links expiry + 70 min) the target
+     *       fails saying TikTok never downloaded the images and a retry is safe.</li>
      * </ul>
      */
     private void tiktokVerdict(PublishTask task, PostPublishTarget target, OffsetDateTime now) {
@@ -283,14 +283,14 @@ public class PublishTaskHandler {
                     target.getId(), task.fireTime(), target.getFireTime());
             return;
         }
-        if (target.getState() != PostPublishTargetState.FAILED) {
+        if (target.getState() != PostPublishTargetState.HANDED_OFF) {
             log.debug("TIKTOK_VERDICT for publish target {} has nothing to do: row is {}", target.getId(),
                     target.getState());
             return;
         }
         TikTokPhotoVerdictCheck.Pending pending = tikTokPhotoVerdictCheck.pending(target).orElse(null);
         if (pending == null) {
-            log.info("TikTok verdict chain for target {} stopped: no live photo links on its checkpoint",
+            log.info("TikTok verdict chain for target {} stopped: no pending TikTok post on the row",
                     target.getId());
             return;
         }
@@ -316,9 +316,8 @@ public class PublishTaskHandler {
             if (status.failed()) {
                 String reason = status.failReason() == null || status.failReason().isBlank()
                         ? "no reason given" : status.failReason().replace('_', ' ');
-                outcomeService.reviseFailureMessage(target.getId(),
-                        "TikTok did not publish the photo post: " + reason + ". It is safe to retry.");
-                tikTokPhotoVerdictCheck.releaseLinks(target);
+                outcomeService.recordVerdictFailure(target.getId(),
+                        "TikTok did not publish the photo post: " + reason + ". A retry is safe now.");
                 log.info("TikTok verdict chain for target {} stopped: TikTok failed publish_id={} ({})",
                         target.getId(), pending.publishId(), status.failReason());
                 return;
@@ -330,9 +329,8 @@ public class PublishTaskHandler {
             rearm(PublishTask.tiktokVerdict(target.getId(), task.fireTime(), nextAt.get(), next));
             return;
         }
-        outcomeService.reviseFailureMessage(target.getId(), "TikTok never downloaded the images before the image "
-                + "links expired (" + formatUtc(pending.linksExpireAt()) + "), so the photo post was not "
-                + "published. It is safe to retry now.");
+        outcomeService.recordVerdictFailure(target.getId(),
+                "TikTok never downloaded the images before the links expired. A retry is safe now.");
         log.info("TikTok verdict chain for target {} stopped: publish_id={} still unfinished after the last check",
                 target.getId(), pending.publishId());
     }
@@ -346,18 +344,13 @@ public class PublishTaskHandler {
             log.warn("TikTok published photo post {} {} (target {}); the destination is now Published",
                     pending.publishId(), late, target.getId());
         } else {
-            log.info("TikTok published photo post {} {} but target {} is no longer FAILED; nothing recorded",
+            log.info("TikTok published photo post {} {} but target {} is no longer waiting; nothing recorded",
                     pending.publishId(), late, target.getId());
         }
     }
 
     private static String formatLateness(Duration d) {
         return d.toHours() + "h" + String.format("%02d", d.toMinutesPart()) + "m";
-    }
-
-    private static String formatUtc(java.time.Instant instant) {
-        return java.time.format.DateTimeFormatter.ofPattern("MMM d, HH:mm", java.util.Locale.ROOT)
-                .withZone(java.time.ZoneOffset.UTC).format(instant) + " UTC";
     }
 
     private static boolean arrivedEarly(OffsetDateTime fireTime, OffsetDateTime now) {

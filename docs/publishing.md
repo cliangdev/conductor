@@ -495,22 +495,31 @@ default `PT48H`, clamped to 7 days minus 5 minutes, the GCS V4 cap). They are si
 shared signed-URL cache, so the lifetime recorded on the invocation checkpoint (`linksExpireAt`) is true.
 While a failed photo target's links are live, a manual retry is refused (it could post the photos twice).
 
-**Late verdict check.** A photo publish attempt polls TikTok for about 10 minutes, three times, and then the
-target is `FAILED` ("TikTok hasn't downloaded the images yet… Conductor keeps checking until …"). If its links
-are still live, a bounded chain of `TIKTOK_VERDICT` Cloud Tasks (`/internal/v1/publish-targets/{id}/tiktok_verdict`,
-modelled on the PERMALINK follow-up, honouring `conductor.post-publish.enabled`) asks TikTok `status/fetch` for
-the recorded `publish_id`: 15 min, 30 min, then hourly, last check at `linksExpireAt` + 70 min (TikTok's
+**Waiting as Handed off, and the late verdict check.** A photo publish attempt polls TikTok for about 10
+minutes. If TikTok has not published or rejected the post by then and the image links are still live, the
+attempt does **not** fail: it returns a success-shaped result flagged `platform_pending` (with the `publish_id`,
+`post_kind`, `links_expire_at`, `init_at`), so the action invocation completes with no further attempt. A status
+read that keeps erroring while the links are live is treated the same way. `PublishOutcomeService` then parks
+the target as `HANDED_OFF` (in flight, so the Post stays Scheduled and nothing announces a failure) with a plain
+note ("TikTok accepted the post and is downloading the images (queued at TikTok). Conductor checks until … UTC
+and will mark it published or failed."), keeps the handle on the row's `resume_checkpoint` (the invocation's own
+checkpoint is wiped on success), and arms a bounded chain of `TIKTOK_VERDICT` Cloud Tasks
+(`/internal/v1/publish-targets/{id}/tiktok_verdict`, modelled on the PERMALINK follow-up, honouring
+`conductor.post-publish.enabled`): 15 min, 30 min, then hourly, last check at `linksExpireAt` + 70 min (TikTok's
 one-hour download window after a fetch starts). Per check:
 
-- `PUBLISH_COMPLETE`: the target moves `FAILED → PUBLISHED` through `recordSuccess` and a Post rolled up to
-  its failed status follows it to published once every target has published; with no link yet the PERMALINK
-  follow-up starts. A WARN logs how late TikTok was.
-- `FAILED`: the target stays failed, its message becomes TikTok's reason, the checkpoint's link expiry is
-  cleared so a retry is allowed at once, and the chain stops.
-- still processing: re-armed; after the last check the message says TikTok never downloaded the images and a
-  retry is now safe.
+- `PUBLISH_COMPLETE`: `HANDED_OFF → PUBLISHED` through the ordinary success path (Post rolls up; no link yet
+  starts the PERMALINK follow-up). A WARN logs how late TikTok was.
+- `FAILED`: the target goes `FAILED` with TikTok's reason in plain words and a retry is allowed at once.
+- still processing: re-armed; after the last check the target goes `FAILED` with "TikTok never downloaded the
+  images before the links expired. A retry is safe now."
 
-A task for a target that is no longer `FAILED`, or that was retried since (its fire time changed), does nothing.
+A real TikTok failure (`FAILED`, a `fail_reason`, a permanent rejection) and a video post still fail in the
+action as before. A task for a target that is no longer `HANDED_OFF`, or was retried since (its fire time
+changed), does nothing. Only native-lane `HANDED_OFF` rows are touched by the confirmation poller and revoked on
+unschedule; a TikTok API row is neither (the post is already at TikTok and cannot be taken back), and the retry
+action ignores it while it waits. A `FAILED` photo target with live links from before this behaviour is still
+refused a retry until its links expire.
 Log lines carry `publish_id`: `TikTok photo post <id> images: <assetId->object>… initAt=… linksExpireAt=…`
 (match the media proxy's access logs by object and `X-Goog-Date`) and one `TikTok verdict check` line per check.
 

@@ -34,6 +34,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -806,13 +807,46 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
                 + (expiresAt == null ? "" : ",\"linksExpireAt\":\"" + expiresAt.toInstant() + "\"") + "}";
     }
 
-    // --- TikTok published a photo post late, after Conductor gave up on it ---
+    // --- a TikTok photo post TikTok accepted but has not downloaded waits as HANDED_OFF ---
+
+    private static final Instant LINKS_EXPIRE = Instant.parse("2026-11-09T12:00:00Z");
+
+    private static Map<String, Object> pendingOutput() {
+        return Map.of("platform_pending", Boolean.TRUE, "publish_id", "pub-1", "post_kind", "photo",
+                "links_expire_at", LINKS_EXPIRE.toString(), "init_at", "2026-11-07T12:00:00Z");
+    }
+
+    private PostPublishTarget handedOffPhoto(WorkItem owner) {
+        PostPublishTarget target = target(owner, "tiktok", PostPublishTargetState.PUBLISHING, "@acme");
+        service.recordOutcome(target.getId(), com.conductor.integration.ActionResult.ok(pendingOutput()));
+        return reload(target);
+    }
 
     @Test
-    void aLatePublishOfAFailedTarget_publishesItAndMovesAFailedPostToPublished() {
+    void aPendingPhotoResult_parksTheTargetAsHandedOffWithAPlainNote_andTheScheduledPostStaysScheduled() {
         WorkItem owner = post();
-        PostPublishTarget tiktok = failedWithCheckpoint(owner, "tiktok", photoCheckpoint(OffsetDateTime.now().plusHours(40)));
-        assertThat(statusOf(owner)).isEqualTo("FAILED");
+        PostPublishTarget target = target(owner, "tiktok", PostPublishTargetState.PUBLISHING, "@acme");
+
+        assertThat(service.recordOutcome(target.getId(), com.conductor.integration.ActionResult.ok(pendingOutput())))
+                .isTrue();
+
+        PostPublishTarget after = reload(target);
+        assertThat(after.getState()).isEqualTo(PostPublishTargetState.HANDED_OFF);
+        assertThat(after.getErrorMessage()).isEqualTo("TikTok accepted the post and is downloading the images "
+                + "(queued at TikTok). Conductor checks until Nov 9, 13:10 UTC and will mark it published or failed.");
+        assertThat(after.getErrorMessage().toLowerCase()).doesNotContain("fail" + "ed to");
+        assertThat(after.getAttempts()).isZero();
+        assertThat(com.conductor.service.publish.PlatformPending.parse(after.getResumeCheckpoint()))
+                .contains(new com.conductor.service.publish.PlatformPending("pub-1", "photo", LINKS_EXPIRE,
+                        Instant.parse("2026-11-07T12:00:00Z")));
+        // HANDED_OFF is in flight: the roll-up does not move the Post, so no failure (or success) is announced
+        assertThat(statusOf(owner)).isEqualTo("SCHEDULED");
+    }
+
+    @Test
+    void aLatePublishOfAWaitingTarget_publishesItAndRollsThePostUp() {
+        WorkItem owner = post();
+        PostPublishTarget tiktok = handedOffPhoto(owner);
 
         boolean moved = service.recordLatePublish(tiktok.getId(), "pub-1", "77",
                 "https://www.tiktok.com/@a/photo/77", "photo");
@@ -822,13 +856,14 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
         assertThat(after.getState()).isEqualTo(PostPublishTargetState.PUBLISHED);
         assertThat(after.getPermalink()).isEqualTo("https://www.tiktok.com/@a/photo/77");
         assertThat(after.getErrorMessage()).isNull();
+        assertThat(after.getResumeCheckpoint()).isNull();
         assertThat(statusOf(owner)).isEqualTo("PUBLISHED");
     }
 
     @Test
     void aLatePublishWithoutALink_keepsTheHandleForThePermalinkFollowUp() {
         WorkItem owner = post();
-        PostPublishTarget tiktok = failedWithCheckpoint(owner, "tiktok", photoCheckpoint(OffsetDateTime.now().plusHours(40)));
+        PostPublishTarget tiktok = handedOffPhoto(owner);
 
         assertThat(service.recordLatePublish(tiktok.getId(), "pub-1", null, null, "photo")).isTrue();
 
@@ -839,39 +874,62 @@ class PublishOutcomeServiceTest extends AbstractNoneWebIntegrationTest {
     }
 
     @Test
-    void aLatePublish_leavesAFailedPostFailedWhileAnotherTargetIsStillFailed() {
+    void aLatePublishForATargetThatIsNotWaiting_changesNothing() {
+        PostPublishTarget target = target("tiktok", PostPublishTargetState.FAILED, "@acme");
+
+        assertThat(service.recordLatePublish(target.getId(), "pub-1", "77", "https://x/77", "photo")).isFalse();
+
+        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.FAILED);
+    }
+
+    @Test
+    void aVerdictFailure_failsTheWaitingTargetAndThePost_andClearsTheMarker() {
         WorkItem owner = post();
-        PostPublishTarget tiktok = failedWithCheckpoint(owner, "tiktok", photoCheckpoint(OffsetDateTime.now().plusHours(40)));
-        PostPublishTarget facebook = target(owner, "facebook", PostPublishTargetState.FAILED, "@acme");
+        PostPublishTarget tiktok = handedOffPhoto(owner);
 
-        assertThat(service.recordLatePublish(tiktok.getId(), "pub-1", "77", "https://www.tiktok.com/@a/photo/77",
-                "photo")).isTrue();
+        assertThat(service.recordVerdictFailure(tiktok.getId(),
+                "TikTok never downloaded the images before the links expired. A retry is safe now.")).isTrue();
 
-        assertThat(reload(facebook).getState()).isEqualTo(PostPublishTargetState.FAILED);
+        PostPublishTarget after = reload(tiktok);
+        assertThat(after.getState()).isEqualTo(PostPublishTargetState.FAILED);
+        assertThat(after.getErrorMessage()).contains("A retry is safe now");
+        assertThat(after.getResumeCheckpoint()).isNull();
+        assertThat(after.getAttempts()).isEqualTo(1);
         assertThat(statusOf(owner)).isEqualTo("FAILED");
     }
 
     @Test
-    void aLatePublishForATargetThatIsNoLongerFailed_changesNothing() {
-        PostPublishTarget target = target("tiktok", PostPublishTargetState.PENDING, "@acme");
+    void aVerdictFailureForATargetThatIsNotWaiting_changesNothing() {
+        PostPublishTarget pending = target("tiktok", PostPublishTargetState.PENDING, "@acme");
 
-        assertThat(service.recordLatePublish(target.getId(), "pub-1", "77", "https://x/77", "photo")).isFalse();
+        assertThat(service.recordVerdictFailure(pending.getId(), "nope")).isFalse();
 
-        assertThat(reload(target).getState()).isEqualTo(PostPublishTargetState.PENDING);
+        assertThat(reload(pending).getState()).isEqualTo(PostPublishTargetState.PENDING);
     }
 
     @Test
-    void reviseFailureMessage_replacesTheMessageOfAFailedTargetOnly() {
+    void retryLeavesAWaitingTikTokTargetAlone() {
         WorkItem owner = post();
-        PostPublishTarget failed = failedWithCheckpoint(owner, "tiktok", null);
-        PostPublishTarget pending = target("tiktok", PostPublishTargetState.PENDING, "@acme");
+        PostPublishTarget tiktok = handedOffPhoto(owner);
 
-        assertThat(service.reviseFailureMessage(failed.getId(), "TikTok never downloaded the images")).isTrue();
-        assertThat(service.reviseFailureMessage(pending.getId(), "nope")).isFalse();
+        PublishOutcomeService.RetryResult result =
+                service.retryFailedTargets(project.getId(), owner.getId(), creator);
 
-        assertThat(reload(failed).getErrorMessage()).isEqualTo("TikTok never downloaded the images");
-        assertThat(reload(failed).getState()).isEqualTo(PostPublishTargetState.FAILED);
-        assertThat(reload(pending).getErrorMessage()).isNull();
+        assertThat(result.retried()).isZero();
+        assertThat(reload(tiktok).getState()).isEqualTo(PostPublishTargetState.HANDED_OFF);
+    }
+
+    @Test
+    void retryAfterAVerdictFailure_isAllowedAtOnce() {
+        WorkItem owner = post();
+        PostPublishTarget tiktok = handedOffPhoto(owner);
+        service.recordVerdictFailure(tiktok.getId(), "TikTok never downloaded the images. A retry is safe now.");
+
+        PublishOutcomeService.RetryResult result =
+                service.retryFailedTargets(project.getId(), owner.getId(), creator);
+
+        assertThat(result.retried()).isEqualTo(1);
+        assertThat(reload(tiktok).getState()).isEqualTo(PostPublishTargetState.PENDING);
     }
 
     @Test

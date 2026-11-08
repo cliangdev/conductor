@@ -1,82 +1,54 @@
 package com.conductor.integration.connector.tiktok;
 
 import com.conductor.entity.PostPublishTarget;
-import com.conductor.service.ActionInvocationService;
-import org.junit.jupiter.api.BeforeEach;
+import com.conductor.service.publish.PlatformPending;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
 
 import java.time.Instant;
-import java.util.Optional;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
-/** The checkpoint side of the late TikTok verdict check: what is pending, and releasing the links. */
+/** What the late TikTok verdict check reads off a waiting target. */
 class TikTokPhotoVerdictCheckTest {
 
-    private ActionInvocationService invocations;
-    private TikTokPhotoVerdictCheck check;
-    private PostPublishTarget target;
+    private final TikTokPhotoVerdictCheck check =
+            new TikTokPhotoVerdictCheck(mock(TikTokClient.class), null, null, null);
 
-    @BeforeEach
-    void setUp() {
-        invocations = mock(ActionInvocationService.class);
-        check = new TikTokPhotoVerdictCheck(mock(TikTokClient.class), null, null, null, invocations);
-        target = new PostPublishTarget();
+    private static PostPublishTarget target(String resumeCheckpoint) {
+        PostPublishTarget target = new PostPublishTarget();
         target.setId("t-1");
-        target.setIdempotencyKey("key-1");
-    }
-
-    private void givenCheckpoint(String json) {
-        when(invocations.readCheckpoint("key-1")).thenReturn(Optional.ofNullable(json));
+        target.setResumeCheckpoint(resumeCheckpoint);
+        return target;
     }
 
     @Test
-    void pending_readsThePublishIdExpiryAndInitTimeOfAPhotoCheckpoint() {
-        givenCheckpoint("{\"publishId\":\"pub-1\",\"mode\":\"PHOTO\",\"linksExpireAt\":\"2026-11-09T12:00:00Z\","
-                + "\"initAt\":\"2026-11-07T12:00:00Z\"}");
+    void pending_readsThePublishIdExpiryAndInitTimeTheOutcomeServiceStored() {
+        Instant expires = Instant.parse("2026-11-09T12:00:00Z");
+        Instant init = Instant.parse("2026-11-07T12:00:00Z");
+        PostPublishTarget target = target(new PlatformPending("pub-1", "photo", expires, init).toJson());
 
-        assertThat(check.pending(target)).contains(new TikTokPhotoVerdictCheck.Pending("pub-1",
-                Instant.parse("2026-11-09T12:00:00Z"), Instant.parse("2026-11-07T12:00:00Z")));
+        assertThat(check.pending(target)).contains(new TikTokPhotoVerdictCheck.Pending("pub-1", expires, init));
     }
 
     @Test
-    void pending_isEmptyForAVideoAReleasedCheckpointOrNoCheckpoint() {
-        givenCheckpoint("{\"publishId\":\"pub-1\",\"linksExpireAt\":\"2026-11-09T12:00:00Z\"}");
-        assertThat(check.pending(target)).isEmpty();
-        givenCheckpoint("{\"publishId\":\"pub-1\",\"mode\":\"PHOTO\"}");
-        assertThat(check.pending(target)).isEmpty();
-        givenCheckpoint(null);
-        assertThat(check.pending(target)).isEmpty();
-        givenCheckpoint("not json");
-        assertThat(check.pending(target)).isEmpty();
+    void pending_isEmptyWithoutAMarkerOrWithAnUnreadableOne() {
+        assertThat(check.pending(target(null))).isEmpty();
+        assertThat(check.pending(target("not json"))).isEmpty();
+        // a PERMALINK follow-up marker is not a pending post
+        assertThat(check.pending(target(
+                new com.conductor.service.publish.PermalinkFollowUp("pub-1", "photo").toJson()))).isEmpty();
     }
 
     @Test
-    void releaseLinks_clearsTheExpiryButKeepsThePublishId() {
-        givenCheckpoint("{\"publishId\":\"pub-1\",\"mode\":\"PHOTO\",\"linksExpireAt\":\"2026-11-09T12:00:00Z\","
-                + "\"initAt\":\"2026-11-07T12:00:00Z\"}");
+    void platformPending_roundTripsThroughTheActionOutput() {
+        Map<String, Object> output = Map.of("platform_pending", Boolean.TRUE, "publish_id", "pub-1",
+                "post_kind", "photo", "links_expire_at", "2026-11-09T12:00:00Z", "init_at", "2026-11-07T12:00:00Z");
 
-        check.releaseLinks(target);
+        PlatformPending pending = PlatformPending.fromOutput(output).orElseThrow();
 
-        ArgumentCaptor<String> saved = ArgumentCaptor.forClass(String.class);
-        verify(invocations).saveCheckpoint(eq("key-1"), saved.capture());
-        assertThat(saved.getValue()).contains("pub-1");
-        assertThat(TikTokPublishAction.photoLinksLiveUntil(saved.getValue())).isEmpty();
-    }
-
-    @Test
-    void releaseLinks_writesNothingWhenThereIsNoCheckpoint() {
-        givenCheckpoint(null);
-
-        check.releaseLinks(target);
-
-        verify(invocations, never()).saveCheckpoint(anyString(), anyString());
+        assertThat(PlatformPending.parse(pending.toJson())).contains(pending);
+        assertThat(PlatformPending.fromOutput(Map.of("publish_id", "pub-1"))).isEmpty();
     }
 }

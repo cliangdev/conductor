@@ -14,6 +14,7 @@ import com.conductor.service.publish.PublishPlatform;
 import com.conductor.service.publish.tasks.PublishTaskArmer;
 import com.conductor.service.publish.PublishPlatformRegistry;
 import com.conductor.service.publish.PermalinkFollowUp;
+import com.conductor.service.publish.PlatformPending;
 import com.conductor.service.publish.PermalinkPostIds;
 import com.conductor.service.publish.PublishingWorkflow;
 import com.conductor.repository.WorkItemRepository;
@@ -317,6 +318,10 @@ public class PublishOutcomeService {
         if (Boolean.TRUE.equals(output.get(AWAITING_HUMAN_OUTPUT_KEY))) {
             return applyAwaitingHuman(target, stringValue(output, HANDOFF_NOTE_OUTPUT_KEY));
         }
+        PlatformPending pending = PlatformPending.fromOutput(output).orElse(null);
+        if (pending != null) {
+            return applyPlatformPending(target, pending);
+        }
         PublishPlatform platform = platformFor(target.getPlatform());
         String platformPostId = platform == null ? null : stringValue(output, platform.publish().postIdOutputKey());
         boolean moved = applySuccess(target, platformPostId, stringValue(output, PERMALINK_OUTPUT_KEY));
@@ -327,19 +332,20 @@ public class PublishOutcomeService {
     }
 
     /**
-     * TikTok published a photo post that Conductor had already given up on (the target is FAILED): records
-     * the success through the ordinary path (which also rolls the Post up, FAILED included) and, when TikTok
-     * gave no link yet, starts the PERMALINK follow-up chain exactly as a normal publish without one does.
+     * TikTok published a photo post that was waiting as {@code HANDED_OFF} (accepted, images not yet
+     * downloaded): records the success through the ordinary path (which also rolls the Post up) and, when
+     * TikTok gave no link yet, starts the PERMALINK follow-up chain exactly as a normal publish without one.
      *
-     * @return true when this call is what moved the row; false when it is no longer FAILED
+     * @return true when this call is what moved the row; false when it is no longer waiting
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public boolean recordLatePublish(String targetId, String publishId, String platformPostId, String permalink,
                                      String kind) {
         PostPublishTarget target = find(targetId);
-        if (target == null || target.getState() != PostPublishTargetState.FAILED) {
+        if (target == null || target.getState() != PostPublishTargetState.HANDED_OFF) {
             return false;
         }
+        target.setResumeCheckpoint(null);
         boolean moved = applySuccess(target, platformPostId, permalink);
         if (moved && (permalink == null || permalink.isBlank())) {
             startPermalinkFollowUp(target, publishId, kind);
@@ -348,20 +354,55 @@ public class PublishOutcomeService {
     }
 
     /**
-     * Replaces the message of a target that is still {@code FAILED} (the late-verdict chain learning more
-     * about why). A row that has moved on - retried, published, revoked - is left alone.
+     * The late-verdict chain's failure: TikTok rejected a waiting photo post, or never downloaded its images
+     * before the links expired. Moves the {@code HANDED_OFF} row to {@code FAILED} through the ordinary
+     * failure path (attempt count, roll-up, the Post's failure notification) and drops the pending marker.
+     * The invocation's own checkpoint is already gone, so the retry guard sees no live links and a retry is
+     * allowed at once.
      *
-     * @return true when the message was replaced
+     * @return true when this call is what moved the row; false when it is no longer waiting
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public boolean reviseFailureMessage(String targetId, String message) {
+    public boolean recordVerdictFailure(String targetId, String message) {
         PostPublishTarget target = find(targetId);
-        if (target == null || target.getState() != PostPublishTargetState.FAILED) {
+        if (target == null || target.getState() != PostPublishTargetState.HANDED_OFF) {
             return false;
         }
-        target.setErrorMessage(message);
+        target.setResumeCheckpoint(null);
+        boolean moved = applyFailure(target, message, false);
+        if (moved) {
+            // Our own plain-words message, not a platform error to condense: keep every sentence.
+            target.setErrorMessage(message);
+            target.setErrorDetail(null);
+            targetRepository.save(target);
+        }
+        return moved;
+    }
+
+    /**
+     * TikTok accepted a photo post and has not published it: not a failure, and not yet a success. The row
+     * waits as {@code HANDED_OFF} (counted in flight by the roll-up, so the Post stays scheduled and nothing
+     * announces a failure), carrying a plain note where an error would go and the handle the verdict check
+     * needs, and the bounded {@code TIKTOK_VERDICT} chain is armed.
+     */
+    private boolean applyPlatformPending(PostPublishTarget target, PlatformPending pending) {
+        if (target.getState() == PostPublishTargetState.REVOKED
+                || target.getState() == PostPublishTargetState.PUBLISHED) {
+            log.warn("Target {} is {}; ignoring a late \"pending\" report", target.getId(), target.getState());
+            return false;
+        }
+        target.setState(PostPublishTargetState.HANDED_OFF);
+        target.setResumeCheckpoint(pending.toJson());
+        target.setErrorMessage("TikTok accepted the post and is downloading the images (queued at TikTok). "
+                + "Conductor checks until "
+                + DateTimeFormatter.ofPattern("MMM d, HH:mm", Locale.ROOT).withZone(ZoneOffset.UTC)
+                        .format(pending.linksExpireAt().plus(PublishTaskArmer.VERDICT_GRACE))
+                + " UTC and will mark it published or failed.");
         target.setErrorDetail(null);
         targetRepository.save(target);
+        publishTaskArmer.armTikTokVerdict(target, pending.linksExpireAt());
+        log.info("Target {} on {} accepted by the platform as publish_id={}, outcome pending until {}",
+                target.getId(), target.getPlatform(), pending.publishId(), pending.linksExpireAt());
         return true;
     }
 
@@ -775,12 +816,7 @@ public class PublishOutcomeService {
         }
         Statechart statechart = statechartFor(post);
         String scheduledStatus = scheduledStatus(statechart);
-        // A Post already rolled up to its failed status is revisited too: a TikTok photo target that failed
-        // while TikTok still held its images can be published late, and then the Post must follow it. From
-        // there only "every target published" moves it; a still-failed set leaves it where it is.
-        boolean fromFailed = !scheduledStatus.equals(post.getCurrentStatus()) && statechart != null
-                && failedStatus(statechart).filter(post.getCurrentStatus()::equals).isPresent();
-        if (!scheduledStatus.equals(post.getCurrentStatus()) && !fromFailed) {
+        if (!scheduledStatus.equals(post.getCurrentStatus())) {
             return;
         }
 
@@ -793,9 +829,6 @@ public class PublishOutcomeService {
         }
         boolean everyTargetPublished = counted.stream()
                 .allMatch(t -> t.getState() == PostPublishTargetState.PUBLISHED);
-        if (fromFailed && !everyTargetPublished) {
-            return;
-        }
 
         if (statechart == null) {
             log.warn("Post {} finished publishing but its workflow could not be resolved; status left at {}",
@@ -1049,20 +1082,7 @@ public class PublishOutcomeService {
             connectionHealthService.reportPublishAuthFailure(target.getConnectionId(), errorMessage);
         }
         rollUp(target);
-        armTikTokVerdictIfLinksLive(target);
         return true;
-    }
-
-    /**
-     * A TikTok photo post that failed while TikTok could still download its images may yet be published
-     * (its download queue has stalled for a day before draining): arm the bounded late-verdict chain so
-     * Conductor learns of it. Nothing is armed once the links are dead or were released.
-     */
-    private void armTikTokVerdictIfLinksLive(PostPublishTarget target) {
-        Instant liveUntil = photoLinksLiveUntil(target, Instant.now());
-        if (liveUntil != null) {
-            publishTaskArmer.armTikTokVerdict(target, liveUntil);
-        }
     }
 
     /**

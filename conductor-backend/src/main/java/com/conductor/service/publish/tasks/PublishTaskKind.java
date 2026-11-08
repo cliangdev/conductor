@@ -14,9 +14,9 @@ public enum PublishTaskKind {
      */
     PERMALINK,
     /**
-     * Ask TikTok whether a photo post whose publish attempt gave up (FAILED, with its image links still
-     * live) has since been published, or definitively failed. Bounded by the links' expiry; see
-     * {@link PublishTaskHandler}.
+     * Ask TikTok whether a photo post it accepted but had not yet downloaded (the target waits as
+     * HANDED_OFF, its image links still live) has since been published, or definitively failed. Bounded by
+     * the links' expiry; see {@link PublishTaskHandler}.
      */
     TIKTOK_VERDICT;
 

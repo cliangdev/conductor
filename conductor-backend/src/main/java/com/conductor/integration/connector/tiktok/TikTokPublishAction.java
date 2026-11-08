@@ -17,6 +17,7 @@ import com.conductor.service.AssetService;
 import com.conductor.service.AssetUploadPolicy;
 import com.conductor.service.StorageService;
 import com.conductor.service.publish.PermalinkFollowUp;
+import com.conductor.service.publish.PlatformPending;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.cloud.ReadChannel;
@@ -528,19 +529,44 @@ public class TikTokPublishAction {
                 maxPollAttempts, elapsedSeconds, lastStatus, last == null ? null : last.downloadedBytes(),
                 last == null ? null : last.uploadedBytes(), last == null ? null : last.logId(),
                 photo ? photoLinksExpireAt : null);
+        if (photo && last != null && photoLinksLive(photoLinksExpireAt)) {
+            // Not a failure: TikTok holds the post and may still fetch the images (its download queue has
+            // stalled for a day). Hand the last reading back; the caller reports it as pending.
+            return last;
+        }
         if (!photo) {
             throw new IllegalStateException("TikTok publish " + publishId + " was still " + lastStatus
                     + " after " + maxPollAttempts + " status polls; upload is complete, so a retry resumes the wait");
         }
         boolean stillDownloading = TikTokClient.STATUS_PROCESSING_DOWNLOAD.equalsIgnoreCase(lastStatus);
         String expiry = photoLinksExpireAt == null ? ""
-                : " TikTok hasn't downloaded the images yet. Its image links stay live until "
-                        + formatUtc(photoLinksExpireAt) + ", and Conductor keeps checking with TikTok until then: "
-                        + "this destination switches to Published if TikTok posts it. Retrying before then "
-                        + "could post the photos twice.";
+                : " Its image links expired at " + formatUtc(photoLinksExpireAt) + ".";
         throw new IllegalStateException("TikTok accepted photo post " + publishId + " but "
                 + (stillDownloading ? "hadn't downloaded its images" : "hadn't finished with its images")
                 + " after " + elapsedSeconds / 60 + " min (still " + lastStatus + ")." + expiry);
+    }
+
+    /** True while the signed image links handed to TikTok can still be fetched. */
+    private boolean photoLinksLive(java.time.Instant linksExpireAt) {
+        return linksExpireAt != null && clock.instant().isBefore(linksExpireAt);
+    }
+
+    /**
+     * The photo post is with TikTok and its outcome is not known yet: success-shaped, so the invocation
+     * completes (no automatic re-attempt, no re-poll) and the outcome service parks the target as
+     * {@code HANDED_OFF} with a verdict check armed. Carries what that check needs.
+     */
+    private ActionResult pendingPhotoResult(String publishId, java.time.Instant linksExpireAt,
+                                            java.time.Instant initAt) {
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put(PlatformPending.OUTPUT_PENDING_KEY, Boolean.TRUE);
+        output.put(PlatformPending.OUTPUT_PUBLISH_ID_KEY, publishId);
+        output.put(PlatformPending.OUTPUT_KIND_KEY, TikTokPermalinks.KIND_PHOTO);
+        output.put(PlatformPending.OUTPUT_LINKS_EXPIRE_KEY, linksExpireAt.toString());
+        if (initAt != null) {
+            output.put(PlatformPending.OUTPUT_INIT_KEY, initAt.toString());
+        }
+        return ActionResult.ok(output);
     }
 
     private long elapsedSeconds(java.time.Instant startedAt) {
@@ -687,6 +713,20 @@ public class TikTokPublishAction {
             saveCheckpoint(idempotencyKey, UploadCheckpoint.forPhotoPost(publishId,
                     photos.stream().map(Asset::getId).toList(), null, initAt));
             throw e;
+        } catch (RuntimeException e) {
+            // A status read that keeps failing (TikTok 5xx) while the links are live must not strand the
+            // target as FAILED with a retry refused until they expire: park it for the verdict check.
+            if (!photoLinksLive(linksExpireAt)) {
+                throw e;
+            }
+            log.warn("TikTok photo post {} status poll failed ({}); leaving it pending for the verdict check",
+                    publishId, e.getMessage());
+            return pendingPhotoResult(publishId, linksExpireAt, initAt);
+        }
+        if (!status.complete() && !status.sentToInbox()) {
+            log.info("TikTok photo post {} still {} after {} polls; leaving it pending until its links expire ({})",
+                    publishId, status.status(), maxPollAttempts, linksExpireAt);
+            return pendingPhotoResult(publishId, linksExpireAt, initAt);
         }
         return ActionResult.ok(publishOutput(publishId, status, ctx, TikTokPermalinks.KIND_PHOTO));
     }

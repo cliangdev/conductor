@@ -86,3 +86,30 @@ describe('DestinationRowDetails — Post as (music carousel)', () => {
     expect(screen.queryByLabelText('Cover image')).not.toBeInTheDocument()
   })
 })
+
+describe('a handed-off row note', () => {
+  it('reads as progress, not as an error', () => {
+    const r = row('tiktok', null)
+    r.target = { id: 't1', state: 'HANDED_OFF', errorMessage: 'TikTok accepted the post and is downloading the images.' } as never
+    r.manual = false
+    const actions = { setCarouselAs: vi.fn(), setFormat: vi.fn(), setTikTokOptions: vi.fn(), setContent: vi.fn() } as unknown as DestinationActions
+    render(
+      <DestinationRowDetails row={r} mode="outcome" assets={[]} caption={null} saving={false} locked={false}
+        completing={false} consentSaving={false} consentError={null} actions={actions} onCancelComplete={() => {}} />,
+    )
+    const note = screen.getByText('TikTok accepted the post and is downloading the images.')
+    expect(note.className).toContain('text-muted-foreground')
+    expect(note.className).not.toContain('text-status-failed')
+  })
+
+  it('still shows a failed row message as an error', () => {
+    const r = row('tiktok', null)
+    r.target = { id: 't1', state: 'FAILED', errorMessage: 'TikTok rejected it.' } as never
+    const actions = { setCarouselAs: vi.fn(), setFormat: vi.fn(), setTikTokOptions: vi.fn(), setContent: vi.fn() } as unknown as DestinationActions
+    render(
+      <DestinationRowDetails row={r} mode="outcome" assets={[]} caption={null} saving={false} locked={false}
+        completing={false} consentSaving={false} consentError={null} actions={actions} onCancelComplete={() => {}} />,
+    )
+    expect(screen.getByText('TikTok rejected it.').className).toContain('text-status-failed')
+  })
+})
