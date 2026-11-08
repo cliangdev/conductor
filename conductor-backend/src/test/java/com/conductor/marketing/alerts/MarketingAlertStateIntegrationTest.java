@@ -179,7 +179,7 @@ class MarketingAlertStateIntegrationTest extends AbstractNoneWebIntegrationTest 
         when(delivery.deliverAlert(any())).thenReturn(true);
         when(ledgerService.ledger(anyString(), anyString())).thenReturn(emptyLedger());
         when(pacingService.trippedRules(anyString(), any(LocalDate.class))).thenReturn(List.of());
-        when(overviewService.overview(anyString(), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
+        when(overviewService.overviewWithEveryMetric(anyString(), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
                 "MISMATCH", List.of(), List.of(backendMismatch("installs", "Installs", 100, 123, 0.187)),
                 "ads-conn")));
         FixedClock clock = new FixedClock(Instant.parse("2026-11-05T09:00:00Z"));
@@ -194,7 +194,7 @@ class MarketingAlertStateIntegrationTest extends AbstractNoneWebIntegrationTest 
         assertThat(active.getLastPostedAt()).isNotNull();
         assertThat(active.getDetails()).containsKey("text");
 
-        when(overviewService.overview(anyString(), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
+        when(overviewService.overviewWithEveryMetric(anyString(), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
                 "LIVE", List.of(), List.of(), "ads-conn")));
         clock.advance(Duration.ofMinutes(11));
         evaluator.onChannelMetricsPulled(new ChannelMetricsPulledEvent(projectId, "ADS", "ads-conn"));

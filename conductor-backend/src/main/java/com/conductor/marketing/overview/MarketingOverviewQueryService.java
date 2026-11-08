@@ -378,6 +378,21 @@ public class MarketingOverviewQueryService {
         return overview(projectId, windowRaw, LocalDate.now(ZoneOffset.UTC), OffsetDateTime.now());
     }
 
+    /**
+     * {@link #overview(String, String)} with every metric of every channel, not only the ones a card shows, and
+     * with every optional metric that has a target even once it stops reporting: what the alerts judge, so a target
+     * past a card's first few is watched and an open alert on one is never resolved by the metric vanishing.
+     */
+    @Transactional(readOnly = true)
+    public Overview overviewWithEveryMetric(String projectId, String windowRaw) {
+        return overviewWithEveryMetric(projectId, windowRaw, LocalDate.now(ZoneOffset.UTC), OffsetDateTime.now());
+    }
+
+    /** Package-visible so a test can pin "today" and "now". */
+    Overview overviewWithEveryMetric(String projectId, String windowRaw, LocalDate today, OffsetDateTime now) {
+        return overview(projectId, parseWindow(windowRaw, ROLLING_OVERVIEW_DAYS, today), today, now, true);
+    }
+
     /** Package-visible so a test can pin "today" and "now"; {@code windowRaw} is parsed like the public one. */
     Overview overview(String projectId, String windowRaw, LocalDate today, OffsetDateTime now) {
         return overview(projectId, parseWindow(windowRaw, ROLLING_OVERVIEW_DAYS, today), today, now);
@@ -389,7 +404,15 @@ public class MarketingOverviewQueryService {
     }
 
     private Overview overview(String projectId, WindowSpec window, LocalDate today, OffsetDateTime now) {
-        return computeOverview(context(projectId, window, today, now), new LinkedHashMap<>());
+        return overview(projectId, window, today, now, false);
+    }
+
+    /** @param everyMetric every metric of every channel (the alerts' view), not only the ones a card shows */
+    private Overview overview(String projectId, WindowSpec window, LocalDate today, OffsetDateTime now,
+                              boolean everyMetric) {
+        Context ctx = context(projectId, window, today, now);
+        ctx.everyMetric = everyMetric;
+        return computeOverview(ctx, new LinkedHashMap<>());
     }
 
     /**
@@ -598,7 +621,7 @@ public class MarketingOverviewQueryService {
         }
         List<FunnelStageView> funnel = withConversions(stages);
         List<ChannelView> channels = builds.values().stream()
-                .map(b -> b.view(true))
+                .map(b -> b.view(!ctx.everyMetric))
                 .toList();
         // The overall range spans the windows of the channels that have data, which differ by how far each is
         // data-complete. With none, there is no "data through" date to claim: both ends are null.
@@ -870,6 +893,8 @@ public class MarketingOverviewQueryService {
         final LocalDate fallbackEnd;
         final LocalDate historyStart;
         final OffsetDateTime now;
+        /** The alerts' view: every metric of every channel, including optional targeted ones that stopped reporting. */
+        boolean everyMetric;
         final List<Connection> connections;
         final List<ConnectorFeed> feeds;
         final Map<String, ChannelMetricTarget> targets;
@@ -1110,9 +1135,13 @@ public class MarketingOverviewQueryService {
         boolean partial = ctx.fixed() && settledThrough != null && settledThrough.isBefore(ctx.fixedTo);
         ChannelData data = new ChannelData(channel, rows);
         Map<String, LocalDate> reportedBefore = snapshotsBeforeLookback(ctx, channel, connectionIds, data);
-        // an optional snapshot with a target that was reported before the lookback stays, so its stop is seen
+        // An optional snapshot with a target that was reported before the lookback stays, so its stop is seen. In the
+        // alerts' view any optional metric with a target stays: an open alert on it is held, never resolved because
+        // the metric vanished.
         List<Metric> visible = channel.visibleMetrics().stream()
-                .filter(m -> !m.optional() || data.hasRows(m) || reportedBefore.containsKey(m.key())).toList();
+                .filter(m -> !m.optional() || data.hasRows(m) || reportedBefore.containsKey(m.key())
+                        || ctx.everyMetric && targetOf(ctx, channel, m) != null)
+                .toList();
         List<MetricView> metrics = new ArrayList<>();
         for (Metric metric : visible) {
             metrics.add(metricView(ctx, channel, data, metric, window, partial, reportedBefore));

@@ -86,7 +86,7 @@ class MarketingAlertEvaluatorTest {
         states = new InMemoryAlertStates();
         clock = new MutableClock(Instant.parse("2026-11-05T09:00:00Z"));
 
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview());
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview());
         when(ledgerService.ledger(eq(PROJECT), anyString())).thenReturn(emptyLedger());
         when(pacingService.trippedRules(eq(PROJECT), any(LocalDate.class))).thenReturn(List.of());
         when(delivery.deliverAlert(any())).thenReturn(true);
@@ -407,11 +407,11 @@ class MarketingAlertEvaluatorTest {
     @Test
     void aStaleChannelPostsNoNewDataSinceOnceAndResolvesWhenItIsFresh() {
         ChannelView stale = channel("STORE", "App Store", "STALE", List.of(), List.of(), "store-conn");
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(stale));
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(stale));
         evaluator.onChannelMetricsPulled(PULLED);
         clock.advance(Duration.ofMinutes(11));
         evaluator.onChannelMetricsPulled(PULLED);
-        when(overviewService.overview(eq(PROJECT), anyString()))
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString()))
                 .thenReturn(overview(liveChannel("STORE", "App Store", List.of())));
         clock.advance(Duration.ofMinutes(11));
 
@@ -429,7 +429,7 @@ class MarketingAlertEvaluatorTest {
         // The puller publishes before the feed's lastSuccessAt is saved, so the overview still calls a
         // first-ever (or long-failing) channel stale at that moment. Its connection's health says otherwise.
         ChannelView justPulled = channel("ADS", "Apple Ads", "STALE", List.of(), List.of(), CONNECTION);
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(justPulled));
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(justPulled));
 
         evaluator.onChannelMetricsPulled(PULLED);
 
@@ -442,7 +442,7 @@ class MarketingAlertEvaluatorTest {
         // connection's pull (here the App Store's) evaluates the project.
         ChannelView leftAtSetup = AlertFixtures.noDataYet("SEARCH", "Search",
                 connectionView("gsc-conn", "gsc", "STALE"));
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(leftAtSetup));
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(leftAtSetup));
 
         evaluator.onChannelMetricsPulled(new ChannelMetricsPulledEvent(PROJECT, "STORE", "store-conn"));
 
@@ -456,7 +456,7 @@ class MarketingAlertEvaluatorTest {
     void aStaleChannelWithDataButNoRecordedFetchSaysSinceItsLastDayNotThatItHasNoData() {
         ChannelView stale = AlertFixtures.staleWithNoFetchTime("SEARCH", "Search",
                 connectionView("gsc-conn", "gsc", "STALE"));
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(stale));
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(stale));
 
         evaluator.onChannelMetricsPulled(new ChannelMetricsPulledEvent(PROJECT, "STORE", "store-conn"));
 
@@ -537,7 +537,7 @@ class MarketingAlertEvaluatorTest {
                 AlertFixtures.THROUGH.minusDays(17)));
         evaluator.onChannelMetricsPulled(PULLED);
         // the rest of the channel stops too, so the snapshot is no longer behind it: nothing has arrived again
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
                 "STALE", List.of(AlertFixtures.offTrackLevel("mrr", "Monthly recurring revenue", 0, 10,
                         AlertFixtures.THROUGH.minusDays(17))), List.of(), "other-conn")));
         clock.advance(Duration.ofHours(6));
@@ -549,7 +549,7 @@ class MarketingAlertEvaluatorTest {
 
     @Test
     void aStoppedMetricInAChannelThatIsStaleAsAWholeIsCoveredByTheChannelsAlertNotPostedTwice() {
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
                 "STALE", List.of(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", 0.0, 10,
                         AlertFixtures.THROUGH.minusDays(17))), List.of(), "other-conn")));
 
@@ -562,7 +562,7 @@ class MarketingAlertEvaluatorTest {
     void aStoppedSnapshotIsReportedWhenTheChannelsStalenessIsOnlyThePullingConnectionsUnsavedSuccess() {
         // the channel reads STALE only because the healthy connection that just pulled has not saved its success
         // yet, so no channel alert is raised and the stopped snapshot must be reported on its own
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(channel("ADS", "Apple Ads",
                 "STALE", List.of(AlertFixtures.stoppedLevel("mrr", "Monthly recurring revenue", 0.0, 10,
                         AlertFixtures.THROUGH.minusDays(17))), List.of(), CONNECTION)));
 
@@ -687,7 +687,7 @@ class MarketingAlertEvaluatorTest {
     @Test
     void aChannelWhoseJustPulledConnectionIsDegradedIsStale() {
         ChannelView noNewData = channel("ADS", "Apple Ads", "STALE", List.of(), List.of(), CONNECTION);
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(noNewData));
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(noNewData));
         when(connections.findById(CONNECTION)).thenReturn(Optional.of(connection("DEGRADED")));
 
         evaluator.onChannelMetricsPulled(PULLED);
@@ -701,7 +701,7 @@ class MarketingAlertEvaluatorTest {
         // because of YouTube, so Meta's pull must neither drop the alert nor resolve it.
         ChannelView social = channelOf("SOCIAL", "Social", "STALE",
                 connectionView(CONNECTION, "Meta", "STALE"), connectionView("youtube-conn", "YouTube", "STALE"));
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(social));
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(social));
         ChannelMetricsPulledEvent youtubeFailedEarlier = new ChannelMetricsPulledEvent(PROJECT, "SOCIAL", "other");
         evaluator.onChannelMetricsPulled(youtubeFailedEarlier);
         assertThat(onlyPost().getMetadata()).containsEntry("alertKey", "stale:SOCIAL")
@@ -718,7 +718,7 @@ class MarketingAlertEvaluatorTest {
     void aHealthyPullOnOneAppStoreAppDoesNotExcuseTheOtherAppStillStale() {
         ChannelView store = channelOf("STORE", "App Store", "STALE",
                 connectionView(CONNECTION, "App A", "STALE"), connectionView("app-b", "App B", "STALE"));
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(store));
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(store));
 
         evaluator.onChannelMetricsPulled(PULLED);
 
@@ -730,7 +730,7 @@ class MarketingAlertEvaluatorTest {
         // Only the pulled connection's lastSuccessAt is unwritten; the channel is STALE on that alone.
         ChannelView channelWithOneStaleConnection = channelOf("ADS", "Apple Ads", "STALE",
                 connectionView(CONNECTION, "Apple Ads", "STALE"), connectionView("other", "Other", "LIVE"));
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(channelWithOneStaleConnection));
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(channelWithOneStaleConnection));
 
         evaluator.onChannelMetricsPulled(PULLED);
 
@@ -740,7 +740,7 @@ class MarketingAlertEvaluatorTest {
     @Test
     void aStaleChannelThatDidNotJustPullIsStaleWhateverTheOtherConnectionsHealthIs() {
         ChannelView other = channel("STORE", "App Store", "STALE", List.of(), List.of(), "store-conn");
-        when(overviewService.overview(eq(PROJECT), anyString())).thenReturn(overview(other));
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenReturn(overview(other));
 
         evaluator.onChannelMetricsPulled(PULLED);
 
@@ -787,7 +787,7 @@ class MarketingAlertEvaluatorTest {
 
         evaluator.onChannelMetricsPulled(new ChannelMetricsPulledEvent(PROJECT, "STORE", "store-conn"));
 
-        verify(overviewService, times(2)).overview(eq(PROJECT), anyString());
+        verify(overviewService, times(2)).overviewWithEveryMetric(eq(PROJECT), anyString());
     }
 
     @Test
@@ -913,7 +913,7 @@ class MarketingAlertEvaluatorTest {
     void aFailingOverviewNeverThrowsAndNeverResolvesWhatItCouldNotCheck() {
         mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
         evaluator.onChannelMetricsPulled(PULLED);
-        when(overviewService.overview(eq(PROJECT), anyString())).thenThrow(new IllegalStateException("db down"));
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenThrow(new IllegalStateException("db down"));
         clock.advance(Duration.ofMinutes(11));
 
         assertThatNoException().isThrownBy(() -> evaluator.onChannelMetricsPulled(PULLED));
@@ -952,7 +952,7 @@ class MarketingAlertEvaluatorTest {
         AtomicReference<Boolean> activeDuringLedger = new AtomicReference<>();
         AtomicReference<Boolean> activeDuringDelivery = new AtomicReference<>();
         mismatchOverview(backendMismatch("installs", "Installs", 100, 123, 0.187));
-        when(overviewService.overview(eq(PROJECT), anyString())).thenAnswer(inv -> {
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString())).thenAnswer(inv -> {
             activeDuringOverview.set(TransactionSynchronizationManager.isActualTransactionActive());
             return overview(channel("ADS", "Apple Ads", "MISMATCH", List.of(),
                     List.of(backendMismatch("installs", "Installs", 100, 123, 0.187)), CONNECTION));
@@ -990,18 +990,18 @@ class MarketingAlertEvaluatorTest {
     // ---- helpers ---------------------------------------------------------------------------------------
 
     private void offTrackOverview(MetricView... metrics) {
-        when(overviewService.overview(eq(PROJECT), anyString()))
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString()))
                 .thenReturn(overview(channel("ADS", "Apple Ads", "LIVE", List.of(metrics), List.of(), CONNECTION)));
     }
 
     private void offTrackOverviewWithMismatch(List<MarketingOverviewQueryService.MismatchView> mismatches,
                                               List<MetricView> metrics) {
-        when(overviewService.overview(eq(PROJECT), anyString()))
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString()))
                 .thenReturn(overview(channel("ADS", "Apple Ads", "MISMATCH", metrics, mismatches, CONNECTION)));
     }
 
     private void mismatchOverview(MarketingOverviewQueryService.MismatchView... mismatches) {
-        when(overviewService.overview(eq(PROJECT), anyString()))
+        when(overviewService.overviewWithEveryMetric(eq(PROJECT), anyString()))
                 .thenReturn(overview(channel("ADS", "Apple Ads", mismatches.length == 0 ? "LIVE" : "MISMATCH",
                         List.of(), List.of(mismatches), CONNECTION)));
     }
