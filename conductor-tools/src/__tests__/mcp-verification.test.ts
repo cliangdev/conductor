@@ -8,7 +8,7 @@ vi.mock('../mcp/api.js', () => ({
 
 import { apiGet, apiPost } from '../mcp/api.js'
 import { TOOLS } from '../mcp/index.js'
-import { getVerificationLedger, recordPlatformRead } from '../mcp/tools/verification.js'
+import { getVerificationLedger, recordPlatformRead, retractPlatformRead } from '../mcp/tools/verification.js'
 
 const config: Config = {
   apiKey: 'k',
@@ -147,6 +147,7 @@ describe('getVerificationLedger', () => {
     const out = (await getVerificationLedger(config, {})) as Record<string, any>
 
     expect(out['rows'][1].read).toEqual({
+      id: 'r1',
       value: 3,
       from: '2026-09-29',
       to: '2026-10-26',
@@ -287,6 +288,63 @@ describe('recordPlatformRead', () => {
     await expect(recordPlatformRead(config, { ...ok, value: Number.NaN })).rejects.toThrow(/value/)
     await expect(recordPlatformRead(config, { ...ok, sourceName: '  ' })).rejects.toThrow(/sourceName/)
     expect(apiPost).not.toHaveBeenCalled()
+  })
+})
+
+describe('retractPlatformRead', () => {
+  it('POSTs the reason and returns a compact entry', async () => {
+    mocked(apiPost).mockResolvedValue({
+      id: 'r1',
+      channel: 'PRODUCT',
+      metric: 'trial_started',
+      from: '2026-09-29',
+      to: '2026-10-26',
+      value: 0,
+      sourceName: 'RevenueCat',
+      note: null,
+      recordedBy: 'u1',
+      recordedAt: '2026-10-29T12:00:00Z',
+      conductorValue: 7,
+      verdict: 'PLATFORM',
+      retractedAt: '2026-11-08T10:00:00Z',
+      retractedBy: 'u2',
+      retractionReason: 'RevenueCat is retired',
+    })
+
+    const out = (await retractPlatformRead(config, { readId: ' r1 ', reason: ' RevenueCat is retired ' })) as Record<string, any>
+
+    expect(mocked(apiPost).mock.calls[0]![0]).toBe(
+      '/api/v2/projects/proj-1/marketing/verification/reads/r1/retract'
+    )
+    expect(mocked(apiPost).mock.calls[0]![1]).toEqual({ reason: 'RevenueCat is retired' })
+    expect(out).toEqual({
+      retracted: true,
+      read: {
+        id: 'r1',
+        metric: 'PRODUCT.trial_started',
+        value: 0,
+        from: '2026-09-29',
+        to: '2026-10-26',
+        sourceName: 'RevenueCat',
+        retractedAt: '2026-11-08T10:00:00Z',
+        retractionReason: 'RevenueCat is retired',
+      },
+    })
+  })
+
+  it('refuses missing arguments before calling the API', async () => {
+    await expect(retractPlatformRead(config, { readId: ' ', reason: 'x' })).rejects.toThrow(/readId/)
+    await expect(retractPlatformRead(config, { readId: 'r1', reason: '  ' })).rejects.toThrow(/reason/)
+    await expect(retractPlatformRead(config, { readId: 'r1', reason: 'x'.repeat(501) })).rejects.toThrow(/500/)
+    expect(apiPost).not.toHaveBeenCalled()
+  })
+
+  it('is registered with both arguments required and names its read-back', () => {
+    const tool = TOOLS.find((t) => t.name === 'retract_platform_read')!
+    expect((tool.inputSchema as { required: string[] }).required).toEqual(['readId', 'reason'])
+    expect(tool.description).toMatch(/get_verification_ledger/)
+    expect(tool.description).toMatch(/Editor/)
+    expect(TOOLS.find((t) => t.name === 'record_platform_read')!.description).toMatch(/retract_platform_read/)
   })
 })
 
