@@ -4,6 +4,7 @@ import com.conductor.generated.v2.api.MarketingVerificationApi;
 import com.conductor.generated.v2.model.MarketingPlatformReadEntry;
 import com.conductor.generated.v2.model.MarketingPlatformReadList;
 import com.conductor.generated.v2.model.MarketingPlatformReadRequest;
+import com.conductor.generated.v2.model.MarketingPlatformReadRetractRequest;
 import com.conductor.generated.v2.model.MarketingVerificationLedger;
 import com.conductor.generated.v2.model.VerificationBackend;
 import com.conductor.generated.v2.model.VerificationPlatformRead;
@@ -19,7 +20,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * The marketing verification ledger and the direct platform reads behind it. Any project member reads; recording a
- * read needs ADMIN or CREATOR. There is deliberately no update or delete: reads are an append-only history. The
+ * read or retracting one needs ADMIN or CREATOR. There is deliberately no update or delete: reads are never
+ * deleted; a wrong read can be retracted, after which it no longer counts (the previous read, if any, applies) but
+ * stays in the history with its retraction fields. The
  * {@code /api/v2} prefix is applied structurally by {@code ApiPathConfig}, so the mappings are bare.
  */
 @RestController
@@ -54,6 +57,14 @@ public class MarketingVerificationController implements MarketingVerificationApi
                 request.getMetric(), request.getFrom(), request.getTo(), request.getValue(), request.getSourceName(),
                 request.getNote(), actor.userId());
         return ResponseEntity.status(HttpStatus.CREATED).body(toRow(recorded.row()));
+    }
+
+    @Override
+    public ResponseEntity<MarketingPlatformReadEntry> retractMarketingPlatformRead(
+            String projectId, String readId, MarketingPlatformReadRetractRequest request) {
+        var actor = projectSecurityService.requireProjectEditor(projectId);
+        return ResponseEntity.ok(toEntry(ledgerService.retract(projectId, readId, request.getReason(),
+                actor.userId())));
     }
 
     @Override
@@ -99,6 +110,9 @@ public class MarketingVerificationController implements MarketingVerificationApi
                 .recordedBy(e.recordedBy())
                 .conductorValue(e.conductorValue())
                 .backendValue(e.backendValue())
-                .verdict(e.verdict() == null ? null : MarketingPlatformReadEntry.VerdictEnum.valueOf(e.verdict()));
+                .verdict(e.verdict() == null ? null : MarketingPlatformReadEntry.VerdictEnum.valueOf(e.verdict()))
+                .retractedAt(e.retractedAt())
+                .retractedBy(e.retractedBy())
+                .retractionReason(e.retractionReason());
     }
 }
