@@ -3,7 +3,8 @@
 // The verification ledger: for every checkable metric, Conductor's value beside the product backend's and the
 // latest direct platform read, which figure to trust, and whether they disagree. A metric with no second source
 // is UNCHECKED and looks it: the ledger never shows an unchecked number as verified.
-// Reads GET …/marketing/verification; "Record a read" posts to …/marketing/verification/reads.
+// Reads GET …/marketing/verification; "Record a read" posts to …/marketing/verification/reads and "Retract" to
+// …/reads/{readId}/retract.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ShieldCheckIcon } from 'lucide-react'
@@ -20,6 +21,7 @@ import { apiErrorMessage } from '@/lib/api'
 import { shortDate } from '@/components/marketing/overview/format'
 import { dayCount, dayRange, daysLabel, formatLedgerValue } from './format'
 import { RecordReadDialog } from './RecordReadDialog'
+import { RetractReadDialog } from './RetractReadDialog'
 import {
   DEFAULT_LEDGER_WINDOW,
   LEDGER_WINDOWS,
@@ -76,7 +78,17 @@ function BackendCell({ row }: { row: VerificationRow }) {
   )
 }
 
-function PlatformCell({ row, canRecord, onRecord }: { row: VerificationRow; canRecord: boolean; onRecord: () => void }) {
+function PlatformCell({
+  row,
+  canRecord,
+  onRecord,
+  onRetract,
+}: {
+  row: VerificationRow
+  canRecord: boolean
+  onRecord: () => void
+  onRetract: () => void
+}) {
   const read = row.platformRead
   return (
     <>
@@ -103,22 +115,46 @@ function PlatformCell({ row, canRecord, onRecord }: { row: VerificationRow; canR
         </>
       )}
       {canRecord && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="mt-1 -ml-2 h-7 px-2 text-xs"
-          aria-label={`Record a read for ${row.label}`}
-          onClick={onRecord}
-        >
-          Record a read
-        </Button>
+        <div className="mt-1 -ml-2 flex flex-wrap items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            aria-label={`Record a read for ${row.label}`}
+            onClick={onRecord}
+          >
+            Record a read
+          </Button>
+          {read && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              aria-label={`Retract the read for ${row.label}`}
+              onClick={onRetract}
+            >
+              Retract
+            </Button>
+          )}
+        </div>
       )}
     </>
   )
 }
 
-function LedgerRow({ row, canRecord, onRecord }: { row: VerificationRow; canRecord: boolean; onRecord: () => void }) {
+function LedgerRow({
+  row,
+  canRecord,
+  onRecord,
+  onRetract,
+}: {
+  row: VerificationRow
+  canRecord: boolean
+  onRecord: () => void
+  onRetract: () => void
+}) {
   return (
     <tr className="align-top">
       <th scope="row" className="px-3 py-3 text-left font-normal">
@@ -132,7 +168,7 @@ function LedgerRow({ row, canRecord, onRecord }: { row: VerificationRow; canReco
         <BackendCell row={row} />
       </td>
       <td className="px-3 py-3">
-        <PlatformCell row={row} canRecord={canRecord} onRecord={onRecord} />
+        <PlatformCell row={row} canRecord={canRecord} onRecord={onRecord} onRetract={onRetract} />
       </td>
       <td className="max-w-[18rem] px-3 py-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -189,6 +225,7 @@ export function VerificationLedger({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [onlyProblems, setOnlyProblems] = useState(false)
   const [recording, setRecording] = useState<{ channel: string; metric: string } | 'any' | null>(null)
+  const [retracting, setRetracting] = useState<VerificationRow | null>(null)
   const latest = useRef(0)
 
   const load = useCallback(
@@ -281,6 +318,7 @@ export function VerificationLedger({ projectId }: { projectId: string }) {
                       row={row}
                       canRecord={canRecord}
                       onRecord={() => setRecording({ channel: row.channel, metric: row.metric })}
+                      onRetract={() => setRetracting(row)}
                     />
                   ))}
                 </tbody>
@@ -297,6 +335,13 @@ export function VerificationLedger({ projectId }: { projectId: string }) {
         rows={data?.rows ?? []}
         initial={recording && recording !== 'any' ? recording : undefined}
         onRecorded={() => load(true)}
+      />
+
+      <RetractReadDialog
+        row={retracting}
+        onOpenChange={(open) => !open && setRetracting(null)}
+        projectId={projectId}
+        onRetracted={() => load(true)}
       />
     </div>
   )
