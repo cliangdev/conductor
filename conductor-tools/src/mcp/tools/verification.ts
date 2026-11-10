@@ -23,6 +23,7 @@ interface BackendDto {
 }
 
 interface PlatformReadDto {
+  id?: string
   value: number
   from: string
   to: string
@@ -82,6 +83,7 @@ function compactRow(r: RowDto, ledgerWindow?: { from: string; to?: string | null
   }
   if (r.platformRead) {
     const read: Record<string, unknown> = {
+      ...(r.platformRead.id ? { id: r.platformRead.id } : {}),
       value: round(r.platformRead.value),
       from: r.platformRead.from,
       to: r.platformRead.to,
@@ -176,4 +178,48 @@ export async function recordPlatformRead(
   if (note) body['note'] = note
   const saved = await apiPost<RowDto>(`/api/v2/projects/${config.projectId}/marketing/verification/reads`, body, config)
   return { recorded: true, row: compactRow(saved) }
+}
+
+interface ReadEntryDto {
+  id: string
+  channel: string
+  metric: string
+  from: string
+  to: string
+  value: number
+  sourceName: string
+  retractedAt?: string | null
+  retractionReason?: string | null
+}
+
+export interface RetractPlatformReadParams {
+  readId: string
+  reason: string
+}
+
+export async function retractPlatformRead(
+  config: Config,
+  p: RetractPlatformReadParams
+): Promise<Record<string, unknown>> {
+  const readId = p.readId?.trim()
+  if (!readId) throw new Error('readId is required: the id of the read, from get_verification_ledger (read.id)')
+  const reason = p.reason?.trim()
+  if (!reason) throw new Error('reason is required: say why the read is wrong')
+  if (reason.length > 500) throw new Error('reason is at most 500 characters')
+  const saved = await apiPost<ReadEntryDto>(
+    `/api/v2/projects/${config.projectId}/marketing/verification/reads/${encodeURIComponent(readId)}/retract`,
+    { reason },
+    config
+  )
+  const out: Record<string, unknown> = {
+    id: saved.id,
+    metric: `${saved.channel}.${saved.metric}`,
+    value: round(saved.value),
+    from: saved.from,
+    to: saved.to,
+    sourceName: saved.sourceName,
+  }
+  if (present(saved.retractedAt)) out['retractedAt'] = saved.retractedAt
+  if (present(saved.retractionReason)) out['retractionReason'] = saved.retractionReason
+  return { retracted: true, read: out }
 }

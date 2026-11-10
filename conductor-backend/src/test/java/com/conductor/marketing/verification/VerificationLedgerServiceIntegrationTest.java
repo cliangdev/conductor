@@ -505,16 +505,108 @@ class VerificationLedgerServiceIntegrationTest extends AbstractNoneWebIntegratio
     }
 
     @Test
-    void thereIsNoWayToUpdateOrDeleteAReadInCodeOrStorage() {
+    void theOnlyWayToChangeAReadIsTheOneWayRetraction() {
         List<String> names = Arrays.stream(MarketingPlatformReadRepository.class.getMethods()).map(Method::getName)
                 .toList();
         assertThat(names).noneMatch(n -> n.startsWith("delete") || n.startsWith("remove") || n.startsWith("update"));
+        assertThat(Arrays.stream(MarketingPlatformReadRepository.class.getMethods())
+                .filter(m -> m.isAnnotationPresent(org.springframework.data.jpa.repository.Modifying.class))
+                .map(Method::getName)).containsExactly("retract");
         assertThat(MarketingPlatformReadRepository.class.getInterfaces())
                 .as("a bare Repository marker, not JpaRepository's delete and flush surface")
                 .containsExactly(org.springframework.data.repository.Repository.class);
         assertThat(MarketingPlatformRead.class.isAnnotationPresent(org.hibernate.annotations.Immutable.class)).isTrue();
         assertThat(Arrays.stream(VerificationLedgerService.class.getMethods()).map(Method::getName))
                 .noneMatch(n -> n.startsWith("delete") || n.startsWith("update") || n.startsWith("remove"));
+    }
+
+    // ---- retracting -----------------------------------------------------------------------------
+
+    @Test
+    void retractingTheOnlyReadOfAMetricRemovesItsPlatformReadAndClearsTheOverviewMismatch() {
+        connectSearch();
+        RecordedRow recorded = read("SEARCH", "clicks", FROM, TO, 9, "Search Console UI");
+        assertThat(recorded.row().verdict()).isEqualTo(Verdict.PLATFORM);
+        assertThat(overviewService.snapshot(project.getId(), WINDOW, TODAY, NOW).channels().get(MetricChannel.SEARCH)
+                .view().status()).isEqualTo("MISMATCH");
+
+        VerificationLedgerService.ReadEntry entry = service.retract(project.getId(), recorded.read().id(),
+                "  wrong platform  ", user.getId());
+
+        assertThat(entry.retractedAt()).isNotNull();
+        assertThat(entry.retractedBy()).isEqualTo(user.getId());
+        assertThat(entry.retractionReason()).isEqualTo("wrong platform");
+        LedgerRow clicks = row("SEARCH.clicks");
+        assertThat(clicks.platformRead()).isNull();
+        assertThat(clicks.verdict()).isEqualTo(Verdict.UNCHECKED);
+        assertThat(clicks.mismatch()).isFalse();
+        ChannelView search = overviewService.snapshot(project.getId(), WINDOW, TODAY, NOW)
+                .channels().get(MetricChannel.SEARCH).view();
+        assertThat(search.status()).isNotEqualTo("MISMATCH");
+        assertThat(search.mismatches()).isEmpty();
+        // the audit trail keeps it
+        assertThat(service.reads(project.getId(), "SEARCH", "clicks", null)).singleElement()
+                .satisfies(e -> assertThat(e.retractionReason()).isEqualTo("wrong platform"));
+        assertThat(readRepository.findLatestByProject(project.getId())).isEmpty();
+    }
+
+    @Test
+    void retractingTheNewestReadMakesThePreviousNonRetractedReadTheOneUsed() {
+        connectSearch();
+        service.record(project.getId(), "SEARCH", "clicks", FROM, TO, 3, "Search Console UI", "older", null, TODAY,
+                NOW.minusMinutes(10));
+        RecordedRow newest = service.record(project.getId(), "SEARCH", "clicks", FROM, TO, 9, "Search Console UI",
+                "newest", null, TODAY, NOW);
+        assertThat(row("SEARCH.clicks").platformRead().value()).isEqualTo(9.0);
+
+        service.retract(project.getId(), newest.read().id(), "typo", user.getId());
+
+        LedgerRow clicks = row("SEARCH.clicks");
+        assertThat(clicks.platformRead().value()).isEqualTo(3.0);
+        assertThat(clicks.verdict()).isEqualTo(Verdict.BOTH);
+        assertThat(service.reads(project.getId(), null, null, null)).hasSize(2);
+    }
+
+    @Test
+    void retractingAgainIsIdempotentAndKeepsWhoAndWhy() {
+        connectSearch();
+        RecordedRow recorded = read("SEARCH", "clicks", FROM, TO, 9, "Search Console UI");
+        VerificationLedgerService.ReadEntry first = service.retract(project.getId(), recorded.read().id(), "first",
+                user.getId());
+
+        VerificationLedgerService.ReadEntry second = service.retract(project.getId(), recorded.read().id(), "second",
+                null);
+
+        assertThat(second).isEqualTo(first);
+        assertThat(second.retractionReason()).isEqualTo("first");
+        assertThat(second.retractedBy()).isEqualTo(user.getId());
+    }
+
+    @Test
+    void aReadOfAnotherProjectIsNotFoundAndStaysCounted() {
+        connectSearch();
+        RecordedRow recorded = read("SEARCH", "clicks", FROM, TO, 9, "Search Console UI");
+
+        assertThatThrownBy(() -> service.retract("other-project", recorded.read().id(), "x", user.getId()))
+                .isInstanceOf(jakarta.persistence.EntityNotFoundException.class);
+        assertThatThrownBy(() -> service.retract(project.getId(), "no-such-read", "x", user.getId()))
+                .isInstanceOf(jakarta.persistence.EntityNotFoundException.class);
+        assertThat(row("SEARCH.clicks").platformRead()).isNotNull();
+    }
+
+    @Test
+    void aBlankOrTooLongReasonIsRefusedAndNothingIsRetracted() {
+        connectSearch();
+        RecordedRow recorded = read("SEARCH", "clicks", FROM, TO, 9, "Search Console UI");
+        String id = recorded.read().id();
+
+        assertThatThrownBy(() -> service.retract(project.getId(), id, "   ", user.getId()))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("reason is required");
+        assertThatThrownBy(() -> service.retract(project.getId(), id, null, user.getId()))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("reason is required");
+        assertThatThrownBy(() -> service.retract(project.getId(), id, "r".repeat(501), user.getId()))
+                .isInstanceOf(BusinessException.class).hasMessageContaining("500");
+        assertThat(row("SEARCH.clicks").platformRead()).isNotNull();
     }
 
     @Test

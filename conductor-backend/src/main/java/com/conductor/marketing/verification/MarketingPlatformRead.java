@@ -15,9 +15,10 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
 /**
- * One direct read of a platform's own UI or API for a metric over an explicit range of days. Append-only:
- * the entity is immutable and its repository has no update or delete, so the history behind every verdict
- * stays as it was recorded. {@code conductorValue}, {@code backendValue} and {@code verdict} are what was true
+ * One direct read of a platform's own UI or API for a metric over an explicit range of days. Never deleted:
+ * the entity is immutable and its repository has no generic update or delete, so the history behind every verdict
+ * stays as it was recorded. The one change ever made is a one-way retraction, done by a single narrow update
+ * query in the repository (the entity itself stays immutable; re-read it to see the retraction). {@code conductorValue}, {@code backendValue} and {@code verdict} are what was true
  * at the moment of recording; the live ledger recomputes them on read. See V188.
  */
 @Entity
@@ -67,6 +68,15 @@ public class MarketingPlatformRead implements Persistable<String> {
 
     @Column(name = "verdict", length = 16, updatable = false)
     private String verdict;
+
+    @Column(name = "retracted_at", updatable = false)
+    private OffsetDateTime retractedAt;
+
+    @Column(name = "retracted_by", length = 36, updatable = false)
+    private String retractedBy;
+
+    @Column(name = "retraction_reason", length = 500, updatable = false)
+    private String retractionReason;
 
     @Transient
     private boolean fresh = true;
@@ -160,5 +170,17 @@ public class MarketingPlatformRead implements Persistable<String> {
 
     public String getVerdict() {
         return verdict;
+    }
+
+    public OffsetDateTime getRetractedAt() {
+        return retractedAt;
+    }
+
+    public String getRetractedBy() {
+        return retractedBy;
+    }
+
+    public String getRetractionReason() {
+        return retractionReason;
     }
 }
