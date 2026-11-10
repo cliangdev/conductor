@@ -1,5 +1,6 @@
 package com.conductor.integration.connector.marketing;
 
+import com.conductor.creative.CreativeTagAttribution;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.WorkItem;
@@ -48,10 +49,13 @@ public class MarketingInsightsSnapshotQuery {
     private final PostPublishTargetRepository targetRepository;
     private final PostPublishTargetMetricRepository metricRepository;
     private final WorkItemRepository workItemRepository;
+    private final CreativeTagAttribution tagAttribution;
 
     public MarketingInsightsSnapshotQuery(PostPublishTargetRepository targetRepository,
                                           PostPublishTargetMetricRepository metricRepository,
-                                          WorkItemRepository workItemRepository) {
+                                          WorkItemRepository workItemRepository,
+                                          CreativeTagAttribution tagAttribution) {
+        this.tagAttribution = tagAttribution;
         this.targetRepository = targetRepository;
         this.metricRepository = metricRepository;
         this.workItemRepository = workItemRepository;
@@ -81,12 +85,31 @@ public class MarketingInsightsSnapshotQuery {
             }
         }
 
-        Map<String, Object> payload = build(targets, latestByTarget, window[0], window[1]);
+        Map<String, String> hookTypeByTarget = hookTypes(projectId, targets);
+        Map<String, Object> payload = build(targets, latestByTarget, window[0], window[1], hookTypeByTarget);
         Map<String, Object> dueChanges = changesDueForReview(projectId, now);
         if (dueChanges != null) {
             payload.put("changesDueForReview", dueChanges);
         }
         return payload;
+    }
+
+    /**
+     * Destination id to the hookType tag of the Creative it was published from (through the shared
+     * attribution); destinations with no attributed Creative or no hookType are absent. A destination
+     * attributed to several hookTypes counts under the alphabetically first, once, so rows still sum to posts.
+     */
+    private Map<String, String> hookTypes(String projectId, List<PostPublishTarget> targets) {
+        if (targets.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        tagAttribution.tagsByTarget(projectId).forEach((targetId, tags) -> tags.stream()
+                .filter(t -> "hookType".equals(t.key()))
+                .map(CreativeTagAttribution.TagValue::value)
+                .min(Comparator.naturalOrder())
+                .ifPresent(v -> result.put(targetId, v)));
+        return result;
     }
 
     /**
@@ -132,7 +155,8 @@ public class MarketingInsightsSnapshotQuery {
 
     private Map<String, Object> build(List<PostPublishTarget> targets,
                                       Map<String, PostPublishTargetMetric> latestByTarget,
-                                      Instant windowStart, Instant windowEnd) {
+                                      Instant windowStart, Instant windowEnd,
+                                      Map<String, String> hookTypeByTarget) {
         DateTimeFormatter iso = DateTimeFormatter.ISO_LOCAL_DATE;
 
         // Zero-filled day buckets across the whole window, in order.
@@ -144,6 +168,7 @@ public class MarketingInsightsSnapshotQuery {
 
         Map<String, long[]> byPlatform = new LinkedHashMap<>(); // [posts, views, engagements]
         Map<String, long[]> byFormat = new LinkedHashMap<>();
+        Map<String, long[]> byHookType = new LinkedHashMap<>();
         List<Map<String, Object>> candidatePosts = new ArrayList<>();
 
         for (PostPublishTarget target : targets) {
@@ -170,6 +195,10 @@ public class MarketingInsightsSnapshotQuery {
             if (metric != null) {
                 accumulate(byPlatform, target.getPlatform(), views, engagements);
                 accumulate(byFormat, target.getFormat(), views, engagements);
+                String hookType = hookTypeByTarget.get(target.getId());
+                if (hookType != null) {
+                    accumulate(byHookType, hookType, views, engagements);
+                }
 
                 if (views >= 1) {
                     WorkItem post = target.getWorkItem();
@@ -214,6 +243,7 @@ public class MarketingInsightsSnapshotQuery {
         payload.put("trend", trend);
         payload.put("byPlatform", platformRows);
         payload.put("byFormat", formatRows);
+        payload.put("byHookType", toDimensionRows(byHookType, "hookType"));
         payload.put("topPosts", topPosts);
         return payload;
     }

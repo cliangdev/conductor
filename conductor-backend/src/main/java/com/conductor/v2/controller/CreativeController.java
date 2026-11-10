@@ -673,6 +673,7 @@ public class CreativeController implements CreativesApi {
                 .motion(toMotion(c.getMotion()))
                 .audio(toAudio(c.getAudio()))
                 .slideStyle(com.conductor.creative.SlideshowStyles.fromStored(objectMapper, c.getSlideStyle()))
+                .tags(com.conductor.creative.CreativeTagsSupport.fromStored(c.getTags()))
                 .slideshowSpec(c.getSlideshowSpec() != null
                         ? objectMapper.convertValue(c.getSlideshowSpec(),
                                 new TypeReference<LinkedHashMap<String, Object>>() { }) : null)

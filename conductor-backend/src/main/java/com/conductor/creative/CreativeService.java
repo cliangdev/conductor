@@ -20,6 +20,7 @@ import com.conductor.generated.v2.model.CreativeRenderSpec;
 import com.conductor.generated.v2.model.CreativeSlideshow;
 import com.conductor.generated.v2.model.SlideshowStyle;
 import com.conductor.generated.v2.model.CreativeState;
+import com.conductor.generated.v2.model.CreativeTags;
 import com.conductor.generated.v2.model.CreativeTheme;
 import com.conductor.generated.v2.model.LocalMediaInfo;
 import com.conductor.generated.v2.model.PatchCreativeRequest;
@@ -326,6 +327,7 @@ public class CreativeService {
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput())));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         violations.addAll(slideStyleViolations(kind, request.getSlideStyle()));
+        violations.addAll(CreativeTagsSupport.validate(request.getTags()));
         JsonNode slideshowSpec = toSpecNode(request.getSlideshowSpec());
         violations.addAll(slideshowSpecViolations(projectId, kind, slideshowSpec, slides));
         violations.addAll(0, media.violations());
@@ -365,6 +367,7 @@ public class CreativeService {
         creative.setSlideAltText(slideAltText.isEmpty() ? null : objectMapper.valueToTree(slideAltText));
         creative.setSlideStyle(SlideshowStyles.toStored(objectMapper, request.getSlideStyle()));
         creative.setSlideshowSpec(slideshowSpec);
+        creative.setTags(CreativeTagsSupport.toStored(objectMapper, request.getTags()));
         return new PreparedCreate(kit, creative, motionRes, sound);
     }
 
@@ -459,6 +462,7 @@ public class CreativeService {
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput()));
         violations.addAll(validator.validateTypeOverrides(request.getTypeOverrides()));
         violations.addAll(slideStyleViolations(kind, request.getSlideStyle()));
+        violations.addAll(CreativeTagsSupport.validate(request.getTags()));
         JsonNode requestedSpec = toSpecNode(request.getSlideshowSpec());
         violations.addAll(slideshowSpecViolations(projectId, kind, requestedSpec, slides));
         if (!violations.isEmpty()) {
@@ -528,6 +532,10 @@ public class CreativeService {
             newSpec = priorSpec;
         }
         current.setSlideshowSpec(newSpec);
+        // Tags: absent keeps them; present (even empty, which is how an explicit JSON null arrives) replaces the whole map.
+        if (request.getTags() != null) {
+            current.setTags(CreativeTagsSupport.toStored(objectMapper, request.getTags()));
+        }
         boolean specChanged = newSpec != null && !newSpec.equals(priorSpec);
 
         current = specChanged ? creativeRepository.saveAndFlush(current) : creativeRepository.save(current);
@@ -574,6 +582,9 @@ public class CreativeService {
                 root.getKind(), clipMediaEntries, motionRes.input(), slideEntries,
                 toStringList(root.getSlideAltText())).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput()));
+        if (request != null) {
+            violations.addAll(CreativeTagsSupport.validate(request.getTags()));
+        }
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
         }
@@ -606,6 +617,9 @@ public class CreativeService {
         variant.setSlideshow(root.getSlideshow());
         variant.setSlideStyle(root.getSlideStyle());
         variant.setSlideshowSpec(root.getSlideshowSpec());
+        // A variant inherits the idea's tags unless it is given its own.
+        variant.setTags(request != null && request.getTags() != null
+                ? CreativeTagsSupport.toStored(objectMapper, request.getTags()) : root.getTags());
         variant.setTypeOverrides(objectMapper.createObjectNode());
         variant.setLayoutOverrides(root.getLayoutOverrides());
         variant.setLockup(root.getLockup());
@@ -1163,6 +1177,7 @@ public class CreativeService {
                     .audio(toAudio(base.getAudio()))
                     .slideshow(toSlideshow(base.getSlideshow()))
                     .slideStyle(SlideshowStyles.fromStored(objectMapper, base.getSlideStyle()))
+                    .tags(CreativeTagsSupport.fromStored(base.getTags()))
                     .slideshowSpec(base.getSlideshowSpec() != null
                             ? objectMapper.convertValue(base.getSlideshowSpec(), SPEC_MAP) : null)
                     .layoutOverrides(base.getLayoutOverrides() != null
@@ -1218,6 +1233,8 @@ public class CreativeService {
             merged.setSlideshowSpec(null);
         }
         if (draft.getLayoutOverrides() != null) merged.setLayoutOverrides(draft.getLayoutOverrides());
+        // Tags: a draft's own replace the base's whole map; absent keeps the base's.
+        if (draft.getTags() != null) merged.setTags(draft.getTags());
         // The base's pinned typeOverrides are deliberately not copied in (see buildDraftSpec): they are kept
         // or cleared there by the headline/layout rule; only a draft's own typeOverrides pass through here.
         if (draft.getTypeOverrides() != null) merged.setTypeOverrides(draft.getTypeOverrides());

@@ -54,7 +54,8 @@ class MarketingInsightsConnectorTest {
         experimentService = mock(CreativeExperimentService.class);
         creativeRepository = mock(CreativeRepository.class);
         MarketingInsightsSnapshotQuery query = new MarketingInsightsSnapshotQuery(targetRepository, metricRepository,
-                mock(com.conductor.repository.WorkItemRepository.class));
+                mock(com.conductor.repository.WorkItemRepository.class),
+                mock(com.conductor.creative.CreativeTagAttribution.class));
         Clock fixedClock = Clock.fixed(NOW, ZoneOffset.UTC);
         connector = new MarketingInsightsConnector(query, metricRepository, experimentService, creativeRepository,
                 new ObjectMapper(), fixedClock);

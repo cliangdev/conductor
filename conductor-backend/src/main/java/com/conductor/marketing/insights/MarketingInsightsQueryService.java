@@ -1,6 +1,7 @@
 package com.conductor.marketing.insights;
 
 import com.conductor.creative.CreativePerformanceService;
+import com.conductor.creative.CreativeTagAttribution;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.User;
@@ -49,6 +50,9 @@ public class MarketingInsightsQueryService {
     public record Group(String key, String label, int posts, long views, long likes, long comments,
                         long shares, long saves, Double engagementRate, Long medianViews, Double avgViewPct) {}
 
+    /** One (tag, value) grouping: {@code tagKey} is the tag, the group's key is its value. */
+    public record TagGroup(String tagKey, Group group) {}
+
     /** One destination, for the top/bottom rankings. */
     public record Post(String workItemId, String displayId, String title, String workflowSlug,
                        String captionExcerpt, String targetId, String platform, String format,
@@ -64,7 +68,7 @@ public class MarketingInsightsQueryService {
 
     /** The whole response, as plain data the controller maps to {@code MarketingInsightsResponse}. */
     public record Insights(Window window, Group totals, List<Group> byPlatform, List<Group> byFormat,
-                           List<Group> byHour, List<Group> byWeekday, List<Post> topPosts,
+                           List<Group> byHour, List<Group> byWeekday, List<TagGroup> byTag, List<Post> topPosts,
                            List<Post> bottomPosts, List<Mover> movers, Coverage coverage,
                            List<CreativePerformanceService.VariantPerformance> creatives) {}
 
@@ -100,19 +104,22 @@ public class MarketingInsightsQueryService {
     private final WorkItemRepository workItemRepository;
     private final PublishPlatformRegistry platformRegistry;
     private final CreativePerformanceService creativePerformanceService;
+    private final CreativeTagAttribution tagAttribution;
 
     public MarketingInsightsQueryService(ProjectSecurityService projectSecurityService,
                                          PostPublishTargetRepository targetRepository,
                                          PostPublishTargetMetricRepository metricRepository,
                                          WorkItemRepository workItemRepository,
                                          PublishPlatformRegistry platformRegistry,
-                                         CreativePerformanceService creativePerformanceService) {
+                                         CreativePerformanceService creativePerformanceService,
+                                         CreativeTagAttribution tagAttribution) {
         this.projectSecurityService = projectSecurityService;
         this.targetRepository = targetRepository;
         this.metricRepository = metricRepository;
         this.workItemRepository = workItemRepository;
         this.platformRegistry = platformRegistry;
         this.creativePerformanceService = creativePerformanceService;
+        this.tagAttribution = tagAttribution;
     }
 
     @Transactional(readOnly = true)
@@ -143,6 +150,7 @@ public class MarketingInsightsQueryService {
         List<Group> byFormat = groupBy(reporting, TargetSnapshot::format, key -> null);
         List<Group> byHour = byHour(reporting);
         List<Group> byWeekday = byWeekday(reporting);
+        List<TagGroup> byTag = byTag(projectId, reporting);
 
         List<Post> ranked = rank(reporting, workItems);
         List<Post> topPosts = ranked.stream().limit(TOP_POSTS_LIMIT).toList();
@@ -158,7 +166,7 @@ public class MarketingInsightsQueryService {
         List<CreativePerformanceService.VariantPerformance> creatives =
                 creativePerformanceService.topCreatives(projectId, from, to, TOP_CREATIVES_LIMIT);
 
-        return new Insights(new Window(from, to, spec.days()), totals, byPlatform, byFormat, byHour, byWeekday,
+        return new Insights(new Window(from, to, spec.days()), totals, byPlatform, byFormat, byHour, byWeekday, byTag,
                 topPosts, bottomPosts, movers, coverage, creatives);
     }
 
@@ -275,6 +283,33 @@ public class MarketingInsightsQueryService {
         return byWeekday.entrySet().stream()
                 .sorted(Map.Entry.comparingByKey())
                 .map(e -> groupOf(e.getKey().name(), null, e.getValue()))
+                .toList();
+    }
+
+    /**
+     * One row per (tag key, value) over the reporting destinations whose attributed Creative carries it,
+     * resolved through {@link CreativeTagAttribution} (and so {@code CreativeAttributionResolver}). Sorted by
+     * tag key (the declared order), then engagement rate descending, nulls last.
+     */
+    private List<TagGroup> byTag(String projectId, List<TargetSnapshot> reporting) {
+        if (reporting.isEmpty()) {
+            return List.of();
+        }
+        Map<String, java.util.Set<CreativeTagAttribution.TagValue>> tagsByTarget = tagAttribution.tagsByTarget(projectId);
+        if (tagsByTarget.isEmpty()) {
+            return List.of();
+        }
+        Map<CreativeTagAttribution.TagValue, List<TargetSnapshot>> grouped = new LinkedHashMap<>();
+        for (TargetSnapshot t : reporting) {
+            for (CreativeTagAttribution.TagValue tag : tagsByTarget.getOrDefault(t.targetId(), java.util.Set.of())) {
+                grouped.computeIfAbsent(tag, k -> new ArrayList<>()).add(t);
+            }
+        }
+        List<String> keyOrder = com.conductor.creative.CreativeTagsSupport.KEYS;
+        return grouped.entrySet().stream()
+                .map(e -> new TagGroup(e.getKey().key(), groupOf(e.getKey().value(), null, e.getValue())))
+                .sorted(Comparator.comparingInt((TagGroup g) -> keyOrder.indexOf(g.tagKey()))
+                        .thenComparing(g -> g.group().engagementRate(), Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
     }
 

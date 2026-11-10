@@ -248,6 +248,19 @@ const CREATIVE_FIELD_PROPERTIES = {
     description:
       "CAROUSEL only: compose_slideshow's returned style. On a saved Creative (update_creative) or a draft over baseCreativeId (preview_creative_draft) the recorded style is kept unless the slides change; changing the slides without a slideStyle clears it; an explicit null (or {}) clears it.",
   },
+  tags: {
+    type: 'object',
+    description:
+      "What kind of idea this Creative is, so performance can be read by it (insights byTag): hookType (a shape from the voice guide's table), angle (story-emotion | utility-education | trend-humor), format (still | carousel | story | motion | clip | film), archetype (a slideshow archetype), hypothesis (H<n>). Each value is a non-blank string of at most 60 characters; any other key is refused. On update_creative: omitted keeps the stored tags, an object replaces them whole, {} clears them. A variant (variantOf) inherits its parent's tags unless it passes its own.",
+    properties: {
+      hookType: { type: 'string' },
+      angle: { type: 'string' },
+      format: { type: 'string' },
+      archetype: { type: 'string' },
+      hypothesis: { type: 'string' },
+    },
+    additionalProperties: false,
+  },
   slideshow: {
     type: 'object',
     description: 'CAROUSEL only: how the 9x16 slides become a video when audio.source is track. slideDurations: seconds per 9x16 slide, one entry per slide, each 1-10. Omitted: the tool times each slide from its text (clamp(2.4 + 0.14 x words, 3.0, 4.8) s, +0.5 s on the first slide, +0.5 s on an app screen or chart), and 3.5 s first / 3.0 s rest when there is no text. zoom: slow push-in on each slide, default true. Slides cross-fade for 0.5 s, out of each slide\'s time.',
@@ -1401,7 +1414,7 @@ export const TOOLS = [
   },
   {
     name: 'get_marketing_insights',
-    description: 'What is working in marketing. Default include ["posts"]: published Posts only (totals, engagement rate by platform, format and time, best and worst posts, top Creatives, movers vs the prior window). Add "channels" for "how is marketing doing overall / per channel": per-channel status (LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH; `noDataYet` = connected but no complete day of data yet), the acquisition funnel (every stage and `window` share one window ending at the earliest complete day of the channels that feed the funnel, so conversions compare the same days; each channel\'s own metrics keep that channel\'s window), and per metric value, previous, changePct, noise (true = within normal variation, do not call it a trend) and target. Channels are WEB, SEARCH, SOCIAL, ADS, STORE, PRODUCT (the in-app numbers a connected product backend reports: `stages` in funnel order from first open to paid, plus metrics such as cost per trial; the funnel continues into them after store downloads). A metric with `provisional` has newest days that may still change; `smallSample` means too few users or events to call a change real. A metric with a target carries `status` (ON_TRACK = met; WATCH = close, or a rate miss too small a sample to call real; OFF_TRACK = missed by more; TOO_EARLY = no value, or a rate on fewer than 20 observations; STOPPED = a snapshot the feed stopped sending, so it is not judged; `note` says when it was last reported) and `missPct`, the shortfall as a fraction of the target (a count or money total is judged against the target prorated to the window). `basis` COHORT means each day counts the people who first opened that day, followed to now; `funnelBasis` says the in-app funnel is counted that way. A target with `readOnly` is set by the product backend (`setIn` says where) and cannot be changed here. A MISMATCH channel carries `mismatch`: the Conductor figure vs the product backend reference over the same settled days; treat the connector number as the one to trust until the gap is explained. Numbers are platform-reported and cover complete days only (see dataCompleteThrough), so they can differ from a platform UI that shows today. Pass `channel` with "channels" to also get that channel\'s series (weekly buckets: sums for counts and money, means for rates and positions; provisional = may still change) and its top 10 rows per breakdown (referrers, queries, campaigns, platforms, App Store traffic sources). Windows: 7d, 30d, 90d. For channels, 30d is read as the 28-day window, and 90d is valid only with `channel`. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
+    description: 'What is working in marketing. Default include ["posts"]: published Posts only (totals, engagement rate by platform, format and time, best and worst posts, top Creatives, movers vs the prior window; byTag: the same groups by the posting Creative\'s tags (hookType, angle, format, archetype, hypothesis)). Add "channels" for "how is marketing doing overall / per channel": per-channel status (LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH; `noDataYet` = connected but no complete day of data yet), the acquisition funnel (every stage and `window` share one window ending at the earliest complete day of the channels that feed the funnel, so conversions compare the same days; each channel\'s own metrics keep that channel\'s window), and per metric value, previous, changePct, noise (true = within normal variation, do not call it a trend) and target. Channels are WEB, SEARCH, SOCIAL, ADS, STORE, PRODUCT (the in-app numbers a connected product backend reports: `stages` in funnel order from first open to paid, plus metrics such as cost per trial; the funnel continues into them after store downloads). A metric with `provisional` has newest days that may still change; `smallSample` means too few users or events to call a change real. A metric with a target carries `status` (ON_TRACK = met; WATCH = close, or a rate miss too small a sample to call real; OFF_TRACK = missed by more; TOO_EARLY = no value, or a rate on fewer than 20 observations; STOPPED = a snapshot the feed stopped sending, so it is not judged; `note` says when it was last reported) and `missPct`, the shortfall as a fraction of the target (a count or money total is judged against the target prorated to the window). `basis` COHORT means each day counts the people who first opened that day, followed to now; `funnelBasis` says the in-app funnel is counted that way. A target with `readOnly` is set by the product backend (`setIn` says where) and cannot be changed here. A MISMATCH channel carries `mismatch`: the Conductor figure vs the product backend reference over the same settled days; treat the connector number as the one to trust until the gap is explained. Numbers are platform-reported and cover complete days only (see dataCompleteThrough), so they can differ from a platform UI that shows today. Pass `channel` with "channels" to also get that channel\'s series (weekly buckets: sums for counts and money, means for rates and positions; provisional = may still change) and its top 10 rows per breakdown (referrers, queries, campaigns, platforms, App Store traffic sources). Windows: 7d, 30d, 90d. For channels, 30d is read as the 28-day window, and 90d is valid only with `channel`. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2033,6 +2046,7 @@ export const TOOLS = [
         audio: CREATIVE_FIELD_PROPERTIES.audio,
         slideshow: CREATIVE_FIELD_PROPERTIES.slideshow,
         slideStyle: CREATIVE_FIELD_PROPERTIES.slideStyle,
+        tags: CREATIVE_FIELD_PROPERTIES.tags,
         layout: { type: 'string' },
         theme: { type: 'string', enum: ['dark', 'light'] },
         photoId: { type: 'string' },
@@ -2247,6 +2261,7 @@ export const TOOLS = [
         licence: { type: 'string', description: 'Licence recorded on each uploaded file, e.g. "Own work" (optional)' },
         aiGenerated: { type: 'boolean', description: 'Whether the uploaded files are AI-generated (optional, informational only)' },
         photoChecked: { type: 'boolean', description: 'true only when the person approved the draft after looking at it — records their check that the uploaded photo(s) carry no burned-in text, logo or claim (readiness item photoChecked).' },
+        tags: { ...CREATIVE_FIELD_PROPERTIES.tags, description: "Optional: tags to save with the Creative, replacing any the draft was previewed with (same keys as create_creative's tags)." },
       },
       required: ['draftDir'],
     },
@@ -3676,6 +3691,7 @@ export async function runMcpServer(): Promise<void> {
                 licence: params['licence'] as string | undefined,
                 aiGenerated: params['aiGenerated'] as boolean | undefined,
                 photoChecked: params['photoChecked'] as boolean | undefined,
+                tags: params['tags'] as Record<string, string> | undefined,
               },
               config
             )

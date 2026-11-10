@@ -921,6 +921,8 @@ export interface CommitCreativeDraftParams {
   aiGenerated?: boolean
   /** True only when the person approved the draft after looking at it: records that the uploaded photo(s) carry no burned-in text, logo or claim. */
   photoChecked?: boolean
+  /** Tags to save with the Creative, replacing any the draft was previewed with. */
+  tags?: Record<string, string>
 }
 
 export interface CommitCreativeDraftResult {
@@ -1026,6 +1028,9 @@ export async function commitCreativeDraft(
     if (!id) throw new Error(`The draft references local:${key} but no file was uploaded for it.`)
     return id
   }) as Record<string, unknown>
+
+  // Tags previewed with the draft ride in draft.request; tags given at commit replace them.
+  if (params.tags) fields['tags'] = params.tags
 
   // The slideshow spec: each distinct input image (background photos, screenshots, grid and week images) is
   // uploaded once, with its own sidecar provenance when it has one, and the spec goes with the Creative as media refs.

@@ -8,6 +8,7 @@ import com.conductor.generated.v2.model.CreativePerformanceEntry;
 import com.conductor.generated.v2.model.CreativePerformancePlatform;
 import com.conductor.generated.v2.model.InsightsCoverage;
 import com.conductor.generated.v2.model.InsightsGroup;
+import com.conductor.generated.v2.model.InsightsTagGroup;
 import com.conductor.generated.v2.model.InsightsMover;
 import com.conductor.generated.v2.model.InsightsPost;
 import com.conductor.generated.v2.model.InsightsWindow;
@@ -88,6 +89,7 @@ public class PublishMetricsController implements PublishMetricsApi {
                 r.byFormat().stream().map(PublishMetricsController::toGroup).toList(),
                 r.byHour().stream().map(PublishMetricsController::toGroup).toList(),
                 r.byWeekday().stream().map(PublishMetricsController::toGroup).toList(),
+                r.byTag().stream().map(PublishMetricsController::toTagGroup).toList(),
                 r.topPosts().stream().map(PublishMetricsController::toInsightsPost).toList(),
                 r.bottomPosts().stream().map(PublishMetricsController::toInsightsPost).toList(),
                 r.movers().stream().map(PublishMetricsController::toMover).toList(),
@@ -108,6 +110,15 @@ public class PublishMetricsController implements PublishMetricsApi {
 
     private static InsightsWindow toWindow(MarketingInsightsQueryService.Window w) {
         return new InsightsWindow(w.from(), w.to(), w.days());
+    }
+
+    private static InsightsTagGroup toTagGroup(MarketingInsightsQueryService.TagGroup t) {
+        MarketingInsightsQueryService.Group g = t.group();
+        return new InsightsTagGroup(g.key(), g.posts(), g.views(), g.likes(), g.comments(), g.shares(), g.saves(), t.tagKey())
+                .label(g.label())
+                .engagementRate(g.engagementRate())
+                .medianViews(g.medianViews())
+                .avgViewPct(g.avgViewPct());
     }
 
     private static InsightsGroup toGroup(MarketingInsightsQueryService.Group g) {

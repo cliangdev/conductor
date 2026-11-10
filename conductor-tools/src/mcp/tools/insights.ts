@@ -29,6 +29,10 @@ interface InsightsGroup {
   avgViewPct?: number | null
 }
 
+interface InsightsTagGroup extends InsightsGroup {
+  tagKey: string
+}
+
 interface InsightsPost {
   workItemId: string
   displayId?: string | null
@@ -88,6 +92,7 @@ interface MarketingInsightsResponse {
   byFormat: InsightsGroup[]
   byHour: InsightsGroup[]
   byWeekday: InsightsGroup[]
+  byTag?: InsightsTagGroup[]
   topPosts: InsightsPost[]
   bottomPosts: InsightsPost[]
   movers: InsightsMover[]
@@ -178,6 +183,7 @@ async function getPostInsights(
     totals: trimGroup(data.totals),
     byPlatform: data.byPlatform.map(trimGroup),
     byFormat: data.byFormat.map(trimGroup),
+    byTag: (data.byTag ?? []).map(trimGroup),
     bestHoursUtc: topGroups(data.byHour),
     bestWeekdays: topGroups(data.byWeekday),
     topPosts: data.topPosts.slice(0, 5).map(trimPost),

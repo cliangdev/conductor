@@ -53,6 +53,8 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
     @Autowired private UserRepository userRepository;
     @Autowired private ProjectMemberRepository projectMemberRepository;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private com.conductor.marketing.insights.MarketingInsightsQueryService insightsService;
+    @Autowired private com.conductor.integration.connector.marketing.MarketingInsightsSnapshotQuery snapshotQuery;
 
     private User admin;
     private Project project;
@@ -170,6 +172,50 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
                 performanceService.topCreatives(project.getId(), now.minusDays(7), now, 10);
         assertThat(lastWeek).extracting(CreativePerformanceService.VariantPerformance::creativeId)
                 .containsExactly(c.getId()); // `a` fired outside the window
+    }
+
+    @Test
+    void insightsByTagGroupsAttributedTaggedDestinationsAndLeavesOutTheRest() {
+        OffsetDateTime now = OffsetDateTime.now();
+
+        Creative tagged = newVariant("a", null, "Tagged hook");
+        tagged.setTags(objectMapper.valueToTree(java.util.Map.of("hookType", "question", "angle", "utility-education")));
+        creativeRepository.save(tagged);
+        WorkItem taggedPost = newPost("Tagged post");
+        newAttachedAsset(taggedPost, newFrameFor(tagged));
+        PostPublishTarget taggedTarget = newTarget(taggedPost, "instagram", now.minusDays(2));
+        newSnapshot(taggedTarget, now.minusDays(2).plusHours(1), 1000L, 40L, 5L, 3L, 2L, null);
+
+        // No attributed Creative at all.
+        WorkItem plainPost = newPost("Unattributed post");
+        PostPublishTarget plainTarget = newTarget(plainPost, "instagram", now.minusDays(1));
+        newSnapshot(plainTarget, now.minusDays(1).plusHours(1), 400L, 4L, 0L, 0L, 0L, null);
+
+        // An attributed Creative with no tags.
+        number = number + 1;
+        Creative untagged = newVariant("a", null, "Untagged");
+        WorkItem untaggedPost = newPost("Untagged post");
+        newAttachedAsset(untaggedPost, newFrameFor(untagged));
+        PostPublishTarget untaggedTarget = newTarget(untaggedPost, "instagram", now.minusDays(1));
+        newSnapshot(untaggedTarget, now.minusDays(1).plusHours(1), 300L, 3L, 0L, 0L, 0L, null);
+
+        var insights = insightsService.compute(project.getId(), "30d", null, admin);
+
+        assertThat(insights.totals().posts()).isEqualTo(3);
+        assertThat(insights.byTag()).extracting(t -> t.tagKey() + "=" + t.group().key())
+                .containsExactly("hookType=question", "angle=utility-education");
+        var hook = insights.byTag().get(0).group();
+        assertThat(hook.posts()).isEqualTo(1);
+        assertThat(hook.views()).isEqualTo(1000L);
+        assertThat(hook.engagementRate()).isCloseTo(50.0 / 1000.0, within(1e-9));
+
+        // The weekly snapshot reads the same attribution, hookType only.
+        var payload = snapshotQuery.fetch(project.getId(), now.toInstant());
+        @SuppressWarnings("unchecked")
+        List<java.util.Map<String, Object>> byHookType = (List<java.util.Map<String, Object>>) payload.get("byHookType");
+        assertThat(byHookType).hasSize(1);
+        assertThat(byHookType.get(0)).containsEntry("hookType", "question").containsEntry("posts", 1L)
+                .containsEntry("views", 1000L);
     }
 
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────

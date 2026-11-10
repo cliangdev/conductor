@@ -13663,6 +13663,7 @@ components:
         - movers
         - coverage
         - creatives
+        - byTag
       properties:
         window:
           $ref: "#/components/schemas/InsightsWindow"
@@ -13688,6 +13689,15 @@ components:
           items:
             $ref: "#/components/schemas/InsightsGroup"
           description: One row per UTC weekday of the fire time, key = MONDAY..SUNDAY, sorted Monday first.
+        byTag:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsightsTagGroup"
+          description: >-
+            One row per (tagKey, value) of the tags on the Creative each destination was published from
+            (attributed through the Creative's rendered frames). Destinations with no attributed Creative, or a
+            Creative with no tags, are left out. Sorted by tagKey, then engagement rate descending (nulls last).
+            May be empty.
         topPosts:
           type: array
           items:
@@ -13782,6 +13792,18 @@ components:
           format: double
           nullable: true
           description: Mean of the destinations' average-view-percentage where a platform reports it (YouTube); null otherwise.
+
+    InsightsTagGroup:
+      description: An `InsightsGroup` for the destinations whose Creative carries one tag value.
+      allOf:
+        - $ref: "#/components/schemas/InsightsGroup"
+        - type: object
+          required:
+            - tagKey
+          properties:
+            tagKey:
+              type: string
+              description: hookType, angle, format, archetype or hypothesis. `key` is the tag's value.
 
     InsightsPost:
       type: object
@@ -15448,6 +15470,34 @@ components:
         which case the render is local and produces a new MP4 with that sound. MOTION (PR2) is a branded
         animated video rendered by a local job.
 
+    CreativeTags:
+      type: object
+      description: >-
+        Free-form-by-key but closed-set labels that say what kind of idea a Creative is, so performance can be
+        read by hook, angle and so on. Only these five keys are accepted (any other key is a 422 naming
+        `tags.<key>`); each value is a non-blank string of at most 60 characters (enforced by the server as a 422, not by the schema, so the problem names the field). The values themselves are
+        not enforced: the create skill uses hookType from its voice guide, angle `story-emotion|utility-education|trend-humor`,
+        format `still|carousel|story|motion|clip|film`, archetype a slideshow archetype, hypothesis `H<n>`.
+        Declared open (`additionalProperties`) only so the server can name an unknown key in a 422 instead of
+        silently dropping it; none is ever stored.
+      properties:
+        hookType:
+          type: string
+          description: The shape of the opening hook (e.g. a hookType from the voice guide's shapes table).
+        angle:
+          type: string
+          description: story-emotion, utility-education or trend-humor.
+        format:
+          type: string
+          description: still, carousel, story, motion, clip or film.
+        archetype:
+          type: string
+          description: A slideshow archetype.
+        hypothesis:
+          type: string
+          description: The hypothesis id this Creative tests, H<n>.
+      additionalProperties: true
+
     CreativeLayoutOverrides:
       type: object
       nullable: true
@@ -15757,6 +15807,10 @@ components:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
           description: The audio of a MOTION, CAROUSEL or CLIP creative, defaults already applied. Null when none was set.
+        tags:
+          allOf:
+            - $ref: "#/components/schemas/CreativeTags"
+          description: The Creative's tags; `{}` when it has none. Always present.
         slideStyle:
           allOf:
             - $ref: "#/components/schemas/SlideshowStyle"
@@ -15952,6 +16006,12 @@ components:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
           description: The audio of a MOTION, CAROUSEL or CLIP creative. Any field left unset gets its documented default.
+        tags:
+          allOf:
+            - $ref: "#/components/schemas/CreativeTags"
+          nullable: true
+          description: >-
+            Tags for the Creative (see `CreativeTags`). Absent or `{}` stores none. 422 on an unknown key or a blank or over-long value.
         slideStyle:
           allOf:
             - $ref: "#/components/schemas/SlideshowStyle"
@@ -16101,6 +16161,14 @@ components:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
           description: The audio of a MOTION, CAROUSEL or CLIP creative. Any field left unset gets its documented default.
+        tags:
+          allOf:
+            - $ref: "#/components/schemas/CreativeTags"
+          nullable: true
+          description: >-
+            Absent: the stored tags are kept. Present: replaces the whole stored map (a key left out is removed).
+            `{}` (or explicit JSON `null`) clears them. 422 on an unknown key or a blank or over-long value.
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonSetter(nulls = com.fasterxml.jackson.annotation.Nulls.AS_EMPTY)"
         slideStyle:
           allOf:
             - $ref: "#/components/schemas/SlideshowStyle"
@@ -16137,6 +16205,12 @@ components:
           type: string
           nullable: true
           description: Defaults to a copy of the source Creative's headline.
+        tags:
+          allOf:
+            - $ref: "#/components/schemas/CreativeTags"
+          nullable: true
+          description: >-
+            The variant's own tags. Absent: it inherits the source Creative's tags. Present (even `{}`): replaces them.
         name:
           type: string
           nullable: true

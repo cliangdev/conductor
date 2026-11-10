@@ -994,6 +994,37 @@ only "re-encoding" that happens, and there is no server-side cropping and no Clo
 render is a well-known local (or self-hosted-Workflow) job PUTing frames it already produced; this
 backend's job is bookkeeping, storage and the attach mapping above.
 
+## Tags {#creative-tags}
+
+A Creative carries `tags` (V201, `creative.tags` jsonb, `{}` when none) so performance can be read by the kind
+of idea it was, not only by Creative or platform. Five optional string keys, nothing else:
+
+| Key | Meaning | Values the skills use |
+|---|---|---|
+| `hookType` | what the opening line does | the hookType column of `voice.md`'s "Shapes, and the hookType each one is tagged" table: `pattern-interrupt`, `relatable-pain`, `story`, `question`, `number`, `bold-claim` |
+| `angle` | the brainstorm angle | `story-emotion`, `utility-education`, `trend-humor` |
+| `format` | the artwork format | `still`, `carousel`, `story`, `motion`, `clip`, `film` |
+| `archetype` | the slideshow hook archetype | one from `slideshow-formats.md`'s "Hook archetypes" table, kebab-cased (e.g. `numbered-list`, `before-after`) |
+| `hypothesis` | the hypothesis the post tests | `H<n>` |
+
+The backend enforces only the keys and the length: any other key, a blank value, or a value over 60
+characters is a 422 naming `tags.<key>`. The vocabularies above are the skills' convention, not validated.
+
+Writes: create stores what is sent. `PATCH` leaves the tags alone when `tags` is omitted, **replaces the
+whole map** when it is sent (a key left out is removed), and clears it for `{}`. A lettered variant
+inherits its parent's tags unless the variant request carries its own. The draft-spec preview takes `tags`
+like any create field (and overlays them on a `baseCreativeId`'s), and `commit_creative_draft` saves what the
+preview carried, or the `tags` it is given. `GET` always returns `tags`.
+
+Insights read them: `GET .../marketing/insights` adds `byTag`, one row per `(tagKey, value)` (`key` is the
+value) with the same counters as every other group, over reporting destinations whose attributed Creative
+carries that tag. Attribution is `CreativeAttributionResolver`'s (see below), through `CreativeTagAttribution`;
+a destination with no attributed Creative, or an untagged one, is left out, and one attributed to several
+tagged Creatives counts once under each distinct tag value. Rows sort by tag key then engagement rate
+descending (nulls last), and `noise`/`smallSample` judgements are the client's to make from `posts`, as for
+the other groups. The weekly `conductor-marketing` snapshot carries the same read as a `byHookType`
+dimension (hookType only), so the digest can say which hooks are working.
+
 ## Performance and experiments (COND-24 T5)
 
 **Attribution** (`CreativeAttributionResolver`) answers "which published destinations actually sent this

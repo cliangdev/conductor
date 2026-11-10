@@ -1,6 +1,7 @@
 package com.conductor.creative;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
@@ -165,6 +166,11 @@ public class Creative {
     @Column(name = "slideshow_spec", columnDefinition = "jsonb")
     private JsonNode slideshowSpec;
 
+    /** {@code {hookType?, angle?, format?, archetype?, hypothesis?}}; {@code {}} when none. See V201__creative_tags.sql. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "tags", columnDefinition = "jsonb", nullable = false)
+    private JsonNode tags = JsonNodeFactory.instance.objectNode();
+
     @Version
     @Column(name = "version", nullable = false)
     private int version;
@@ -296,6 +302,9 @@ public class Creative {
 
     public JsonNode getSlideStyle() { return slideStyle; }
     public void setSlideStyle(JsonNode slideStyle) { this.slideStyle = slideStyle; }
+    public JsonNode getTags() { return tags; }
+    public void setTags(JsonNode tags) { this.tags = tags != null ? tags : JsonNodeFactory.instance.objectNode(); }
+
     public JsonNode getSlideshowSpec() { return slideshowSpec; }
     public void setSlideshowSpec(JsonNode slideshowSpec) { this.slideshowSpec = slideshowSpec; }
 

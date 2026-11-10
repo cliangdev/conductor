@@ -1441,6 +1441,128 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
         assertThat(fromDraft.violations()).isNotEmpty().isEqualTo(fromCreate.violations());
     }
 
+    // ── tags ─────────────────────────────────────────────────────────────────────────────────────
+
+    private static com.conductor.generated.v2.model.CreativeTags tags(String hookType, String angle) {
+        return new com.conductor.generated.v2.model.CreativeTags().hookType(hookType).angle(angle);
+    }
+
+    private Map<String, String> storedTags(CreativeService.CreativeView view) {
+        return CreativeTagsSupport.valuesOf(view.creative().getTags());
+    }
+
+    @Test
+    void tagsRoundTripOnCreateAndDefaultToAnEmptyMap() {
+        CreativeService.CreativeView untagged = creativeService.createCreative(project.getId(),
+                concept("No tags here.", "Body."), admin);
+        assertThat(untagged.creative().getTags().isObject()).isTrue();
+        assertThat(untagged.creative().getTags().size()).isZero();
+
+        CreateCreativeRequest request = concept("Tagged *hook*.", "Body.");
+        request.setTags(tags("question", "utility-education").hypothesis("H3"));
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+
+        assertThat(storedTags(created)).containsExactly(
+                Map.entry("hookType", "question"), Map.entry("angle", "utility-education"),
+                Map.entry("hypothesis", "H3"));
+        assertThat(storedTags(creativeService.getCreative(project.getId(), created.creative().getId(), admin)))
+                .containsEntry("hookType", "question");
+    }
+
+    @Test
+    void patchReplacesClearsOrKeepsTheTags() {
+        CreateCreativeRequest request = concept("Patch me.", "Body.");
+        request.setTags(tags("question", "story-emotion"));
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(), request, admin);
+        String id = created.creative().getId();
+
+        // Omitted: kept.
+        PatchCreativeRequest omit = new PatchCreativeRequest(created.creative().getVersion());
+        omit.setCaption("A caption.");
+        CreativeService.CreativeView afterOmit = creativeService.patchCreative(project.getId(), id, omit, admin);
+        assertThat(storedTags(afterOmit)).containsOnlyKeys("hookType", "angle");
+
+        // Present: replaces the whole map (angle goes away).
+        PatchCreativeRequest replace = new PatchCreativeRequest(afterOmit.creative().getVersion());
+        replace.setTags(new com.conductor.generated.v2.model.CreativeTags().archetype("before-after"));
+        CreativeService.CreativeView afterReplace = creativeService.patchCreative(project.getId(), id, replace, admin);
+        assertThat(storedTags(afterReplace)).containsExactly(Map.entry("archetype", "before-after"));
+
+        // Empty: clears.
+        PatchCreativeRequest clear = new PatchCreativeRequest(afterReplace.creative().getVersion());
+        clear.setTags(new com.conductor.generated.v2.model.CreativeTags());
+        CreativeService.CreativeView afterClear = creativeService.patchCreative(project.getId(), id, clear, admin);
+        assertThat(afterClear.creative().getTags().size()).isZero();
+    }
+
+    @Test
+    void aVariantInheritsTheParentsTagsUnlessGivenItsOwn() {
+        CreateCreativeRequest request = concept("Variant parent.", "Body.");
+        request.setTags(tags("question", "trend-humor"));
+        CreativeService.CreativeView root = creativeService.createCreative(project.getId(), request, admin);
+
+        CreativeService.CreativeView inherited = creativeService.createVariant(project.getId(),
+                root.creative().getId(), new CreateCreativeVariantRequest().headline("Second *take*."), admin);
+        assertThat(storedTags(inherited)).containsExactly(
+                Map.entry("hookType", "question"), Map.entry("angle", "trend-humor"));
+
+        CreativeService.CreativeView overridden = creativeService.createVariant(project.getId(),
+                root.creative().getId(), new CreateCreativeVariantRequest().headline("Third *take*.")
+                        .tags(tags("stat", "trend-humor")), admin);
+        assertThat(storedTags(overridden)).containsEntry("hookType", "stat");
+        // The parent is untouched.
+        assertThat(storedTags(creativeService.getCreative(project.getId(), root.creative().getId(), admin)))
+                .containsEntry("hookType", "question");
+    }
+
+    @Test
+    void aDraftSpecCarriesTagsAndOverlaysTheBasesUnlessItSendsItsOwn() {
+        CreateCreativeRequest request = concept("Draft base.", "Body.");
+        request.setTags(tags("question", "story-emotion"));
+        CreativeService.CreativeView base = creativeService.createCreative(project.getId(), request, admin);
+
+        CreateCreativeRequest keeps = creativeService.overlayOnBase(base.creative(),
+                new CreativeDraftSpecRequest().headline("Draft *edit*."));
+        assertThat(keeps.getTags().getHookType()).isEqualTo("question");
+
+        CreateCreativeRequest replaces = creativeService.overlayOnBase(base.creative(),
+                (CreativeDraftSpecRequest) new CreativeDraftSpecRequest().tags(tags("stat", null)));
+        assertThat(replaces.getTags().getHookType()).isEqualTo("stat");
+        assertThat(replaces.getTags().getAngle()).isNull();
+    }
+
+    @Test
+    void invalidTagsAre422WithTheFieldNamed() {
+        CreateCreativeRequest unknownKey = concept("Bad tag.", "Body.");
+        com.conductor.generated.v2.model.CreativeTags withUnknown = tags("question", null);
+        withUnknown.putAdditionalProperty("mood", "happy");
+        unknownKey.setTags(withUnknown);
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), unknownKey, admin))
+                .isInstanceOfSatisfying(CreativeValidationException.class, e ->
+                        assertThat(e.violations()).extracting(CreativeValidationException.Violation::field)
+                                .contains("tags.mood"));
+
+        CreateCreativeRequest tooLong = concept("Long tag.", "Body.");
+        tooLong.setTags(tags("x".repeat(61), null));
+        assertThatThrownBy(() -> creativeService.createCreative(project.getId(), tooLong, admin))
+                .isInstanceOfSatisfying(CreativeValidationException.class, e ->
+                        assertThat(e.violations()).extracting(CreativeValidationException.Violation::field)
+                                .contains("tags.hookType"));
+
+        CreativeService.CreativeView ok = creativeService.createCreative(project.getId(),
+                concept("Ok.", "Body."), admin);
+        PatchCreativeRequest blank = new PatchCreativeRequest(ok.creative().getVersion());
+        blank.setTags(tags("   ", null));
+        assertThatThrownBy(() -> creativeService.patchCreative(project.getId(), ok.creative().getId(), blank, admin))
+                .isInstanceOfSatisfying(CreativeValidationException.class, e ->
+                        assertThat(e.violations()).extracting(CreativeValidationException.Violation::field)
+                                .contains("tags.hookType"));
+
+        CreateCreativeVariantRequest badVariant = new CreateCreativeVariantRequest().tags(tags("", null));
+        assertThatThrownBy(() -> creativeService.createVariant(project.getId(), ok.creative().getId(), badVariant, admin))
+                .isInstanceOf(CreativeValidationException.class);
+    }
+
     private CreateCreativeRequest concept(String headline, String body) {
         CreateCreativeRequest request = new CreateCreativeRequest();
         request.setHeadline(headline);
