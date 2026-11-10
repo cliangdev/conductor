@@ -14,7 +14,8 @@ breakdown: rows of `{tagKey, key, ...group metrics, noise, smallSample}`.
 ## The playbook page
 
 Path `marketing/playbook.md`. With several Brand Kits, one `## <kit name>` section per kit, each in
-the template below; read and write only the chosen kit's section. Fixed template, at most about 80
+the template below with its headings one level down (`###`); read and write only the chosen kit's
+section. Fixed template, at most about 80
 lines per kit:
 
 ```
@@ -34,7 +35,7 @@ Updated <date> · results through <date> · N Creatives measured
 - <the person's preference about this brand's look or voice> (<date>)
 
 ## Open hypotheses
-- H<n>: <what is tested>. Tested by <display id>. Result due <date, 72 h after posting>.
+- H<n>: <what is tested>. Tested by <display id>. Result due 72 h after it posts.
 
 ## Folded in
 <last ~30 Creative display ids already counted, comma separated>
@@ -47,7 +48,9 @@ Updated <date> · results through <date> · N Creatives measured
   or smallSample result to Proven.
 - **Didn't work**: same evidence rule; say what was tried and what happened.
 - **Taste**: the person's own feedback on drafts, dated. Constraints, not statistics.
-- **Folded in**: lets the retro skip Creatives it has already counted, so nothing is counted twice.
+- **Folded in**: Creatives whose results a retro has already counted, so nothing is counted twice.
+  A Creative goes in only when the retro counts it (72 hours or more after it posted), never at
+  commit.
 - **Prune** on every write: merge duplicate lines, and drop the oldest Leaning lines when the
   section is over the cap.
 
@@ -83,14 +86,17 @@ the shape's row in `voice.md` when the line fits one.
 
 1. `read_knowledge_pages` for `marketing/playbook.md` and `marketing/what-works.md`. A missing
    playbook means bootstrap (below).
-2. Skip the rest when the playbook was updated less than 24 hours ago and no open hypothesis is due.
+2. Skip the rest when the playbook was updated less than 24 hours ago: the last retro is recent
+   enough, and any hypothesis that has come due waits for the next run.
 3. Otherwise `get_marketing_insights` (window `30d`, `90d` if empty) and read `byTag`, `byFormat`
    and `creatives`. Ignore Creatives already in Folded in.
-4. For each due hypothesis (72 hours or more since its Creative posted), `get_creative` on its
-   Creative: its performance and its experiment.
+4. For each open hypothesis, `get_creative` on its Creative: its performance and its experiment.
+   It is due once 72 hours or more have passed since that Creative first posted; one that has not
+   posted yet, or posted less than 72 hours ago, stays open.
 5. Apply the thresholds above. Promote a Leaning line that now has 3 or more clean posts. Demote a
-   Proven line a later clean result contradicts. Resolve a hypothesis: move it into Proven, Leaning
-   or Didn't work with its evidence, and remove it from Open hypotheses.
+   Proven line a later clean result contradicts. Resolve a due hypothesis: move it into Proven,
+   Leaning or Didn't work with its evidence, remove it from Open hypotheses, and add its Creative to
+   Folded in. Add any other Creative counted this retro to Folded in too.
 6. Name what could not be measured (no data yet, a platform that reports no views, a Creative with no
    tags). Do not guess a result.
 
@@ -129,8 +135,8 @@ The retro changes the page only at capture, after the commit.
 2. Taste lessons are about this brand's look or voice, generalised one step: "keep text off faces",
    not "move CR-14's headline". Date them. Banned copy stays on the Brand Kit as today
    (`references/direct.md`, step 1).
-3. Add the new hypothesis to Open hypotheses with this Creative's display id and the due date
-   (72 hours after it is expected to post), and add the Creative's id to Folded in.
+3. Add this run's hypothesis to Open hypotheses with this Creative's display id. Do not add the
+   Creative to Folded in: it has no results yet, and the retro adds it once they settle.
 4. Update the header and prune.
 5. `write_knowledge_pages` with `baseVersion` from the read (omit it to create the page when it is
    new). On `conflict: true`, merge your changes into `currentContent` and write once more.
