@@ -59,6 +59,10 @@ function trimPerformanceEntry(entry: Record<string, unknown>): Record<string, un
     medianViewLift: round4(entry['medianViewLift']),
     medianRetentionLift: round4(entry['medianRetentionLift']),
     beatBaselineShare: round4(entry['beatBaselineShare']),
+    withBaselinePosts: entry['withBaselinePosts'],
+    beatBaselinePosts: entry['beatBaselinePosts'],
+    viewVerdict: entry['viewVerdict'],
+    retentionVerdict: entry['retentionVerdict'],
   }
 }
 

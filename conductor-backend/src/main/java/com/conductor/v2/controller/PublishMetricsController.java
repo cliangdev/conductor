@@ -9,6 +9,9 @@ import com.conductor.generated.v2.model.CreativePerformancePlatform;
 import com.conductor.generated.v2.model.InsightsCoverage;
 import com.conductor.generated.v2.model.InsightsGroup;
 import com.conductor.generated.v2.model.InsightsTagGroup;
+import com.conductor.generated.v2.model.PlaybookEffect;
+import com.conductor.generated.v2.model.PlaybookEffectSide;
+import com.conductor.marketing.insights.PostBaselineService;
 import com.conductor.generated.v2.model.InsightsMover;
 import com.conductor.generated.v2.model.InsightsPost;
 import com.conductor.generated.v2.model.InsightsWindow;
@@ -90,6 +93,11 @@ public class PublishMetricsController implements PublishMetricsApi {
                 r.byHour().stream().map(PublishMetricsController::toGroup).toList(),
                 r.byWeekday().stream().map(PublishMetricsController::toGroup).toList(),
                 r.byTag().stream().map(PublishMetricsController::toTagGroup).toList(),
+                toWindow(r.byTagWindow()),
+                new PlaybookEffect(new PlaybookEffectSide(r.playbookEffect().withLessons().posts())
+                        .medianViewLift(r.playbookEffect().withLessons().medianViewLift()),
+                        new PlaybookEffectSide(r.playbookEffect().withoutLessons().posts())
+                                .medianViewLift(r.playbookEffect().withoutLessons().medianViewLift())),
                 r.topPosts().stream().map(PublishMetricsController::toInsightsPost).toList(),
                 r.bottomPosts().stream().map(PublishMetricsController::toInsightsPost).toList(),
                 r.movers().stream().map(PublishMetricsController::toMover).toList(),
@@ -109,7 +117,11 @@ public class PublishMetricsController implements PublishMetricsApi {
                 .settledPosts(p.settledPosts())
                 .medianViewLift(p.medianViewLift())
                 .medianRetentionLift(p.medianRetentionLift())
-                .beatBaselineShare(p.beatBaselineShare());
+                .beatBaselineShare(p.beatBaselineShare())
+                .withBaselinePosts(p.withBaselinePosts())
+                .beatBaselinePosts(p.beatBaselinePosts())
+                .viewVerdict(p.viewVerdict())
+                .retentionVerdict(p.retentionVerdict());
     }
 
     private static InsightsWindow toWindow(MarketingInsightsQueryService.Window w) {
@@ -118,16 +130,25 @@ public class PublishMetricsController implements PublishMetricsApi {
 
     private static InsightsTagGroup toTagGroup(MarketingInsightsQueryService.TagGroup t) {
         MarketingInsightsQueryService.Group g = t.group();
+        PostBaselineService.LiftSummary l = t.lift();
         return new InsightsTagGroup(g.key(), g.posts(), g.views(), g.likes(), g.comments(), g.shares(), g.saves(), t.tagKey())
                 .label(g.label())
                 .engagementRate(g.engagementRate())
                 .medianViews(g.medianViews())
                 .avgViewPct(g.avgViewPct())
                 .unsettledPosts(t.unsettledPosts())
-                .medianViewLift(t.medianViewLift())
-                .beatBaselineShare(t.beatBaselineShare())
-                .medianEngagementRate(t.medianEngagementRate())
-                .medianRetentionLift(t.medianRetentionLift());
+                .medianViewLift(l.medianViewLift())
+                .beatBaselineShare(l.beatBaselineShare())
+                .medianEngagementRate(l.medianEngagementRate())
+                .medianRetentionLift(l.medianRetentionLift())
+                .withBaselinePosts(l.withBaselinePosts())
+                .beatBaselinePosts(l.beatBaselinePosts())
+                .withRetentionBaselinePosts(l.withRetentionBaselinePosts())
+                .beatRetentionBaselinePosts(l.beatRetentionBaselinePosts())
+                .viewVerdict(l.viewVerdict())
+                .retentionVerdict(l.retentionVerdict())
+                .verdict(t.verdict())
+                .verdictMetric(t.verdictMetric());
     }
 
     private static InsightsGroup toGroup(MarketingInsightsQueryService.Group g) {

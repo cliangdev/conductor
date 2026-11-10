@@ -215,16 +215,13 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         assertThat(hook.engagementRate()).isCloseTo(50.0 / 1000.0, within(1e-9));
         assertThat(insights.byTag().get(0).unsettledPosts()).isEqualTo(1);
         // Fewer than 10 settled posts anywhere: no baseline, so no lift.
-        assertThat(insights.byTag().get(0).medianViewLift()).isNull();
-        assertThat(insights.byTag().get(0).medianEngagementRate()).isCloseTo(50.0 / 1000.0, within(1e-9));
+        assertThat(insights.byTag().get(0).lift().medianViewLift()).isNull();
+        assertThat(insights.byTag().get(0).verdict()).isEqualTo("NOT_ENOUGH_DATA");
+        assertThat(insights.byTag().get(0).lift().medianEngagementRate()).isCloseTo(50.0 / 1000.0, within(1e-9));
 
-        // The weekly snapshot reads the same attribution, hookType only.
+        // The weekly snapshot ranks on lift, so with no baseline there is no hookType row to rank.
         var payload = snapshotQuery.fetch(project.getId(), now.toInstant());
-        @SuppressWarnings("unchecked")
-        List<java.util.Map<String, Object>> byHookType = (List<java.util.Map<String, Object>>) payload.get("byHookType");
-        assertThat(byHookType).hasSize(1);
-        assertThat(byHookType.get(0)).containsEntry("hookType", "question").containsEntry("posts", 1L)
-                .containsEntry("views", 1000L);
+        assertThat((List<?>) payload.get("byHookType")).isEmpty();
     }
 
     @Test
@@ -243,16 +240,24 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         newSnapshot(target, now.minusDays(5).plusHours(1), 300L, 30L, 0L, 0L, 0L, null);
 
         var tag = insightsService.compute(project.getId(), "30d", null, admin).byTag().get(0);
-        assertThat(tag.medianViewLift()).isCloseTo(3.0, within(1e-9));
-        assertThat(tag.beatBaselineShare()).isEqualTo(1.0);
-        assertThat(tag.medianEngagementRate()).isCloseTo(0.1, within(1e-9));
-        assertThat(tag.medianRetentionLift()).isNull(); // no avgViewPct on either side
+        assertThat(tag.lift().medianViewLift()).isCloseTo(3.0, within(1e-9));
+        assertThat(tag.lift().beatBaselineShare()).isEqualTo(1.0);
+        assertThat(tag.lift().withBaselinePosts()).isEqualTo(1);
+        assertThat(tag.lift().beatBaselinePosts()).isEqualTo(1);
+        assertThat(tag.lift().medianEngagementRate()).isCloseTo(0.1, within(1e-9));
+        assertThat(tag.lift().medianRetentionLift()).isNull(); // no avgViewPct on either side
+        assertThat(tag.verdict()).isEqualTo("NOT_ENOUGH_DATA"); // one post is under the minimum of 3
+        assertThat(tag.verdictMetric()).isEqualTo("VIEW_LIFT"); // no retention baseline, so hookType reads views
 
         var perf = performanceService.topCreatives(project.getId(), null, null, 10).get(0);
         assertThat(perf.creativeId()).isEqualTo(tagged.getId());
         assertThat(perf.settledPosts()).isEqualTo(1);
         assertThat(perf.medianViewLift()).isCloseTo(3.0, within(1e-9));
         assertThat(perf.beatBaselineShare()).isEqualTo(1.0);
+        assertThat(perf.withBaselinePosts()).isEqualTo(1);
+        assertThat(perf.beatBaselinePosts()).isEqualTo(1);
+        assertThat(perf.viewVerdict()).isEqualTo("NOT_ENOUGH_DATA");
+        assertThat(perf.retentionVerdict()).isEqualTo("NOT_ENOUGH_DATA");
         assertThat(perf.medianRetentionLift()).isNull();
 
         @SuppressWarnings("unchecked")
@@ -260,6 +265,46 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
                 snapshotQuery.fetch(project.getId(), now.toInstant()).get("byHookType");
         assertThat(rows).hasSize(1);
         assertThat((Double) rows.get(0).get("medianViewLift")).isCloseTo(3.0, within(1e-9));
+        assertThat(rows.get(0)).containsEntry("verdict", "NOT_ENOUGH_DATA").containsEntry("verdictMetric", "VIEW_LIFT");
+    }
+
+    @Test
+    void byTagIgnoresTheWindowSoASettledFacebookPostCountsEvenAt7d_andLessonsSplitAndPreviewRoundsIsNotGrouped() {
+        OffsetDateTime now = OffsetDateTime.now();
+        // A Facebook post from 10 days ago: outside a 7d window, and Facebook needs 7 days to settle.
+        Creative c = newVariant("a", null, "Playbook hook");
+        c.setTags(objectMapper.valueToTree(java.util.Map.of("hookType", "question", "lessons", "#3,#12",
+                "previewRounds", "2")));
+        creativeRepository.save(c);
+        WorkItem post = newPost("Facebook playbook post");
+        newAttachedAsset(post, newFrameFor(c));
+        PostPublishTarget target = newTarget(post, "facebook", now.minusDays(10));
+        newSnapshot(target, now.minusDays(10).plusHours(1), 500L, 10L, 0L, 0L, 0L, null);
+        // A Facebook post from 3 days ago (unsettled), same Creative.
+        WorkItem fresh = newPost("Fresh facebook post");
+        newAttachedAsset(fresh, newFrameFor(c));
+        PostPublishTarget freshTarget = newTarget(fresh, "facebook", now.minusDays(3));
+        newSnapshot(freshTarget, now.minusDays(3).plusHours(1), 50L, 1L, 0L, 0L, 0L, null);
+        // A post with no lessons at all.
+        PostPublishTarget plain = newTarget(newPost("No lessons"), "facebook", now.minusDays(12));
+        newSnapshot(plain, now.minusDays(12).plusHours(1), 700L, 7L, 0L, 0L, 0L, null);
+
+        var insights = insightsService.compute(project.getId(), "7d", null, admin);
+
+        assertThat(insights.totals().posts()).isEqualTo(1); // the rest of insights still honours the 7d window: only the 3-day-old post
+        assertThat(insights.byTagWindow().days()).isEqualTo(90);
+        assertThat(insights.byTag()).extracting(t -> t.tagKey() + "=" + t.group().key())
+                .containsExactly("hookType=question", "lessons=#3", "lessons=#12");
+        insights.byTag().forEach(t -> {
+            assertThat(t.group().posts()).isEqualTo(1);
+            assertThat(t.unsettledPosts()).isEqualTo(1);
+        });
+        assertThat(insights.byTag()).noneMatch(t -> t.tagKey().equals("previewRounds"));
+
+        // Playbook effect: the lessons Creative's one settled post vs the unattributed one.
+        assertThat(insights.playbookEffect().withLessons().posts()).isEqualTo(1);
+        assertThat(insights.playbookEffect().withoutLessons().posts()).isEqualTo(1);
+        assertThat(insights.playbookEffect().withLessons().medianViewLift()).isNull(); // no baseline under 10 posts
     }
 
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────

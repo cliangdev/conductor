@@ -13664,6 +13664,8 @@ components:
         - coverage
         - creatives
         - byTag
+        - byTagWindow
+        - playbookEffect
       properties:
         window:
           $ref: "#/components/schemas/InsightsWindow"
@@ -13695,9 +13697,22 @@ components:
             $ref: "#/components/schemas/InsightsTagGroup"
           description: >-
             One row per (tagKey, value) of the tags on the Creative each destination was published from
-            (attributed through the Creative's rendered frames). Destinations with no attributed Creative, or a
-            Creative with no tags, are left out. Sorted by tagKey, then engagement rate descending (nulls last).
-            May be empty.
+            (attributed through the Creative's rendered frames); a `lessons` tag is split so each lesson id
+            (`#3`) has its own row, and `previewRounds` is not grouped. Destinations with no attributed Creative,
+            or a Creative with no tags, are left out. Ignores `window`: it always reads the settled posts of the
+            trailing 90 days (see `byTagWindow`), because a short window can never contain a settled Facebook
+            post. Rows are sorted by tagKey, then `medianViewLift` descending (nulls last). Each row carries a
+            server-decided `verdict`; the model should not re-judge the numbers. May be empty.
+        byTagWindow:
+          allOf:
+            - $ref: "#/components/schemas/InsightsWindow"
+          description: The fixed 90-day evidence window `byTag` and `playbookEffect` read, whatever `window` was asked for.
+        playbookEffect:
+          allOf:
+            - $ref: "#/components/schemas/PlaybookEffect"
+          description: >-
+            Settled posts of the same 90 days split by whether their attributed Creative has a non-empty
+            `lessons` tag, with each side's median view lift: did following the playbook help at all.
         topPosts:
           type: array
           items:
@@ -13793,6 +13808,31 @@ components:
           nullable: true
           description: Mean of the destinations' average-view-percentage where a platform reports it (YouTube); null otherwise.
 
+    PlaybookEffect:
+      type: object
+      required:
+        - withLessons
+        - withoutLessons
+      properties:
+        withLessons:
+          $ref: "#/components/schemas/PlaybookEffectSide"
+        withoutLessons:
+          $ref: "#/components/schemas/PlaybookEffectSide"
+
+    PlaybookEffectSide:
+      type: object
+      required:
+        - posts
+      properties:
+        posts:
+          type: integer
+          description: Settled posts on this side of the split.
+        medianViewLift:
+          type: number
+          format: double
+          nullable: true
+          description: Median view lift over the side's posts that have a baseline; null when none has one.
+
     InsightsTagGroup:
       description: An `InsightsGroup` for the destinations whose Creative carries one tag value.
       allOf:
@@ -13832,6 +13872,36 @@ components:
               format: double
               nullable: true
               description: Median of avgViewPct divided by the baseline's median avgViewPct, over posts with both; null otherwise.
+            withBaselinePosts:
+              type: integer
+              description: Settled posts with a view lift (a baseline existed). `beatBaselineShare` = `beatBaselinePosts` / this.
+            beatBaselinePosts:
+              type: integer
+              description: Of those, how many have a view lift above 1.
+            withRetentionBaselinePosts:
+              type: integer
+              description: Settled posts with a retention lift.
+            beatRetentionBaselinePosts:
+              type: integer
+              description: Of those, how many have a retention lift above 1.
+            viewVerdict:
+              type: string
+              description: >-
+                WORKS | DOESNT_WORK | NO_DIFFERENCE | NOT_ENOUGH_DATA, decided by the server from the view lift:
+                NOT_ENOUGH_DATA under 3 posts with a baseline; WORKS when the median lift is at least 1.2 and at
+                least 2/3 of the posts beat the baseline; DOESNT_WORK when it is at most 0.8 and at most 1/3 beat
+                it; otherwise NO_DIFFERENCE.
+            retentionVerdict:
+              type: string
+              description: The same rules over the retention lift.
+            verdict:
+              type: string
+              description: The row's default verdict, one of `viewVerdict` or `retentionVerdict` (see `verdictMetric`).
+            verdictMetric:
+              type: string
+              description: >-
+                VIEW_LIFT or RETENTION_LIFT. For hookType and archetype it is RETENTION_LIFT when at least 3 posts
+                have a retention baseline, else VIEW_LIFT; every other tag key uses VIEW_LIFT.
 
     InsightsPost:
       type: object
@@ -15502,7 +15572,7 @@ components:
       type: object
       description: >-
         Free-form-by-key but closed-set labels that say what kind of idea a Creative is, so performance can be
-        read by hook, angle and so on. Only these five keys are accepted (any other key is a 422 naming
+        read by hook, angle and so on. Only these seven keys are accepted (hookType, angle, format, archetype, hypothesis, lessons, previewRounds) (any other key is a 422 naming
         `tags.<key>`); each value is a non-blank string of at most 60 characters (enforced by the server as a 422, not by the schema, so the problem names the field). The values themselves are
         not enforced: the create skill uses hookType from its voice guide, angle `story-emotion|utility-education|trend-humor`,
         format `still|carousel|story|motion|clip|film`, archetype a slideshow archetype, hypothesis `H<n>`.
@@ -15524,6 +15594,16 @@ components:
         hypothesis:
           type: string
           description: The hypothesis id this Creative tests, H<n>.
+        lessons:
+          type: string
+          description: >-
+            The playbook lessons this Creative followed, as comma-separated ids matching `^#\d+(,#\d+)*$`
+            (e.g. `#3,#12`), at most 60 characters. Insights `byTag` gives each id its own row.
+        previewRounds:
+          type: string
+          description: >-
+            How many preview rounds the Creative took before it was approved, a whole number from 0 to 50 as a
+            string. Recorded for the author; never grouped by insights.
       additionalProperties: true
 
     CreativeLayoutOverrides:
@@ -17012,6 +17092,22 @@ components:
           format: double
           nullable: true
           description: Share of settled posts with a view lift whose lift is above 1; null when none has one.
+        withBaselinePosts:
+          type: integer
+          nullable: true
+          description: Settled posts with a view lift.
+        beatBaselinePosts:
+          type: integer
+          nullable: true
+          description: Of those, how many have a view lift above 1.
+        viewVerdict:
+          type: string
+          nullable: true
+          description: WORKS | DOESNT_WORK | NO_DIFFERENCE | NOT_ENOUGH_DATA, decided by the server (see InsightsTagGroup.viewVerdict).
+        retentionVerdict:
+          type: string
+          nullable: true
+          description: The same rules over the retention lift.
         byPlatform:
           type: array
           items:

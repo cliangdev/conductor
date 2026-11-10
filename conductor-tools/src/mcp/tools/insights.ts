@@ -36,6 +36,19 @@ interface InsightsTagGroup extends InsightsGroup {
   beatBaselineShare?: number | null
   medianEngagementRate?: number | null
   medianRetentionLift?: number | null
+  withBaselinePosts?: number | null
+  beatBaselinePosts?: number | null
+  withRetentionBaselinePosts?: number | null
+  beatRetentionBaselinePosts?: number | null
+  viewVerdict?: string | null
+  retentionVerdict?: string | null
+  verdict?: string | null
+  verdictMetric?: string | null
+}
+
+interface PlaybookEffectSide {
+  posts: number
+  medianViewLift?: number | null
 }
 
 interface InsightsPost {
@@ -91,6 +104,10 @@ interface CreativePerformanceEntry {
   medianViewLift?: number | null
   medianRetentionLift?: number | null
   beatBaselineShare?: number | null
+  withBaselinePosts?: number | null
+  beatBaselinePosts?: number | null
+  viewVerdict?: string | null
+  retentionVerdict?: string | null
   byPlatform: CreativePerformancePlatform[]
 }
 
@@ -102,6 +119,8 @@ interface MarketingInsightsResponse {
   byHour: InsightsGroup[]
   byWeekday: InsightsGroup[]
   byTag?: InsightsTagGroup[]
+  byTagWindow?: InsightsWindow
+  playbookEffect?: { withLessons: PlaybookEffectSide; withoutLessons: PlaybookEffectSide }
   topPosts: InsightsPost[]
   bottomPosts: InsightsPost[]
   movers: InsightsMover[]
@@ -181,6 +200,10 @@ function trimCreative(entry: CreativePerformanceEntry): Record<string, unknown> 
     medianViewLift: round4(entry.medianViewLift),
     medianRetentionLift: round4(entry.medianRetentionLift),
     beatBaselineShare: round4(entry.beatBaselineShare),
+    withBaselinePosts: entry.withBaselinePosts,
+    beatBaselinePosts: entry.beatBaselinePosts,
+    viewVerdict: entry.viewVerdict,
+    retentionVerdict: entry.retentionVerdict,
   })
 }
 
@@ -208,6 +231,11 @@ async function getPostInsights(
     byPlatform: data.byPlatform.map(trimGroup),
     byFormat: data.byFormat.map(trimGroup),
     byTag: (data.byTag ?? []).map(trimTagGroup),
+    byTagWindow: data.byTagWindow,
+    playbookEffect: data.playbookEffect && {
+      withLessons: omitNulls({ posts: data.playbookEffect.withLessons.posts, medianViewLift: round4(data.playbookEffect.withLessons.medianViewLift) }),
+      withoutLessons: omitNulls({ posts: data.playbookEffect.withoutLessons.posts, medianViewLift: round4(data.playbookEffect.withoutLessons.medianViewLift) }),
+    },
     bestHoursUtc: topGroups(data.byHour),
     bestWeekdays: topGroups(data.byWeekday),
     topPosts: data.topPosts.slice(0, 5).map(trimPost),

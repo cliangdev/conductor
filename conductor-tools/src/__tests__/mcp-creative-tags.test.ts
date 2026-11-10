@@ -47,7 +47,7 @@ describe('Creative tags', () => {
     for (const name of ['create_creative', 'update_creative', 'commit_creative_draft', 'preview_creative_draft']) {
       const t = props(name)['tags']!
       expect(t.type).toBe('object')
-      expect(Object.keys(t.properties!)).toEqual(['hookType', 'angle', 'format', 'archetype', 'hypothesis'])
+      expect(Object.keys(t.properties!)).toEqual(['hookType', 'angle', 'format', 'archetype', 'hypothesis', 'lessons', 'previewRounds'])
     }
   })
 
@@ -146,7 +146,7 @@ describe('Tag lift fields', () => {
     expect(result.byTag[0]).toMatchObject({ unsettledPosts: 2, medianViewLift: 1.2346, beatBaselineShare: 0.6667, medianEngagementRate: 0.05 })
     expect(result.byTag[0]).not.toHaveProperty('medianRetentionLift')
     const description = TOOLS.find((t) => t.name === 'get_marketing_insights')!.description
-    expect(description).toContain('only settled posts (TikTok/Instagram/YouTube 72 h old, Facebook 7 d)')
+    expect(description).toContain('settled posts (TikTok/Instagram/YouTube 72 h old, Facebook 7 d)')
     expect(description).toContain('1.0 is typical')
   })
 
@@ -161,5 +161,50 @@ describe('Tag lift fields', () => {
     const result = await getCreative({ creativeId: 'c-1' }, config)
     expect((result['performance'] as Array<Record<string, unknown>>)[0]).toMatchObject({ settledPosts: 1, medianViewLift: 2.5, medianRetentionLift: 1.1, beatBaselineShare: 1 })
     expect(TOOLS.find((t) => t.name === 'get_creative')!.description).toContain('medianViewLift')
+  })
+})
+
+describe('Verdicts, evidence window and playbook effect', () => {
+  it('get_marketing_insights passes the verdict fields, byTagWindow and playbookEffect through', async () => {
+    mocked(apiGet).mockResolvedValue({
+      window: { from: 'a', to: 'b', days: 7 },
+      totals: { key: 'all', posts: 0, views: 0, likes: 0, comments: 0, shares: 0, saves: 0 },
+      byPlatform: [], byFormat: [], byHour: [], byWeekday: [], topPosts: [], bottomPosts: [], movers: [],
+      coverage: { platforms: [], notes: [] }, creatives: [],
+      byTagWindow: { from: 'x', to: 'y', days: 90 },
+      playbookEffect: { withLessons: { posts: 4, medianViewLift: 1.31234 }, withoutLessons: { posts: 9, medianViewLift: null } },
+      byTag: [{ key: '#3', tagKey: 'lessons', posts: 4, views: 400, likes: 0, comments: 0, shares: 0, saves: 0, unsettledPosts: 1,
+        medianViewLift: 1.3, beatBaselineShare: 0.75, withBaselinePosts: 4, beatBaselinePosts: 3, withRetentionBaselinePosts: 0,
+        beatRetentionBaselinePosts: 0, viewVerdict: 'WORKS', retentionVerdict: 'NOT_ENOUGH_DATA', verdict: 'WORKS', verdictMetric: 'VIEW_LIFT' }],
+    })
+    const result = (await getMarketingInsights({ window: '7d' }, config)) as Record<string, unknown>
+    expect(result['byTagWindow']).toEqual({ from: 'x', to: 'y', days: 90 })
+    expect(result['playbookEffect']).toEqual({ withLessons: { posts: 4, medianViewLift: 1.3123 }, withoutLessons: { posts: 9 } })
+    expect((result['byTag'] as Array<Record<string, unknown>>)[0]).toMatchObject({
+      tagKey: 'lessons', key: '#3', withBaselinePosts: 4, beatBaselinePosts: 3, withRetentionBaselinePosts: 0,
+      beatRetentionBaselinePosts: 0, viewVerdict: 'WORKS', retentionVerdict: 'NOT_ENOUGH_DATA', verdict: 'WORKS', verdictMetric: 'VIEW_LIFT',
+    })
+    const description = TOOLS.find((t) => t.name === 'get_marketing_insights')!.description
+    expect(description).toContain('trailing 90 days')
+    expect(description).toContain('decided by the server')
+    expect(description).toContain('playbookEffect')
+  })
+
+  it('get_creative keeps the per-variant verdict fields', async () => {
+    mocked(apiGet).mockImplementation(async (url: string) => {
+      if (url.endsWith('/readiness')) return { ready: true, items: [] }
+      if (url.endsWith('/performance')) return { family: [{ creativeId: 'c-1', label: '1a', posts: 3, views: 10, withBaselinePosts: 3, beatBaselinePosts: 2, viewVerdict: 'WORKS', retentionVerdict: 'NOT_ENOUGH_DATA' }] }
+      if (url.includes('/experiments')) return []
+      if (url.endsWith('/c-1')) return { id: 'c-1', number: 1 }
+      return [{ id: 'c-1', number: 1 }]
+    })
+    const result = await getCreative({ creativeId: 'c-1' }, config)
+    expect((result['performance'] as Array<Record<string, unknown>>)[0]).toMatchObject({ withBaselinePosts: 3, beatBaselinePosts: 2, viewVerdict: 'WORKS', retentionVerdict: 'NOT_ENOUGH_DATA' })
+  })
+
+  it('create_creative sends lessons and previewRounds', async () => {
+    mocked(apiPost).mockResolvedValue({ id: 'c-1' })
+    await createCreative({ headline: 'Hi *there*', tags: { lessons: '#3,#12', previewRounds: '2' } }, config)
+    expect(mocked(apiPost).mock.calls[0]![1]).toMatchObject({ tags: { lessons: '#3,#12', previewRounds: '2' } })
   })
 })

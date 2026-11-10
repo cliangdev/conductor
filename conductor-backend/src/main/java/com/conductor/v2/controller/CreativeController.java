@@ -580,7 +580,11 @@ public class CreativeController implements CreativesApi {
                 .settledPosts(p.settledPosts())
                 .medianViewLift(p.medianViewLift())
                 .medianRetentionLift(p.medianRetentionLift())
-                .beatBaselineShare(p.beatBaselineShare());
+                .beatBaselineShare(p.beatBaselineShare())
+                .withBaselinePosts(p.withBaselinePosts())
+                .beatBaselinePosts(p.beatBaselinePosts())
+                .viewVerdict(p.viewVerdict())
+                .retentionVerdict(p.retentionVerdict());
     }
 
     private CreativeExperimentResponse toResponse(CreativeExperiment e) {

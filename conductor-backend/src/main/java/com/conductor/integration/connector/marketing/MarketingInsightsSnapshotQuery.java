@@ -4,8 +4,8 @@ import com.conductor.creative.CreativeTagAttribution;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.WorkItem;
+import com.conductor.marketing.insights.LessonVerdictRules;
 import com.conductor.marketing.insights.PostBaselineService;
-import com.conductor.marketing.insights.PostSettleWindows;
 import com.conductor.repository.PostPublishTargetMetricRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.WorkItemRepository;
@@ -90,10 +90,8 @@ public class MarketingInsightsSnapshotQuery {
             }
         }
 
-        Map<String, String> hookTypeByTarget = hookTypes(projectId, targets);
-        Map<String, Object> payload = build(targets, latestByTarget, window[0], window[1], hookTypeByTarget,
-                hookTypeByTarget.isEmpty() ? null : baselineService.baselines(projectId, now.atOffset(ZoneOffset.UTC)),
-                now.atOffset(ZoneOffset.UTC));
+        Map<String, Object> payload = build(targets, latestByTarget, window[0], window[1]);
+        payload.put("byHookType", byHookType(projectId, now.atOffset(ZoneOffset.UTC)));
         Map<String, Object> dueChanges = changesDueForReview(projectId, now);
         if (dueChanges != null) {
             payload.put("changesDueForReview", dueChanges);
@@ -102,21 +100,52 @@ public class MarketingInsightsSnapshotQuery {
     }
 
     /**
-     * Destination id to the hookType tag of the Creative it was published from (through the shared
-     * attribution); destinations with no attributed Creative or no hookType are absent. A destination
-     * attributed to several hookTypes counts under the alphabetically first, once, so rows still sum to posts.
+     * The weekly hook read: one row per hookType over the settled posts of the trailing 90 days (the same
+     * evidence set as insights' {@code byTag}, not this snapshot's seven-day window, because a week can never
+     * hold a settled Facebook post), through the shared attribution. A row carries the usual counters, the
+     * median view lift and the server's {@code verdict}/{@code verdictMetric} ({@code LessonVerdictRules}); a
+     * hookType with no computable view lift is left out, as the digest ranks on it. Best lift first.
      */
-    private Map<String, String> hookTypes(String projectId, List<PostPublishTarget> targets) {
-        if (targets.isEmpty()) {
-            return Map.of();
+    private List<Map<String, Object>> byHookType(String projectId, OffsetDateTime now) {
+        Map<String, java.util.Set<CreativeTagAttribution.TagValue>> tagsByTarget = tagAttribution.tagsByTarget(projectId);
+        if (tagsByTarget.isEmpty()) {
+            return List.of();
         }
-        Map<String, String> result = new LinkedHashMap<>();
-        tagAttribution.tagsByTarget(projectId).forEach((targetId, tags) -> tags.stream()
-                .filter(t -> "hookType".equals(t.key()))
-                .map(CreativeTagAttribution.TagValue::value)
-                .min(Comparator.naturalOrder())
-                .ifPresent(v -> result.put(targetId, v)));
-        return result;
+        PostBaselineService.Baselines evidence = baselineService.baselines(projectId, now);
+        Map<String, List<PostBaselineService.Observation>> byHook = new LinkedHashMap<>();
+        for (PostBaselineService.Observation o : evidence.settled()) {
+            tagsByTarget.getOrDefault(o.targetId(), java.util.Set.of()).stream()
+                    .filter(t -> "hookType".equals(t.key()))
+                    .map(CreativeTagAttribution.TagValue::value)
+                    .distinct()
+                    .forEach(hook -> byHook.computeIfAbsent(hook, k -> new ArrayList<>()).add(o));
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        byHook.forEach((hook, observations) -> {
+            PostBaselineService.LiftSummary lift = evidence.summarize(observations);
+            if (lift.medianViewLift() == null) {
+                return;
+            }
+            long views = 0;
+            long engagements = 0;
+            for (PostBaselineService.Observation o : observations) {
+                views += orZero(o.views());
+                engagements += orZero(o.likes()) + orZero(o.comments()) + orZero(o.shares()) + orZero(o.saves());
+            }
+            LessonVerdictRules.Default verdict = LessonVerdictRules.defaultFor("hookType", lift);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("hookType", hook);
+            row.put("posts", (long) observations.size());
+            row.put("views", views);
+            row.put("engagements", engagements);
+            row.put("engagementRate", views > 0 ? (double) engagements / views : 0.0);
+            row.put("medianViewLift", lift.medianViewLift());
+            row.put("verdict", verdict.verdict());
+            row.put("verdictMetric", verdict.metric());
+            rows.add(row);
+        });
+        rows.sort(Comparator.comparingDouble((Map<String, Object> r) -> (double) r.get("medianViewLift")).reversed());
+        return rows;
     }
 
     /**
@@ -162,9 +191,7 @@ public class MarketingInsightsSnapshotQuery {
 
     private Map<String, Object> build(List<PostPublishTarget> targets,
                                       Map<String, PostPublishTargetMetric> latestByTarget,
-                                      Instant windowStart, Instant windowEnd,
-                                      Map<String, String> hookTypeByTarget,
-                                      PostBaselineService.Baselines baselines, OffsetDateTime now) {
+                                      Instant windowStart, Instant windowEnd) {
         DateTimeFormatter iso = DateTimeFormatter.ISO_LOCAL_DATE;
 
         // Zero-filled day buckets across the whole window, in order.
@@ -176,8 +203,6 @@ public class MarketingInsightsSnapshotQuery {
 
         Map<String, long[]> byPlatform = new LinkedHashMap<>(); // [posts, views, engagements]
         Map<String, long[]> byFormat = new LinkedHashMap<>();
-        Map<String, long[]> byHookType = new LinkedHashMap<>();
-        Map<String, List<PostBaselineService.Observation>> hookObservations = new LinkedHashMap<>();
         List<Map<String, Object>> candidatePosts = new ArrayList<>();
 
         for (PostPublishTarget target : targets) {
@@ -204,17 +229,6 @@ public class MarketingInsightsSnapshotQuery {
             if (metric != null) {
                 accumulate(byPlatform, target.getPlatform(), views, engagements);
                 accumulate(byFormat, target.getFormat(), views, engagements);
-                String hookType = hookTypeByTarget.get(target.getId());
-                // Settled posts only: a post a few hours old has not finished collecting views.
-                if (hookType != null && PostSettleWindows.isSettled(target.getPlatform(), target.getFireTime(), now)) {
-                    accumulate(byHookType, hookType, views, engagements);
-                    hookObservations.computeIfAbsent(hookType, k -> new ArrayList<>()).add(
-                            new PostBaselineService.Observation(target.getPlatform(), target.getFormat(),
-                                    target.getFireTime(), metric.getViews(), metric.getLikes(), metric.getComments(),
-                                    metric.getShares(), metric.getSaves(),
-                                    PostBaselineService.avgViewPct(metric.getExtra())));
-                }
-
                 if (views >= 1) {
                     WorkItem post = target.getWorkItem();
                     String displayId = post.getProject() != null && post.getProject().getKey() != null
@@ -258,15 +272,6 @@ public class MarketingInsightsSnapshotQuery {
         payload.put("trend", trend);
         payload.put("byPlatform", platformRows);
         payload.put("byFormat", formatRows);
-        List<Map<String, Object>> hookRows = toDimensionRows(byHookType, "hookType");
-        for (Map<String, Object> row : hookRows) {
-            Double lift = baselines == null ? null
-                    : baselines.summarize(hookObservations.get((String) row.get("hookType"))).medianViewLift();
-            if (lift != null) {
-                row.put("medianViewLift", lift);
-            }
-        }
-        payload.put("byHookType", hookRows);
         payload.put("topPosts", topPosts);
         return payload;
     }

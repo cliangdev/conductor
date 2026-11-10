@@ -52,11 +52,18 @@ public class MarketingInsightsQueryService {
 
     /**
      * One (tag, value) grouping: {@code tagKey} is the tag, the group's key is its value. The group counts
-     * settled posts only; {@code unsettledPosts} is how many were left out, and the lifts are against the
-     * account's own 90-day baseline ({@link PostBaselineService}).
+     * settled posts only; {@code unsettledPosts} is how many were left out. {@code lift} holds the lifts and
+     * verdicts against the account's 90-day baseline ({@link PostBaselineService}); {@code verdict} and
+     * {@code verdictMetric} are the row's default ({@link LessonVerdictRules}).
      */
-    public record TagGroup(String tagKey, Group group, int unsettledPosts, Double medianViewLift,
-                           Double beatBaselineShare, Double medianEngagementRate, Double medianRetentionLift) {}
+    public record TagGroup(String tagKey, Group group, int unsettledPosts, PostBaselineService.LiftSummary lift,
+                           String verdict, String verdictMetric) {}
+
+    /** One side of {@link PlaybookEffect}. */
+    public record PlaybookSide(int posts, Double medianViewLift) {}
+
+    /** Settled posts of the evidence window split by whether their Creative has a {@code lessons} tag. */
+    public record PlaybookEffect(PlaybookSide withLessons, PlaybookSide withoutLessons) {}
 
     /** One destination, for the top/bottom rankings. */
     public record Post(String workItemId, String displayId, String title, String workflowSlug,
@@ -73,7 +80,8 @@ public class MarketingInsightsQueryService {
 
     /** The whole response, as plain data the controller maps to {@code MarketingInsightsResponse}. */
     public record Insights(Window window, Group totals, List<Group> byPlatform, List<Group> byFormat,
-                           List<Group> byHour, List<Group> byWeekday, List<TagGroup> byTag, List<Post> topPosts,
+                           List<Group> byHour, List<Group> byWeekday, List<TagGroup> byTag, Window byTagWindow,
+                           PlaybookEffect playbookEffect, List<Post> topPosts,
                            List<Post> bottomPosts, List<Mover> movers, Coverage coverage,
                            List<CreativePerformanceService.VariantPerformance> creatives) {}
 
@@ -158,7 +166,12 @@ public class MarketingInsightsQueryService {
         List<Group> byFormat = groupBy(reporting, TargetSnapshot::format, key -> null);
         List<Group> byHour = byHour(reporting);
         List<Group> byWeekday = byWeekday(reporting);
-        List<TagGroup> byTag = byTag(projectId, reporting, now);
+        // One evidence set per request (the settled posts of the trailing 90 days, whatever the window) and one
+        // destination-to-tags map, shared by byTag, playbookEffect and the top Creatives.
+        PostBaselineService.Baselines evidence = baselineService.baselines(projectId, now);
+        Map<String, java.util.Set<CreativeTagAttribution.TagValue>> tagsByTarget = tagAttribution.tagsByTarget(projectId);
+        List<TagGroup> byTag = byTag(evidence, tagsByTarget);
+        PlaybookEffect playbookEffect = playbookEffect(evidence, tagsByTarget);
 
         List<Post> ranked = rank(reporting, workItems);
         List<Post> topPosts = ranked.stream().limit(TOP_POSTS_LIMIT).toList();
@@ -172,9 +185,10 @@ public class MarketingInsightsQueryService {
         Coverage coverage = coverage(population, reporting);
 
         List<CreativePerformanceService.VariantPerformance> creatives =
-                creativePerformanceService.topCreatives(projectId, from, to, TOP_CREATIVES_LIMIT);
+                creativePerformanceService.topCreatives(projectId, from, to, TOP_CREATIVES_LIMIT, evidence);
 
         return new Insights(new Window(from, to, spec.days()), totals, byPlatform, byFormat, byHour, byWeekday, byTag,
+                new Window(evidence.from(), evidence.to(), PostBaselineService.BASELINE_DAYS), playbookEffect,
                 topPosts, bottomPosts, movers, coverage, creatives);
     }
 
@@ -295,46 +309,52 @@ public class MarketingInsightsQueryService {
     }
 
     /**
-     * One row per (tag key, value) over the reporting destinations whose attributed Creative carries it,
-     * resolved through {@link CreativeTagAttribution} (and so {@code CreativeAttributionResolver}). Only
-     * settled posts ({@link PostSettleWindows}) are counted; the rest show as {@code unsettledPosts}. Lifts
-     * come from {@link PostBaselineService}. Sorted by tag key (the declared order), then median view lift
-     * descending, nulls last.
+     * One row per (tag key, value) over the evidence set's settled posts whose attributed Creative carries it
+     * (a {@code lessons} tag gives each lesson id its own row; {@code previewRounds} is not grouped). The
+     * attribution is {@link CreativeTagAttribution}'s, which is {@code CreativeAttributionResolver}'s. Posts
+     * still inside their settle window show only as {@code unsettledPosts}. Sorted by tag key (the declared
+     * order), then median view lift descending, nulls last.
      */
-    private List<TagGroup> byTag(String projectId, List<TargetSnapshot> reporting, OffsetDateTime now) {
-        if (reporting.isEmpty()) {
-            return List.of();
-        }
-        Map<String, java.util.Set<CreativeTagAttribution.TagValue>> tagsByTarget = tagAttribution.tagsByTarget(projectId);
+    private List<TagGroup> byTag(PostBaselineService.Baselines evidence,
+                                 Map<String, java.util.Set<CreativeTagAttribution.TagValue>> tagsByTarget) {
         if (tagsByTarget.isEmpty()) {
             return List.of();
         }
-        Map<CreativeTagAttribution.TagValue, List<TargetSnapshot>> grouped = new LinkedHashMap<>();
-        for (TargetSnapshot t : reporting) {
-            for (CreativeTagAttribution.TagValue tag : tagsByTarget.getOrDefault(t.targetId(), java.util.Set.of())) {
-                grouped.computeIfAbsent(tag, k -> new ArrayList<>()).add(t);
-            }
-        }
-        if (grouped.isEmpty()) {
-            return List.of();
-        }
-        PostBaselineService.Baselines baselines = baselineService.baselines(projectId, now);
+        Map<CreativeTagAttribution.TagValue, List<PostBaselineService.Observation>> settled =
+                TagGrouping.group(evidence.settled(), tagsByTarget);
+        Map<CreativeTagAttribution.TagValue, List<PostBaselineService.Observation>> unsettled =
+                TagGrouping.group(evidence.unsettled(), tagsByTarget);
+        java.util.Set<CreativeTagAttribution.TagValue> tags = new java.util.LinkedHashSet<>(settled.keySet());
+        tags.addAll(unsettled.keySet());
         List<String> keyOrder = com.conductor.creative.CreativeTagsSupport.KEYS;
-        return grouped.entrySet().stream()
-                .map(e -> {
-                    List<TargetSnapshot> settled = e.getValue().stream()
-                            .filter(t -> PostSettleWindows.isSettled(t.platform(), t.fireTime(), now)).toList();
-                    PostBaselineService.LiftSummary lift = baselines.summarize(settled.stream()
-                            .map(t -> new PostBaselineService.Observation(t.platform(), t.format(), t.fireTime(),
-                                    t.views(), t.likes(), t.comments(), t.shares(), t.saves(), t.avgViewPct()))
-                            .toList());
-                    return new TagGroup(e.getKey().key(), groupOf(e.getKey().value(), null, settled),
-                            e.getValue().size() - settled.size(), lift.medianViewLift(), lift.beatBaselineShare(),
-                            lift.medianEngagementRate(), lift.medianRetentionLift());
+        return tags.stream()
+                .map(tag -> {
+                    List<PostBaselineService.Observation> posts = settled.getOrDefault(tag, List.of());
+                    PostBaselineService.LiftSummary lift = evidence.summarize(posts);
+                    LessonVerdictRules.Default verdict = LessonVerdictRules.defaultFor(tag.key(), lift);
+                    return new TagGroup(tag.key(), groupOf(tag.value(), null, posts.stream().map(MarketingInsightsQueryService::asSnapshot).toList()),
+                            unsettled.getOrDefault(tag, List.of()).size(), lift, verdict.verdict(), verdict.metric());
                 })
                 .sorted(Comparator.comparingInt((TagGroup g) -> keyOrder.indexOf(g.tagKey()))
-                        .thenComparing(TagGroup::medianViewLift, Comparator.nullsLast(Comparator.reverseOrder())))
+                        .thenComparing(g -> g.lift().medianViewLift(), Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
+    }
+
+    private PlaybookEffect playbookEffect(PostBaselineService.Baselines evidence,
+                                          Map<String, java.util.Set<CreativeTagAttribution.TagValue>> tagsByTarget) {
+        List<PostBaselineService.Observation> with = new ArrayList<>();
+        List<PostBaselineService.Observation> without = new ArrayList<>();
+        for (PostBaselineService.Observation o : evidence.settled()) {
+            (TagGrouping.followedLessons(o.targetId(), tagsByTarget) ? with : without).add(o);
+        }
+        return new PlaybookEffect(
+                new PlaybookSide(with.size(), evidence.summarize(with).medianViewLift()),
+                new PlaybookSide(without.size(), evidence.summarize(without).medianViewLift()));
+    }
+
+    private static TargetSnapshot asSnapshot(PostBaselineService.Observation o) {
+        return new TargetSnapshot(o.targetId(), null, o.platform(), o.format(), null, null, null, o.fireTime(), true,
+                o.views(), o.likes(), o.comments(), o.shares(), o.saves(), o.avgViewPct(), null);
     }
 
     private Group groupOf(String key, String label, List<TargetSnapshot> targets) {

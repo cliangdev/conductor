@@ -58,8 +58,7 @@ class MarketingInsightsQueryServiceTest {
         when(performanceService.topCreatives(anyString(), any(), any(), anyInt())).thenReturn(List.of());
         service = new MarketingInsightsQueryService(security, targetRepository, metricRepository, workItemRepository,
                 new PublishPlatformRegistry(), performanceService,
-                mock(com.conductor.creative.CreativeTagAttribution.class),
-                mock(com.conductor.marketing.insights.PostBaselineService.class));
+                mock(com.conductor.creative.CreativeTagAttribution.class), emptyEvidence());
         caller = new User();
         caller.setId("u-1");
         when(security.isProjectMember("proj-1", "u-1")).thenReturn(true);
@@ -371,5 +370,33 @@ class MarketingInsightsQueryServiceTest {
         stranger.setId("u-2");
         assertThatThrownBy(() -> service.compute("proj-1", "30d", null, stranger))
                 .isInstanceOf(jakarta.persistence.EntityNotFoundException.class);
+    }
+
+    private static PostBaselineService emptyEvidence() {
+        PostBaselineService baselines = mock(PostBaselineService.class);
+        when(baselines.baselines(anyString(), any())).thenReturn(PostBaselineService.Baselines.empty(NOW));
+        return baselines;
+    }
+
+    @Test
+    void computeBuildsTheEvidenceAndTheTagMapOnceAndSharesThemWithTheTopCreatives() {
+        com.conductor.creative.CreativeTagAttribution tags = mock(com.conductor.creative.CreativeTagAttribution.class);
+        PostBaselineService baselines = mock(PostBaselineService.class);
+        PostBaselineService.Baselines evidence = PostBaselineService.Baselines.empty(NOW);
+        when(baselines.baselines(anyString(), any())).thenReturn(evidence);
+        MarketingInsightsQueryService once = new MarketingInsightsQueryService(security, targetRepository,
+                metricRepository, workItemRepository, new PublishPlatformRegistry(), performanceService, tags, baselines);
+
+        MarketingInsightsQueryService.Insights insights = once.compute("proj-1", InsightsWindowSpec.parse("7d"), null, NOW);
+
+        org.mockito.Mockito.verify(baselines, org.mockito.Mockito.times(1)).baselines(anyString(), any());
+        org.mockito.Mockito.verify(tags, org.mockito.Mockito.times(1)).tagsByTarget(anyString());
+        org.mockito.Mockito.verify(performanceService).topCreatives(anyString(), any(), any(), anyInt(),
+                org.mockito.ArgumentMatchers.same(evidence));
+        // byTag ignores the 7d window: it reports the fixed 90-day one.
+        assertThat(insights.byTagWindow().days()).isEqualTo(90);
+        assertThat(insights.window().days()).isEqualTo(7);
+        assertThat(insights.byTag()).isEmpty();
+        assertThat(insights.playbookEffect().withLessons().posts()).isZero();
     }
 }

@@ -3,6 +3,7 @@ package com.conductor.creative;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.User;
+import com.conductor.marketing.insights.LessonVerdictRules;
 import com.conductor.marketing.insights.PostBaselineService;
 import com.conductor.marketing.insights.PostSettleWindows;
 import com.conductor.repository.PostPublishTargetMetricRepository;
@@ -39,7 +40,8 @@ public class CreativePerformanceService {
                                      Double engagementRate, Double avgViewPct, Long views72h,
                                      List<PlatformBreakdown> byPlatform, Integer settledPosts,
                                      Double medianViewLift, Double medianRetentionLift,
-                                     Double beatBaselineShare) {}
+                                     Double beatBaselineShare, Integer withBaselinePosts,
+                                     Integer beatBaselinePosts, String viewVerdict, String retentionVerdict) {}
 
     /** The whole family (the requested Creative plus every lettered sibling), oldest letter first. */
     public record FamilyPerformance(String creativeId, List<VariantPerformance> family) {}
@@ -69,7 +71,7 @@ public class CreativePerformanceService {
         Creative root = rootOf(projectId, creative);
         List<Creative> family = new ArrayList<>(creativeRepository.findAllByNumberAndProjectId(root.getNumber(), projectId));
         family.sort(Comparator.comparing(Creative::getVariantLetter));
-        return new FamilyPerformance(creativeId, variantPerformances(family, null, null));
+        return new FamilyPerformance(creativeId, variantPerformances(family, null, null, null));
     }
 
     /**
@@ -79,8 +81,15 @@ public class CreativePerformanceService {
      */
     @Transactional(readOnly = true)
     public List<VariantPerformance> topCreatives(String projectId, OffsetDateTime from, OffsetDateTime to, int limit) {
+        return topCreatives(projectId, from, to, limit, null);
+    }
+
+    /** As above, reading lifts from {@code baselines} when the caller already built them for this request (null builds them here). */
+    @Transactional(readOnly = true)
+    public List<VariantPerformance> topCreatives(String projectId, OffsetDateTime from, OffsetDateTime to, int limit,
+                                                 PostBaselineService.Baselines baselines) {
         List<Creative> creatives = creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId);
-        return variantPerformances(creatives, from, to).stream()
+        return variantPerformances(creatives, from, to, baselines).stream()
                 .filter(p -> p.posts() > 0)
                 .sorted(Comparator.comparingLong(VariantPerformance::views).reversed())
                 .limit(limit)
@@ -96,7 +105,8 @@ public class CreativePerformanceService {
      * One roll-up per Creative, in input order, in a constant number of queries: attribution, the latest
      * snapshots and the 72h snapshots are each loaded once for every Creative's destinations together.
      */
-    private List<VariantPerformance> variantPerformances(List<Creative> creatives, OffsetDateTime from, OffsetDateTime to) {
+    private List<VariantPerformance> variantPerformances(List<Creative> creatives, OffsetDateTime from, OffsetDateTime to,
+                                                         PostBaselineService.Baselines given) {
         Map<String, List<PostPublishTarget>> attributed = attributionResolver.resolvePublishedTargetsByCreative(
                 creatives.stream().map(Creative::getId).toList());
 
@@ -116,9 +126,12 @@ public class CreativePerformanceService {
         Map<String, PostPublishTargetMetric> latestByTarget = new LinkedHashMap<>();
         Map<String, PostPublishTargetMetric> at72hByTarget = new LinkedHashMap<>();
         OffsetDateTime now = OffsetDateTime.now();
-        PostBaselineService.Baselines baselines = null;
+        // At most one baseline build per call: the caller's when given, else built here, and only when there is something to lift.
+        PostBaselineService.Baselines baselines = given;
         if (!allTargets.isEmpty()) {
-            baselines = baselineService.baselines(creatives.get(0).getProjectId(), now);
+            if (baselines == null) {
+                baselines = baselineService.baselines(creatives.get(0).getProjectId(), now);
+            }
             List<String> targetIds = List.copyOf(allTargets.keySet());
             for (PostPublishTargetMetric m : metricRepository.findLatestAvailableForTargets(targetIds)) {
                 latestByTarget.put(m.getTargetId(), m);
@@ -169,7 +182,7 @@ public class CreativePerformanceService {
                 avgViewPcts.add(avgPct);
             }
             if (PostSettleWindows.isSettled(target.getPlatform(), target.getFireTime(), now)) {
-                settled.add(new PostBaselineService.Observation(target.getPlatform(), target.getFormat(),
+                settled.add(new PostBaselineService.Observation(target.getId(), target.getPlatform(), target.getFormat(),
                         target.getFireTime(), latest.getViews(), latest.getLikes(), latest.getComments(),
                         latest.getShares(), latest.getSaves(), avgPct));
             }
@@ -206,12 +219,14 @@ public class CreativePerformanceService {
         PostBaselineService.LiftSummary lift = baselines.summarize(settled);
         return new VariantPerformance(creative.getId(), creative.displayId(), creative.getHeadline(), posts, views,
                 engagementRate, avgViewPct, views72h, platformBreakdown, settled.size(), lift.medianViewLift(),
-                lift.medianRetentionLift(), lift.beatBaselineShare());
+                lift.medianRetentionLift(), lift.beatBaselineShare(), lift.withBaselinePosts(),
+                lift.beatBaselinePosts(), lift.viewVerdict(), lift.retentionVerdict());
     }
 
     private VariantPerformance empty(Creative creative) {
         return new VariantPerformance(creative.getId(), creative.displayId(), creative.getHeadline(), 0, 0,
-                null, null, null, List.of(), 0, null, null, null);
+                null, null, null, List.of(), 0, null, null, null, 0, 0,
+                LessonVerdictRules.NOT_ENOUGH_DATA, LessonVerdictRules.NOT_ENOUGH_DATA);
     }
 
     private static Double avgViewPct(JsonNode extra) {

@@ -1563,6 +1563,46 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
                 .isInstanceOf(CreativeValidationException.class);
     }
 
+    @Test
+    void aVariantCutFromTheSecondLetterInheritsThatLettersTagsNotTheRoots() {
+        CreateCreativeRequest request = concept("Source parent.", "Body.");
+        request.setTags(tags("question", "trend-humor"));
+        CreativeService.CreativeView root = creativeService.createCreative(project.getId(), request, admin);
+        CreativeService.CreativeView b = creativeService.createVariant(project.getId(), root.creative().getId(),
+                new CreateCreativeVariantRequest().headline("Second *take*.").tags(tags("stat", "story-emotion")), admin);
+
+        CreativeService.CreativeView c = creativeService.createVariant(project.getId(), b.creative().getId(),
+                new CreateCreativeVariantRequest().headline("Third *take*."), admin);
+
+        assertThat(storedTags(c)).containsExactly(Map.entry("hookType", "stat"), Map.entry("angle", "story-emotion"));
+    }
+
+    @Test
+    void lessonsAndPreviewRoundsAreValidated() {
+        for (String ok : List.of("0", "7", "50")) {
+            CreateCreativeRequest r = concept("Rounds " + ok + ".", "Body.");
+            r.setTags(new com.conductor.generated.v2.model.CreativeTags().previewRounds(ok).lessons("#3,#12"));
+            assertThat(storedTags(creativeService.createCreative(project.getId(), r, admin)))
+                    .containsEntry("previewRounds", ok).containsEntry("lessons", "#3,#12");
+        }
+        for (String bad : List.of("51", "-1", "abc", "1.5", "007", "")) {
+            CreateCreativeRequest r = concept("Bad rounds.", "Body.");
+            r.setTags(new com.conductor.generated.v2.model.CreativeTags().previewRounds(bad));
+            assertThatThrownBy(() -> creativeService.createCreative(project.getId(), r, admin))
+                    .isInstanceOfSatisfying(CreativeValidationException.class, e ->
+                            assertThat(e.violations()).extracting(CreativeValidationException.Violation::field)
+                                    .contains("tags.previewRounds"));
+        }
+        for (String bad : List.of("3", "#3,", "#3, #4", "#a", "#" + "1".repeat(60))) {
+            CreateCreativeRequest r = concept("Bad lessons.", "Body.");
+            r.setTags(new com.conductor.generated.v2.model.CreativeTags().lessons(bad));
+            assertThatThrownBy(() -> creativeService.createCreative(project.getId(), r, admin))
+                    .isInstanceOfSatisfying(CreativeValidationException.class, e ->
+                            assertThat(e.violations()).extracting(CreativeValidationException.Violation::field)
+                                    .contains("tags.lessons"));
+        }
+    }
+
     private CreateCreativeRequest concept(String headline, String body) {
         CreateCreativeRequest request = new CreateCreativeRequest();
         request.setHeadline(headline);

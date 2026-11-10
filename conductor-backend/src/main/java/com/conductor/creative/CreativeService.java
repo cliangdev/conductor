@@ -617,9 +617,9 @@ public class CreativeService {
         variant.setSlideshow(root.getSlideshow());
         variant.setSlideStyle(root.getSlideStyle());
         variant.setSlideshowSpec(root.getSlideshowSpec());
-        // A variant inherits the idea's tags unless it is given its own.
+        // A variant inherits the tags of the Creative it was cut from (not the family root's) unless given its own.
         variant.setTags(request != null && request.getTags() != null
-                ? CreativeTagsSupport.toStored(objectMapper, request.getTags()) : root.getTags());
+                ? CreativeTagsSupport.toStored(objectMapper, request.getTags()) : source.getTags());
         variant.setTypeOverrides(objectMapper.createObjectNode());
         variant.setLayoutOverrides(root.getLayoutOverrides());
         variant.setLockup(root.getLockup());

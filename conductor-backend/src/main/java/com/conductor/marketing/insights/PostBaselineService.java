@@ -35,7 +35,7 @@ public class PostBaselineService {
     public static final int MIN_BUCKET_POSTS = 10;
 
     /** One reporting destination's numbers. */
-    public record Observation(String platform, String format, OffsetDateTime fireTime, Long views, Long likes,
+    public record Observation(String targetId, String platform, String format, OffsetDateTime fireTime, Long views, Long likes,
                               Long comments, Long shares, Long saves, Double avgViewPct) {
 
         Double engagementRate() {
@@ -60,17 +60,43 @@ public class PostBaselineService {
      * and {@code medianRetentionLift}. Each null when it cannot be computed.
      */
     public record LiftSummary(Double medianViewLift, Double beatBaselineShare, Double medianEngagementRate,
-                              Double medianRetentionLift) {}
+                              Double medianRetentionLift, int withBaselinePosts, int beatBaselinePosts,
+                              int withRetentionBaselinePosts, int beatRetentionBaselinePosts, String viewVerdict,
+                              String retentionVerdict) {}
 
     /** Baselines for one project at one moment. */
     public static final class Baselines {
         private final Map<String, Baseline> byPlatformFormat;
         private final Map<String, Baseline> byPlatform;
+        private final List<Observation> settled;
+        private final List<Observation> unsettled;
+        private final OffsetDateTime from;
+        private final OffsetDateTime to;
 
-        Baselines(Map<String, Baseline> byPlatformFormat, Map<String, Baseline> byPlatform) {
+        Baselines(Map<String, Baseline> byPlatformFormat, Map<String, Baseline> byPlatform,
+                  List<Observation> settled, List<Observation> unsettled, OffsetDateTime from, OffsetDateTime to) {
             this.byPlatformFormat = byPlatformFormat;
             this.byPlatform = byPlatform;
+            this.settled = settled;
+            this.unsettled = unsettled;
+            this.from = from;
+            this.to = to;
         }
+
+        /** No evidence at all (no baseline, no posts), for the window ending at {@code now}. */
+        public static Baselines empty(OffsetDateTime now) {
+            return new Baselines(Map.of(), Map.of(), List.of(), List.of(), now.minusDays(BASELINE_DAYS), now);
+        }
+
+        /** Settled reporting destinations of the trailing {@value #BASELINE_DAYS} days: the one fixed evidence set. */
+        public List<Observation> settled() { return settled; }
+
+        /** Reporting destinations of the same days still inside their settle window. */
+        public List<Observation> unsettled() { return unsettled; }
+
+        public OffsetDateTime from() { return from; }
+
+        public OffsetDateTime to() { return to; }
 
         /** The platform+format baseline when it has enough posts, else the platform's, else null. */
         public Baseline forBucket(String platform, String format) {
@@ -96,11 +122,16 @@ public class PostBaselineService {
         public LiftSummary summarize(List<Observation> settled) {
             List<PostLift> lifts = settled.stream().map(this::lift).toList();
             List<Double> viewLifts = lifts.stream().map(PostLift::viewLift).filter(java.util.Objects::nonNull).toList();
-            Double beat = viewLifts.isEmpty() ? null
-                    : (double) viewLifts.stream().filter(l -> l > 1).count() / viewLifts.size();
-            return new LiftSummary(median(viewLifts), beat,
+            List<Double> retentionLifts = lifts.stream().map(PostLift::retentionLift).filter(java.util.Objects::nonNull).toList();
+            int beat = (int) viewLifts.stream().filter(l -> l > 1).count();
+            int beatRetention = (int) retentionLifts.stream().filter(l -> l > 1).count();
+            Double medianView = median(viewLifts);
+            Double medianRetention = median(retentionLifts);
+            return new LiftSummary(medianView, viewLifts.isEmpty() ? null : (double) beat / viewLifts.size(),
                     median(lifts.stream().map(PostLift::engagementRate).filter(java.util.Objects::nonNull).toList()),
-                    median(lifts.stream().map(PostLift::retentionLift).filter(java.util.Objects::nonNull).toList()));
+                    medianRetention, viewLifts.size(), beat, retentionLifts.size(), beatRetention,
+                    LessonVerdictRules.verdict(viewLifts.size(), beat, medianView),
+                    LessonVerdictRules.verdict(retentionLifts.size(), beatRetention, medianRetention));
         }
     }
 
@@ -113,44 +144,53 @@ public class PostBaselineService {
         this.metricRepository = metricRepository;
     }
 
-    /** Two queries however many posts: the project's published destinations in the window, their latest snapshots. */
+    /**
+     * The evidence for one project at one moment, always the trailing {@value #BASELINE_DAYS} days whatever
+     * window a caller is looking at: two queries however many posts (published destinations, latest snapshots).
+     * Build it once per request and pass it down.
+     */
     @Transactional(readOnly = true)
     public Baselines baselines(String projectId, OffsetDateTime now) {
         OffsetDateTime from = now.minusDays(BASELINE_DAYS);
-        List<PostPublishTarget> targets = targetRepository.findPublishedByFireTimeWindow(projectId, null, from, now)
-                .stream()
-                .filter(t -> PostSettleWindows.isSettled(t.getPlatform(), t.getFireTime(), now))
-                .toList();
+        List<PostPublishTarget> targets = targetRepository.findPublishedByFireTimeWindow(projectId, null, from, now);
         if (targets.isEmpty()) {
-            return new Baselines(Map.of(), Map.of());
+            return Baselines.empty(now);
         }
         Map<String, PostPublishTargetMetric> latest = metricRepository
                 .findLatestAvailableForTargets(targets.stream().map(PostPublishTarget::getId).toList()).stream()
                 .collect(Collectors.toMap(PostPublishTargetMetric::getTargetId, m -> m));
 
-        Map<String, List<PostPublishTargetMetric>> byPf = new HashMap<>();
-        Map<String, List<PostPublishTargetMetric>> byP = new HashMap<>();
+        List<Observation> settled = new ArrayList<>();
+        List<Observation> unsettled = new ArrayList<>();
         for (PostPublishTarget t : targets) {
             PostPublishTargetMetric m = latest.get(t.getId());
             if (m == null) {
                 continue;
             }
-            byPf.computeIfAbsent(key(t.getPlatform(), t.getFormat()), k -> new ArrayList<>()).add(m);
-            byP.computeIfAbsent(t.getPlatform(), k -> new ArrayList<>()).add(m);
+            Observation o = new Observation(t.getId(), t.getPlatform(), t.getFormat(), t.getFireTime(), m.getViews(),
+                    m.getLikes(), m.getComments(), m.getShares(), m.getSaves(), avgViewPct(m.getExtra()));
+            (PostSettleWindows.isSettled(t.getPlatform(), t.getFireTime(), now) ? settled : unsettled).add(o);
         }
-        return new Baselines(baselinesOf(byPf), baselinesOf(byP));
+
+        Map<String, List<Observation>> byPf = new HashMap<>();
+        Map<String, List<Observation>> byP = new HashMap<>();
+        for (Observation o : settled) {
+            byPf.computeIfAbsent(key(o.platform(), o.format()), k -> new ArrayList<>()).add(o);
+            byP.computeIfAbsent(o.platform(), k -> new ArrayList<>()).add(o);
+        }
+        return new Baselines(baselinesOf(byPf), baselinesOf(byP), settled, unsettled, from, now);
     }
 
-    private static Map<String, Baseline> baselinesOf(Map<String, List<PostPublishTargetMetric>> buckets) {
+    private static Map<String, Baseline> baselinesOf(Map<String, List<Observation>> buckets) {
         Map<String, Baseline> out = new HashMap<>();
-        buckets.forEach((k, metrics) -> {
-            if (metrics.size() < MIN_BUCKET_POSTS) {
+        buckets.forEach((k, observations) -> {
+            if (observations.size() < MIN_BUCKET_POSTS) {
                 return;
             }
             out.put(k, new Baseline(
-                    median(metrics.stream().map(PostPublishTargetMetric::getViews).filter(java.util.Objects::nonNull)
+                    median(observations.stream().map(Observation::views).filter(java.util.Objects::nonNull)
                             .map(Long::doubleValue).toList()),
-                    median(metrics.stream().map(m -> avgViewPct(m.getExtra())).filter(java.util.Objects::nonNull).toList())));
+                    median(observations.stream().map(Observation::avgViewPct).filter(java.util.Objects::nonNull).toList())));
         });
         return out;
     }

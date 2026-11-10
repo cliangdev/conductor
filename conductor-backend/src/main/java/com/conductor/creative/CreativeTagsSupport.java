@@ -19,7 +19,12 @@ import java.util.Map;
 public final class CreativeTagsSupport {
 
     public static final int MAX_LENGTH = 60;
-    public static final List<String> KEYS = List.of("hookType", "angle", "format", "archetype", "hypothesis");
+    public static final List<String> KEYS = List.of("hookType", "angle", "format", "archetype", "hypothesis",
+            "lessons", "previewRounds");
+
+    /** {@code lessons}: playbook lesson ids, e.g. {@code #3,#12}. */
+    public static final java.util.regex.Pattern LESSONS = java.util.regex.Pattern.compile("^#\\d+(,#\\d+)*$");
+    public static final int MAX_PREVIEW_ROUNDS = 50;
 
     private CreativeTagsSupport() {}
 
@@ -50,6 +55,12 @@ public final class CreativeTagsSupport {
             } else if (s.length() > MAX_LENGTH) {
                 out.add(new Violation("tags." + key, "tagValue",
                         "tags." + key + " must be at most " + MAX_LENGTH + " characters"));
+            } else if ("lessons".equals(key) && !LESSONS.matcher(s).matches()) {
+                out.add(new Violation("tags.lessons", "tagValue",
+                        "tags.lessons must be comma-separated lesson ids like #3,#12"));
+            } else if ("previewRounds".equals(key) && !validRounds(s)) {
+                out.add(new Violation("tags.previewRounds", "tagValue",
+                        "tags.previewRounds must be a whole number from 0 to " + MAX_PREVIEW_ROUNDS));
             }
         });
         return out;
@@ -87,6 +98,8 @@ public final class CreativeTagsSupport {
                 case "format" -> tags.setFormat(v.asText());
                 case "archetype" -> tags.setArchetype(v.asText());
                 case "hypothesis" -> tags.setHypothesis(v.asText());
+                case "lessons" -> tags.setLessons(v.asText());
+                case "previewRounds" -> tags.setPreviewRounds(v.asText());
                 default -> { }
             }
         }
@@ -108,6 +121,13 @@ public final class CreativeTagsSupport {
         return out;
     }
 
+    private static boolean validRounds(String s) {
+        if (!s.matches("^(0|[1-9][0-9]?)$")) {
+            return false;
+        }
+        return Integer.parseInt(s) <= MAX_PREVIEW_ROUNDS;
+    }
+
     private static String valueOf(CreativeTags t, String key) {
         return switch (key) {
             case "hookType" -> t.getHookType();
@@ -115,6 +135,8 @@ public final class CreativeTagsSupport {
             case "format" -> t.getFormat();
             case "archetype" -> t.getArchetype();
             case "hypothesis" -> t.getHypothesis();
+            case "lessons" -> t.getLessons();
+            case "previewRounds" -> t.getPreviewRounds();
             default -> null;
         };
     }
