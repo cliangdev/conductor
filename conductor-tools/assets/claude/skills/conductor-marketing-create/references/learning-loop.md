@@ -10,7 +10,8 @@ overrides brand rules, copy rules, banned copy, `voice.md` or the approval gate.
 The one place to tune the loop. These are practitioner rules of thumb, not proven constants.
 
 - **Proven / Didn't work**: median view lift of 1.2 or more (Proven) or 0.8 or less (Didn't work),
-  and `beatBaselineShare` of 0.67 or more in that direction, over 3 or more settled posts. Or a hook
+  and `beatBaselineShare` of 0.67 or more (Proven) or 0.33 or less (Didn't work), over 3 or more
+  settled posts. Or a hook
   experiment that is DECIDED. A lift between 0.8 and 1.2 counts as no difference.
 - **Resolving a hypothesis**: 3 or more settled test posts.
 - **Exploration**: about 1 in 4 Creatives carries a test.
@@ -128,8 +129,8 @@ the shape's row in `voice.md` when the line fits one.
    playbook means bootstrap (below).
 2. Skip the rest when the playbook was updated less than 24 hours ago: the last retro is recent
    enough.
-3. Otherwise `get_marketing_insights` (window `30d`, `90d` if empty) and read `byTag`, `byFormat`
-   and `creatives`. Ignore Creatives already in Folded in.
+3. Otherwise `get_marketing_insights` with window `90d` (the same 90 days as the baseline and the
+   decay) and read `byTag`, `byFormat` and `creatives`.
 4. For each open hypothesis, `get_creative` on each Creative in its `tests:` list and read
    `settledPosts` and the lift fields. A Creative that has not posted, or has no settled post yet,
    adds nothing.
@@ -138,12 +139,18 @@ the shape's row in `voice.md` when the line fits one.
      leave it open. At 3 or more it resolves as a win, a loss or no difference by its own metric and
      thresholds. Remove it from Open hypotheses and ADD or UPDATE a lesson with the result (a win to
      Proven, a loss to Didn't work, no difference to Leaning with the note "no difference").
-   - Rows: UPDATE counts and evidence dates on lessons the `byTag` rows touch. MOVE a Leaning line
+   - Rows: a `byTag` row is the whole 90-day picture, recomputed each time, so its numbers
+     **replace** a tag lesson's value, n and counts (`+support` = posts beating the baseline, from
+     `beatBaselineShare` × `posts`; `−contra` = the rest); never add them to the old counts, or the
+     same posts are counted again. Set the evidence date to the newest settled post. ADD a lesson
+     for a row that meets a threshold and has none. MOVE a Leaning line
      to Proven or Didn't work when it now meets the threshold; MOVE a Proven line back to Leaning
      when later posts contradict it.
    - Decay: a lesson whose last evidence date is over 90 days old moves Proven to Leaning, and
      Leaning is removed. Taste lines are exempt.
-   - Folded in: add each Creative whose posts are all settled and counted.
+   - Folded in: add each hypothesis test Creative whose posts are all settled and counted, so its
+     posts are not counted toward that hypothesis twice. Tag lessons need no ledger, since their
+     numbers are replaced, not summed.
 6. A lesson in Proven, Leaning or Didn't work comes only from metrics or a decided experiment. Your
    own opinion of a draft is never recorded as one.
 7. Name what could not be measured (no data yet, a platform that reports no views, a Creative with
