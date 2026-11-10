@@ -15,6 +15,7 @@ import {
   deleteMarketingBenchmark,
   trimReportValue,
   MAX_REPORT_ASO_KEYWORDS,
+  MAX_REPORT_CHANGES,
 } from '../mcp/tools/marketing-report.js'
 
 const config: Config = {
@@ -238,6 +239,42 @@ describe('getMarketingReport', () => {
     expect(out['changes'].open).toHaveLength(1)
     expect(out['changes'].dueForReview).toEqual([])
     expect(out['changes'].reviewedInWindow).toEqual([])
+  })
+
+  it('lists open and reviewed changes briefly and capped, and keeps changes due for review whole', async () => {
+    const long = { hypothesis: 'h'.repeat(500), baseline: 'b'.repeat(500), evidence: 'e'.repeat(500) }
+    const change = (n: number, extra: Record<string, unknown> = {}) => ({
+      id: `w${n}`, displayId: `RE-${n}`, title: `Change ${n}`, type: 'LISTING', status: 'LIVE',
+      dueOn: '2026-10-24', fields: { ...long, liveSince: '2026-10-01', ...extra },
+    })
+    const open = Array.from({ length: 30 }, (_, i) => change(i))
+    mocked(apiGet).mockResolvedValue({
+      window: { from: '2026-09-20', to: '2026-10-17' },
+      changes: {
+        open,
+        dueForReview: [change(0)],
+        reviewedInWindow: [change(99, { verdict: 'WORKED' })],
+      },
+    })
+    const out = (await getMarketingReport(config, {})) as Record<string, any>
+    expect(out['changes'].open).toHaveLength(MAX_REPORT_CHANGES)
+    // soonest due first: the head is kept
+    expect(out['changes'].open[0]).toEqual({
+      id: 'w0', displayId: 'RE-0', title: 'Change 0', type: 'LISTING', status: 'LIVE', dueOn: '2026-10-24',
+      fields: { liveSince: '2026-10-01' },
+    })
+    expect(out['changes'].reviewedInWindow[0].fields).toEqual({ liveSince: '2026-10-01', verdict: 'WORKED' })
+    expect(out['changes'].dueForReview[0].fields.hypothesis).toHaveLength(500)
+    expect(out['totalRows']).toEqual({ 'changes.open': 30 })
+  })
+
+  it('drops the fields of a brief change that has none of the kept ones', async () => {
+    mocked(apiGet).mockResolvedValue({
+      changes: { open: [{ id: 'w1', title: 'Change', fields: { hypothesis: 'x' } }], dueForReview: [], reviewedInWindow: [] },
+    })
+    const out = (await getMarketingReport(config, {})) as Record<string, any>
+    expect(out['changes'].open).toEqual([{ id: 'w1', title: 'Change' }])
+    expect(out['totalRows']).toBeUndefined()
   })
 
   it('keeps changes and a null window.to when the report has no data yet', async () => {
