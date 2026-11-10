@@ -24,6 +24,7 @@ import com.conductor.support.AbstractNoneWebIntegrationTest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.reflect.Method;
@@ -63,6 +64,7 @@ class VerificationLedgerServiceIntegrationTest extends AbstractNoneWebIntegratio
     @Autowired private ConnectorFeedRepository feedRepository;
     @Autowired private ProjectRepository projectRepository;
     @Autowired private UserRepository userRepository;
+    @Autowired private JdbcTemplate jdbc;
 
     private Project project;
     private User user;
@@ -565,6 +567,77 @@ class VerificationLedgerServiceIntegrationTest extends AbstractNoneWebIntegratio
         assertThat(clicks.platformRead().value()).isEqualTo(3.0);
         assertThat(clicks.verdict()).isEqualTo(Verdict.BOTH);
         assertThat(service.reads(project.getId(), null, null, null)).hasSize(2);
+    }
+
+    // ---- reads follow their connections ---------------------------------------------------------
+
+    @Test
+    void aReadStopsCountingOnceTheConnectionItWasRecordedAgainstIsReplaced() {
+        connectSearch();
+        String oldConnection = gsc;
+        RecordedRow recorded = read("SEARCH", "clicks", FROM, TO, 9, "Search Console UI");
+        assertThat(readRepository.findLatestByProject(project.getId())).singleElement()
+                .satisfies(r -> assertThat(r.getConnectionIds()).containsExactly(oldConnection));
+        assertThat(row("SEARCH.clicks").platformRead()).isNotNull();
+        assertThat(row("SEARCH.clicks").verdict()).isEqualTo(Verdict.PLATFORM);
+        assertThat(overviewService.snapshot(project.getId(), WINDOW, TODAY, NOW).channels().get(MetricChannel.SEARCH)
+                .view().status()).isEqualTo("MISMATCH");
+
+        connectionRepository.deleteById(oldConnection);
+        connectionRepository.flush();
+        connectSearch();
+
+        LedgerRow clicks = row("SEARCH.clicks");
+        assertThat(clicks.platformRead()).isNull();
+        assertThat(clicks.verdict()).isEqualTo(Verdict.UNCHECKED);
+        assertThat(clicks.mismatch()).isFalse();
+        ChannelView search = overviewService.snapshot(project.getId(), WINDOW, TODAY, NOW)
+                .channels().get(MetricChannel.SEARCH).view();
+        assertThat(search.status()).isNotEqualTo("MISMATCH");
+        assertThat(search.mismatches()).isEmpty();
+        assertThat(readRepository.findLatestByProject(project.getId())).isEmpty();
+        // still in the audit trail, and not retracted
+        assertThat(service.reads(project.getId(), "SEARCH", "clicks", null)).singleElement()
+                .satisfies(e -> {
+                    assertThat(e.id()).isEqualTo(recorded.read().id());
+                    assertThat(e.retractedAt()).isNull();
+                });
+    }
+
+    @Test
+    void anOlderReadUnderAStillConnectedAccountTakesOverWhenTheNewerReadsConnectionsAreGone() {
+        connectSearch();
+        service.record(project.getId(), "SEARCH", "clicks", FROM, TO, 3, "Search Console UI", "older", null, TODAY,
+                NOW.minusMinutes(10));
+        RecordedRow newest = service.record(project.getId(), "SEARCH", "clicks", FROM, TO, 9, "Search Console UI",
+                "newest", null, TODAY, NOW);
+        assertThat(row("SEARCH.clicks").platformRead().value()).isEqualTo(9.0);
+
+        jdbc.update("UPDATE marketing_platform_read SET connection_ids = ARRAY['gone-connection']::varchar[]"
+                + " WHERE id = ?", newest.read().id());
+
+        LedgerRow clicks = row("SEARCH.clicks");
+        assertThat(clicks.platformRead().value()).isEqualTo(3.0);
+        assertThat(clicks.verdict()).isEqualTo(Verdict.BOTH);
+    }
+
+    @Test
+    void aReadRecordedBeforeConnectionsWereTrackedAlwaysCounts() {
+        connectSearch();
+        RecordedRow recorded = read("SEARCH", "clicks", FROM, TO, 9, "Search Console UI");
+        // the insert is flushed by the first query; only then can the row be rewritten to look pre-V201
+        assertThat(readRepository.findLatestByProject(project.getId())).hasSize(1);
+        assertThat(jdbc.update("UPDATE marketing_platform_read SET connection_ids = NULL WHERE id = ?",
+                recorded.read().id())).isEqualTo(1);
+        assertThat(row("SEARCH.clicks").platformRead()).isNotNull();
+
+        connectionRepository.deleteById(gsc);
+        connectionRepository.flush();
+        connectSearch();
+
+        LedgerRow clicks = row("SEARCH.clicks");
+        assertThat(clicks.platformRead()).isNotNull();
+        assertThat(clicks.verdict()).isEqualTo(Verdict.PLATFORM);
     }
 
     @Test
