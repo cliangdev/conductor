@@ -910,7 +910,7 @@
     },
     {
       "name": "record_platform_read",
-      "description": "Log what a platform's own UI or API shows for one metric over an exact day range. Append-only; returns the metric's row with its verdict.",
+      "description": "Log what a platform's own UI or API shows for one metric over an exact day range. A wrong read can be retracted; returns the metric's row with its verdict.",
       "category": "marketing",
       "requiredParams": [
         "channel",
@@ -919,6 +919,15 @@
         "to",
         "value",
         "sourceName"
+      ]
+    },
+    {
+      "name": "retract_platform_read",
+      "description": "Retract a wrong direct platform read: it stays in the history but stops counting, so the previous read (if any) applies. One-way, idempotent.",
+      "category": "marketing",
+      "requiredParams": [
+        "readId",
+        "reason"
       ]
     },
     {

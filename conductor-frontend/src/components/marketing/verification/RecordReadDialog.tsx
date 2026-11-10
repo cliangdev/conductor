@@ -2,7 +2,7 @@
 
 // Records one direct platform read: what the platform's own UI or API showed for a metric over a range of whole
 // days. Checks the form the way the API will, posts it, then shows the verdict of the returned ledger row.
-// Reads are append-only, so there is no edit: a wrong read is superseded by recording a newer one.
+// Reads are never edited or deleted: a wrong read is superseded by a newer one, or retracted from the ledger.
 
 import { useEffect, useRef, useState } from 'react'
 import { Alert } from '@/components/ui/alert'

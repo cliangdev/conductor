@@ -82,7 +82,7 @@ import { getMarketingInsights } from './tools/insights.js'
 import { getBudgetPacing, setMarketingBudget, setStopRule, removeStopRule } from './tools/budget.js'
 import { getMarketingDefinitions } from './tools/marketing-definitions.js'
 import { getMarketingReport, setMarketingBenchmark, deleteMarketingBenchmark } from './tools/marketing-report.js'
-import { getVerificationLedger, recordPlatformRead } from './tools/verification.js'
+import { getVerificationLedger, recordPlatformRead, retractPlatformRead } from './tools/verification.js'
 import { proposeMarketingChange, installWeeklyGrowthWorkflow, type ProposalSignal } from './tools/proposals.js'
 import {
   getGrowthSignals,
@@ -1530,7 +1530,7 @@ export const TOOLS = [
   },
   {
     name: 'get_verification_ledger',
-    description: 'Which marketing numbers to trust: per metric (CHANNEL.key) Conductor\'s value, the product backend\'s value over the settled days both have, the latest direct platform read and a verdict. BOTH: every second source agrees. CONNECTOR: trust the connector (a read agrees with it, or only the backend disagrees). BACKEND: backend and read agree, the connector does not. PLATFORM: the read disagrees with every other source. UNCHECKED: no second source, never verified. `mismatch` means a second source disagrees; `stale` means the read is over 7 days old; `over` is set when a row covers other days than the window. Cite a number only when its verdict is not UNCHECKED and it has no mismatch. Read-only. Use record_platform_read to log a direct read.',
+    description: 'Which marketing numbers to trust: per metric (CHANNEL.key) Conductor\'s value, the product backend\'s value over the settled days both have, the latest direct platform read and a verdict. BOTH: every second source agrees. CONNECTOR: trust the connector (a read agrees with it, or only the backend disagrees). BACKEND: backend and read agree, the connector does not. PLATFORM: the read disagrees with every other source. UNCHECKED: no second source, never verified. `mismatch` means a second source disagrees; `stale` means the read is over 7 days old; `over` is set when a row covers other days than the window. Cite a number only when its verdict is not UNCHECKED and it has no mismatch. Read-only. Each read shows its `id`. Use record_platform_read to log a direct read and retract_platform_read to retract a wrong one.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1542,7 +1542,7 @@ export const TOOLS = [
   },
   {
     name: 'record_platform_read',
-    description: 'Log a direct read: what the platform\'s own UI or API shows for one metric over an exact day range. Look at the platform for that range; never copy Conductor\'s number. from and to are whole days, to yesterday or earlier, at most 92 days apart (a level such as followers is read on `to`; unique visitors need a range of 7, 28 or 90 days). Append-only: a newer read supersedes this one, nothing is edited or deleted. Returns the metric\'s row with its verdict. Requires the Editor role (or Admin). Always call get_verification_ledger after to verify.',
+    description: 'Log a direct read: what the platform\'s own UI or API shows for one metric over an exact day range. Look at the platform for that range; never copy Conductor\'s number. from and to are whole days, to yesterday or earlier, at most 92 days apart (a level such as followers is read on `to`; unique visitors need a range of 7, 28 or 90 days). A newer read supersedes this one; a wrong read can be retracted with retract_platform_read. Only read a platform the workspace\'s product actually uses for that metric (a retired platform reads 0, not the truth). Returns the metric\'s row with its verdict. Requires the Editor role (or Admin). Always call get_verification_ledger after to verify.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1555,6 +1555,18 @@ export const TOOLS = [
         note: { type: 'string', description: 'Caveats, e.g. the filter or time zone the platform used (optional)' },
       },
       required: ['channel', 'metric', 'from', 'to', 'value', 'sourceName'],
+    },
+  },
+  {
+    name: 'retract_platform_read',
+    description: 'Retract a wrong direct platform read (for example one taken from a platform the product no longer uses, which reads a dead 0). The read stays in the history but stops counting: the previous read of that metric (if any) applies, otherwise the metric has no platform read. One-way and idempotent (retracting again changes nothing). Get the read id from get_verification_ledger (read.id). Requires the Editor role (or Admin). Verify with get_verification_ledger.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        readId: { type: 'string', description: 'The read\'s id, from get_verification_ledger (read.id)' },
+        reason: { type: 'string', description: 'Why the read is wrong (required, at most 500 characters)' },
+      },
+      required: ['readId', 'reason'],
     },
   },
   {
@@ -3269,6 +3281,14 @@ export async function runMcpServer(): Promise<void> {
               value: params['value'] as number,
               sourceName: params['sourceName'] as string,
               note: params['note'] as string | undefined,
+            })
+          )
+        }
+        case 'retract_platform_read': {
+          return successResponse(
+            await retractPlatformRead(config, {
+              readId: params['readId'] as string,
+              reason: params['reason'] as string,
             })
           )
         }

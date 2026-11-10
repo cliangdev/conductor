@@ -1,5 +1,5 @@
 // Wire shapes for GET /api/v2/projects/{projectId}/marketing/verification and
-// POST …/marketing/verification/reads (openapi-v2 `MarketingVerificationLedger`, `VerificationRow`,
+// POST …/marketing/verification/reads and …/reads/{readId}/retract (openapi-v2 `MarketingVerificationLedger`, `VerificationRow`,
 // `MarketingPlatformReadRequest`). Values are plain numbers; percent values are fractions.
 
 import { apiGet, apiPost } from '@/lib/api'
@@ -102,4 +102,9 @@ export function getVerificationLedger(projectId: string, token: string, window: 
 /** Records one direct platform read; the response is the ledger row recomputed for exactly the read's days. */
 export function recordPlatformRead(projectId: string, token: string, body: PlatformReadRequest) {
   return apiPost<VerificationRow>(`${base(projectId)}/reads`, body, token)
+}
+
+/** Retracts a wrong read: it stays in the history but stops counting. Idempotent; requires ADMIN or CREATOR. */
+export function retractPlatformRead(projectId: string, token: string, readId: string, reason: string) {
+  return apiPost<unknown>(`${base(projectId)}/reads/${encodeURIComponent(readId)}/retract`, { reason }, token)
 }

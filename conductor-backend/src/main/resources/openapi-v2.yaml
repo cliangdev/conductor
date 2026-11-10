@@ -5446,7 +5446,8 @@ paths:
         the connector does not), PLATFORM (the platform read disagrees with every other source) or UNCHECKED (no
         second source at all; never verified). `mismatch` is true when any second source that could be compared
         disagrees with Conductor. A read recorded more than 7 days ago is `readStale`. Only settled days are
-        compared. Computed on read; the only stored data is the reads themselves.
+        compared. Computed on read; the only stored data is the reads themselves. Retracted reads do not count: the
+        previous non-retracted read of a metric (if any) is the one shown.
       operationId: getMarketingVerification
       security:
         - bearerAuth: []
@@ -5498,8 +5499,10 @@ paths:
         - marketing-verification
       summary: The platform reads recorded for a metric, newest first
       description: >-
-        The append-only history of direct platform reads, newest first. Filter by `channel` and `metric`. Reads
-        are never updated or deleted, so this is the audit trail behind every verdict.
+        The history of direct platform reads, newest first. Filter by `channel` and `metric`. Reads are never
+        deleted, so this is the audit trail behind every verdict. A wrong read can be retracted (see
+        `retractMarketingPlatformRead`): it no longer counts, but it still appears here with its `retractedAt`,
+        `retractedBy` and `retractionReason`.
       operationId: listMarketingPlatformReads
       security:
         - bearerAuth: []
@@ -5561,8 +5564,9 @@ paths:
       summary: Record a direct platform read
       description: >-
         Records what the platform's own UI or API showed for one metric over an explicit range of whole days
-        (`from` to `to`, `to` yesterday or earlier, at most 92 days). The read is append-only: it is never
-        updated or deleted, and a newer read supersedes it in the ledger. Conductor's value, the backend's value
+        (`from` to `to`, `to` yesterday or earlier, at most 92 days). The read is never deleted, and a newer
+        read supersedes it in the ledger. A wrong read can be retracted afterwards, after which it no longer counts
+        and the previous read (if any) applies. Conductor's value, the backend's value
         and the verdict at the time of recording are stored with it. Returns the recomputed ledger row for exactly
         the read's days. Requires ADMIN or CREATOR. Not idempotent: each call adds a read.
       operationId: recordMarketingPlatformRead
@@ -5602,6 +5606,71 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/marketing/verification/reads/{readId}/retract:
+    post:
+      tags:
+        - marketing-verification
+      summary: Retract a wrong platform read
+      description: >-
+        Retracts a recorded read as wrong (for example one read from a platform the product no longer uses, which
+        reports a dead 0). The read is never deleted: it stays in the history with `retractedAt`, `retractedBy` and
+        `retractionReason`, but it no longer counts in the ledger, the overview or alerts, so the previous
+        non-retracted read of that metric (if any) applies, otherwise the metric has no platform read. One-way and
+        idempotent: retracting a retracted read returns it unchanged and does not overwrite who or why. Requires
+        ADMIN or CREATOR.
+      operationId: retractMarketingPlatformRead
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: readId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarketingPlatformReadRetractRequest"
+      responses:
+        "200":
+          description: The read, with its retraction fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MarketingPlatformReadEntry"
+        "400":
+          description: The reason is missing, blank or longer than 500 characters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Requires ADMIN or CREATOR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: No such read in this project
           content:
             application/json:
               schema:
@@ -11898,6 +11967,19 @@ components:
           nullable: true
           enum: [BOTH, CONNECTOR, BACKEND, PLATFORM, UNCHECKED]
           description: The verdict at the time of recording.
+        retractedAt: {type: string, format: date-time, nullable: true, description: "When the read was retracted as wrong; absent while it still counts."}
+        retractedBy: {type: string, nullable: true, description: "The user who retracted it."}
+        retractionReason: {type: string, nullable: true, description: "Why the read was wrong."}
+
+    MarketingPlatformReadRetractRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Why the read is wrong. Required; trimmed.
 
     OverviewConnection:
       type: object

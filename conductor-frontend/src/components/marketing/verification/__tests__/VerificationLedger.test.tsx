@@ -231,6 +231,56 @@ describe('VerificationLedger', () => {
     expect(screen.queryByRole('button', { name: /Record a read/ })).not.toBeInTheDocument()
   })
 
+  it('retracts a read with its reason, posts to the retract endpoint and reloads the ledger', async () => {
+    ;(apiPost as Mock).mockResolvedValue({ id: 'read-1', retractedAt: '2026-11-08T10:00:00Z' })
+    render(<VerificationLedger projectId="proj-1" />)
+    await screen.findByRole('table')
+    const before = (apiGet as Mock).mock.calls.length
+
+    fireEvent.click(within(tableRow('Impressions')).getByRole('button', { name: 'Retract the read for Impressions' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retract read' }))
+    expect(within(dialog).getByText('Say why the read is wrong.')).toBeInTheDocument()
+    expect(apiPost).not.toHaveBeenCalled()
+
+    fireEvent.change(within(dialog).getByLabelText('Reason'), { target: { value: '  App stopped using it  ' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retract read' }))
+
+    await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1))
+    expect(apiPost).toHaveBeenCalledWith(
+      '/api/v2/projects/proj-1/marketing/verification/reads/read-1/retract',
+      { reason: 'App stopped using it' },
+      'test-token',
+    )
+    await waitFor(() => expect((apiGet as Mock).mock.calls.length).toBeGreaterThan(before))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('shows the API error when a retraction fails and keeps the dialog open', async () => {
+    ;(apiPost as Mock).mockRejectedValue({ detail: 'Platform read not found' })
+    render(<VerificationLedger projectId="proj-1" />)
+    await screen.findByRole('table')
+    fireEvent.click(within(tableRow('Impressions')).getByRole('button', { name: 'Retract the read for Impressions' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Reason'), { target: { value: 'wrong' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Retract read' }))
+    expect(await within(dialog).findByText('Platform read not found')).toBeInTheDocument()
+  })
+
+  it('offers Retract only on a row that has a read', async () => {
+    render(<VerificationLedger projectId="proj-1" />)
+    await screen.findByRole('table')
+    expect(within(tableRow('Impressions')).getByRole('button', { name: /Retract/ })).toBeInTheDocument()
+    expect(within(tableRow('Installs')).queryByRole('button', { name: /Retract/ })).not.toBeInTheDocument()
+  })
+
+  it('hides Retract from a reviewer', async () => {
+    role = 'REVIEWER'
+    render(<VerificationLedger projectId="proj-1" />)
+    await screen.findByRole('table')
+    expect(screen.queryByRole('button', { name: /Retract/ })).not.toBeInTheDocument()
+  })
+
   it('keeps a backend row whose figure matches readable (no mismatch marker)', async () => {
     ;(apiGet as Mock).mockResolvedValue(
       ledger({
