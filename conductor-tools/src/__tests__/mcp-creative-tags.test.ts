@@ -127,9 +127,7 @@ describe('Creative tags', () => {
     })
     const result = (await getMarketingInsights({}, config)) as { byTag: Array<Record<string, unknown>> }
     expect(result.byTag).toEqual([{ key: 'question', tagKey: 'hookType', posts: 3, views: 900, likes: 90, comments: 9, shares: 1, saves: 0, engagementRate: 0.1111, medianViews: 300 }])
-    expect(TOOLS.find((t) => t.name === 'get_marketing_insights')!.description).toContain(
-      "byTag: the same groups by the posting Creative's tags (hookType, angle, format, archetype, hypothesis)"
-    )
+    expect(TOOLS.find((t) => t.name === 'get_marketing_insights')!.description).toContain('Add "tags" to include for byTag')
   })
 })
 
@@ -146,8 +144,8 @@ describe('Tag lift fields', () => {
     expect(result.byTag[0]).toMatchObject({ unsettledPosts: 2, medianViewLift: 1.2346, beatBaselineShare: 0.6667, medianEngagementRate: 0.05 })
     expect(result.byTag[0]).not.toHaveProperty('medianRetentionLift')
     const description = TOOLS.find((t) => t.name === 'get_marketing_insights')!.description
-    expect(description).toContain('settled posts (TikTok/Instagram/YouTube 72 h old, Facebook 7 d)')
-    expect(description).toContain('1.0 is typical')
+    expect(description).toContain('byTag (90-day settled posts vs this account')
+    expect(description).toContain('byTagWindow and playbookEffect')
   })
 
   it('get_creative keeps the lift fields of each variant and documents them', async () => {
@@ -160,7 +158,7 @@ describe('Tag lift fields', () => {
     })
     const result = await getCreative({ creativeId: 'c-1' }, config)
     expect((result['performance'] as Array<Record<string, unknown>>)[0]).toMatchObject({ settledPosts: 1, medianViewLift: 2.5, medianRetentionLift: 1.1, beatBaselineShare: 1 })
-    expect(TOOLS.find((t) => t.name === 'get_creative')!.description).toContain('medianViewLift')
+    expect(TOOLS.find((t) => t.name === 'get_creative')!.description).toContain('settled-post lift and a server verdict')
   })
 })
 
@@ -185,9 +183,9 @@ describe('Verdicts, evidence window and playbook effect', () => {
       beatRetentionBaselinePosts: 0, viewVerdict: 'WORKS', retentionVerdict: 'NOT_ENOUGH_DATA', verdict: 'WORKS', verdictMetric: 'VIEW_LIFT',
     })
     const description = TOOLS.find((t) => t.name === 'get_marketing_insights')!.description
-    expect(description).toContain('trailing 90 days')
-    expect(description).toContain('decided by the server')
+    expect(description).toContain('server verdict')
     expect(description).toContain('playbookEffect')
+    expect(description.length).toBeLessThan(5000)
   })
 
   it('get_creative keeps the per-variant verdict fields', async () => {
@@ -223,5 +221,33 @@ describe('Insights filters', () => {
     const url = String(mocked(apiGet).mock.calls[0]![0])
     expect(url).toContain('platform=tiktok')
     expect(url).toContain('brandKitId=kit-1')
+  })
+})
+
+describe('Opt-in tag data', () => {
+  const base = {
+    window: { from: 'a', to: 'b', days: 30 },
+    totals: { key: 'all', posts: 0, views: 0, likes: 0, comments: 0, shares: 0, saves: 0 },
+    byPlatform: [], byFormat: [], byHour: [], byWeekday: [], topPosts: [], bottomPosts: [], movers: [],
+    coverage: { platforms: [], notes: [] }, creatives: [],
+  }
+
+  it('offers include "tags", sends it only when asked, and adds no tag keys when the API sent none', async () => {
+    const include = (TOOLS.find((t) => t.name === 'get_marketing_insights')!.inputSchema as { properties: Record<string, { items: { enum: string[] } }> }).properties['include']!
+    expect(include.items.enum).toContain('tags')
+
+    mocked(apiGet).mockResolvedValue(base)
+    const plain = await getMarketingInsights(config, {})
+    expect(String(mocked(apiGet).mock.calls[0]![0])).not.toContain('include=')
+    expect(plain).not.toHaveProperty('byTag')
+    expect(plain).not.toHaveProperty('byTagWindow')
+    expect(plain).not.toHaveProperty('playbookEffect')
+
+    mocked(apiGet).mockClear()
+    mocked(apiGet).mockResolvedValue({ ...base, byTag: [], byTagWindow: { from: 'x', to: 'y', days: 90 }, playbookEffect: { withLessons: { posts: 0 }, withoutLessons: { posts: 0 } } })
+    const tagged = await getMarketingInsights(config, { include: ['tags'] })
+    expect(String(mocked(apiGet).mock.calls[0]![0])).toContain('include=tags')
+    expect(tagged).toHaveProperty('byTag')
+    expect(tagged).toHaveProperty('playbookEffect')
   })
 })

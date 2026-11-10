@@ -49,6 +49,8 @@ class PostBaselineServiceTest {
         assertThat(PostSettleWindows.isSettled("facebook", NOW.minusDays(7), NOW)).isTrue();
         assertThat(PostSettleWindows.isSettled("somewhere-else", NOW.minusHours(80), NOW)).isTrue();
         assertThat(PostSettleWindows.isSettled("somewhere-else", NOW.minusHours(10), NOW)).isFalse();
+        // No fire time, no age: never settled, so it stays out of every baseline, lift and verdict.
+        assertThat(PostSettleWindows.isSettled("tiktok", null, NOW)).isFalse();
     }
 
     @Test

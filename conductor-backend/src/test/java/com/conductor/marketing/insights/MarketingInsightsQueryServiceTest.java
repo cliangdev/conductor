@@ -394,17 +394,35 @@ class MarketingInsightsQueryServiceTest {
         MarketingInsightsQueryService once = new MarketingInsightsQueryService(security, targetRepository,
                 metricRepository, workItemRepository, new PublishPlatformRegistry(), performanceService, tags, baselines);
 
-        MarketingInsightsQueryService.Insights insights = once.compute("proj-1", InsightsWindowSpec.parse("7d"), null, NOW);
+        MarketingInsightsQueryService.Insights insights = once.compute("proj-1", InsightsWindowSpec.parse("7d"), null, null, true, NOW);
 
         org.mockito.Mockito.verify(baselines, org.mockito.Mockito.times(1)).baselines(anyString(), any());
         // One attribution resolution (Creatives, their destinations, their tags) shared with the top Creatives.
         org.mockito.Mockito.verify(tags, org.mockito.Mockito.times(1)).attribution(anyString(), any());
-        org.mockito.Mockito.verify(performanceService).topCreatives(any(), any(), anyInt(),
-                org.mockito.ArgumentMatchers.same(evidence), anyList(), org.mockito.ArgumentMatchers.anyMap(), any());
+        org.mockito.Mockito.verify(performanceService).topCreatives(anyString(), any(), any(), anyInt(), any(),
+                org.mockito.ArgumentMatchers.notNull(), org.mockito.ArgumentMatchers.same(evidence));
         // byTag ignores the 7d window: it reports the fixed 90-day one.
         assertThat(insights.byTagWindow().days()).isEqualTo(90);
         assertThat(insights.window().days()).isEqualTo(7);
         assertThat(insights.byTag()).isEmpty();
         assertThat(insights.playbookEffect().withLessons().posts()).isZero();
+    }
+
+    @Test
+    void withoutTagsNeitherTheBaselineNorTheTagAttributionIsEverTouched() {
+        com.conductor.creative.CreativeTagAttribution tags = mock(com.conductor.creative.CreativeTagAttribution.class);
+        PostBaselineService baselines = mock(PostBaselineService.class);
+        MarketingInsightsQueryService plain = new MarketingInsightsQueryService(security, targetRepository,
+                metricRepository, workItemRepository, new PublishPlatformRegistry(), performanceService, tags, baselines);
+
+        MarketingInsightsQueryService.Insights insights = plain.compute("proj-1", InsightsWindowSpec.parse("30d"), "tiktok", NOW);
+
+        org.mockito.Mockito.verifyNoInteractions(baselines, tags);
+        // The top Creatives take the old path: nothing pre-resolved, no baselines, no kit.
+        org.mockito.Mockito.verify(performanceService).topCreatives(anyString(), any(), any(), anyInt(),
+                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNull());
+        assertThat(insights.byTag()).isNull();
+        assertThat(insights.byTagWindow()).isNull();
+        assertThat(insights.playbookEffect()).isNull();
     }
 }

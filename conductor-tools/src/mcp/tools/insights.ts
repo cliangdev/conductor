@@ -214,12 +214,13 @@ function trimCreative(entry: CreativePerformanceEntry): Record<string, unknown> 
  */
 async function getPostInsights(
   config: Config,
-  params: { window?: '7d' | '30d' | '90d'; platform?: string; brandKitId?: string }
+  params: { window?: '7d' | '30d' | '90d'; platform?: string; brandKitId?: string; tags?: boolean }
 ): Promise<Record<string, unknown>> {
   const query = new URLSearchParams()
   if (params.window) query.set('window', params.window)
   if (params.platform) query.set('platform', params.platform)
   if (params.brandKitId) query.set('brandKitId', params.brandKitId)
+  if (params.tags) query.set('include', 'tags')
   const qs = query.toString()
   const data = await apiGet<MarketingInsightsResponse>(
     `/api/v2/projects/${config.projectId}/marketing/insights${qs ? `?${qs}` : ''}`,
@@ -231,12 +232,17 @@ async function getPostInsights(
     totals: trimGroup(data.totals),
     byPlatform: data.byPlatform.map(trimGroup),
     byFormat: data.byFormat.map(trimGroup),
-    byTag: (data.byTag ?? []).map(trimTagGroup),
-    byTagWindow: data.byTagWindow,
-    playbookEffect: data.playbookEffect && {
-      withLessons: omitNulls({ posts: data.playbookEffect.withLessons.posts, medianViewLift: round4(data.playbookEffect.withLessons.medianViewLift) }),
-      withoutLessons: omitNulls({ posts: data.playbookEffect.withoutLessons.posts, medianViewLift: round4(data.playbookEffect.withoutLessons.medianViewLift) }),
-    },
+    // Present only when "tags" was asked for: the output is otherwise exactly what it always was.
+    ...(data.byTag ? { byTag: data.byTag.map(trimTagGroup) } : {}),
+    ...(data.byTagWindow ? { byTagWindow: data.byTagWindow } : {}),
+    ...(data.playbookEffect
+      ? {
+          playbookEffect: {
+            withLessons: omitNulls({ posts: data.playbookEffect.withLessons.posts, medianViewLift: round4(data.playbookEffect.withLessons.medianViewLift) }),
+            withoutLessons: omitNulls({ posts: data.playbookEffect.withoutLessons.posts, medianViewLift: round4(data.playbookEffect.withoutLessons.medianViewLift) }),
+          },
+        }
+      : {}),
     bestHoursUtc: topGroups(data.byHour),
     bestWeekdays: topGroups(data.byWeekday),
     topPosts: data.topPosts.slice(0, 5).map(trimPost),
@@ -560,13 +566,15 @@ async function getChannelInsights(
  */
 export async function getMarketingInsights(
   config: Config,
-  params: { window?: '7d' | '30d' | '90d'; platform?: string; brandKitId?: string; include?: ('posts' | 'channels')[]; channel?: string }
+  params: { window?: '7d' | '30d' | '90d'; platform?: string; brandKitId?: string; include?: ('posts' | 'channels' | 'tags')[]; channel?: string }
 ): Promise<Record<string, unknown>> {
   const include = params.include && params.include.length > 0 ? params.include : ['posts']
   for (const i of include) {
-    if (i !== 'posts' && i !== 'channels') throw new Error(`Unknown include "${i}": use "posts" and/or "channels"`)
+    if (i !== 'posts' && i !== 'channels' && i !== 'tags') throw new Error(`Unknown include "${i}": use "posts", "channels" and/or "tags"`)
   }
-  const wantPosts = include.includes('posts')
+  const wantTags = include.includes('tags')
+  // The tag sections ride on the posts read, so "tags" alone still returns the posts.
+  const wantPosts = include.includes('posts') || wantTags
   const wantChannels = include.includes('channels')
   if (params.channel !== undefined && !CHANNELS.includes(params.channel as MarketingChannel)) {
     throw new Error(`Unknown channel "${params.channel}": use one of ${CHANNELS.join(', ')}`)
@@ -581,8 +589,9 @@ export async function getMarketingInsights(
     throw new Error('`platform` only filters posts: add "posts" to include')
   }
 
-  if (!wantChannels) return getPostInsights(config, params)
+  const postParams = { ...params, tags: wantTags }
+  if (!wantChannels) return getPostInsights(config, postParams)
   const marketing = await getChannelInsights(config, { window: params.window, channel: params.channel as MarketingChannel | undefined })
   if (!wantPosts) return { marketing }
-  return { ...(await getPostInsights(config, params)), marketing }
+  return { ...(await getPostInsights(config, postParams)), marketing }
 }

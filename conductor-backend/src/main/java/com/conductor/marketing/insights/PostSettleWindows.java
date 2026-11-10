@@ -32,9 +32,9 @@ public final class PostSettleWindows {
 
     /**
      * Settled when the fire time is at least the platform's window before {@code now}. A destination with no
-     * fire time (admitted to insights by its first snapshot) has no age to judge and counts as settled.
+     * fire time has no age to judge, so it is not settled: it stays out of every baseline, lift and verdict.
      */
     public static boolean isSettled(String platform, OffsetDateTime fireTime, OffsetDateTime now) {
-        return fireTime == null || !fireTime.isAfter(now.minus(of(platform)));
+        return fireTime != null && !fireTime.isAfter(now.minus(of(platform)));
     }
 }

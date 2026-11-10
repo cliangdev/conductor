@@ -48,9 +48,10 @@ public class PublishMetricsController implements PublishMetricsApi {
 
     @Override
     public ResponseEntity<MarketingInsightsResponse> getMarketingInsights(String projectId, String window,
-                                                                          String platform, String brandKitId) {
+                                                                          String platform, String brandKitId,
+                                                                          java.util.List<String> include) {
         MarketingInsightsQueryService.Insights insights = insightsQueryService.compute(projectId, window, platform,
-                brandKitId, currentUser());
+                brandKitId, include != null && include.contains("tags"), currentUser());
         return ResponseEntity.ok(toResponse(insights));
     }
 
@@ -87,22 +88,25 @@ public class PublishMetricsController implements PublishMetricsApi {
     }
 
     private static MarketingInsightsResponse toResponse(MarketingInsightsQueryService.Insights r) {
-        return new MarketingInsightsResponse(toWindow(r.window()), toGroup(r.totals()),
+        MarketingInsightsResponse response = new MarketingInsightsResponse(toWindow(r.window()), toGroup(r.totals()),
                 r.byPlatform().stream().map(PublishMetricsController::toGroup).toList(),
                 r.byFormat().stream().map(PublishMetricsController::toGroup).toList(),
                 r.byHour().stream().map(PublishMetricsController::toGroup).toList(),
                 r.byWeekday().stream().map(PublishMetricsController::toGroup).toList(),
-                r.byTag().stream().map(PublishMetricsController::toTagGroup).toList(),
-                toWindow(r.byTagWindow()),
-                new PlaybookEffect(new PlaybookEffectSide(r.playbookEffect().withLessons().posts())
-                        .medianViewLift(r.playbookEffect().withLessons().medianViewLift()),
-                        new PlaybookEffectSide(r.playbookEffect().withoutLessons().posts())
-                                .medianViewLift(r.playbookEffect().withoutLessons().medianViewLift())),
                 r.topPosts().stream().map(PublishMetricsController::toInsightsPost).toList(),
                 r.bottomPosts().stream().map(PublishMetricsController::toInsightsPost).toList(),
                 r.movers().stream().map(PublishMetricsController::toMover).toList(),
                 new InsightsCoverage(r.coverage().platforms(), r.coverage().notes()),
                 r.creatives().stream().map(PublishMetricsController::toCreativeEntry).toList());
+        if (r.byTag() != null) {
+            response.byTag(r.byTag().stream().map(PublishMetricsController::toTagGroup).toList())
+                    .byTagWindow(toWindow(r.byTagWindow()))
+                    .playbookEffect(new PlaybookEffect(new PlaybookEffectSide(r.playbookEffect().withLessons().posts())
+                            .medianViewLift(r.playbookEffect().withLessons().medianViewLift()),
+                            new PlaybookEffectSide(r.playbookEffect().withoutLessons().posts())
+                                    .medianViewLift(r.playbookEffect().withoutLessons().medianViewLift())));
+        }
+        return response;
     }
 
     private static CreativePerformanceEntry toCreativeEntry(CreativePerformanceService.VariantPerformance p) {

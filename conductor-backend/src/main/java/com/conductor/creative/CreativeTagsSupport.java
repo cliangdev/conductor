@@ -30,6 +30,11 @@ public final class CreativeTagsSupport {
 
     /** 422 violations naming {@code tags.<key>}; empty for null or valid tags. */
     public static List<Violation> validate(CreativeTags tags) {
+        return validate(tags, false);
+    }
+
+    /** As above; with {@code blankRemoves} an empty or blank value is allowed (a variant request uses it to drop an inherited key). */
+    public static List<Violation> validate(CreativeTags tags, boolean blankRemoves) {
         List<Violation> out = new ArrayList<>();
         if (tags == null) {
             return out;
@@ -50,6 +55,9 @@ public final class CreativeTagsSupport {
                 return;
             }
             String s = value.toString();
+            if (s.isBlank() && blankRemoves) {
+                return;
+            }
             if (s.isBlank()) {
                 out.add(new Violation("tags." + key, "tagValue", "tags." + key + " must not be blank"));
             } else if (s.length() > MAX_LENGTH) {
@@ -79,6 +87,37 @@ public final class CreativeTagsSupport {
             }
         }
         return node;
+    }
+
+    /** The descriptive keys a variant inherits from the Creative it is cut from; the rest describe one piece of work. */
+    public static final List<String> INHERITED_BY_VARIANTS = List.of("hookType", "angle", "format", "archetype");
+
+    /**
+     * A new variant's tags: the descriptive keys of its source, with the request's tags merged over them (a
+     * blank value removes a key). Never hypothesis, lessons or previewRounds from the source.
+     */
+    public static ObjectNode forVariant(ObjectMapper mapper, JsonNode sourceTags, CreativeTags requested) {
+        ObjectNode out = mapper.createObjectNode();
+        for (String key : INHERITED_BY_VARIANTS) {
+            JsonNode v = sourceTags == null ? null : sourceTags.get(key);
+            if (v != null && v.isTextual() && !v.asText().isBlank()) {
+                out.put(key, v.asText());
+            }
+        }
+        if (requested != null) {
+            for (String key : KEYS) {
+                String value = valueOf(requested, key);
+                if (value == null) {
+                    continue;
+                }
+                if (value.isBlank()) {
+                    out.remove(key);
+                } else {
+                    out.put(key, value.trim());
+                }
+            }
+        }
+        return out;
     }
 
     /** The response model for stored JSON; never null (an empty {@link CreativeTags} when none). */

@@ -380,6 +380,18 @@ public class CreativeService {
                     + " (current version " + current.getVersion() + ", expected " + request.getVersion() + ")");
         }
 
+        if (isTagsOnly(request)) {
+            // Tagging must never fail over unrelated content (an old headline that now breaks a copy rule, a
+            // photo since blocked): validate the tags alone and save.
+            List<Violation> tagViolations = CreativeTagsSupport.validate(request.getTags());
+            if (!tagViolations.isEmpty()) {
+                throw new CreativeValidationException(tagViolations);
+            }
+            current.setTags(CreativeTagsSupport.toStored(objectMapper, request.getTags()));
+            current = creativeRepository.save(current);
+            return toView(projectId, current, loadPhotos(List.of(current)));
+        }
+
         BrandKit kit = request.getBrandKitId() != null ? resolveKit(projectId, request.getBrandKitId())
                 : requireKit(projectId, current.getBrandKitId());
 
@@ -550,6 +562,23 @@ public class CreativeService {
         return toView(projectId, current, loadPhotos(List.of(current)));
     }
 
+    /** True when the patch carries tags and version and nothing else (any other present field makes it a content patch). */
+    private boolean isTagsOnly(PatchCreativeRequest request) {
+        if (request.getTags() == null) {
+            return false;
+        }
+        JsonNode node = objectMapper.valueToTree(request);
+        java.util.Iterator<Map.Entry<String, JsonNode>> fields = node.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            // A field the request did not carry serializes as null; anything else is a content change.
+            if (!field.getValue().isNull() && !field.getKey().equals("version") && !field.getKey().equals("tags")) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     @Transactional
     public CreativeView createVariant(String projectId, String creativeId, CreateCreativeVariantRequest request, User caller) {
         requireEditor(projectId, caller);
@@ -583,7 +612,7 @@ public class CreativeService {
                 toStringList(root.getSlideAltText())).withPhotoGif(mainPhoto.photo() != null && mainPhoto.photo().isGif())
                 .withAudioAndSlideshow(sound.audioInput(), sound.slideshowInput()));
         if (request != null) {
-            violations.addAll(CreativeTagsSupport.validate(request.getTags()));
+            violations.addAll(CreativeTagsSupport.validate(request.getTags(), true));
         }
         if (!violations.isEmpty()) {
             throw new CreativeValidationException(violations);
@@ -617,9 +646,9 @@ public class CreativeService {
         variant.setSlideshow(root.getSlideshow());
         variant.setSlideStyle(root.getSlideStyle());
         variant.setSlideshowSpec(root.getSlideshowSpec());
-        // A variant inherits the tags of the Creative it was cut from (not the family root's) unless given its own.
-        variant.setTags(request != null && request.getTags() != null
-                ? CreativeTagsSupport.toStored(objectMapper, request.getTags()) : source.getTags());
+        // A variant inherits the descriptive tags (hookType, angle, format, archetype) of the Creative it was cut from, not
+        // the family root's and never hypothesis/lessons/previewRounds; the request's tags merge over them.
+        variant.setTags(CreativeTagsSupport.forVariant(objectMapper, source.getTags(), request != null ? request.getTags() : null));
         variant.setTypeOverrides(objectMapper.createObjectNode());
         variant.setLayoutOverrides(root.getLayoutOverrides());
         variant.setLockup(root.getLockup());

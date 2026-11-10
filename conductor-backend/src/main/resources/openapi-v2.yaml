@@ -3076,17 +3076,30 @@ paths:
           schema:
             type: string
           description: >-
-            Restrict to one platform (facebook, instagram, tiktok, youtube). Applies to everything, including
-            `byTag`, `playbookEffect` and the Creatives' figures; baselines stay per platform.
+            Restrict to one platform (facebook, instagram, tiktok, youtube). With `include=tags` it also filters
+            `byTag` and `playbookEffect`; `creatives` has never honoured it. Baselines stay per platform.
         - name: brandKitId
           in: query
           required: false
           schema:
             type: string
           description: >-
-            Count only destinations published from Creatives on this Brand Kit in `byTag`, `playbookEffect` and
-            `creatives` (the default kit is addressed by its own id, which Creatives on it store). The other
-            groups are about Posts and ignore it.
+            Restrict `creatives` (and, with `include=tags`, `byTag` and `playbookEffect`) to Creatives on this
+            Brand Kit; the default kit is addressed by its own id, which Creatives on it store. The other groups
+            are about Posts and ignore it.
+        - name: include
+          in: query
+          required: false
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [tags]
+          description: >-
+            Opt-in sections. `tags` adds `byTag`, `byTagWindow` and `playbookEffect` and fills the lift and verdict
+            fields of `creatives`; without it none of that is computed and those fields are absent.
       responses:
         "200":
           description: The insights
@@ -13674,9 +13687,6 @@ components:
         - movers
         - coverage
         - creatives
-        - byTag
-        - byTagWindow
-        - playbookEffect
       properties:
         window:
           $ref: "#/components/schemas/InsightsWindow"
@@ -13707,7 +13717,7 @@ components:
           items:
             $ref: "#/components/schemas/InsightsTagGroup"
           description: >-
-            One row per (tagKey, value) of the tags on the Creative each destination was published from
+            Only with `include=tags`. One row per (tagKey, value) of the tags on the Creative each destination was published from
             (attributed through the Creative's rendered frames); a `lessons` tag is split so each lesson id
             (`#3`) has its own row, and `previewRounds` is not grouped. Destinations with no attributed Creative,
             or a Creative with no tags, are left out. Ignores `window`: it always reads the settled posts of the
@@ -13717,12 +13727,12 @@ components:
         byTagWindow:
           allOf:
             - $ref: "#/components/schemas/InsightsWindow"
-          description: The fixed 90-day evidence window `byTag` and `playbookEffect` read, whatever `window` was asked for.
+          description: Only with `include=tags`. The fixed 90-day evidence window `byTag` and `playbookEffect` read, whatever `window` was asked for.
         playbookEffect:
           allOf:
             - $ref: "#/components/schemas/PlaybookEffect"
           description: >-
-            Settled posts of the same 90 days that have an attributed Creative, split by whether that Creative has a
+            Only with `include=tags`. Settled posts of the same 90 days that have an attributed Creative, split by whether that Creative has a
             non-empty `lessons` tag, with each side's median view lift: did following the playbook help at all.
             Posts with no attributed Creative are on neither side.
         topPosts:

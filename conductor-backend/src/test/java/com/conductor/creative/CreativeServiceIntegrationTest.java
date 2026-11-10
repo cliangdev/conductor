@@ -1558,7 +1558,7 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
                         assertThat(e.violations()).extracting(CreativeValidationException.Violation::field)
                                 .contains("tags.hookType"));
 
-        CreateCreativeVariantRequest badVariant = new CreateCreativeVariantRequest().tags(tags("", null));
+        CreateCreativeVariantRequest badVariant = new CreateCreativeVariantRequest().tags(tags("x".repeat(61), null));
         assertThatThrownBy(() -> creativeService.createVariant(project.getId(), ok.creative().getId(), badVariant, admin))
                 .isInstanceOf(CreativeValidationException.class);
     }
@@ -1601,6 +1601,61 @@ class CreativeServiceIntegrationTest extends AbstractNoneWebIntegrationTest {
                             assertThat(e.violations()).extracting(CreativeValidationException.Violation::field)
                                     .contains("tags.lessons"));
         }
+    }
+
+    @Test
+    void aVariantInheritsOnlyTheDescriptiveTagsAndRequestTagsMergeOverThem() {
+        CreateCreativeRequest request = concept("Merge parent.", "Body.");
+        request.setTags(tags("question", "trend-humor").hypothesis("H2").lessons("#3").archetype("numbered-list"));
+        CreativeService.CreativeView root = creativeService.createCreative(project.getId(), request, admin);
+
+        CreativeService.CreativeView inherited = creativeService.createVariant(project.getId(),
+                root.creative().getId(), new CreateCreativeVariantRequest().headline("Second *take*."), admin);
+        // hypothesis and lessons describe one piece of work, not the idea: they are not copied.
+        assertThat(storedTags(inherited)).containsOnlyKeys("hookType", "angle", "archetype");
+
+        CreativeService.CreativeView merged = creativeService.createVariant(project.getId(),
+                root.creative().getId(), new CreateCreativeVariantRequest().headline("Third *take*.")
+                        .tags(tags("stat", "").lessons("#9")), admin);
+        assertThat(storedTags(merged)).containsOnly(
+                Map.entry("hookType", "stat"), Map.entry("archetype", "numbered-list"), Map.entry("lessons", "#9"));
+        // An explicit empty string removed the inherited angle.
+        assertThat(storedTags(merged)).doesNotContainKey("angle");
+
+        // PATCH still replaces the whole map.
+        PatchCreativeRequest patch = new PatchCreativeRequest(merged.creative().getVersion());
+        patch.setTags(new com.conductor.generated.v2.model.CreativeTags().format("still"));
+        assertThat(storedTags(creativeService.patchCreative(project.getId(), merged.creative().getId(), patch, admin)))
+                .containsExactly(Map.entry("format", "still"));
+    }
+
+    @Test
+    void aTagsOnlyPatchSkipsContentValidationSoTaggingAnOldCreativeNeverFailsOverItsCopy() {
+        CreativeService.CreativeView created = creativeService.createCreative(project.getId(),
+                concept("Dinner is ready.", "A calm plan."), admin);
+        // The kit later gains a rule the headline now breaks.
+        CopyRule noDinner = new CopyRule("noDinner", "Dinner", "No dinner talk.", List.of(CopyRuleField.HEADLINE));
+        brandKitService.patchKit(project.getId(), defaultKit.getId(),
+                new com.conductor.generated.v2.model.PatchBrandKitRequest().copyRules(List.of(noDinner)), admin);
+
+        // A content patch that touches the headline is still held to the rule...
+        PatchCreativeRequest content = new PatchCreativeRequest(created.creative().getVersion());
+        content.setCaption("New caption");
+        assertThatThrownBy(() -> creativeService.patchCreative(project.getId(), created.creative().getId(), content, admin))
+                .isInstanceOf(CreativeValidationException.class);
+
+        // ...but tagging alone is not.
+        PatchCreativeRequest tagsOnly = new PatchCreativeRequest(created.creative().getVersion());
+        tagsOnly.setTags(tags("question", null));
+        CreativeService.CreativeView tagged = creativeService.patchCreative(project.getId(), created.creative().getId(), tagsOnly, admin);
+        assertThat(storedTags(tagged)).containsEntry("hookType", "question");
+
+        // Bad tags are still refused, naming the field.
+        PatchCreativeRequest badTags = new PatchCreativeRequest(tagged.creative().getVersion());
+        badTags.setTags(tags("x".repeat(61), null));
+        assertThatThrownBy(() -> creativeService.patchCreative(project.getId(), created.creative().getId(), badTags, admin))
+                .isInstanceOfSatisfying(CreativeValidationException.class, e ->
+                        assertThat(e.violations()).extracting(CreativeValidationException.Violation::field).contains("tags.hookType"));
     }
 
     private CreateCreativeRequest concept(String headline, String body) {

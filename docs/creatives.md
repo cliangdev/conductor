@@ -1015,8 +1015,11 @@ vocabularies are the skills' convention, not validated.
 
 Writes: create stores what is sent. `PATCH` leaves the tags alone when `tags` is omitted, **replaces the
 whole map** when it is sent (a key left out is removed), and clears it for `{}`. A lettered variant
-inherits the tags of the Creative it is cut from (cut 1c from 1b and it takes 1b's, not the family root's) unless
-the variant request carries its own. The draft-spec preview takes `tags`
+inherits only the descriptive tags (`hookType`, `angle`, `format`, `archetype`) of the Creative it is cut from (cut 1c
+from 1b and it takes 1b's, not the family root's), never `hypothesis`, `lessons` or `previewRounds`; tags in the
+variant request merge over the inherited ones, and a key given as an empty string removes it. A `PATCH` that
+carries only `tags` (and `version`) validates the tags alone, so tagging an old Creative never fails over its
+unrelated content. The draft-spec preview takes `tags`
 like any create field (and overlays them on a `baseCreativeId`'s), and `commit_creative_draft` saves what the
 preview carried, or the `tags` it is given. `GET` always returns `tags`.
 
@@ -1033,7 +1036,7 @@ reads **settled posts only** and compares each post with the account's own typic
 - *Settled*: a destination counts once its fire time is at least its platform's window before now,
   TikTok, Instagram and YouTube 72 h, Facebook 7 d, any other platform 72 h (`PostSettleWindows`). Posts
   still inside the window are not counted; a row's `unsettledPosts` says how many were left out. A destination
-  with no fire time has no age to judge and counts as settled.
+  with no fire time has no age to judge, so it is never settled and stays out of every baseline, lift and verdict.
 - *Baseline* (`PostBaselineService`): the median views and median `avgViewPct` of settled reporting
   destinations over the trailing 90 days, independent of the insights `window`. Per platform and format when
   that bucket has at least 10 settled posts *with a value for that metric*, else per platform when the platform
@@ -1049,12 +1052,18 @@ Each `byTag` row keeps the group fields (counted over its settled posts) and add
 when it cannot be computed. Rows sort by tag key, then `medianViewLift` descending, nulls last. Read the lift
 rather than the pooled views, and `posts` for how much to trust it.
 
+**Opt-in.** The tag data is built only when `GET .../marketing/insights` is called with `include=tags` (the MCP
+`get_marketing_insights` takes `include: ["tags"]`): `byTag`, `byTagWindow`, `playbookEffect` and the lift and verdict
+fields of `creatives`. Without it none of that code runs, the request issues the queries it always did, and those
+fields are absent. `creatives` itself behaves as before: it has never honoured `platform`, and `brandKitId` (new)
+only narrows it to one kit.
+
 **A fixed evidence window, but the same filters.** `byTag` (and `playbookEffect`) ignore the insights `window`: they
 always read the settled posts of the trailing 90 days, and the response says so in `byTagWindow` (`{from, to,
-days: 90}`). A 7-day window could never contain a settled Facebook post. They do honour `platform`, and the new
+days: 90}`). A 7-day window could never contain a settled Facebook post. With `include=tags` they honour `platform`, and the new
 `brandKitId` filter (only destinations published from Creatives on that Brand Kit; every Creative stores its kit's
-real id, the default kit's included, so the default is filtered by its own id). The top Creatives' figures honour
-both filters too. Baselines stay per platform whatever is filtered. The rest of insights still honours `window`.
+real id, the default kit's included, so the default is filtered by its own id). Baselines stay per platform whatever is
+filtered. The rest of insights still honours `window`.
 
 **Verdicts are decided by the server, not the model.** A model asked to judge noisy numbers finds a story in
 them, so each `byTag` row (and each variant in creative performance) carries a verdict from
@@ -1068,7 +1077,7 @@ most 1/3 beat it; otherwise `NO_DIFFERENCE`. Rows add `withBaselinePosts`/`beatB
 when at least 3 posts have a retention baseline and they are at least 2/3 of the posts with a view baseline
 (`RETENTION_COVERAGE_SHARE`), else views. Only YouTube reports `avg_view_pct`, so a few YouTube posts must not
 decide a row that is mostly TikTok or Instagram. Creative
-performance adds `withBaselinePosts`, `beatBaselinePosts`, `viewVerdict` and `retentionVerdict`. The constants
+performance (`get_creative`'s per-variant performance, and `creatives` with `include=tags`) adds `withBaselinePosts`, `beatBaselinePosts`, `viewVerdict` and `retentionVerdict`. The constants
 (`MIN_POSTS`, the 1.2/0.8 lifts and the 2/3, 1/3 shares) are in `LessonVerdictRules`.
 
 **Playbook lessons.** A Creative's `lessons` tag records which playbook lessons it followed. `byTag` splits it, one

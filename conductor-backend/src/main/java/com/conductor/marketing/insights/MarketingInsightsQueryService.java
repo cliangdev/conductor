@@ -140,27 +140,32 @@ public class MarketingInsightsQueryService {
 
     @Transactional(readOnly = true)
     public Insights compute(String projectId, String windowRaw, String platformRaw, User caller) {
-        return compute(projectId, windowRaw, platformRaw, null, caller);
+        return compute(projectId, windowRaw, platformRaw, null, false, caller);
     }
 
     /**
-     * {@code brandKitId}, when given, restricts {@code byTag}, {@code playbookEffect} and the top Creatives to
-     * destinations attributed to Creatives on that Brand Kit (the other groups are about Posts, not Creatives).
+     * {@code tags} opts in to the tag data ({@code byTag}, {@code byTagWindow}, {@code playbookEffect} and the
+     * lift/verdict fields of the top Creatives): without it none of that code runs and the request issues the
+     * queries it always did. {@code platform} filters {@code byTag} and {@code playbookEffect} too (the top
+     * Creatives have never honoured it). {@code brandKitId}, when given, restricts {@code byTag},
+     * {@code playbookEffect} and the top Creatives to Creatives on that Brand Kit.
      */
     @Transactional(readOnly = true)
-    public Insights compute(String projectId, String windowRaw, String platformRaw, String brandKitId, User caller) {
+    public Insights compute(String projectId, String windowRaw, String platformRaw, String brandKitId, boolean tags,
+                            User caller) {
         verifyMembership(projectId, caller);
         InsightsWindowSpec spec = InsightsWindowSpec.parse(windowRaw);
         String platform = normalizePlatform(platformRaw);
-        return compute(projectId, spec, platform, brandKitId, OffsetDateTime.now());
+        return compute(projectId, spec, platform, brandKitId, tags, OffsetDateTime.now());
     }
 
     /** Package-visible so a test can pin "now" without mocking the clock. */
     Insights compute(String projectId, InsightsWindowSpec spec, String platform, OffsetDateTime now) {
-        return compute(projectId, spec, platform, null, now);
+        return compute(projectId, spec, platform, null, false, now);
     }
 
-    Insights compute(String projectId, InsightsWindowSpec spec, String platform, String brandKitId, OffsetDateTime now) {
+    Insights compute(String projectId, InsightsWindowSpec spec, String platform, String brandKitId, boolean tags,
+                     OffsetDateTime now) {
         OffsetDateTime from = spec.from(now);
         OffsetDateTime to = now;
         OffsetDateTime prevFrom = spec.previousFrom(now);
@@ -179,17 +184,24 @@ public class MarketingInsightsQueryService {
         List<Group> byFormat = groupBy(reporting, TargetSnapshot::format, key -> null);
         List<Group> byHour = byHour(reporting);
         List<Group> byWeekday = byWeekday(reporting);
-        // One evidence set per request (the settled posts of the trailing 90 days, whatever the window) and one
-        // destination-to-tags map, shared by byTag, playbookEffect and the top Creatives.
-        PostBaselineService.Baselines evidence = baselineService.baselines(projectId, now);
-        CreativeTagAttribution.Attribution attribution = tagAttribution.attribution(projectId, brandKitId);
-        Map<String, java.util.Set<CreativeTagAttribution.TagValue>> tagsByTarget = attribution.tagsByTarget();
-        // With a Brand Kit, a destination counts only if a Creative of that kit published it; the platform
-        // filter applies on top. Baselines stay per platform whatever is filtered.
-        List<PostBaselineService.Observation> settledEvidence = evidenceFor(evidence.settled(), tagsByTarget, platform, brandKitId);
-        List<PostBaselineService.Observation> unsettledEvidence = evidenceFor(evidence.unsettled(), tagsByTarget, platform, brandKitId);
-        List<TagGroup> byTag = byTag(evidence, settledEvidence, unsettledEvidence, tagsByTarget);
-        PlaybookEffect playbookEffect = playbookEffect(evidence, settledEvidence, tagsByTarget);
+        // Tag data is opt-in. One evidence set per request (the settled posts of the trailing 90 days, whatever
+        // the window) and one attribution (Creatives, their destinations, their tags), shared by byTag,
+        // playbookEffect and the top Creatives.
+        PostBaselineService.Baselines evidence = null;
+        CreativeTagAttribution.Attribution attribution = null;
+        List<TagGroup> byTag = null;
+        PlaybookEffect playbookEffect = null;
+        if (tags) {
+            evidence = baselineService.baselines(projectId, now);
+            attribution = tagAttribution.attribution(projectId, brandKitId);
+            Map<String, java.util.Set<CreativeTagAttribution.TagValue>> tagsByTarget = attribution.tagsByTarget();
+            // With a Brand Kit, a destination counts only if a Creative of that kit published it; the platform
+            // filter applies on top. Baselines stay per platform whatever is filtered.
+            List<PostBaselineService.Observation> settledEvidence = evidenceFor(evidence.settled(), tagsByTarget, platform, brandKitId);
+            List<PostBaselineService.Observation> unsettledEvidence = evidenceFor(evidence.unsettled(), tagsByTarget, platform, brandKitId);
+            byTag = byTag(evidence, settledEvidence, unsettledEvidence, tagsByTarget);
+            playbookEffect = playbookEffect(evidence, settledEvidence, tagsByTarget);
+        }
 
         List<Post> ranked = rank(reporting, workItems);
         List<Post> topPosts = ranked.stream().limit(TOP_POSTS_LIMIT).toList();
@@ -202,12 +214,12 @@ public class MarketingInsightsQueryService {
 
         Coverage coverage = coverage(population, reporting);
 
-        List<CreativePerformanceService.VariantPerformance> creatives =
-                creativePerformanceService.topCreatives(from, to, TOP_CREATIVES_LIMIT, evidence, attribution.creatives(),
-                        attribution.targetsByCreative(), platform);
+        List<CreativePerformanceService.VariantPerformance> creatives = creativePerformanceService.topCreatives(
+                projectId, from, to, TOP_CREATIVES_LIMIT, brandKitId, attribution, evidence);
 
         return new Insights(new Window(from, to, spec.days()), totals, byPlatform, byFormat, byHour, byWeekday, byTag,
-                new Window(evidence.from(), evidence.to(), PostBaselineService.BASELINE_DAYS), playbookEffect,
+                evidence == null ? null : new Window(evidence.from(), evidence.to(), PostBaselineService.BASELINE_DAYS),
+                playbookEffect,
                 topPosts, bottomPosts, movers, coverage, creatives);
     }
 

@@ -164,12 +164,12 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         newSnapshot(targetC, fireC.plusHours(1), 800L, 20L, 2L, 1L, 1L, null);
 
         List<CreativePerformanceService.VariantPerformance> allTime =
-                performanceService.topCreatives(project.getId(), null, null, 10);
+                performanceService.topCreatives(project.getId(), null, null, 10, null, null, null);
         assertThat(allTime).extracting(CreativePerformanceService.VariantPerformance::creativeId)
                 .containsExactly(a.getId(), c.getId()); // higher views first
 
         List<CreativePerformanceService.VariantPerformance> lastWeek =
-                performanceService.topCreatives(project.getId(), now.minusDays(7), now, 10);
+                performanceService.topCreatives(project.getId(), now.minusDays(7), now, 10, null, null, null);
         assertThat(lastWeek).extracting(CreativePerformanceService.VariantPerformance::creativeId)
                 .containsExactly(c.getId()); // `a` fired outside the window
     }
@@ -204,7 +204,7 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         PostPublishTarget untaggedTarget = newTarget(untaggedPost, "instagram", now.minusDays(1));
         newSnapshot(untaggedTarget, now.minusDays(1).plusHours(1), 300L, 3L, 0L, 0L, 0L, null);
 
-        var insights = insightsService.compute(project.getId(), "30d", null, admin);
+        var insights = insightsService.compute(project.getId(), "30d", null, null, true, admin);
 
         assertThat(insights.totals().posts()).isEqualTo(4);
         assertThat(insights.byTag()).extracting(t -> t.tagKey() + "=" + t.group().key())
@@ -239,7 +239,7 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         newAttachedAsset(target.getWorkItem(), newFrameFor(tagged));
         newSnapshot(target, now.minusDays(5).plusHours(1), 300L, 30L, 0L, 0L, 0L, null);
 
-        var tag = insightsService.compute(project.getId(), "30d", null, admin).byTag().get(0);
+        var tag = insightsService.compute(project.getId(), "30d", null, null, true, admin).byTag().get(0);
         assertThat(tag.lift().medianViewLift()).isCloseTo(3.0, within(1e-9));
         assertThat(tag.lift().beatBaselineShare()).isEqualTo(1.0);
         assertThat(tag.lift().withBaselinePosts()).isEqualTo(1);
@@ -249,7 +249,7 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         assertThat(tag.verdict()).isEqualTo("NOT_ENOUGH_DATA"); // one post is under the minimum of 3
         assertThat(tag.verdictMetric()).isEqualTo("VIEW_LIFT"); // no retention baseline, so hookType reads views
 
-        var perf = performanceService.topCreatives(project.getId(), null, null, 10).get(0);
+        var perf = insightsService.compute(project.getId(), "30d", null, null, true, admin).creatives().get(0);
         assertThat(perf.creativeId()).isEqualTo(tagged.getId());
         assertThat(perf.settledPosts()).isEqualTo(1);
         assertThat(perf.medianViewLift()).isCloseTo(3.0, within(1e-9));
@@ -298,7 +298,7 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         PostPublishTarget orphan = newTarget(newPost("Hand-made"), "facebook", now.minusDays(11));
         newSnapshot(orphan, now.minusDays(11).plusHours(1), 900L, 9L, 0L, 0L, 0L, null);
 
-        var insights = insightsService.compute(project.getId(), "7d", null, admin);
+        var insights = insightsService.compute(project.getId(), "7d", null, null, true, admin);
 
         assertThat(insights.totals().posts()).isEqualTo(1); // the rest of insights still honours the 7d window: only the 3-day-old post
         assertThat(insights.byTagWindow().days()).isEqualTo(90);
@@ -343,33 +343,69 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         newAttachedAsset(og.getWorkItem(), newFrameFor(onOther));
         newSnapshot(og, now.minusDays(6).plusHours(1), 300L, 3L, 0L, 0L, 0L, null);
 
-        var all = insightsService.compute(project.getId(), "30d", null, null, admin);
+        var all = insightsService.compute(project.getId(), "30d", null, null, true, admin);
         assertThat(all.byTag()).extracting(t -> t.tagKey() + "=" + t.group().key())
                 .containsExactlyInAnyOrder("hookType=question", "hookType=story", "lessons=#1");
         assertThat(all.playbookEffect().withLessons().posts()).isEqualTo(2);
         assertThat(all.playbookEffect().withoutLessons().posts()).isEqualTo(1);
         assertThat(all.creatives()).hasSize(2);
 
-        var instagram = insightsService.compute(project.getId(), "30d", "instagram", null, admin);
+        var instagram = insightsService.compute(project.getId(), "30d", "instagram", null, true, admin);
         assertThat(instagram.byTag().stream().filter(t -> t.group().key().equals("question")).findFirst().orElseThrow()
                 .group().posts()).isEqualTo(1); // the TikTok post is out
         assertThat(instagram.playbookEffect().withLessons().posts()).isEqualTo(1);
-        assertThat(instagram.creatives()).extracting(c -> c.posts()).containsOnly(1);
+        // The top Creatives have never honoured the platform filter (they list every destination).
+        assertThat(instagram.creatives()).extracting(c -> c.creativeId()).isEqualTo(all.creatives().stream().map(c -> c.creativeId()).toList());
 
         // The default kit's id: the Creatives on it store that real id, so the filter simply matches it.
         assertThat(kit.getId()).isEqualTo(onDefault.getBrandKitId());
-        var defaultKit = insightsService.compute(project.getId(), "30d", null, kit.getId(), admin);
+        var defaultKit = insightsService.compute(project.getId(), "30d", null, kit.getId(), true, admin);
         assertThat(defaultKit.byTag()).extracting(t -> t.tagKey() + "=" + t.group().key())
                 .containsExactlyInAnyOrder("hookType=question", "lessons=#1");
         assertThat(defaultKit.playbookEffect().withLessons().posts()).isEqualTo(2);
         assertThat(defaultKit.playbookEffect().withoutLessons().posts()).isZero();
         assertThat(defaultKit.creatives()).extracting(c -> c.creativeId()).containsExactly(onDefault.getId());
 
-        var other = insightsService.compute(project.getId(), "30d", null, otherKit.getId(), admin);
+        var other = insightsService.compute(project.getId(), "30d", null, otherKit.getId(), true, admin);
         assertThat(other.byTag()).extracting(t -> t.group().key()).containsExactly("story");
         assertThat(other.creatives()).extracting(c -> c.creativeId()).containsExactly(onOther.getId());
         // Posts-level groups are about Posts, not Creatives: the kit filter leaves them alone.
         assertThat(other.totals().posts()).isEqualTo(3);
+    }
+
+    @Test
+    void withoutTagsTheTopCreativesAreExactlyWhatTheyWereAndIgnoreThePlatformFilter() {
+        OffsetDateTime now = OffsetDateTime.now();
+        Creative c = newVariant("a", null, "Cross-posted");
+        c.setTags(objectMapper.valueToTree(java.util.Map.of("hookType", "question")));
+        creativeRepository.save(c);
+        for (String platform : List.of("instagram", "tiktok")) {
+            PostPublishTarget t = newTarget(newPost("On " + platform), platform, now.minusDays(6));
+            newAttachedAsset(t.getWorkItem(), newFrameFor(c));
+            newSnapshot(t, now.minusDays(6).plusHours(1), platform.equals("tiktok") ? 900L : 100L, 5L, 0L, 0L, 0L, null);
+        }
+
+        var unfiltered = insightsService.compute(project.getId(), "30d", null, admin);
+        var tiktok = insightsService.compute(project.getId(), "30d", "tiktok", admin);
+
+        // As on main: platform narrows the post groups but never the top Creatives list.
+        assertThat(unfiltered.creatives()).hasSize(1);
+        assertThat(tiktok.creatives()).isEqualTo(unfiltered.creatives());
+        assertThat(tiktok.totals().posts()).isEqualTo(1);
+        // And the opt-in fields are not there: no lift, no verdicts, no tag sections.
+        assertThat(unfiltered.byTag()).isNull();
+        assertThat(unfiltered.byTagWindow()).isNull();
+        assertThat(unfiltered.playbookEffect()).isNull();
+        var entry = unfiltered.creatives().get(0);
+        assertThat(entry.posts()).isEqualTo(2);
+        assertThat(entry.settledPosts()).isNull();
+        assertThat(entry.viewVerdict()).isNull();
+
+        // With tags the Creatives still ignore the platform filter; only byTag narrows.
+        var withTags = insightsService.compute(project.getId(), "30d", "tiktok", null, true, admin);
+        assertThat(withTags.creatives()).extracting(v -> v.creativeId() + ":" + v.posts() + ":" + v.views())
+                .isEqualTo(unfiltered.creatives().stream().map(v -> v.creativeId() + ":" + v.posts() + ":" + v.views()).toList());
+        assertThat(withTags.creatives().get(0).settledPosts()).isEqualTo(2);
     }
 
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────
