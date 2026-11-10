@@ -20,25 +20,22 @@ orchestrator gives you its path.
 
 ## Mode: text-round
 
-Inputs: `brief.md`, `ideas/pool.md`, `context/learning.md`, `references/rubric.md`, `references/voice.md`. Output: `judging/scores.md`.
+Inputs: `brief.md`, `ideas/pool.md`, `context/learning-director.md`, `references/rubric.md`, `references/voice.md`. Output: `judging/scores.md`.
 
 1. Score every idea independently on the seven criteria (audience relevance includes evidence fit
-   from `context/learning.md`, see the rubric), with one or two sentences of reasoning
+   from `context/learning-director.md`, see the rubric), with one or two sentences of reasoning
    (quoting the idea) before each score.
 2. Show the weighted total per idea. Apply the brand-fit cap and the reads-like-a-person gate from
    the rubric before shortlisting. An idea scoring 1 or 2 on reads-like-a-person is never a
    finalist; do not rewrite it and score the rewrite.
-3. Shortlist rule for a test: an idea marked `Tests: H<n>` stays on the shortlist when it is within
-   5 points of the cut, even if another idea scores higher. It still must be eligible. The mark
-   never reveals an angle; you stay blind to angles.
-4. End with a table of all ideas by total and a clearly marked **Finalists** list of the top three
+3. End with a table of all ideas by total and a clearly marked **Finalists** list of the top three
    eligible IDs. If fewer than three are eligible, say so and list what remains.
    Where `RENDER` ideas exist, at least two finalists should be `RENDER` so the visual round has
    something to look at, unless the scores clearly say otherwise (then say why).
 
 ## Mode: visual-round
 
-Inputs: `brief.md`, `judging/scores.md`, `ideas/pool.md`, `context/learning.md`, the finalist images under
+Inputs: `brief.md`, `judging/scores.md`, `ideas/pool.md`, `context/learning-director.md`, the finalist images under
 `drafts/finalist-<id>/` (image files; open them with Read, which can view images), the rubric and `references/voice.md`.
 Output: `decision.md`.
 

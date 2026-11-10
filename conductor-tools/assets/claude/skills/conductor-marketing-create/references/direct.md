@@ -71,8 +71,8 @@ against placeholder tokens: gather colours, font, CTA claim and any copy rules o
 with `get_brand_kit` afterward — `configured` should now read `true`. (`references/brand-kit-setup.md`
 walks a person through exactly this.)
 
-Then run the retro in `references/learning-loop.md` (read the playbook, bootstrap it if there is
-none, skip the rest when it is fresh).
+Then run the retro in `references/learning-loop.md` (read the playbook as advisory data, warm-start
+it if there is none, skip the rest when it is fresh).
 
 ### 2. Pick the angle
 
@@ -189,7 +189,7 @@ the rule and field, without rendering — fix the copy and preview again.
 
 Pass `tags` on every preview and commit: `hookType` (classified from the mapping in
 `references/learning-loop.md`), `angle` if one applies, `format`, `archetype` for a slideshow, and
-`hypothesis` when the run carries a test.
+`hypothesis` when the run carries a test, `lessons` (the playbook IDs applied), and `previewRounds` at commit (the preview rounds before approval).
 
 To change an existing Creative's copy, layout or photo, preview the edit first with `baseCreativeId`:
 only the fields you pass change, and the commit then updates that Creative instead of creating one.
@@ -278,7 +278,8 @@ display id, the frames and the readiness. It can be run once per draft; if its r
 Creative is already saved — call `render_creative`, don't commit again. Verify with `get_creative`.
 After the commit, capture what was learned (`references/learning-loop.md`, "Capture") and say the
 `Learned:` lines when you report. If the test's hook was kept as a spare, suggest a lettered
-variant (`variantOf`) and `create_experiment`.
+variant (`variantOf`) and `create_experiment`, with the variant's own tags (its `hookType`, the same
+`hypothesis` and `lessons`).
 Then `attach_creative_to_post` with the Post's Work Item id — it maps each placement to the right
 destinations (9:16 to TikTok/Reels, 4:5 to Instagram feed, 1:1 to Facebook, story to story targets)
 for every destination that has not set its own custom media, and never touches one that has. Verify

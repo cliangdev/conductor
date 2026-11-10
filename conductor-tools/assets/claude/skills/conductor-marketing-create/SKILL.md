@@ -32,8 +32,8 @@ do not post it.
   a draft the person has not seen and approved.
 - **Learns as it goes.** Read the workspace playbook first (the retro), follow it, test one new
   thing now and then (about 1 Creative in 4), commit with `tags`, then write back what was learned
-  as edits to single lessons and list them as `Learned:` lines in the final message. Lessons are
-  judged against the account's own baseline, never raw totals. A test never overrides brand or copy rules or the approval gate. See
+  as edits to single lessons and list them as `Learned:` lines in the final message. The server's
+  verdicts, not the model, decide what counts as a lesson, and the playbook is advisory. A test never overrides brand or copy rules or the approval gate. See
   `references/learning-loop.md`.
 - **A run never creates a Post.** It ends at a committed Creative (or a shoot script). Hand off to
   `conductor-marketing-publish` for the Post, scheduling and review.
