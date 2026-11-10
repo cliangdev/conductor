@@ -24,7 +24,7 @@ One section per platform the brief asks for. Omit a platform it does not.
 ```
 # Publish pack: <title>
 
-Run: <runId>   Creative: <display id, or "not yet committed">   Tags: hook <type>, angle <angle>, format <format>
+Run: <runId>   Creative: <display id, or "not yet committed">   Tags: hook <type>, angle <angle>, format <format>, archetype <archetype or none>, hypothesis <H<n> or none>
 
 ## <Platform> (<feed | reel | story>, as the destination's formats allow)
 - **Caption:** <final text; the search keyword is in the first line, within the first ~125
@@ -94,7 +94,7 @@ prompts, captions or this pack", or the hit and how it was fixed>
   "bannedCopyCheck": "clean",
   "altText": ["<card 1 alt text>", "<card 2 alt text>"],
   "alternateHooks": [{ "hook": "<line>", "hookType": "question" }],
-  "tags": { "hookType": "bold-claim", "angle": "utility-education", "format": "carousel" }
+  "tags": { "hookType": "bold-claim", "angle": "utility-education", "format": "carousel", "archetype": "numbered-list", "hypothesis": "H3" }
 }
 ```
 
@@ -140,4 +140,7 @@ Rules:
   copied into `run.json`.
 - `tags.angle` is the ideator's angle: `story-emotion`, `utility-education` or `trend-humor`.
   `tags.format` is the idea's format (`still`, `carousel`, `story`, `motion`, `clip` or `film`; map the idea template's formats: story sequence -> `story`, motion text over photo or clip -> `motion`, talking head, demo, skit or other -> `film`; `clip` is for a finished video posted as-is).
+- `tags.archetype` is the slideshow archetype from `references/slideshow-formats.md` in kebab-case
+  (omit it for anything else). `tags.hypothesis` is the `H<n>` the run tests, from `context/learning.md`
+  (omit it when none). Vocabulary and meaning: `references/learning-loop.md`.
 - Valid JSON, no comments.

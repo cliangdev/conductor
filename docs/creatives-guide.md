@@ -410,6 +410,21 @@ Performance shows up in two places: the **Performance** panel on a Creative's ow
 whole lettered family, side by side), and **Marketing → Posts → What's working → Top creatives**, which
 ranks your best-performing variants across the whole project.
 
+## 4b. How it gets better
+
+The creative skill keeps one playbook for your workspace: the Knowledge Center page
+`marketing/playbook.md` (with one section per Brand Kit if you have several). Every run, in Claude
+Code or Desktop, starts by reading it, follows what has proven out, avoids what did not work and
+tests one new idea. After you approve a draft, the skill updates the page by itself and lists what
+changed as "Learned:" lines in its final message. Creatives carry tags (hook type, angle, format,
+slideshow archetype, the hypothesis being tested), so results from Marketing → Posts can be traced
+back to the choice that made them.
+
+The playbook sorts lessons by evidence: Proven (three or more measured posts, or a decided hook
+experiment), Leaning, Didn't work, your Taste, and Open hypotheses with the date a result is due.
+To change it, edit the page in **Knowledge** like any other page; the next run follows your edit. To
+undo a bad update, open the page's revisions and restore the earlier one.
+
 ## 5. Video
 
 A **Clip** creative uses a finished video as-is — no brand layout, no headline/body rendered onto

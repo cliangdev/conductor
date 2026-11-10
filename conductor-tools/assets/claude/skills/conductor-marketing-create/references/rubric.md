@@ -24,7 +24,7 @@ Score each 1 to 5. Weighted total = sum(score x weight) / 5, so the maximum is 1
 | Criterion | Weight | 1 | 3 | 5 |
 |---|---|---|---|---|
 | Hook strength | 20 | Opens on a greeting, a logo or context; nothing makes a stranger stay | A clear promise or question, but generic; could open any account's post | A specific, surprising or tension-filled claim a stranger understands in 1s, spoken and on screen |
-| Audience relevance | 20 | Aimed at "everyone"; ignores the brief's tension | Names the audience's topic but not their actual friction | Opens on a friction the brief names and the audience would recognise as theirs |
+| Audience relevance | 20 | Aimed at "everyone"; ignores the brief's tension; or repeats a Didn't work line from `learning.md` | Names the audience's topic but not their actual friction | Opens on a friction the brief names and the audience would recognise as theirs; follows a Proven line from `learning.md` where one fits |
 | Reads like a person | 15 | A template frame ("X but Y"), brand words, a described picture or an explained joke; nobody would say it out loud | Plain and correct, but no speaker or attitude; reads as a caption, not a post | Someone is talking, with one real detail and a reason to care; passes every question in `voice.md`'s self-check |
 | Brand fit | 10 | Breaks a copy rule or approved-line, or reads off-voice | Within the rules but could be any brand | Uses an approved line or the knowledge page's voice naturally; no rule risk |
 | Feasibility with assets on hand | 15 | Needs assets that do not exist and cannot be made here (and is tagged `RENDER`) | Needs one new photo or clip the user can supply easily | Fully buildable from `media.json` or a render with no photo; or an honest `FILM` with a simple shoot |
@@ -37,13 +37,17 @@ Score each 1 to 5. Weighted total = sum(score x weight) / 5, so the maximum is 1
    order they appear in and any difference in polish.
 2. For each idea, per criterion, write one or two sentences of reasoning FIRST, citing the idea's
    own words. Then write the score. Never write a score before its reasoning.
-3. Penalise nothing for length (ideas are length-matched) and reward nothing for confident tone.
-4. Compute the weighted total.
-5. Any idea that breaks a copy rule or contradicts an approved line is capped at 2 on brand fit
+3. Evidence fit lives inside audience relevance: reward an idea that follows a Proven line in
+   `context/learning.md`, and penalise one that repeats a Didn't work line, unless it is the
+   hypothesis under test (`Tests:`). The total stays 100. Leaning lines are never a reason to score
+   up or down.
+4. Penalise nothing for length (ideas are length-matched) and reward nothing for confident tone.
+5. Compute the weighted total.
+6. Any idea that breaks a copy rule or contradicts an approved line is capped at 2 on brand fit
    and cannot be a finalist unless the fix is a one-word edit you state.
-6. Any idea scoring 1 or 2 on reads-like-a-person cannot be a finalist, full stop. Do not rewrite
+7. Any idea scoring 1 or 2 on reads-like-a-person cannot be a finalist, full stop. Do not rewrite
    it and score the rewrite.
-7. Shortlist the top 3 eligible ideas (steps 5 and 6 applied first). If ties, apply the tie-break
+8. Shortlist the top 3 eligible ideas (steps 6 and 7 applied first). An idea marked `Tests:` that is eligible and within 5 points of the cut also makes the shortlist (it replaces the third place if needed). If ties, apply the tie-break
    rule below. If fewer than 3 are eligible, say so in `scores.md` and continue with what remains:
    the pairwise round covers the remaining pairs, and a single eligible idea wins outright (the
    visual round only checks it against the veto questions).

@@ -34,6 +34,7 @@ const PLUGIN_FILES = [
   'skills/conductor-marketing-create/references/design-critique.md',
   'skills/conductor-marketing-create/references/direct.md',
   'skills/conductor-marketing-create/references/hooks.md',
+  'skills/conductor-marketing-create/references/learning-loop.md',
   'skills/conductor-marketing-create/references/voice.md',
   'skills/conductor-marketing-create/references/idea-template.md',
   'skills/conductor-marketing-create/references/layout-guide.md',

@@ -86,7 +86,7 @@ shoot/     shoot-script.md  (FILM winner only)
   "brandKitId": null,
   "slideshowStyle": {"styleKitId": null, "style": null},
   "finalists": [], "winner": null, "tag": null, "runnerUps": [],
-  "tags": {"hookType": null, "angle": null, "format": null},
+  "tags": {"hookType": null, "angle": null, "format": null, "archetype": null, "hypothesis": null},
   "drafts": {"finalist-I3": "<absolute dir>", "final": "<absolute dir>"},
   "creativeId": null, "creativeDisplayId": null, "shootDoc": null
 }
@@ -138,17 +138,18 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
    to what bears on the request; keep approved lines verbatim, marked "may use, not required". List every expected page that was not
    found under "Missing pages". A missing page is a gap to record, never a reason to stop.
 3. Performance, for `context/performance.md`: `get_marketing_insights` (window `30d`, or `90d` if
-   empty) and `list_top_posts` (limit 10). Summarise what the data says; "no performance data yet"
+   empty; read `byTag` as well as `byFormat`) and `list_top_posts` (limit 10). Summarise what the data says; "no performance data yet"
    is a valid result. For the whole-funnel view (acquisition, in-app funnel, benchmarks) `get_marketing_report` exists.
 4. `list_creative_media` for `IMAGE`, `VIDEO` and `AUDIO` -> `context/media.json` (id, kind, label,
    dimensions or duration, checked, blocked, provenance).
-5. Learning, for `context/learning.md`. Glob `.conductor/content-runs/*/run.json`, skip this run, and
-   keep the runs that have a `creativeId` and `tags`. For each, call `get_creative` (the variants'
-   attributed performance and the family's hook experiment, with its winner once decided) and read
-   its tags (hookType, angle, format). Summarise which hook types and angles did well and which did
-   not, using views, engagement rate, average view percentage, 72 h views and any 3-second or
-   completion figure the insights expose, and any experiment result. Name what you could not
-   measure. With no earlier run or no data, write exactly "No data yet".
+5. Learning, for `context/learning.md`. Run the retro in `references/learning-loop.md` (it reads
+   `marketing/playbook.md` and the insights from steps 2 and 3, and bootstraps a missing playbook
+   from the local `.conductor/content-runs/*/run.json` files, skipping this run). Write the chosen
+   kit's playbook sections (Proven, Leaning, Didn't work, Taste, Open hypotheses) into the file,
+   copied as they stand after the retro, then a `## Hypothesis under test` section: the one
+   hypothesis this run tests (the oldest open one, or a new `H<n>`), and what would count as a
+   result. Name what you could not measure. With no playbook and no data, write exactly "No data
+   yet". Record the hypothesis in `run.json` as `tags.hypothesis`.
 6. Banned copy, for `context/banned.md`: list every `copyRules` entry in `context/brand-kit.json`
    whose id starts with `banned-` (the line or visual, the pattern and the message). With none,
    write exactly "No banned copy yet".
@@ -173,7 +174,7 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
 
 ### S1 — Strategist -> `brief.md`
 
-`Agent(subagent_type: "conductor-marketing-strategist")` with the seven context files (including `context/banned.md`, whose every entry goes into the brief's must-avoid), `request.md`
+`Agent(subagent_type: "conductor-marketing-strategist")` with the seven context files (`learning.md` carries the playbook and the hypothesis under test) (including `context/banned.md`, whose every entry goes into the brief's must-avoid), `request.md`
 and `references/capabilities.md` (so the brief states rendering constraints correctly: motion text
 over a photo is renderable and needs no filming).
 
@@ -186,6 +187,9 @@ Three `Agent` calls in ONE message so they run in parallel, `subagent_type:
 
 Each gets `brief.md`, `context/media.json`, `references/idea-template.md`,
 `references/capabilities.md` (the `RENDER`/`FILM` test) and `references/voice.md`, and writes 4 ideas.
+The brief names the hypothesis under test. Tell each ideator it may name it, and that across the run
+at most one idea tests it: the ideator whose angle fits best marks one idea `Tests: H<n>`, the others
+mark none.
 With `--quick`: only angles 1 and 2, 3 ideas each. Any ideator rerun passes the same inputs, `references/voice.md` included.
 
 ### Merge (you) -> `ideas/pool.md`
@@ -195,14 +199,16 @@ Build one pool from all the angle files:
 - Give every idea an ID `I1..In` in a shuffled order (not grouped by angle, not in file order).
 - Remove angle names and any trace of the source. Put every idea in the identical template from
   `references/idea-template.md`, trimming any field to its word cap so lengths match.
-- Record the true mapping in `run.json` `idMap`. Keep the tag (`RENDER`/`FILM`) in the pool.
+- Record the true mapping in `run.json` `idMap`. Keep the tag (`RENDER`/`FILM`) in the pool, and a
+  `Tests:` line if an idea has one (it names no angle). If more than one idea has it, keep the first
+  by ID and drop the line from the rest.
 - Drop an idea that breaks the brief's must-avoid list or copy rules in a way you cannot fix by
   one word, and note the drop in `run.json`.
 
 ### S3a — Creative director, text round -> `judging/scores.md`
 
 `Agent(subagent_type: "conductor-marketing-creative-director")`, mode `text-round`. Inputs:
-`brief.md`, `ideas/pool.md`, `references/rubric.md`, `references/voice.md`. It scores every idea independently, reasoning
+`brief.md`, `ideas/pool.md`, `context/learning.md`, `references/rubric.md`, `references/voice.md`. It scores every idea independently, reasoning
 before each score, and names the top 3 eligible ideas (fewer when the rubric's gates leave fewer; it says so). Store the finalists in `run.json`.
 
 ### S3b — Finalist drafts (you; skipped in `--quick`)
@@ -231,7 +237,7 @@ path as `photoPath` (generate only for finalists, not the whole pool).
 
 ### S3c — Creative director, visual round (text-only with `--quick`) -> `decision.md`
 
-Same agent, mode `visual-round`. Inputs: `brief.md`, `judging/scores.md`, `ideas/pool.md`, the
+Same agent, mode `visual-round`. Inputs: `brief.md`, `judging/scores.md`, `ideas/pool.md`, `context/learning.md`, the
 finalist image paths (`drafts/finalist-<id>/sheet.jpg`; the director views them with Read), the
 rubric, `references/voice.md`, `references/design-critique.md` and `references/compliance-checklist.md`. It compares finalists pairwise in both orders (a single finalist wins outright and is only checked), runs
 the devil's-advocate pass against the leader (including the veto questions: an unsubstantiated
@@ -242,7 +248,8 @@ so it judges from the text and says so.
 
 Read `decision.md`, then set `winner`, `tag` and `runnerUps` in `run.json`, and the run's own
 `tags`: `hookType` from the winning idea's hook type, `angle` from `idMap` (`story-emotion`,
-`utility-education` or `trend-humor`) and `format` from the idea's format. Do not ask the person
+`utility-education` or `trend-humor`), `format` from the idea's format and `archetype` for a
+slideshow. `hypothesis` stays as S0 set it. Do not ask the person
 which idea to take; show the decision at the gate.
 
 ### S4 — Scriptwriter -> `script.md`
@@ -381,7 +388,10 @@ any placement is fixed now, not shown.
      fields only when needed). Then `get_creative` and read its `readiness`. If `state` is the only
      blocking item, `update_creative({creativeId, state: "READY"})` and verify with `get_creative`;
      otherwise say exactly what is missing and ask for it. Never call a Creative done while `ready`
-     is false. After the commit, write the Creative's id into `publish-pack.json` as `creativeId` and
+     is false. Pass the run's `tags` (`run.json`) to `preview_creative_draft` and
+     `commit_creative_draft`. After the commit, capture what was learned
+     (`references/learning-loop.md`, "Capture"), add the run's `Learned:` lines to the final message,
+     write the Creative's id into `publish-pack.json` as `creativeId` and
      its state into `publish-pack.json` as `creativeState` (and both into `run.json`).
    - **Use a runner-up**: ask a second `AskUserQuestion` listing the runners-up by title (with
      their tag; label one that could not be rendered as such and say why, rather than offering it as
@@ -418,10 +428,12 @@ Keep it short:
 - `publish-pack.md` (captions, hashtags, pinned comment, disclosure and AI-label settings, sound,
   alternate hooks); say the publisher will pre-fill the Post from `publish-pack.json`, and that the
   pinned comment, the link in bio and the Stories repost with a link sticker are manual steps;
+- up to 3 `Learned:` lines and the hypothesis this Creative tests (`references/learning-loop.md`);
 - next steps:
   - make the Post with the `conductor-marketing-publish` skill (the Creative is
     not on a Post yet, because a run never creates one);
-  - to test a runner-up's hook, cut it as a lettered variant of the Creative with `variantOf`;
+  - to test a runner-up's hook, cut it as a lettered variant of the Creative with `variantOf` and
+    `create_experiment`;
   - for `FILM`: film it, upload the clip, then run `/conductor:marketing create` and pick a clip I have.
 
 ## Failure handling
