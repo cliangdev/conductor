@@ -133,33 +133,34 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
    look as `slideshowStyle.styleKitId`, null = native), and write `get_brand_kit({kitId})` ->
    `context/brand-kit.json`. Use that kit's `knowledgePagePath` and copy rules below. If `configured` is false and the person already
    skipped setup in the command, note that in the brief's constraints.
-2. Knowledge, for `context/knowledge.md`: `read_knowledge_pages` for the kit's `knowledgePagePath`
-   and `marketing/what-works.md`; `search_knowledge` for persona/audience, campaign and positioning
+2. Knowledge, for `context/knowledge.md`: one `read_knowledge_pages` for the kit's `knowledgePagePath`,
+   `marketing/what-works.md` and `marketing/playbook.md` (the retro reuses the playbook; never read a
+   page twice); `search_knowledge` for persona/audience, campaign and positioning
    pages and read the best few (at most 6 pages in all). Paste each page under its path heading, trimmed
    to what bears on the request; keep approved lines verbatim, marked "may use, not required". List every expected page that was not
    found under "Missing pages". A missing page is a gap to record, never a reason to stop.
-3. Performance, for `context/performance.md`: `get_marketing_insights` (window `30d`, or `90d` if
-   empty) and `list_top_posts` (limit 10). Summarise what the data says; "no performance data yet"
+3. Performance, for `context/performance.md`: one `get_marketing_insights` (window `30d`, or `90d` if
+   empty; `include: ["posts","tags"]` and the run's `brandKitId`, so the same call also feeds the
+   retro's `byTag`) and `list_top_posts` (limit 10). Summarise what the data says; "no performance data yet"
    is a valid result. For the whole-funnel view (acquisition, in-app funnel, benchmarks) `get_marketing_report` exists.
 4. `list_creative_media` for `IMAGE`, `VIDEO` and `AUDIO` -> `context/media.json` (id, kind, label,
    dimensions or duration, checked, blocked, provenance).
-5. Learning, for `context/learning.md`. Run the retro in `references/learning-loop.md`. It reads
-   `marketing/playbook.md` and calls `get_marketing_insights` itself with the run's `brandKitId` (or the default kit's id) for `byTag` (a fixed 90 days;
-   do not reuse step 3's 30-day call). A missing playbook gets the warm start there. Write the
-   chosen kit's playbook sections (Proven, Leaning, Didn't work, Taste, Open hypotheses) into the
-   file, as they stand after the retro, with the "Is it working" line, then a
-   `## Hypothesis under test` section: the pre-registered hypothesis this run's marked idea tests
-   (an open one that needs more posts first, else a new `H<n>`, in the line format of
-   `references/learning-loop.md`, "Explore"). When the exploration cap is already met, write "none
-   this run" and no idea is marked. Name what you could not measure. With no playbook and no data,
-   write exactly "No data yet". Record the hypothesis in `run.json` as `plannedHypothesis` (null
-   when none), never as `tags.hypothesis`: only a winning idea ships. Record the playbook lesson IDs
-   you pass on as `tags.lessons`.
+5. Learning, for `context/learning.md`. Run the retro in `references/learning-loop.md` with what S0
+   already fetched: the playbook from step 2, `byTag` and `playbookEffect` from step 3, plus one
+   `list_creatives` (no second read or insights call). If the Knowledge Center is off or a call
+   errors, skip the retro and write "No data yet". Write the chosen kit's playbook sections (Proven,
+   Leaning, Didn't work, Taste, Open hypotheses) into the file, as they stand after the retro, with the
+   "Is it working" line, then a `## Hypothesis under test` section: the pre-registered hypothesis this
+   run's marked idea tests (an open one needing posts first, else a new `H<n>`, in the line format of
+   `references/learning-loop.md`, "Explore"). When the exploration cap is met, write "none this run" and
+   mark no idea. Name what you could not measure. With no playbook and no data, write exactly "No data
+   yet". Record the hypothesis in `run.json` as `plannedHypothesis` (null when none), never as
+   `tags.hypothesis`: only a winning idea ships. Keep each lesson's `#id` so ideators can cite it.
    Then write `context/learning-director.md` for the judge, who stays blind to angles: the Proven,
    Didn't work and Taste lines from `learning.md` with every angle-keyed lesson (story-emotion,
    utility-education, trend-humor, or the same idea in other words) and the whole Open hypotheses
    section removed. When this run's hypothesis deliberately retests a Didn't work lesson, leave that
-   lesson out too, so the judge neither penalises nor favours the test idea.
+   lesson out too, so the judge neither penalises nor favours the test idea. With no playbook, write "No data yet" there too.
 6. Banned copy, for `context/banned.md`: list every `copyRules` entry in `context/brand-kit.json`
    whose id starts with `banned-` (the line or visual, the pattern and the message). With none,
    write exactly "No banned copy yet".
@@ -263,7 +264,8 @@ Read `decision.md`, then set `winner`, `tag` and `runnerUps` in `run.json`, and 
 `tags`: `hookType` from the winning idea's hook type, `angle` from `idMap` (`story-emotion`,
 `utility-education` or `trend-humor`), `format` from the idea's format and `archetype` for a
 slideshow. `hypothesis` is `plannedHypothesis` only when the winner is the idea in `testIdea`; otherwise it
-stays null, and so does `plannedHypothesis`'s effect on the commit. Do not ask the person
+stays null. `lessons` is the winning idea's `Follows` ids, minus any the final script no longer
+follows, at most 5. Do not ask the person
 which idea to take; show the decision at the gate.
 
 ### S4 — Scriptwriter -> `script.md`
@@ -448,8 +450,8 @@ Keep it short:
   - make the Post with the `conductor-marketing-publish` skill (the Creative is
     not on a Post yet, because a run never creates one);
   - to test a runner-up's hook, cut it as a lettered variant of the Creative with `variantOf` and
-    `create_experiment`, passing the variant its own tags (its `hookType`, the same `hypothesis` and
-    `lessons`);
+    `create_experiment`, passing the variant only the tags that differ (its `hookType`, its
+    `hypothesis` if it is the tested arm, its `lessons`); the control keeps no `hypothesis` tag;
   - for `FILM`: film it, upload the clip, then run `/conductor:marketing create` and pick a clip I have.
 
 ## Failure handling

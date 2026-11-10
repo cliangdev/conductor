@@ -11,7 +11,7 @@ Fixture, playbook:
 
 ```
 ## Leaning
-- [#4 +2/−0 · 2026-10-28 · row hookType=question] question hooks hold (VIEW_LIFT 1.5, n=2; CR-31 1.6, CR-33 1.4)
+- [#4 +2/−0 · 2026-10-28 · row hookType=question] question hooks hold (VIEW_LIFT 1.5, n=2)
 ```
 
 `byTag` row: `{tagKey: "hookType", key: "question", posts: 2, medianRetentionLift: 1.5, retentionVerdict: "NOT_ENOUGH_DATA", verdict: "NOT_ENOUGH_DATA", verdictMetric: "RETENTION_LIFT"}`
@@ -41,7 +41,7 @@ Fixture, playbook:
 
 ```
 ## Proven
-- [#3 +6/−0 · 2026-11-01 · row hookType=how-to] how-to hooks hold (VIEW_LIFT 1.3, n=6; CR-20 1.8, CR-27 1.1)
+- [#3 +6/−0 · 2026-11-01 · row hookType=how-to] how-to hooks hold (VIEW_LIFT 1.3, n=6)
 ```
 
 `byTag` rows: `{tagKey: "hookType", key: "how-to", posts: 6, verdict: "WORKS", verdictMetric: "VIEW_LIFT"}` and `{tagKey: "lessons", key: "#3", posts: 4, verdict: "DOESNT_WORK"}`
@@ -91,5 +91,48 @@ Expected: H2 resolves as a win and becomes a Proven lesson naming `row hypothesi
 
 Fixture: two kits whose sections already hold `#1` to `#5` (kit A) and `#6` to `#8` (kit B).
 
-Expected: retro calls for kit B pass kit B's `brandKitId`, a new lesson in either kit gets `#9`, and
-no ID repeats on the page.
+Expected: retro calls for kit B pass kit B's `brandKitId`, the header reads `Next ids: #9 H<n>`, a new
+lesson in either kit takes `#9` and the header becomes `#10`, and no id repeats on the page.
+
+## 10. A/B arms: only the tested arm carries the hypothesis
+
+Fixture: Direct run tests H4 (`hookType=question vs the account's usual`). The committed Creative CR-50a
+uses the question hook; the spare hook, a statement, is cut as variant CR-50b.
+
+Expected: CR-50a carries `tags.hypothesis: "H4"` and `hookType: question`. CR-50b is passed only
+`hookType: bold-claim` (and `lessons`), with no `hypothesis`; `angle`, `format` and `archetype` are
+inherited. H4's `tests:` reads `CR-50a (vs CR-50b)`. If the experiment is DECIDED, the retro resolves H4
+from it with one `get_creative`, without waiting for 3 posts.
+
+## 11. Ids are never reused
+
+Fixture: header `Next ids: #12 H5`; H4 resolved last retro and its line is gone; #11 was removed by decay.
+
+Expected: a new hypothesis is `H5`, a new lesson `#12`, and the header becomes `Next ids: #13 H6`. H4 and
+#11 are not reissued.
+
+## 12. Team `tags.lessons` is what the winner follows
+
+Fixture: the brief lists #3 and #7 (Proven) and #5 (Leaning). The winner's `Follows` is `#3,#5`; the
+script keeps both.
+
+Expected: `tags.lessons` is `#3,#5`, not `#3,#5,#7`. A `Follows` that names a Didn't work or Taste id
+is not copied. More than 5 ids are cut to 5.
+
+## 13. Call budget
+
+Fixture: `Last retro` is 3 hours old. Then the same playbook with `Last retro` 3 days old.
+
+Expected: with the recent retro, one `read_knowledge_pages` (playbook and `marketing/what-works.md`
+together) and no `get_marketing_insights` or `list_creatives`. With the old one, exactly one
+`get_marketing_insights` (`include: ["tags"]`, `brandKitId`) and one `list_creatives`, and no
+`get_creative` unless a variant pair's experiment is DECIDED. In Team mode the playbook is in S0's
+single knowledge read and `byTag` comes from S0's single insights call: nothing is fetched twice.
+
+## 14. The loop never blocks a run
+
+Fixture: Knowledge Center off, or `get_marketing_insights` returns an error.
+
+Expected: one line saying the learning loop was skipped, then the run continues with the same steps,
+approval gate, banned-copy check, voice check and publish-pack outputs as without the loop. No write is
+attempted, and lessons, if any, go in the final message.

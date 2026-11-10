@@ -71,8 +71,8 @@ against placeholder tokens: gather colours, font, CTA claim and any copy rules o
 with `get_brand_kit` afterward — `configured` should now read `true`. (`references/brand-kit-setup.md`
 walks a person through exactly this.)
 
-Then run the retro in `references/learning-loop.md` (read the playbook as advisory data, warm-start
-it if there is none, skip the rest when it is fresh).
+Then run the retro in `references/learning-loop.md` (one playbook read, then insights and
+`list_creatives` only when it is due). If the Knowledge Center is off or a call errors, skip it and go on.
 
 ### 2. Pick the angle
 
@@ -99,11 +99,10 @@ asterisks: `Every saved link, *finally usable*.` Never zero, never two — `prev
 
 Keep it short — checked at thumbnail size, not read up close.
 
-Decide whether this run carries a test (`references/learning-loop.md`, "Explore": check the last
-about 8 Creatives with `list_creatives`, and test only under the cap or to give an open hypothesis
-more posts). If it does, change one thing: usually the headline against an alternate hook from the
-spare candidates, or the format. Classify each kept hook's `hookType`
-with the mapping there.
+Decide whether this run carries a test (`references/learning-loop.md`, "Explore": the cap, from the
+retro's `list_creatives`). If it does, change one thing: usually the headline against an alternate
+hook from the spare candidates, or the format. Classify each kept hook's `hookType` with the mapping
+there.
 
 ### 4. Obey the brand's copy rules
 
@@ -189,7 +188,8 @@ the rule and field, without rendering — fix the copy and preview again.
 
 Pass `tags` on every preview and commit: `hookType` (classified from the mapping in
 `references/learning-loop.md`), `angle` if one applies, `format`, `archetype` for a slideshow, and
-`hypothesis` when the run carries a test, `lessons` (the playbook IDs applied), and `previewRounds` at commit (the preview rounds before approval).
+`hypothesis` when this Creative is the tested arm, `lessons` (the playbook ids applied, at most 5),
+and `previewRounds` at commit (preview rounds before approval).
 
 To change an existing Creative's copy, layout or photo, preview the edit first with `baseCreativeId`:
 only the fields you pass change, and the commit then updates that Creative instead of creating one.
@@ -278,8 +278,9 @@ display id, the frames and the readiness. It can be run once per draft; if its r
 Creative is already saved — call `render_creative`, don't commit again. Verify with `get_creative`.
 After the commit, capture what was learned (`references/learning-loop.md`, "Capture") and say the
 `Learned:` lines when you report. If the test's hook was kept as a spare, suggest a lettered
-variant (`variantOf`) and `create_experiment`, with the variant's own tags (its `hookType`, the same
-`hypothesis` and `lessons`).
+variant (`variantOf`) and `create_experiment`. Pass the variant only the tags that differ (its
+`hookType`, its `hypothesis` if it is the tested arm, its `lessons`); the control keeps no
+`hypothesis` tag. A DECIDED experiment resolves the hypothesis.
 Then `attach_creative_to_post` with the Post's Work Item id — it maps each placement to the right
 destinations (9:16 to TikTok/Reels, 4:5 to Instagram feed, 1:1 to Facebook, story to story targets)
 for every destination that has not set its own custom media, and never touches one that has. Verify

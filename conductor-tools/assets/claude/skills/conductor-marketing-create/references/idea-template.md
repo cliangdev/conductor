@@ -18,6 +18,7 @@ Heading: `## Idea <n>: <title>` where the title is 8 words or fewer.
 - **Tag:** RENDER | FILM
 - **Why this audience cares:** <max 30 words, tied to the brief's tension>
 - **Assets needed:** <ids and labels from media.json, or "none", or what must be filmed>
+- **Follows:** <optional: the Proven or Leaning lesson ids from the brief that this idea follows, e.g. `#3,#7`, at most 5; never a Didn't work or Taste id>
 - **Tests:** <optional: `H<n>`, only when the brief names that hypothesis and this idea is the one that tests it (change only its one variable); otherwise leave the line out>
 
 Draft spec (RENDER only):
