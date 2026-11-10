@@ -144,7 +144,7 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
 4. `list_creative_media` for `IMAGE`, `VIDEO` and `AUDIO` -> `context/media.json` (id, kind, label,
    dimensions or duration, checked, blocked, provenance).
 5. Learning, for `context/learning.md`. Run the retro in `references/learning-loop.md`. It reads
-   `marketing/playbook.md` and calls `get_marketing_insights` itself for `byTag` (a fixed 90 days;
+   `marketing/playbook.md` and calls `get_marketing_insights` itself with the run's `brandKitId` (or the default kit's id) for `byTag` (a fixed 90 days;
    do not reuse step 3's 30-day call). A missing playbook gets the warm start there. Write the
    chosen kit's playbook sections (Proven, Leaning, Didn't work, Taste, Open hypotheses) into the
    file, as they stand after the retro, with the "Is it working" line, then a
@@ -158,7 +158,8 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
    Then write `context/learning-director.md` for the judge, who stays blind to angles: the Proven,
    Didn't work and Taste lines from `learning.md` with every angle-keyed lesson (story-emotion,
    utility-education, trend-humor, or the same idea in other words) and the whole Open hypotheses
-   section removed.
+   section removed. When this run's hypothesis deliberately retests a Didn't work lesson, leave that
+   lesson out too, so the judge neither penalises nor favours the test idea.
 6. Banned copy, for `context/banned.md`: list every `copyRules` entry in `context/brand-kit.json`
    whose id starts with `banned-` (the line or visual, the pattern and the message). With none,
    write exactly "No banned copy yet".
