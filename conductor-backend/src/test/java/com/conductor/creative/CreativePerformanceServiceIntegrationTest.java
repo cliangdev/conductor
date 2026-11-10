@@ -285,23 +285,32 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         newAttachedAsset(fresh, newFrameFor(c));
         PostPublishTarget freshTarget = newTarget(fresh, "facebook", now.minusDays(3));
         newSnapshot(freshTarget, now.minusDays(3).plusHours(1), 50L, 1L, 0L, 0L, 0L, null);
-        // A post with no lessons at all.
-        PostPublishTarget plain = newTarget(newPost("No lessons"), "facebook", now.minusDays(12));
+        // A settled post whose Creative is tagged but has no lessons: the "without" side.
+        number = number + 1;
+        Creative noLessons = newVariant("a", null, "No lessons hook");
+        noLessons.setTags(objectMapper.valueToTree(java.util.Map.of("hookType", "story")));
+        creativeRepository.save(noLessons);
+        WorkItem noLessonsPost = newPost("No lessons");
+        newAttachedAsset(noLessonsPost, newFrameFor(noLessons));
+        PostPublishTarget plain = newTarget(noLessonsPost, "facebook", now.minusDays(12));
         newSnapshot(plain, now.minusDays(12).plusHours(1), 700L, 7L, 0L, 0L, 0L, null);
+        // A settled post with no attributed Creative at all: on neither side.
+        PostPublishTarget orphan = newTarget(newPost("Hand-made"), "facebook", now.minusDays(11));
+        newSnapshot(orphan, now.minusDays(11).plusHours(1), 900L, 9L, 0L, 0L, 0L, null);
 
         var insights = insightsService.compute(project.getId(), "7d", null, admin);
 
         assertThat(insights.totals().posts()).isEqualTo(1); // the rest of insights still honours the 7d window: only the 3-day-old post
         assertThat(insights.byTagWindow().days()).isEqualTo(90);
         assertThat(insights.byTag()).extracting(t -> t.tagKey() + "=" + t.group().key())
-                .containsExactly("hookType=question", "lessons=#3", "lessons=#12");
-        insights.byTag().forEach(t -> {
+                .containsExactlyInAnyOrder("hookType=question", "hookType=story", "lessons=#3", "lessons=#12");
+        insights.byTag().stream().filter(t -> !t.group().key().equals("story")).forEach(t -> {
             assertThat(t.group().posts()).isEqualTo(1);
             assertThat(t.unsettledPosts()).isEqualTo(1);
         });
         assertThat(insights.byTag()).noneMatch(t -> t.tagKey().equals("previewRounds"));
 
-        // Playbook effect: the lessons Creative's one settled post vs the unattributed one.
+        // Playbook effect: the lessons Creative's settled post vs the lesson-less Creative's; the hand-made post is on neither side.
         assertThat(insights.playbookEffect().withLessons().posts()).isEqualTo(1);
         assertThat(insights.playbookEffect().withoutLessons().posts()).isEqualTo(1);
         assertThat(insights.playbookEffect().withLessons().medianViewLift()).isNull(); // no baseline under 10 posts

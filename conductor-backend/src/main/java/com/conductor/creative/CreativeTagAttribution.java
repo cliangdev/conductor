@@ -31,14 +31,13 @@ public class CreativeTagAttribution {
         this.attributionResolver = attributionResolver;
     }
 
-    /** Destination id to its tag values, for every tagged Creative of the project (a constant number of queries). */
+    /** Destination id to its tag values, for every Creative of the project (an attributed destination whose Creative has no tags maps to an empty set; a destination with no attributed Creative is absent) (a constant number of queries). */
     public Map<String, Set<TagValue>> tagsByTarget(String projectId) {
         Map<String, Map<String, String>> tagsByCreative = new LinkedHashMap<>();
         for (Creative c : creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId)) {
-            Map<String, String> values = CreativeTagsSupport.valuesOf(c.getTags());
-            if (!values.isEmpty()) {
-                tagsByCreative.put(c.getId(), values);
-            }
+            // Untagged Creatives are kept (with no values): a destination attributed to one is present in the
+            // result with an empty set, which tells it apart from a destination with no Creative at all.
+            tagsByCreative.put(c.getId(), CreativeTagsSupport.valuesOf(c.getTags()));
         }
         if (tagsByCreative.isEmpty()) {
             return Map.of();

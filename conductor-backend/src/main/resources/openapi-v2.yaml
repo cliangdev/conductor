@@ -13711,8 +13711,9 @@ components:
           allOf:
             - $ref: "#/components/schemas/PlaybookEffect"
           description: >-
-            Settled posts of the same 90 days split by whether their attributed Creative has a non-empty
-            `lessons` tag, with each side's median view lift: did following the playbook help at all.
+            Settled posts of the same 90 days that have an attributed Creative, split by whether that Creative has a
+            non-empty `lessons` tag, with each side's median view lift: did following the playbook help at all.
+            Posts with no attributed Creative are on neither side.
         topPosts:
           type: array
           items:

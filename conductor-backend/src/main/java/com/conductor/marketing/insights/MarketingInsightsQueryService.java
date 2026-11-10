@@ -345,6 +345,9 @@ public class MarketingInsightsQueryService {
         List<PostBaselineService.Observation> with = new ArrayList<>();
         List<PostBaselineService.Observation> without = new ArrayList<>();
         for (PostBaselineService.Observation o : evidence.settled()) {
+            if (!tagsByTarget.containsKey(o.targetId())) {
+                continue; // no attributed Creative: not content this playbook produced, so on neither side
+            }
             (TagGrouping.followedLessons(o.targetId(), tagsByTarget) ? with : without).add(o);
         }
         return new PlaybookEffect(

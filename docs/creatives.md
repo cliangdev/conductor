@@ -1067,7 +1067,8 @@ performance adds `withBaselinePosts`, `beatBaselinePosts`, `viewVerdict` and `re
 **Playbook lessons.** A Creative's `lessons` tag records which playbook lessons it followed. `byTag` splits it, one
 row per lesson id (`tagKey` `lessons`, `key` `#3`). `playbookEffect` is `{withLessons: {posts, medianViewLift},
 withoutLessons: {posts, medianViewLift}}` over the same settled 90 days: a post is "with lessons" when its
-attributed Creative has a non-empty `lessons` tag, and every other settled post is "without"; it answers whether
+attributed Creative has a non-empty `lessons` tag and "without" when its attributed Creative has none; a settled
+post with no attributed Creative is on neither side, so the comparison is only content the skill made; it answers whether
 following the playbook helped at all.
 
 The same service and settled-only rule give each variant in `GET .../marketing/creatives/{id}/performance`
