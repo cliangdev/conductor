@@ -50,8 +50,13 @@ public class MarketingInsightsQueryService {
     public record Group(String key, String label, int posts, long views, long likes, long comments,
                         long shares, long saves, Double engagementRate, Long medianViews, Double avgViewPct) {}
 
-    /** One (tag, value) grouping: {@code tagKey} is the tag, the group's key is its value. */
-    public record TagGroup(String tagKey, Group group) {}
+    /**
+     * One (tag, value) grouping: {@code tagKey} is the tag, the group's key is its value. The group counts
+     * settled posts only; {@code unsettledPosts} is how many were left out, and the lifts are against the
+     * account's own 90-day baseline ({@link PostBaselineService}).
+     */
+    public record TagGroup(String tagKey, Group group, int unsettledPosts, Double medianViewLift,
+                           Double beatBaselineShare, Double medianEngagementRate, Double medianRetentionLift) {}
 
     /** One destination, for the top/bottom rankings. */
     public record Post(String workItemId, String displayId, String title, String workflowSlug,
@@ -105,6 +110,7 @@ public class MarketingInsightsQueryService {
     private final PublishPlatformRegistry platformRegistry;
     private final CreativePerformanceService creativePerformanceService;
     private final CreativeTagAttribution tagAttribution;
+    private final PostBaselineService baselineService;
 
     public MarketingInsightsQueryService(ProjectSecurityService projectSecurityService,
                                          PostPublishTargetRepository targetRepository,
@@ -112,7 +118,8 @@ public class MarketingInsightsQueryService {
                                          WorkItemRepository workItemRepository,
                                          PublishPlatformRegistry platformRegistry,
                                          CreativePerformanceService creativePerformanceService,
-                                         CreativeTagAttribution tagAttribution) {
+                                         CreativeTagAttribution tagAttribution,
+                                         PostBaselineService baselineService) {
         this.projectSecurityService = projectSecurityService;
         this.targetRepository = targetRepository;
         this.metricRepository = metricRepository;
@@ -120,6 +127,7 @@ public class MarketingInsightsQueryService {
         this.platformRegistry = platformRegistry;
         this.creativePerformanceService = creativePerformanceService;
         this.tagAttribution = tagAttribution;
+        this.baselineService = baselineService;
     }
 
     @Transactional(readOnly = true)
@@ -150,7 +158,7 @@ public class MarketingInsightsQueryService {
         List<Group> byFormat = groupBy(reporting, TargetSnapshot::format, key -> null);
         List<Group> byHour = byHour(reporting);
         List<Group> byWeekday = byWeekday(reporting);
-        List<TagGroup> byTag = byTag(projectId, reporting);
+        List<TagGroup> byTag = byTag(projectId, reporting, now);
 
         List<Post> ranked = rank(reporting, workItems);
         List<Post> topPosts = ranked.stream().limit(TOP_POSTS_LIMIT).toList();
@@ -288,10 +296,12 @@ public class MarketingInsightsQueryService {
 
     /**
      * One row per (tag key, value) over the reporting destinations whose attributed Creative carries it,
-     * resolved through {@link CreativeTagAttribution} (and so {@code CreativeAttributionResolver}). Sorted by
-     * tag key (the declared order), then engagement rate descending, nulls last.
+     * resolved through {@link CreativeTagAttribution} (and so {@code CreativeAttributionResolver}). Only
+     * settled posts ({@link PostSettleWindows}) are counted; the rest show as {@code unsettledPosts}. Lifts
+     * come from {@link PostBaselineService}. Sorted by tag key (the declared order), then median view lift
+     * descending, nulls last.
      */
-    private List<TagGroup> byTag(String projectId, List<TargetSnapshot> reporting) {
+    private List<TagGroup> byTag(String projectId, List<TargetSnapshot> reporting, OffsetDateTime now) {
         if (reporting.isEmpty()) {
             return List.of();
         }
@@ -305,11 +315,25 @@ public class MarketingInsightsQueryService {
                 grouped.computeIfAbsent(tag, k -> new ArrayList<>()).add(t);
             }
         }
+        if (grouped.isEmpty()) {
+            return List.of();
+        }
+        PostBaselineService.Baselines baselines = baselineService.baselines(projectId, now);
         List<String> keyOrder = com.conductor.creative.CreativeTagsSupport.KEYS;
         return grouped.entrySet().stream()
-                .map(e -> new TagGroup(e.getKey().key(), groupOf(e.getKey().value(), null, e.getValue())))
+                .map(e -> {
+                    List<TargetSnapshot> settled = e.getValue().stream()
+                            .filter(t -> PostSettleWindows.isSettled(t.platform(), t.fireTime(), now)).toList();
+                    PostBaselineService.LiftSummary lift = baselines.summarize(settled.stream()
+                            .map(t -> new PostBaselineService.Observation(t.platform(), t.format(), t.fireTime(),
+                                    t.views(), t.likes(), t.comments(), t.shares(), t.saves(), t.avgViewPct()))
+                            .toList());
+                    return new TagGroup(e.getKey().key(), groupOf(e.getKey().value(), null, settled),
+                            e.getValue().size() - settled.size(), lift.medianViewLift(), lift.beatBaselineShare(),
+                            lift.medianEngagementRate(), lift.medianRetentionLift());
+                })
                 .sorted(Comparator.comparingInt((TagGroup g) -> keyOrder.indexOf(g.tagKey()))
-                        .thenComparing(g -> g.group().engagementRate(), Comparator.nullsLast(Comparator.reverseOrder())))
+                        .thenComparing(TagGroup::medianViewLift, Comparator.nullsLast(Comparator.reverseOrder())))
                 .toList();
     }
 

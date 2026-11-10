@@ -52,6 +52,7 @@ class MarketingInsightsQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     @Autowired private ProjectSecurityService projectSecurityService;
     @Autowired private CreativePerformanceService creativePerformanceService;
     @Autowired private com.conductor.creative.CreativeTagAttribution tagAttribution;
+    @Autowired private com.conductor.marketing.insights.PostBaselineService baselineService;
 
     private MarketingInsightsQueryService service;
     private User creator;
@@ -61,7 +62,7 @@ class MarketingInsightsQueryServiceIntegrationTest extends AbstractNoneWebIntegr
     @BeforeEach
     void setUp() {
         service = new MarketingInsightsQueryService(projectSecurityService, targetRepository, metricRepository,
-                workItemRepository, new PublishPlatformRegistry(), creativePerformanceService, tagAttribution);
+                workItemRepository, new PublishPlatformRegistry(), creativePerformanceService, tagAttribution, baselineService);
 
         creator = new User();
         creator.setFirebaseUid("test-uid-" + UUID.randomUUID());

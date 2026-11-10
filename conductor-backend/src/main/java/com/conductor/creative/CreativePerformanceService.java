@@ -3,6 +3,8 @@ package com.conductor.creative;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.User;
+import com.conductor.marketing.insights.PostBaselineService;
+import com.conductor.marketing.insights.PostSettleWindows;
 import com.conductor.repository.PostPublishTargetMetricRepository;
 import com.conductor.service.ProjectSecurityService;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -35,7 +37,9 @@ public class CreativePerformanceService {
     /** One variant's roll-up — a row of {@code CreativeResponse}'s family, or of insights' top creatives. */
     public record VariantPerformance(String creativeId, String label, String headline, int posts, long views,
                                      Double engagementRate, Double avgViewPct, Long views72h,
-                                     List<PlatformBreakdown> byPlatform) {}
+                                     List<PlatformBreakdown> byPlatform, Integer settledPosts,
+                                     Double medianViewLift, Double medianRetentionLift,
+                                     Double beatBaselineShare) {}
 
     /** The whole family (the requested Creative plus every lettered sibling), oldest letter first. */
     public record FamilyPerformance(String creativeId, List<VariantPerformance> family) {}
@@ -44,15 +48,18 @@ public class CreativePerformanceService {
     private final CreativeAttributionResolver attributionResolver;
     private final PostPublishTargetMetricRepository metricRepository;
     private final ProjectSecurityService projectSecurityService;
+    private final PostBaselineService baselineService;
 
     public CreativePerformanceService(CreativeRepository creativeRepository,
                                       CreativeAttributionResolver attributionResolver,
                                       PostPublishTargetMetricRepository metricRepository,
-                                      ProjectSecurityService projectSecurityService) {
+                                      ProjectSecurityService projectSecurityService,
+                                      PostBaselineService baselineService) {
         this.creativeRepository = creativeRepository;
         this.attributionResolver = attributionResolver;
         this.metricRepository = metricRepository;
         this.projectSecurityService = projectSecurityService;
+        this.baselineService = baselineService;
     }
 
     @Transactional(readOnly = true)
@@ -108,7 +115,10 @@ public class CreativePerformanceService {
 
         Map<String, PostPublishTargetMetric> latestByTarget = new LinkedHashMap<>();
         Map<String, PostPublishTargetMetric> at72hByTarget = new LinkedHashMap<>();
+        OffsetDateTime now = OffsetDateTime.now();
+        PostBaselineService.Baselines baselines = null;
         if (!allTargets.isEmpty()) {
+            baselines = baselineService.baselines(creatives.get(0).getProjectId(), now);
             List<String> targetIds = List.copyOf(allTargets.keySet());
             for (PostPublishTargetMetric m : metricRepository.findLatestAvailableForTargets(targetIds)) {
                 latestByTarget.put(m.getTargetId(), m);
@@ -120,14 +130,16 @@ public class CreativePerformanceService {
 
         List<VariantPerformance> result = new ArrayList<>(creatives.size());
         for (Creative creative : creatives) {
-            result.add(variantPerformance(creative, targetsByCreative.get(creative.getId()), latestByTarget, at72hByTarget));
+            result.add(variantPerformance(creative, targetsByCreative.get(creative.getId()), latestByTarget, at72hByTarget,
+                    baselines, now));
         }
         return result;
     }
 
     private VariantPerformance variantPerformance(Creative creative, List<PostPublishTarget> targets,
                                                   Map<String, PostPublishTargetMetric> latestByTarget,
-                                                  Map<String, PostPublishTargetMetric> at72hByTarget) {
+                                                  Map<String, PostPublishTargetMetric> at72hByTarget,
+                                                  PostBaselineService.Baselines baselines, OffsetDateTime now) {
         if (targets.isEmpty()) {
             return empty(creative);
         }
@@ -139,6 +151,7 @@ public class CreativePerformanceService {
         Map<String, long[]> byPlatform = new LinkedHashMap<>();
         long views72hSum = 0;
         boolean any72h = false;
+        List<PostBaselineService.Observation> settled = new ArrayList<>();
 
         for (PostPublishTarget target : targets) {
             PostPublishTargetMetric latest = latestByTarget.get(target.getId());
@@ -154,6 +167,11 @@ public class CreativePerformanceService {
             Double avgPct = avgViewPct(latest.getExtra());
             if (avgPct != null) {
                 avgViewPcts.add(avgPct);
+            }
+            if (PostSettleWindows.isSettled(target.getPlatform(), target.getFireTime(), now)) {
+                settled.add(new PostBaselineService.Observation(target.getPlatform(), target.getFormat(),
+                        target.getFireTime(), latest.getViews(), latest.getLikes(), latest.getComments(),
+                        latest.getShares(), latest.getSaves(), avgPct));
             }
 
             long[] bucket = byPlatform.computeIfAbsent(target.getPlatform(), k -> new long[3]);
@@ -185,13 +203,15 @@ public class CreativePerformanceService {
                 .sorted(Comparator.comparingLong(PlatformBreakdown::views).reversed())
                 .toList();
 
+        PostBaselineService.LiftSummary lift = baselines.summarize(settled);
         return new VariantPerformance(creative.getId(), creative.displayId(), creative.getHeadline(), posts, views,
-                engagementRate, avgViewPct, views72h, platformBreakdown);
+                engagementRate, avgViewPct, views72h, platformBreakdown, settled.size(), lift.medianViewLift(),
+                lift.medianRetentionLift(), lift.beatBaselineShare());
     }
 
     private VariantPerformance empty(Creative creative) {
         return new VariantPerformance(creative.getId(), creative.displayId(), creative.getHeadline(), 0, 0,
-                null, null, null, List.of());
+                null, null, null, List.of(), 0, null, null, null);
     }
 
     private static Double avgViewPct(JsonNode extra) {

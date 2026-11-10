@@ -55,6 +55,10 @@ function trimPerformanceEntry(entry: Record<string, unknown>): Record<string, un
     engagementRate: round4(entry['engagementRate']),
     avgViewPct: round4(entry['avgViewPct']),
     views72h: entry['views72h'],
+    settledPosts: entry['settledPosts'],
+    medianViewLift: round4(entry['medianViewLift']),
+    medianRetentionLift: round4(entry['medianRetentionLift']),
+    beatBaselineShare: round4(entry['beatBaselineShare']),
   }
 }
 

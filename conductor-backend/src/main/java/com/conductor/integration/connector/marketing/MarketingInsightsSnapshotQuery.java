@@ -4,6 +4,8 @@ import com.conductor.creative.CreativeTagAttribution;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.WorkItem;
+import com.conductor.marketing.insights.PostBaselineService;
+import com.conductor.marketing.insights.PostSettleWindows;
 import com.conductor.repository.PostPublishTargetMetricRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.WorkItemRepository;
@@ -50,12 +52,15 @@ public class MarketingInsightsSnapshotQuery {
     private final PostPublishTargetMetricRepository metricRepository;
     private final WorkItemRepository workItemRepository;
     private final CreativeTagAttribution tagAttribution;
+    private final PostBaselineService baselineService;
 
     public MarketingInsightsSnapshotQuery(PostPublishTargetRepository targetRepository,
                                           PostPublishTargetMetricRepository metricRepository,
                                           WorkItemRepository workItemRepository,
-                                          CreativeTagAttribution tagAttribution) {
+                                          CreativeTagAttribution tagAttribution,
+                                          PostBaselineService baselineService) {
         this.tagAttribution = tagAttribution;
+        this.baselineService = baselineService;
         this.targetRepository = targetRepository;
         this.metricRepository = metricRepository;
         this.workItemRepository = workItemRepository;
@@ -86,7 +91,9 @@ public class MarketingInsightsSnapshotQuery {
         }
 
         Map<String, String> hookTypeByTarget = hookTypes(projectId, targets);
-        Map<String, Object> payload = build(targets, latestByTarget, window[0], window[1], hookTypeByTarget);
+        Map<String, Object> payload = build(targets, latestByTarget, window[0], window[1], hookTypeByTarget,
+                hookTypeByTarget.isEmpty() ? null : baselineService.baselines(projectId, now.atOffset(ZoneOffset.UTC)),
+                now.atOffset(ZoneOffset.UTC));
         Map<String, Object> dueChanges = changesDueForReview(projectId, now);
         if (dueChanges != null) {
             payload.put("changesDueForReview", dueChanges);
@@ -156,7 +163,8 @@ public class MarketingInsightsSnapshotQuery {
     private Map<String, Object> build(List<PostPublishTarget> targets,
                                       Map<String, PostPublishTargetMetric> latestByTarget,
                                       Instant windowStart, Instant windowEnd,
-                                      Map<String, String> hookTypeByTarget) {
+                                      Map<String, String> hookTypeByTarget,
+                                      PostBaselineService.Baselines baselines, OffsetDateTime now) {
         DateTimeFormatter iso = DateTimeFormatter.ISO_LOCAL_DATE;
 
         // Zero-filled day buckets across the whole window, in order.
@@ -169,6 +177,7 @@ public class MarketingInsightsSnapshotQuery {
         Map<String, long[]> byPlatform = new LinkedHashMap<>(); // [posts, views, engagements]
         Map<String, long[]> byFormat = new LinkedHashMap<>();
         Map<String, long[]> byHookType = new LinkedHashMap<>();
+        Map<String, List<PostBaselineService.Observation>> hookObservations = new LinkedHashMap<>();
         List<Map<String, Object>> candidatePosts = new ArrayList<>();
 
         for (PostPublishTarget target : targets) {
@@ -196,8 +205,14 @@ public class MarketingInsightsSnapshotQuery {
                 accumulate(byPlatform, target.getPlatform(), views, engagements);
                 accumulate(byFormat, target.getFormat(), views, engagements);
                 String hookType = hookTypeByTarget.get(target.getId());
-                if (hookType != null) {
+                // Settled posts only: a post a few hours old has not finished collecting views.
+                if (hookType != null && PostSettleWindows.isSettled(target.getPlatform(), target.getFireTime(), now)) {
                     accumulate(byHookType, hookType, views, engagements);
+                    hookObservations.computeIfAbsent(hookType, k -> new ArrayList<>()).add(
+                            new PostBaselineService.Observation(target.getPlatform(), target.getFormat(),
+                                    target.getFireTime(), metric.getViews(), metric.getLikes(), metric.getComments(),
+                                    metric.getShares(), metric.getSaves(),
+                                    PostBaselineService.avgViewPct(metric.getExtra())));
                 }
 
                 if (views >= 1) {
@@ -243,7 +258,15 @@ public class MarketingInsightsSnapshotQuery {
         payload.put("trend", trend);
         payload.put("byPlatform", platformRows);
         payload.put("byFormat", formatRows);
-        payload.put("byHookType", toDimensionRows(byHookType, "hookType"));
+        List<Map<String, Object>> hookRows = toDimensionRows(byHookType, "hookType");
+        for (Map<String, Object> row : hookRows) {
+            Double lift = baselines == null ? null
+                    : baselines.summarize(hookObservations.get((String) row.get("hookType"))).medianViewLift();
+            if (lift != null) {
+                row.put("medianViewLift", lift);
+            }
+        }
+        payload.put("byHookType", hookRows);
         payload.put("topPosts", topPosts);
         return payload;
     }

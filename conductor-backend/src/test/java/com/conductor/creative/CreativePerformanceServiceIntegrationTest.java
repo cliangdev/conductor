@@ -183,8 +183,13 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         creativeRepository.save(tagged);
         WorkItem taggedPost = newPost("Tagged post");
         newAttachedAsset(taggedPost, newFrameFor(tagged));
-        PostPublishTarget taggedTarget = newTarget(taggedPost, "instagram", now.minusDays(2));
-        newSnapshot(taggedTarget, now.minusDays(2).plusHours(1), 1000L, 40L, 5L, 3L, 2L, null);
+        PostPublishTarget taggedTarget = newTarget(taggedPost, "instagram", now.minusDays(5));
+        newSnapshot(taggedTarget, now.minusDays(5).plusHours(1), 1000L, 40L, 5L, 3L, 2L, null);
+        // Same tagged Creative, but posted six hours ago: unsettled, so counted apart and kept out of the numbers.
+        WorkItem freshPost = newPost("Fresh post");
+        newAttachedAsset(freshPost, newFrameFor(tagged));
+        PostPublishTarget freshTarget = newTarget(freshPost, "instagram", now.minusHours(6));
+        newSnapshot(freshTarget, now.minusHours(5), 90000L, 1L, 0L, 0L, 0L, null);
 
         // No attributed Creative at all.
         WorkItem plainPost = newPost("Unattributed post");
@@ -201,13 +206,17 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
 
         var insights = insightsService.compute(project.getId(), "30d", null, admin);
 
-        assertThat(insights.totals().posts()).isEqualTo(3);
+        assertThat(insights.totals().posts()).isEqualTo(4);
         assertThat(insights.byTag()).extracting(t -> t.tagKey() + "=" + t.group().key())
                 .containsExactly("hookType=question", "angle=utility-education");
         var hook = insights.byTag().get(0).group();
         assertThat(hook.posts()).isEqualTo(1);
         assertThat(hook.views()).isEqualTo(1000L);
         assertThat(hook.engagementRate()).isCloseTo(50.0 / 1000.0, within(1e-9));
+        assertThat(insights.byTag().get(0).unsettledPosts()).isEqualTo(1);
+        // Fewer than 10 settled posts anywhere: no baseline, so no lift.
+        assertThat(insights.byTag().get(0).medianViewLift()).isNull();
+        assertThat(insights.byTag().get(0).medianEngagementRate()).isCloseTo(50.0 / 1000.0, within(1e-9));
 
         // The weekly snapshot reads the same attribution, hookType only.
         var payload = snapshotQuery.fetch(project.getId(), now.toInstant());
@@ -216,6 +225,41 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         assertThat(byHookType).hasSize(1);
         assertThat(byHookType.get(0)).containsEntry("hookType", "question").containsEntry("posts", 1L)
                 .containsEntry("views", 1000L);
+    }
+
+    @Test
+    void liftIsAgainstTheAccountsOwnBaselineAndReachesByTagCreativePerformanceAndTheSnapshot() {
+        OffsetDateTime now = OffsetDateTime.now();
+        // Ten untagged settled Instagram posts at 100 views each make the instagram baseline (median 100).
+        for (int i = 0; i < 10; i++) {
+            PostPublishTarget t = newTarget(newPost("Baseline " + i), "instagram", now.minusDays(10 + i));
+            newSnapshot(t, now.minusDays(10 + i).plusHours(1), 100L, 5L, 0L, 0L, 0L, null);
+        }
+        Creative tagged = newVariant("a", null, "Lifted hook");
+        tagged.setTags(objectMapper.valueToTree(java.util.Map.of("hookType", "question")));
+        creativeRepository.save(tagged);
+        PostPublishTarget target = newTarget(newPost("Lifted post"), "instagram", now.minusDays(5));
+        newAttachedAsset(target.getWorkItem(), newFrameFor(tagged));
+        newSnapshot(target, now.minusDays(5).plusHours(1), 300L, 30L, 0L, 0L, 0L, null);
+
+        var tag = insightsService.compute(project.getId(), "30d", null, admin).byTag().get(0);
+        assertThat(tag.medianViewLift()).isCloseTo(3.0, within(1e-9));
+        assertThat(tag.beatBaselineShare()).isEqualTo(1.0);
+        assertThat(tag.medianEngagementRate()).isCloseTo(0.1, within(1e-9));
+        assertThat(tag.medianRetentionLift()).isNull(); // no avgViewPct on either side
+
+        var perf = performanceService.topCreatives(project.getId(), null, null, 10).get(0);
+        assertThat(perf.creativeId()).isEqualTo(tagged.getId());
+        assertThat(perf.settledPosts()).isEqualTo(1);
+        assertThat(perf.medianViewLift()).isCloseTo(3.0, within(1e-9));
+        assertThat(perf.beatBaselineShare()).isEqualTo(1.0);
+        assertThat(perf.medianRetentionLift()).isNull();
+
+        @SuppressWarnings("unchecked")
+        List<java.util.Map<String, Object>> rows = (List<java.util.Map<String, Object>>)
+                snapshotQuery.fetch(project.getId(), now.toInstant()).get("byHookType");
+        assertThat(rows).hasSize(1);
+        assertThat((Double) rows.get(0).get("medianViewLift")).isCloseTo(3.0, within(1e-9));
     }
 
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────

@@ -576,7 +576,11 @@ public class CreativeController implements CreativesApi {
                 .headline(p.headline())
                 .engagementRate(p.engagementRate())
                 .avgViewPct(p.avgViewPct())
-                .views72h(p.views72h());
+                .views72h(p.views72h())
+                .settledPosts(p.settledPosts())
+                .medianViewLift(p.medianViewLift())
+                .medianRetentionLift(p.medianRetentionLift())
+                .beatBaselineShare(p.beatBaselineShare());
     }
 
     private CreativeExperimentResponse toResponse(CreativeExperiment e) {

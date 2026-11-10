@@ -31,6 +31,11 @@ interface InsightsGroup {
 
 interface InsightsTagGroup extends InsightsGroup {
   tagKey: string
+  unsettledPosts?: number | null
+  medianViewLift?: number | null
+  beatBaselineShare?: number | null
+  medianEngagementRate?: number | null
+  medianRetentionLift?: number | null
 }
 
 interface InsightsPost {
@@ -82,6 +87,10 @@ interface CreativePerformanceEntry {
   engagementRate?: number | null
   avgViewPct?: number | null
   views72h?: number | null
+  settledPosts?: number | null
+  medianViewLift?: number | null
+  medianRetentionLift?: number | null
+  beatBaselineShare?: number | null
   byPlatform: CreativePerformancePlatform[]
 }
 
@@ -123,6 +132,17 @@ function trimGroup(group: InsightsGroup): Record<string, unknown> {
   })
 }
 
+/** A byTag row: the group plus its lift numbers (settled posts only), nulls dropped. */
+function trimTagGroup(group: InsightsTagGroup): Record<string, unknown> {
+  return omitNulls({
+    ...trimGroup(group),
+    medianViewLift: round4(group.medianViewLift),
+    beatBaselineShare: round4(group.beatBaselineShare),
+    medianEngagementRate: round4(group.medianEngagementRate),
+    medianRetentionLift: round4(group.medianRetentionLift),
+  })
+}
+
 /** The fields worth an agent's context for one destination — a subset of the backend's InsightsPost. */
 function trimPost(post: InsightsPost): Record<string, unknown> {
   return omitNulls({
@@ -157,6 +177,10 @@ function trimCreative(entry: CreativePerformanceEntry): Record<string, unknown> 
     engagementRate: round4(entry.engagementRate),
     avgViewPct: round4(entry.avgViewPct),
     views72h: entry.views72h,
+    settledPosts: entry.settledPosts,
+    medianViewLift: round4(entry.medianViewLift),
+    medianRetentionLift: round4(entry.medianRetentionLift),
+    beatBaselineShare: round4(entry.beatBaselineShare),
   })
 }
 
@@ -183,7 +207,7 @@ async function getPostInsights(
     totals: trimGroup(data.totals),
     byPlatform: data.byPlatform.map(trimGroup),
     byFormat: data.byFormat.map(trimGroup),
-    byTag: (data.byTag ?? []).map(trimGroup),
+    byTag: (data.byTag ?? []).map(trimTagGroup),
     bestHoursUtc: topGroups(data.byHour),
     bestWeekdays: topGroups(data.byWeekday),
     topPosts: data.topPosts.slice(0, 5).map(trimPost),

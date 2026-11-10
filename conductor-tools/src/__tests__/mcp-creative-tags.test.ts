@@ -132,3 +132,34 @@ describe('Creative tags', () => {
     )
   })
 })
+
+describe('Tag lift fields', () => {
+  it('get_marketing_insights passes the lift fields through byTag and says byTag counts settled posts only', async () => {
+    mocked(apiGet).mockResolvedValue({
+      window: { from: 'a', to: 'b', days: 30 },
+      totals: { key: 'all', posts: 3, views: 900, likes: 0, comments: 0, shares: 0, saves: 0 },
+      byPlatform: [], byFormat: [], byHour: [], byWeekday: [], topPosts: [], bottomPosts: [], movers: [],
+      coverage: { platforms: [], notes: [] }, creatives: [],
+      byTag: [{ key: 'question', tagKey: 'hookType', posts: 3, views: 900, likes: 0, comments: 0, shares: 0, saves: 0, engagementRate: null, unsettledPosts: 2, medianViewLift: 1.23456, beatBaselineShare: 0.66667, medianEngagementRate: 0.05, medianRetentionLift: null }],
+    })
+    const result = (await getMarketingInsights({}, config)) as { byTag: Array<Record<string, unknown>> }
+    expect(result.byTag[0]).toMatchObject({ unsettledPosts: 2, medianViewLift: 1.2346, beatBaselineShare: 0.6667, medianEngagementRate: 0.05 })
+    expect(result.byTag[0]).not.toHaveProperty('medianRetentionLift')
+    const description = TOOLS.find((t) => t.name === 'get_marketing_insights')!.description
+    expect(description).toContain('only settled posts (TikTok/Instagram/YouTube 72 h old, Facebook 7 d)')
+    expect(description).toContain('1.0 is typical')
+  })
+
+  it('get_creative keeps the lift fields of each variant and documents them', async () => {
+    mocked(apiGet).mockImplementation(async (url: string) => {
+      if (url.endsWith('/readiness')) return { ready: true, items: [] }
+      if (url.endsWith('/performance')) return { family: [{ creativeId: 'c-1', label: '1a', posts: 2, views: 10, settledPosts: 1, medianViewLift: 2.5, medianRetentionLift: 1.1, beatBaselineShare: 1 }] }
+      if (url.includes('/experiments')) return []
+      if (url.endsWith('/c-1')) return { id: 'c-1', number: 1 }
+      return [{ id: 'c-1', number: 1 }]
+    })
+    const result = await getCreative({ creativeId: 'c-1' }, config)
+    expect((result['performance'] as Array<Record<string, unknown>>)[0]).toMatchObject({ settledPosts: 1, medianViewLift: 2.5, medianRetentionLift: 1.1, beatBaselineShare: 1 })
+    expect(TOOLS.find((t) => t.name === 'get_creative')!.description).toContain('medianViewLift')
+  })
+})

@@ -58,7 +58,8 @@ class MarketingInsightsQueryServiceTest {
         when(performanceService.topCreatives(anyString(), any(), any(), anyInt())).thenReturn(List.of());
         service = new MarketingInsightsQueryService(security, targetRepository, metricRepository, workItemRepository,
                 new PublishPlatformRegistry(), performanceService,
-                mock(com.conductor.creative.CreativeTagAttribution.class));
+                mock(com.conductor.creative.CreativeTagAttribution.class),
+                mock(com.conductor.marketing.insights.PostBaselineService.class));
         caller = new User();
         caller.setId("u-1");
         when(security.isProjectMember("proj-1", "u-1")).thenReturn(true);

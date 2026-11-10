@@ -13804,6 +13804,34 @@ components:
             tagKey:
               type: string
               description: hookType, angle, format, archetype or hypothesis. `key` is the tag's value.
+            unsettledPosts:
+              type: integer
+              description: >-
+                Destinations carrying this tag left out because they are too new (TikTok, Instagram and YouTube
+                72 hours, Facebook 7 days, any other platform 72 hours). The group fields count settled posts only.
+            medianViewLift:
+              type: number
+              format: double
+              nullable: true
+              description: >-
+                Median over the settled posts of views divided by the account's own median views for that
+                platform and format over the trailing 90 days (platform alone when the format bucket has fewer
+                than 10 settled posts). 1.0 is typical. Null when no post has a baseline.
+            beatBaselineShare:
+              type: number
+              format: double
+              nullable: true
+              description: Share of the posts that have a view lift whose lift is above 1; null when none has one.
+            medianEngagementRate:
+              type: number
+              format: double
+              nullable: true
+              description: Median of the settled posts' own engagement rates (not the pooled rate); null when none has views.
+            medianRetentionLift:
+              type: number
+              format: double
+              nullable: true
+              description: Median of avgViewPct divided by the baseline's median avgViewPct, over posts with both; null otherwise.
 
     InsightsPost:
       type: object
@@ -16965,6 +16993,25 @@ components:
           format: int64
           nullable: true
           description: Summed views at the snapshot nearest at or after each destination's fireTime + 72h; null when no destination has reached that snapshot yet.
+        settledPosts:
+          type: integer
+          nullable: true
+          description: Posts old enough to judge (TikTok, Instagram and YouTube 72 hours, Facebook 7 days); the lift fields use only these.
+        medianViewLift:
+          type: number
+          format: double
+          nullable: true
+          description: Median over settled posts of views divided by the account's own 90-day median views for that platform and format; 1.0 is typical. Null when none has a baseline.
+        medianRetentionLift:
+          type: number
+          format: double
+          nullable: true
+          description: Median over settled posts of avgViewPct divided by the baseline's median avgViewPct; null when not computable.
+        beatBaselineShare:
+          type: number
+          format: double
+          nullable: true
+          description: Share of settled posts with a view lift whose lift is above 1; null when none has one.
         byPlatform:
           type: array
           items:

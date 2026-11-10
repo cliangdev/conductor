@@ -1017,13 +1017,41 @@ like any create field (and overlays them on a `baseCreativeId`'s), and `commit_c
 preview carried, or the `tags` it is given. `GET` always returns `tags`.
 
 Insights read them: `GET .../marketing/insights` adds `byTag`, one row per `(tagKey, value)` (`key` is the
-value) with the same counters as every other group, over reporting destinations whose attributed Creative
-carries that tag. Attribution is `CreativeAttributionResolver`'s (see below), through `CreativeTagAttribution`;
-a destination with no attributed Creative, or an untagged one, is left out, and one attributed to several
-tagged Creatives counts once under each distinct tag value. Rows sort by tag key then engagement rate
-descending (nulls last), and `noise`/`smallSample` judgements are the client's to make from `posts`, as for
-the other groups. The weekly `conductor-marketing` snapshot carries the same read as a `byHookType`
-dimension (hookType only), so the digest can say which hooks are working.
+value) over reporting destinations whose attributed Creative carries that tag. Attribution is
+`CreativeAttributionResolver`'s (see below), through `CreativeTagAttribution`; a destination with no attributed
+Creative, or an untagged one, is left out, and one attributed to several tagged Creatives counts once under
+each distinct tag value.
+
+**Numbers that survive one viral post and a platform mix.** Raw pooled views and engagement are dominated by
+the single best post (views are heavy-tailed) and by which platform a tag happened to be used on, so `byTag`
+reads **settled posts only** and compares each post with the account's own typical post:
+
+- *Settled*: a destination counts once its fire time is at least its platform's window before now,
+  TikTok, Instagram and YouTube 72 h, Facebook 7 d, any other platform 72 h (`PostSettleWindows`). Posts
+  still inside the window are not counted; a row's `unsettledPosts` says how many were left out. A destination
+  with no fire time has no age to judge and counts as settled.
+- *Baseline* (`PostBaselineService`): the median views and median `avgViewPct` of settled reporting
+  destinations over the trailing 90 days, independent of the insights `window`. Per platform and format when
+  that bucket has at least 10 settled posts, else per platform when the platform has at least 10, else none.
+- *Lift*: a post's **view lift** is its views over the baseline median views, and its **retention lift** is its
+  `avgViewPct` over the baseline median `avgViewPct`; 1.0 is typical for this account on that platform (and
+  format). Either is null when the baseline or the post's own value is missing.
+
+Each `byTag` row keeps the group fields (counted over its settled posts) and adds `unsettledPosts`,
+`medianViewLift`, `beatBaselineShare` (share of posts with a lift whose view lift is above 1),
+`medianEngagementRate` (the median of per-post rates, not the pooled rate) and `medianRetentionLift`, each null
+when it cannot be computed. Rows sort by tag key, then `medianViewLift` descending, nulls last. Read the lift
+rather than the pooled views, and `posts` for how much to trust it.
+
+The same service and settled-only rule give each variant in `GET .../marketing/creatives/{id}/performance`
+(and `get_creative`, and insights' `creatives`) `settledPosts`, `medianViewLift`, `medianRetentionLift` and
+`beatBaselineShare`, next to its existing fields. The weekly `conductor-marketing` snapshot carries a
+`byHookType` dimension (hookType only) counted over settled posts with a `medianViewLift` per row, so the digest
+can say which hooks are working; its seven-day window means Facebook posts there are mostly not yet settled.
+
+The thresholds are named constants, not configuration: the settle windows in `PostSettleWindows`, and the
+90 days and the 10-post minimum in `PostBaselineService` (`BASELINE_DAYS`, `MIN_BUCKET_POSTS`). Change them
+there, and in this section.
 
 ## Performance and experiments (COND-24 T5)
 

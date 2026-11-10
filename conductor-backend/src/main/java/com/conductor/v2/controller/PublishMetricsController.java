@@ -105,7 +105,11 @@ public class PublishMetricsController implements PublishMetricsApi {
                 .headline(p.headline())
                 .engagementRate(p.engagementRate())
                 .avgViewPct(p.avgViewPct())
-                .views72h(p.views72h());
+                .views72h(p.views72h())
+                .settledPosts(p.settledPosts())
+                .medianViewLift(p.medianViewLift())
+                .medianRetentionLift(p.medianRetentionLift())
+                .beatBaselineShare(p.beatBaselineShare());
     }
 
     private static InsightsWindow toWindow(MarketingInsightsQueryService.Window w) {
@@ -118,7 +122,12 @@ public class PublishMetricsController implements PublishMetricsApi {
                 .label(g.label())
                 .engagementRate(g.engagementRate())
                 .medianViews(g.medianViews())
-                .avgViewPct(g.avgViewPct());
+                .avgViewPct(g.avgViewPct())
+                .unsettledPosts(t.unsettledPosts())
+                .medianViewLift(t.medianViewLift())
+                .beatBaselineShare(t.beatBaselineShare())
+                .medianEngagementRate(t.medianEngagementRate())
+                .medianRetentionLift(t.medianRetentionLift());
     }
 
     private static InsightsGroup toGroup(MarketingInsightsQueryService.Group g) {
