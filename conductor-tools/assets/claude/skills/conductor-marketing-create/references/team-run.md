@@ -146,10 +146,11 @@ Write `request.md` (the request verbatim, `--quick` if given, the platform if st
    `marketing/playbook.md` and the insights from steps 2 and 3, and bootstraps a missing playbook
    from the local `.conductor/content-runs/*/run.json` files, skipping this run). Write the chosen
    kit's playbook sections (Proven, Leaning, Didn't work, Taste, Open hypotheses) into the file,
-   copied as they stand after the retro, then a `## Hypothesis under test` section: the one
-   hypothesis this run tests (the oldest open one, or a new `H<n>`), and what would count as a
-   result. Name what you could not measure. With no playbook and no data, write exactly "No data
-   yet". Record the hypothesis in `run.json` as `tags.hypothesis`.
+   copied as they stand after the retro, then a `## Hypothesis under test` section: the
+   pre-registered hypothesis this run's marked idea tests (an open one that needs more posts first,
+   else a new `H<n>`, in the line format of `references/learning-loop.md`, "Explore"). When the
+   exploration cap is already met, write "none this run" and no idea is marked. Name what you could not measure. With no playbook and no data, write exactly "No data
+   yet". Record the hypothesis in `run.json` as `tags.hypothesis` (null when none); only a winning idea ships, so the commit carries it only if the marked idea won.
 6. Banned copy, for `context/banned.md`: list every `copyRules` entry in `context/brand-kit.json`
    whose id starts with `banned-` (the line or visual, the pattern and the message). With none,
    write exactly "No banned copy yet".
@@ -187,7 +188,7 @@ Three `Agent` calls in ONE message so they run in parallel, `subagent_type:
 
 Each gets `brief.md`, `context/media.json`, `references/idea-template.md`,
 `references/capabilities.md` (the `RENDER`/`FILM` test) and `references/voice.md`, and writes 4 ideas.
-The brief names the hypothesis under test. Tell each ideator it may name it, and that across the run
+The brief names the hypothesis under test. If it names one, tell each ideator it may use it, and that across the run
 at most one idea tests it: the ideator whose angle fits best marks one idea `Tests: H<n>`, the others
 mark none.
 With `--quick`: only angles 1 and 2, 3 ideas each. Any ideator rerun passes the same inputs, `references/voice.md` included.
@@ -428,7 +429,7 @@ Keep it short:
 - `publish-pack.md` (captions, hashtags, pinned comment, disclosure and AI-label settings, sound,
   alternate hooks); say the publisher will pre-fill the Post from `publish-pack.json`, and that the
   pinned comment, the link in bio and the Stories repost with a link sticker are manual steps;
-- up to 3 `Learned:` lines and the hypothesis this Creative tests (`references/learning-loop.md`);
+- up to 3 `Learned:` lines (the playbook operations in plain words) and the hypothesis this Creative tests (`references/learning-loop.md`);
 - next steps:
   - make the Post with the `conductor-marketing-publish` skill (the Creative is
     not on a Post yet, because a run never creates one);

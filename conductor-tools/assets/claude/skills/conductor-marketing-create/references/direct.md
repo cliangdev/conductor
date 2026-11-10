@@ -99,8 +99,10 @@ asterisks: `Every saved link, *finally usable*.` Never zero, never two — `prev
 
 Keep it short — checked at thumbnail size, not read up close.
 
-Choose this run's one test (`references/learning-loop.md`, "Explore"): usually the headline against
-an alternate hook from the spare candidates, or the format. Classify each kept hook's `hookType`
+Decide whether this run carries a test (`references/learning-loop.md`, "Explore": check the last
+about 8 Creatives with `list_creatives`, and test only under the cap or to give an open hypothesis
+more posts). If it does, change one thing: usually the headline against an alternate hook from the
+spare candidates, or the format. Classify each kept hook's `hookType`
 with the mapping there.
 
 ### 4. Obey the brand's copy rules
@@ -187,7 +189,7 @@ the rule and field, without rendering — fix the copy and preview again.
 
 Pass `tags` on every preview and commit: `hookType` (classified from the mapping in
 `references/learning-loop.md`), `angle` if one applies, `format`, `archetype` for a slideshow, and
-`hypothesis` for the run's test.
+`hypothesis` when the run carries a test.
 
 To change an existing Creative's copy, layout or photo, preview the edit first with `baseCreativeId`:
 only the fields you pass change, and the commit then updates that Creative instead of creating one.

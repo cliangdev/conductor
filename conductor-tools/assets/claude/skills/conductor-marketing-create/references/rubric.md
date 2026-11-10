@@ -39,7 +39,8 @@ Score each 1 to 5. Weighted total = sum(score x weight) / 5, so the maximum is 1
    own words. Then write the score. Never write a score before its reasoning.
 3. Evidence fit lives inside audience relevance: reward an idea that follows a Proven line in
    `context/learning.md`, and penalise one that repeats a Didn't work line, unless it is the
-   hypothesis under test (`Tests:`). The total stays 100. Leaning lines are never a reason to score
+   hypothesis under test (`Tests:`). Judge by what the lines say about the account's own results; a
+   Taste line is a constraint, a Leaning line never moves a score. The total stays 100. Leaning lines are never a reason to score
    up or down.
 4. Penalise nothing for length (ideas are length-matched) and reward nothing for confident tone.
 5. Compute the weighted total.

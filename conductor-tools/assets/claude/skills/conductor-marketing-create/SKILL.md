@@ -31,8 +31,9 @@ do not post it.
   `commit_creative_draft` upload the media, save the Creative and run the full render. Never commit
   a draft the person has not seen and approved.
 - **Learns as it goes.** Read the workspace playbook first (the retro), follow it, test one new
-  thing, commit with `tags`, then write back what was learned and list it as `Learned:` lines in the
-  final message. A test never overrides brand or copy rules or the approval gate. See
+  thing now and then (about 1 Creative in 4), commit with `tags`, then write back what was learned
+  as edits to single lessons and list them as `Learned:` lines in the final message. Lessons are
+  judged against the account's own baseline, never raw totals. A test never overrides brand or copy rules or the approval gate. See
   `references/learning-loop.md`.
 - **A run never creates a Post.** It ends at a committed Creative (or a shoot script). Hand off to
   `conductor-marketing-publish` for the Post, scheduling and review.
@@ -56,7 +57,7 @@ preview, check and commit steps (S6 reads `references/direct.md`).
 - `references/direct.md`: the Direct flow (read the brand, angle, headline, photo, preview, critique, commit), sequences, video, finished images, short videos, video from a generated still (only when motion is asked for), music, cleanup.
 - `references/team-run.md`: the Team flow (run folder, stages S0 to S6, FILM ideas, final message, failure handling).
 - `references/brand-kit-setup.md`: check the Brand Kit and set it up from a website, a brand doc or direct answers; "Make a kit style from slides" (Direct mode) turns slides the person likes into a slideshow style on a new or existing kit.
-- `references/learning-loop.md`: the playbook, tag vocabulary, retro, the one test per run and what gets captured (both modes).
+- `references/learning-loop.md`: the thresholds, the playbook, tag vocabulary, retro, pre-registered tests and what gets captured (both modes).
 - `references/hooks.md`: writing and scoring headline candidates.
 - `references/voice.md`: making every line read like a person posted it, with the self-check every
   hook, card and caption passes (both modes).

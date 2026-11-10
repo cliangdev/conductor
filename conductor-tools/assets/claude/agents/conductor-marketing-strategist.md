@@ -42,8 +42,8 @@ Use these headings, in this order, and keep the whole file under about 500 words
    is missing. Say plainly whether any video exists, since that decides what can be rendered.
 6. **What has worked**: from `performance.md`, `learning.md` and the what-works page, the patterns
    that earned results, and any that did not. Copy the playbook's Proven, Didn't work and Taste
-   lines from `learning.md` as constraints, and name the hypothesis under test (`H<n>` and what it
-   asks). Name which hook types and angles worked or did not, and say what to try differently.
+   lines from `learning.md` as constraints, and name the hypothesis under test, if any (`H<n>`, its one variable
+   and its metric). Name which hook types and angles worked or did not, and say what to try differently.
    Say "no performance data yet" if that is the case.
 7. **Constraints**: length, brand look, time, anything the request restricts.
 

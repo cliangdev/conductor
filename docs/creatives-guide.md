@@ -420,10 +420,16 @@ changed as "Learned:" lines in its final message. Creatives carry tags (hook typ
 slideshow archetype, the hypothesis being tested), so results from Marketing → Posts can be traced
 back to the choice that made them.
 
-The playbook sorts lessons by evidence: Proven (three or more measured posts, or a decided hook
-experiment), Leaning, Didn't work, your Taste, and Open hypotheses with the date a result is due.
-To change it, edit the page in **Knowledge** like any other page; the next run follows your edit. To
-undo a bad update, open the page's revisions and restore the earlier one.
+The playbook sorts lessons by evidence: Proven (three or more settled posts that beat your own
+typical results by about 20%, or a decided hook experiment), Leaning, Didn't work, your Taste, and
+Open hypotheses (tests the skill set up before posting, each needing three settled posts). Results are
+always compared with your own account's typical numbers, never raw totals. A post counts once it has
+settled: 72 hours for TikTok, Instagram and YouTube, 7 days for Facebook. Each lesson has a stable
+number, and a run edits only the lessons it has new evidence for. A lesson with no new evidence for 90
+days is demoted, then dropped. Your Taste lines are yours: the skill never removes one.
+
+To change the playbook, edit the page in **Knowledge** like any other page; the next run follows your
+edit. To undo a bad update, open the page's revisions and restore the earlier one.
 
 ## 5. Video
 
