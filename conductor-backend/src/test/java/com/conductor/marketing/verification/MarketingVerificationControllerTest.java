@@ -241,6 +241,63 @@ class MarketingVerificationControllerTest {
                 .andExpect(jsonPath("$.detail").value("A read must end yesterday (2026-10-28) or earlier"));
     }
 
+    // ---- retracting ----
+
+    private static final String RETRACT = BASE + "/reads/read-1/retract";
+
+    @Test
+    void retract_byAnEditor_returns200WithTheRetractionFieldsAndTheActorsUserId() throws Exception {
+        memberWithRole(MemberRole.CREATOR);
+        when(ledgerService.retract(PROJECT_ID, "read-1", "RevenueCat is retired", "user-1")).thenReturn(new ReadEntry(
+                "read-1", "PRODUCT", "trial_started", LocalDate.of(2026, 9, 29), LocalDate.of(2026, 10, 26), 0,
+                "RevenueCat", null, "user-0", OffsetDateTime.parse("2026-10-29T12:00:00Z"), 7.0, null, "PLATFORM",
+                OffsetDateTime.parse("2026-11-08T10:00:00Z"), "user-1", "RevenueCat is retired"));
+
+        mockMvc.perform(post(RETRACT).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"reason\":\"RevenueCat is retired\"}")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value("read-1"))
+                .andExpect(jsonPath("$.retractedBy").value("user-1"))
+                .andExpect(jsonPath("$.retractionReason").value("RevenueCat is retired"))
+                .andExpect(jsonPath("$.retractedAt").exists());
+    }
+
+    @Test
+    void retract_byAReviewer_isForbiddenAndNothingIsRetracted() throws Exception {
+        memberWithRole(MemberRole.REVIEWER);
+
+        mockMvc.perform(post(RETRACT).contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"wrong\"}")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isForbidden());
+        verify(ledgerService, never()).retract(anyString(), anyString(), any(), any());
+    }
+
+    @Test
+    void retract_withoutAReason_returns400() throws Exception {
+        memberWithRole(MemberRole.CREATOR);
+        when(ledgerService.retract(anyString(), anyString(), any(), any()))
+                .thenThrow(new BusinessException("reason is required: say why the read is wrong"));
+
+        mockMvc.perform(post(RETRACT).contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"  \"}")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post(RETRACT).contentType(MediaType.APPLICATION_JSON).content("{}")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void retract_aReadOfAnotherProject_returns404() throws Exception {
+        memberWithRole(MemberRole.CREATOR);
+        when(ledgerService.retract(anyString(), anyString(), any(), any()))
+                .thenThrow(new jakarta.persistence.EntityNotFoundException("Platform read not found"));
+
+        mockMvc.perform(post(RETRACT).contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"wrong\"}")
+                        .header("Authorization", "Bearer valid-token"))
+                .andExpect(status().isNotFound());
+    }
+
     // ---- history ----
 
     @Test
@@ -249,7 +306,7 @@ class MarketingVerificationControllerTest {
         when(ledgerService.reads(PROJECT_ID, "ads", "installs", 20)).thenReturn(List.of(
                 new ReadEntry("read-2", "ADS", "installs", LocalDate.of(2026, 9, 29), LocalDate.of(2026, 10, 26), 23,
                         "Apple Ads console", null, null, OffsetDateTime.parse("2026-10-29T12:00:00Z"), 7.0, 23.0,
-                        "BACKEND")));
+                        "BACKEND", null, null, null)));
 
         mockMvc.perform(get(BASE + "/reads").param("channel", "ads").param("metric", "installs").param("limit", "20")
                         .header("Authorization", "Bearer valid-token"))

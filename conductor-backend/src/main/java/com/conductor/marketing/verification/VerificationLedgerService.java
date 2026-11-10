@@ -17,6 +17,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.persistence.EntityNotFoundException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -45,7 +46,9 @@ import java.util.UUID;
  * connector, so only {@code BOTH} is ever {@linkplain #isVerified verified}. Figures are judged by
  * {@link ReconciliationBand}, over settled days only.
  *
- * <p><b>Reads</b> are append-only: this service adds them and lists them and has no way to change or remove one.
+ * <p><b>Reads</b> are never deleted: this service adds them, lists them (retracted ones too, as the audit trail)
+ * and can {@linkplain #retract retract} a wrong one, after which it counts nowhere and the previous read of that
+ * metric (if any) applies.
  * A read covers an explicit range of days; it is compared with Conductor's figure over exactly those days (a
  * level: its value on the last day; unique visitors: the stored count for a window of that length ending on the
  * last day). A read over days Conductor has not settled yet cannot be compared and counts for nothing, not for a
@@ -100,7 +103,8 @@ public class VerificationLedgerService {
     /** One stored read with what Conductor and the backend showed when it was recorded. */
     public record ReadEntry(String id, String channel, String metric, LocalDate from, LocalDate to, double value,
                             String sourceName, String note, String recordedBy, OffsetDateTime recordedAt,
-                            Double conductorValue, Double backendValue, String verdict) {}
+                            Double conductorValue, Double backendValue, String verdict,
+                            OffsetDateTime retractedAt, String retractedBy, String retractionReason) {}
 
     private final MarketingOverviewQueryService overviewService;
     private final MarketingPlatformReadRepository readRepository;
@@ -191,7 +195,7 @@ public class VerificationLedgerService {
      * ledger row recomputed for exactly those days. The metric must be a sum, a level or window-unique visitors of
      * a connected channel; the range must end yesterday or earlier and span at most
      * {@value MarketingOverviewQueryService#FIXED_WINDOW_MAX_DAYS} days; the value must be zero or more.
-     * Conductor's figure, the backend's and the verdict as of now are stored with the read. Append-only.
+     * Conductor's figure, the backend's and the verdict as of now are stored with the read. Never deleted.
      */
     @Transactional
     public RecordedRow record(String projectId, String channelRaw, String metricKey, LocalDate from, LocalDate to,
@@ -261,6 +265,33 @@ public class VerificationLedgerService {
                 conductorOverRead == null ? null : BigDecimal.valueOf(conductorOverRead),
                 backendOverRead == null ? null : BigDecimal.valueOf(backendOverRead), row.verdict().name()));
         return new RecordedRow(row.platformRead(), row);
+    }
+
+    // ---- retracting ---------------------------------------------------------------------------------
+
+    /**
+     * Retracts a read as wrong: it stays in the history with who and why, but no longer counts, so the previous
+     * non-retracted read of that metric (if any) applies. One-way and idempotent: retracting a retracted read
+     * returns it unchanged (who and why are not overwritten).
+     */
+    @Transactional
+    public ReadEntry retract(String projectId, String readId, String reason, String actorUserId) {
+        String why = reason == null ? "" : reason.trim();
+        if (why.isEmpty()) {
+            throw new BusinessException("reason is required: say why the read is wrong");
+        }
+        if (why.length() > MAX_NOTE) {
+            throw new BusinessException("reason is at most " + MAX_NOTE + " characters");
+        }
+        MarketingPlatformRead existing = readRepository.findByIdAndProjectId(readId, projectId)
+                .orElseThrow(() -> new EntityNotFoundException("Platform read not found"));
+        if (existing.getRetractedAt() != null) {
+            return toEntry(existing);
+        }
+        readRepository.retract(readId, projectId, OffsetDateTime.now().truncatedTo(ChronoUnit.MICROS), actorUserId,
+                why);
+        return toEntry(readRepository.findByIdAndProjectId(readId, projectId)
+                .orElseThrow(() -> new EntityNotFoundException("Platform read not found")));
     }
 
     private static void validateRange(LocalDate from, LocalDate to, LocalDate today) {
@@ -510,7 +541,8 @@ public class VerificationLedgerService {
         return new ReadEntry(r.getId(), r.getChannel(), r.getMetric(), r.getDayFrom(), r.getDayTo(),
                 r.getValue().doubleValue(), r.getSourceName(), r.getNote(), r.getRecordedBy(), r.getRecordedAt(),
                 r.getConductorValue() == null ? null : r.getConductorValue().doubleValue(),
-                r.getBackendValue() == null ? null : r.getBackendValue().doubleValue(), r.getVerdict());
+                r.getBackendValue() == null ? null : r.getBackendValue().doubleValue(), r.getVerdict(),
+                r.getRetractedAt(), r.getRetractedBy(), r.getRetractionReason());
     }
 
     private static String normalizeRef(String metricRef) {
