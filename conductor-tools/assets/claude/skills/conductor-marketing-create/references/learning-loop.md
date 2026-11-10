@@ -9,7 +9,8 @@ Tags are the join between a Creative and its results. Server-side Creative `tags
 optional keys `hookType`, `angle`, `format`, `archetype`, `hypothesis`) are accepted by
 `create_creative`, `update_creative`, `preview_creative_draft` and `commit_creative_draft`, and
 returned by `get_creative` and `list_creatives`. `get_marketing_insights` returns a `byTag`
-breakdown: rows of `{tagKey, key, ...group metrics, noise, smallSample}`.
+breakdown: rows of `{tagKey, key, posts, ...group metrics}`. The rows carry no noise flag, so `posts`
+is the sample size: judge every lesson by it.
 
 ## The playbook page
 
@@ -41,11 +42,11 @@ Updated <date> · results through <date> · N Creatives measured
 <last ~30 Creative display ids already counted, comma separated>
 ```
 
-- **Proven**: 3 or more measured posts, none flagged `noise` or `smallSample`, or a hook experiment
+- **Proven**: 3 or more measured posts that agree, or a hook experiment
   that is DECIDED. Every line carries its evidence: the metric, n, the window and the Creative
   display ids.
-- **Leaning**: 1 or 2 posts, or any result flagged `noise` or `smallSample`. Never promote a noise
-  or smallSample result to Proven.
+- **Leaning**: 1 or 2 posts, or posts that disagree. Never promote a row with fewer than 3 posts,
+  or a gap too small to tell apart from normal variation, to Proven.
 - **Didn't work**: same evidence rule; say what was tried and what happened.
 - **Taste**: the person's own feedback on drafts, dated. Constraints, not statistics.
 - **Folded in**: Creatives whose results a retro has already counted, so nothing is counted twice.
@@ -93,8 +94,8 @@ the shape's row in `voice.md` when the line fits one.
 4. For each open hypothesis, `get_creative` on its Creative: its performance and its experiment.
    It is due once 72 hours or more have passed since that Creative first posted; one that has not
    posted yet, or posted less than 72 hours ago, stays open.
-5. Apply the thresholds above. Promote a Leaning line that now has 3 or more clean posts. Demote a
-   Proven line a later clean result contradicts. Resolve a due hypothesis: move it into Proven,
+5. Apply the thresholds above. Promote a Leaning line that now has 3 or more posts that agree. Demote a
+   Proven line a later result on 3 or more posts contradicts. Resolve a due hypothesis: move it into Proven,
    Leaning or Didn't work with its evidence, remove it from Open hypotheses, and add its Creative to
    Folded in. Add any other Creative counted this retro to Folded in too.
 6. Name what could not be measured (no data yet, a platform that reports no views, a Creative with no
