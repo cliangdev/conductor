@@ -71,7 +71,7 @@ public class CreativePerformanceService {
         Creative root = rootOf(projectId, creative);
         List<Creative> family = new ArrayList<>(creativeRepository.findAllByNumberAndProjectId(root.getNumber(), projectId));
         family.sort(Comparator.comparing(Creative::getVariantLetter));
-        return new FamilyPerformance(creativeId, variantPerformances(family, null, null, null));
+        return new FamilyPerformance(creativeId, variantPerformances(family, null, null, null, null, null));
     }
 
     /**
@@ -89,7 +89,24 @@ public class CreativePerformanceService {
     public List<VariantPerformance> topCreatives(String projectId, OffsetDateTime from, OffsetDateTime to, int limit,
                                                  PostBaselineService.Baselines baselines) {
         List<Creative> creatives = creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId);
-        return variantPerformances(creatives, from, to, baselines).stream()
+        return rankTop(variantPerformances(creatives, from, to, baselines, null, null), limit);
+    }
+
+    /**
+     * As above for a caller that has already loaded the Creatives (restricted to a Brand Kit, if it asked) and
+     * resolved their attributed destinations ({@link CreativeTagAttribution#attribution}), so neither is done
+     * twice in a request. When {@code platform} is given only destinations on it count, so every figure of an
+     * entry agrees with the request's filter.
+     */
+    @Transactional(readOnly = true)
+    public List<VariantPerformance> topCreatives(OffsetDateTime from, OffsetDateTime to, int limit,
+                                                 PostBaselineService.Baselines baselines, List<Creative> creatives,
+                                                 Map<String, List<PostPublishTarget>> attributed, String platform) {
+        return rankTop(variantPerformances(creatives, from, to, baselines, attributed, platform), limit);
+    }
+
+    private static List<VariantPerformance> rankTop(List<VariantPerformance> all, int limit) {
+        return all.stream()
                 .filter(p -> p.posts() > 0)
                 .sorted(Comparator.comparingLong(VariantPerformance::views).reversed())
                 .limit(limit)
@@ -106,14 +123,18 @@ public class CreativePerformanceService {
      * snapshots and the 72h snapshots are each loaded once for every Creative's destinations together.
      */
     private List<VariantPerformance> variantPerformances(List<Creative> creatives, OffsetDateTime from, OffsetDateTime to,
-                                                         PostBaselineService.Baselines given) {
-        Map<String, List<PostPublishTarget>> attributed = attributionResolver.resolvePublishedTargetsByCreative(
-                creatives.stream().map(Creative::getId).toList());
+                                                         PostBaselineService.Baselines given,
+                                                         Map<String, List<PostPublishTarget>> resolved, String platform) {
+        Map<String, List<PostPublishTarget>> attributed = resolved != null ? resolved
+                : attributionResolver.resolvePublishedTargetsByCreative(creatives.stream().map(Creative::getId).toList());
 
         Map<String, List<PostPublishTarget>> targetsByCreative = new LinkedHashMap<>();
         Map<String, PostPublishTarget> allTargets = new LinkedHashMap<>();
         for (Creative creative : creatives) {
             List<PostPublishTarget> targets = attributed.getOrDefault(creative.getId(), List.of());
+            if (platform != null) {
+                targets = targets.stream().filter(t -> platform.equals(t.getPlatform())).toList();
+            }
             if (from != null) {
                 targets = targets.stream()
                         .filter(t -> t.getFireTime() != null && !t.getFireTime().isBefore(from) && t.getFireTime().isBefore(to))

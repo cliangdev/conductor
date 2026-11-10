@@ -132,7 +132,7 @@ public class MarketingInsightsSnapshotQuery {
                 views += orZero(o.views());
                 engagements += orZero(o.likes()) + orZero(o.comments()) + orZero(o.shares()) + orZero(o.saves());
             }
-            LessonVerdictRules.Default verdict = LessonVerdictRules.defaultFor("hookType", lift);
+            LessonVerdictRules.Default verdict = LessonVerdictRules.defaultFor(lift);
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("hookType", hook);
             row.put("posts", (long) observations.size());

@@ -55,10 +55,10 @@ class MarketingInsightsQueryServiceTest {
         metricRepository = mock(PostPublishTargetMetricRepository.class);
         workItemRepository = mock(WorkItemRepository.class);
         performanceService = mock(CreativePerformanceService.class);
-        when(performanceService.topCreatives(anyString(), any(), any(), anyInt())).thenReturn(List.of());
+        
         service = new MarketingInsightsQueryService(security, targetRepository, metricRepository, workItemRepository,
                 new PublishPlatformRegistry(), performanceService,
-                mock(com.conductor.creative.CreativeTagAttribution.class), emptyEvidence());
+                emptyAttribution(), emptyEvidence());
         caller = new User();
         caller.setId("u-1");
         when(security.isProjectMember("proj-1", "u-1")).thenReturn(true);
@@ -372,6 +372,13 @@ class MarketingInsightsQueryServiceTest {
                 .isInstanceOf(jakarta.persistence.EntityNotFoundException.class);
     }
 
+    private static com.conductor.creative.CreativeTagAttribution emptyAttribution() {
+        com.conductor.creative.CreativeTagAttribution tags = mock(com.conductor.creative.CreativeTagAttribution.class);
+        when(tags.attribution(anyString(), any())).thenReturn(
+                new com.conductor.creative.CreativeTagAttribution.Attribution(List.of(), java.util.Map.of(), java.util.Map.of()));
+        return tags;
+    }
+
     private static PostBaselineService emptyEvidence() {
         PostBaselineService baselines = mock(PostBaselineService.class);
         when(baselines.baselines(anyString(), any())).thenReturn(PostBaselineService.Baselines.empty(NOW));
@@ -380,7 +387,7 @@ class MarketingInsightsQueryServiceTest {
 
     @Test
     void computeBuildsTheEvidenceAndTheTagMapOnceAndSharesThemWithTheTopCreatives() {
-        com.conductor.creative.CreativeTagAttribution tags = mock(com.conductor.creative.CreativeTagAttribution.class);
+        com.conductor.creative.CreativeTagAttribution tags = emptyAttribution();
         PostBaselineService baselines = mock(PostBaselineService.class);
         PostBaselineService.Baselines evidence = PostBaselineService.Baselines.empty(NOW);
         when(baselines.baselines(anyString(), any())).thenReturn(evidence);
@@ -390,9 +397,10 @@ class MarketingInsightsQueryServiceTest {
         MarketingInsightsQueryService.Insights insights = once.compute("proj-1", InsightsWindowSpec.parse("7d"), null, NOW);
 
         org.mockito.Mockito.verify(baselines, org.mockito.Mockito.times(1)).baselines(anyString(), any());
-        org.mockito.Mockito.verify(tags, org.mockito.Mockito.times(1)).tagsByTarget(anyString());
-        org.mockito.Mockito.verify(performanceService).topCreatives(anyString(), any(), any(), anyInt(),
-                org.mockito.ArgumentMatchers.same(evidence));
+        // One attribution resolution (Creatives, their destinations, their tags) shared with the top Creatives.
+        org.mockito.Mockito.verify(tags, org.mockito.Mockito.times(1)).attribution(anyString(), any());
+        org.mockito.Mockito.verify(performanceService).topCreatives(any(), any(), anyInt(),
+                org.mockito.ArgumentMatchers.same(evidence), anyList(), org.mockito.ArgumentMatchers.anyMap(), any());
         // byTag ignores the 7d window: it reports the fixed 90-day one.
         assertThat(insights.byTagWindow().days()).isEqualTo(90);
         assertThat(insights.window().days()).isEqualTo(7);

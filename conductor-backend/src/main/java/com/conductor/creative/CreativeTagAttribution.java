@@ -31,27 +31,47 @@ public class CreativeTagAttribution {
         this.attributionResolver = attributionResolver;
     }
 
-    /** Destination id to its tag values, for every Creative of the project (an attributed destination whose Creative has no tags maps to an empty set; a destination with no attributed Creative is absent) (a constant number of queries). */
+    /**
+     * One resolution of a project's Creatives and the destinations they published: the Creatives themselves,
+     * each one's attributed destinations, and each attributed destination's tag values. Built once per
+     * request and shared by everything that needs any of the three.
+     */
+    public record Attribution(List<Creative> creatives, Map<String, List<PostPublishTarget>> targetsByCreative,
+                              Map<String, Set<TagValue>> tagsByTarget) {}
+
+    /** Destination id to its tag values for the whole project (see {@link #attribution}). */
     public Map<String, Set<TagValue>> tagsByTarget(String projectId) {
-        Map<String, Map<String, String>> tagsByCreative = new LinkedHashMap<>();
-        for (Creative c : creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId)) {
-            // Untagged Creatives are kept (with no values): a destination attributed to one is present in the
-            // result with an empty set, which tells it apart from a destination with no Creative at all.
-            tagsByCreative.put(c.getId(), CreativeTagsSupport.valuesOf(c.getTags()));
+        return attribution(projectId, null).tagsByTarget();
+    }
+
+    /**
+     * Loads the project's Creatives (only those on {@code brandKitId} when given; every Creative stores its
+     * kit's real id, the default kit included, so there is no null to special-case) and resolves their
+     * attributed destinations through {@link CreativeAttributionResolver}, a constant number of queries. In
+     * {@code tagsByTarget} an attributed destination whose Creative has no tags maps to an empty set; a
+     * destination with no attributed Creative is absent.
+     */
+    public Attribution attribution(String projectId, String brandKitId) {
+        List<Creative> creatives = brandKitId != null
+                ? creativeRepository.findAllByProjectIdAndBrandKitIdOrderByNumberDescVariantLetterAsc(projectId, brandKitId)
+                : creativeRepository.findAllByProjectIdOrderByNumberDescVariantLetterAsc(projectId);
+        if (creatives.isEmpty()) {
+            return new Attribution(creatives, Map.of(), Map.of());
         }
-        if (tagsByCreative.isEmpty()) {
-            return Map.of();
+        Map<String, List<PostPublishTarget>> attributed = attributionResolver.resolvePublishedTargetsByCreative(
+                creatives.stream().map(Creative::getId).toList());
+        Map<String, Map<String, String>> valuesByCreative = new LinkedHashMap<>();
+        for (Creative c : creatives) {
+            valuesByCreative.put(c.getId(), CreativeTagsSupport.valuesOf(c.getTags()));
         }
-        Map<String, List<PostPublishTarget>> attributed =
-                attributionResolver.resolvePublishedTargetsByCreative(tagsByCreative.keySet());
         Map<String, Set<TagValue>> result = new LinkedHashMap<>();
         attributed.forEach((creativeId, targets) -> {
-            Map<String, String> values = tagsByCreative.get(creativeId);
+            Map<String, String> values = valuesByCreative.getOrDefault(creativeId, Map.of());
             for (PostPublishTarget target : targets) {
                 Set<TagValue> set = result.computeIfAbsent(target.getId(), k -> new LinkedHashSet<>());
                 values.forEach((k, v) -> set.add(new TagValue(k, v)));
             }
         });
-        return result;
+        return new Attribution(creatives, attributed, result);
     }
 }

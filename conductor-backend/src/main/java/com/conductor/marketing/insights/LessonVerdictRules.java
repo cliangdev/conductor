@@ -1,7 +1,5 @@
 package com.conductor.marketing.insights;
 
-import java.util.Set;
-
 /**
  * The server, not the model, decides whether a tag or a playbook lesson "works": a model asked to judge noisy
  * numbers finds a story in them. Every threshold lives here. A verdict is about one lift metric over a set of
@@ -32,8 +30,12 @@ public final class LessonVerdictRules {
     public static final String VIEW_LIFT = "VIEW_LIFT";
     public static final String RETENTION_LIFT = "RETENTION_LIFT";
 
-    /** Tag keys whose default verdict reads retention (when enough posts have it), because the hook is what holds a viewer. */
-    private static final Set<String> RETENTION_KEYS = Set.of("hookType", "archetype");
+    /**
+     * The default verdict reads retention only when posts with a retention baseline are at least this share of
+     * the posts with a view baseline. Only YouTube reports average view percentage, so a handful of YouTube
+     * posts must not decide a verdict for a row that is mostly TikTok or Instagram.
+     */
+    public static final double RETENTION_COVERAGE_SHARE = 2.0 / 3.0;
 
     private LessonVerdictRules() {}
 
@@ -55,11 +57,15 @@ public final class LessonVerdictRules {
     /** A tag row's default verdict and the metric it was read from. */
     public record Default(String verdict, String metric) {}
 
-    /** hookType and archetype read retention when at least {@link #MIN_POSTS} posts have its baseline; everything else reads views. */
-    public static Default defaultFor(String tagKey, PostBaselineService.LiftSummary lift) {
-        if (RETENTION_KEYS.contains(tagKey) && lift.withRetentionBaselinePosts() >= MIN_POSTS) {
-            return new Default(lift.retentionVerdict(), RETENTION_LIFT);
-        }
-        return new Default(lift.viewVerdict(), VIEW_LIFT);
+    /**
+     * The row's default verdict, for every tag key: retention when at least {@link #MIN_POSTS} posts have a
+     * retention baseline and they are at least {@link #RETENTION_COVERAGE_SHARE} of the posts with a view
+     * baseline; otherwise views.
+     */
+    public static Default defaultFor(PostBaselineService.LiftSummary lift) {
+        boolean retentionCovers = lift.withRetentionBaselinePosts() >= MIN_POSTS
+                && lift.withRetentionBaselinePosts() * 3 >= lift.withBaselinePosts() * 2;
+        return retentionCovers ? new Default(lift.retentionVerdict(), RETENTION_LIFT)
+                : new Default(lift.viewVerdict(), VIEW_LIFT);
     }
 }

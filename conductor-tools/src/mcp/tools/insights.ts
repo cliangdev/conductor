@@ -214,11 +214,12 @@ function trimCreative(entry: CreativePerformanceEntry): Record<string, unknown> 
  */
 async function getPostInsights(
   config: Config,
-  params: { window?: '7d' | '30d' | '90d'; platform?: string }
+  params: { window?: '7d' | '30d' | '90d'; platform?: string; brandKitId?: string }
 ): Promise<Record<string, unknown>> {
   const query = new URLSearchParams()
   if (params.window) query.set('window', params.window)
   if (params.platform) query.set('platform', params.platform)
+  if (params.brandKitId) query.set('brandKitId', params.brandKitId)
   const qs = query.toString()
   const data = await apiGet<MarketingInsightsResponse>(
     `/api/v2/projects/${config.projectId}/marketing/insights${qs ? `?${qs}` : ''}`,
@@ -559,7 +560,7 @@ async function getChannelInsights(
  */
 export async function getMarketingInsights(
   config: Config,
-  params: { window?: '7d' | '30d' | '90d'; platform?: string; include?: ('posts' | 'channels')[]; channel?: string }
+  params: { window?: '7d' | '30d' | '90d'; platform?: string; brandKitId?: string; include?: ('posts' | 'channels')[]; channel?: string }
 ): Promise<Record<string, unknown>> {
   const include = params.include && params.include.length > 0 ? params.include : ['posts']
   for (const i of include) {

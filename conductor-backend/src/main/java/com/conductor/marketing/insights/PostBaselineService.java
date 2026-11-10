@@ -31,7 +31,7 @@ public class PostBaselineService {
     /** Trailing days of settled posts the baseline is the median of. */
     public static final int BASELINE_DAYS = 90;
 
-    /** Settled posts a bucket needs before its own median is used (platform+format, then platform). */
+    /** Settled posts with a value for a metric that a bucket needs before its own median of it is used (platform+format, then platform). */
     public static final int MIN_BUCKET_POSTS = 10;
 
     /** One reporting destination's numbers. */
@@ -98,10 +98,18 @@ public class PostBaselineService {
 
         public OffsetDateTime to() { return to; }
 
-        /** The platform+format baseline when it has enough posts, else the platform's, else null. */
+        /**
+         * The baseline for a platform and format, chosen separately for each metric: the platform+format median
+         * when that bucket has enough posts with the metric, else the platform's, else none. Null when neither
+         * metric has one.
+         */
         public Baseline forBucket(String platform, String format) {
-            Baseline b = byPlatformFormat.get(key(platform, format));
-            return b != null ? b : byPlatform.get(platform);
+            Baseline pf = byPlatformFormat.get(key(platform, format));
+            Baseline p = byPlatform.get(platform);
+            Double views = pf != null && pf.medianViews() != null ? pf.medianViews() : p != null ? p.medianViews() : null;
+            Double retention = pf != null && pf.medianAvgViewPct() != null ? pf.medianAvgViewPct()
+                    : p != null ? p.medianAvgViewPct() : null;
+            return views == null && retention == null ? null : new Baseline(views, retention);
         }
 
         public PostLift lift(Observation o) {
@@ -181,16 +189,22 @@ public class PostBaselineService {
         return new Baselines(baselinesOf(byPf), baselinesOf(byP), settled, unsettled, from, now);
     }
 
+    /**
+     * A bucket's medians, each only when at least {@value #MIN_BUCKET_POSTS} of its posts have a value for that
+     * metric: ten posts of which one reports retention have a views baseline and no retention baseline.
+     */
     private static Map<String, Baseline> baselinesOf(Map<String, List<Observation>> buckets) {
         Map<String, Baseline> out = new HashMap<>();
         buckets.forEach((k, observations) -> {
-            if (observations.size() < MIN_BUCKET_POSTS) {
-                return;
+            List<Double> views = observations.stream().map(Observation::views).filter(java.util.Objects::nonNull)
+                    .map(Long::doubleValue).toList();
+            List<Double> retention = observations.stream().map(Observation::avgViewPct)
+                    .filter(java.util.Objects::nonNull).toList();
+            Double medianViews = views.size() >= MIN_BUCKET_POSTS ? median(views) : null;
+            Double medianRetention = retention.size() >= MIN_BUCKET_POSTS ? median(retention) : null;
+            if (medianViews != null || medianRetention != null) {
+                out.put(k, new Baseline(medianViews, medianRetention));
             }
-            out.put(k, new Baseline(
-                    median(observations.stream().map(Observation::views).filter(java.util.Objects::nonNull)
-                            .map(Long::doubleValue).toList()),
-                    median(observations.stream().map(Observation::avgViewPct).filter(java.util.Objects::nonNull).toList())));
         });
         return out;
     }

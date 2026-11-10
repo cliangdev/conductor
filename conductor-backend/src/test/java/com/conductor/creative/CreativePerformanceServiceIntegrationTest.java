@@ -316,6 +316,62 @@ class CreativePerformanceServiceIntegrationTest extends AbstractNoneWebIntegrati
         assertThat(insights.playbookEffect().withLessons().medianViewLift()).isNull(); // no baseline under 10 posts
     }
 
+    @Test
+    void platformAndBrandKitFiltersApplyToByTagPlaybookEffectAndTopCreatives() {
+        OffsetDateTime now = OffsetDateTime.now();
+        BrandKit otherKit = brandKitService.createKit(project.getId(),
+                new com.conductor.generated.v2.model.CreateBrandKitRequest("other", "Other Kit"), admin);
+
+        // Default-kit Creative with lessons, posted on instagram and tiktok.
+        Creative onDefault = newVariant("a", null, "Default kit hook");
+        onDefault.setTags(objectMapper.valueToTree(java.util.Map.of("hookType", "question", "lessons", "#1")));
+        creativeRepository.save(onDefault);
+        PostPublishTarget ig = newTarget(newPost("Default IG"), "instagram", now.minusDays(6));
+        newAttachedAsset(ig.getWorkItem(), newFrameFor(onDefault));
+        newSnapshot(ig, now.minusDays(6).plusHours(1), 200L, 2L, 0L, 0L, 0L, null);
+        PostPublishTarget tt = newTarget(newPost("Default TT"), "tiktok", now.minusDays(6));
+        newAttachedAsset(tt.getWorkItem(), newFrameFor(onDefault));
+        newSnapshot(tt, now.minusDays(6).plusHours(1), 900L, 9L, 0L, 0L, 0L, null);
+
+        // A Creative on the other kit, tagged differently, on instagram.
+        number = number + 1;
+        Creative onOther = newVariant("a", null, "Other kit hook");
+        onOther.setBrandKitId(otherKit.getId());
+        onOther.setTags(objectMapper.valueToTree(java.util.Map.of("hookType", "story")));
+        creativeRepository.save(onOther);
+        PostPublishTarget og = newTarget(newPost("Other IG"), "instagram", now.minusDays(6));
+        newAttachedAsset(og.getWorkItem(), newFrameFor(onOther));
+        newSnapshot(og, now.minusDays(6).plusHours(1), 300L, 3L, 0L, 0L, 0L, null);
+
+        var all = insightsService.compute(project.getId(), "30d", null, null, admin);
+        assertThat(all.byTag()).extracting(t -> t.tagKey() + "=" + t.group().key())
+                .containsExactlyInAnyOrder("hookType=question", "hookType=story", "lessons=#1");
+        assertThat(all.playbookEffect().withLessons().posts()).isEqualTo(2);
+        assertThat(all.playbookEffect().withoutLessons().posts()).isEqualTo(1);
+        assertThat(all.creatives()).hasSize(2);
+
+        var instagram = insightsService.compute(project.getId(), "30d", "instagram", null, admin);
+        assertThat(instagram.byTag().stream().filter(t -> t.group().key().equals("question")).findFirst().orElseThrow()
+                .group().posts()).isEqualTo(1); // the TikTok post is out
+        assertThat(instagram.playbookEffect().withLessons().posts()).isEqualTo(1);
+        assertThat(instagram.creatives()).extracting(c -> c.posts()).containsOnly(1);
+
+        // The default kit's id: the Creatives on it store that real id, so the filter simply matches it.
+        assertThat(kit.getId()).isEqualTo(onDefault.getBrandKitId());
+        var defaultKit = insightsService.compute(project.getId(), "30d", null, kit.getId(), admin);
+        assertThat(defaultKit.byTag()).extracting(t -> t.tagKey() + "=" + t.group().key())
+                .containsExactlyInAnyOrder("hookType=question", "lessons=#1");
+        assertThat(defaultKit.playbookEffect().withLessons().posts()).isEqualTo(2);
+        assertThat(defaultKit.playbookEffect().withoutLessons().posts()).isZero();
+        assertThat(defaultKit.creatives()).extracting(c -> c.creativeId()).containsExactly(onDefault.getId());
+
+        var other = insightsService.compute(project.getId(), "30d", null, otherKit.getId(), admin);
+        assertThat(other.byTag()).extracting(t -> t.group().key()).containsExactly("story");
+        assertThat(other.creatives()).extracting(c -> c.creativeId()).containsExactly(onOther.getId());
+        // Posts-level groups are about Posts, not Creatives: the kit filter leaves them alone.
+        assertThat(other.totals().posts()).isEqualTo(3);
+    }
+
     // ── fixtures ─────────────────────────────────────────────────────────────────────────────────
 
     private Creative newVariant(String letter, String parentId, String headline) {

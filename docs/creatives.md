@@ -1036,7 +1036,9 @@ reads **settled posts only** and compares each post with the account's own typic
   with no fire time has no age to judge and counts as settled.
 - *Baseline* (`PostBaselineService`): the median views and median `avgViewPct` of settled reporting
   destinations over the trailing 90 days, independent of the insights `window`. Per platform and format when
-  that bucket has at least 10 settled posts, else per platform when the platform has at least 10, else none.
+  that bucket has at least 10 settled posts *with a value for that metric*, else per platform when the platform
+  has at least 10, else none, chosen separately for views and for `avgViewPct` (ten posts of which one reports
+  retention have a views baseline and no retention baseline).
 - *Lift*: a post's **view lift** is its views over the baseline median views, and its **retention lift** is its
   `avgViewPct` over the baseline median `avgViewPct`; 1.0 is typical for this account on that platform (and
   format). Either is null when the baseline or the post's own value is missing.
@@ -1047,9 +1049,12 @@ Each `byTag` row keeps the group fields (counted over its settled posts) and add
 when it cannot be computed. Rows sort by tag key, then `medianViewLift` descending, nulls last. Read the lift
 rather than the pooled views, and `posts` for how much to trust it.
 
-**A fixed evidence window.** `byTag` (and `playbookEffect`) ignore the insights `window`: they always read the
-settled posts of the trailing 90 days, and the response says so in `byTagWindow` (`{from, to, days: 90}`). A
-7-day window could never contain a settled Facebook post. The rest of insights still honours `window`.
+**A fixed evidence window, but the same filters.** `byTag` (and `playbookEffect`) ignore the insights `window`: they
+always read the settled posts of the trailing 90 days, and the response says so in `byTagWindow` (`{from, to,
+days: 90}`). A 7-day window could never contain a settled Facebook post. They do honour `platform`, and the new
+`brandKitId` filter (only destinations published from Creatives on that Brand Kit; every Creative stores its kit's
+real id, the default kit's included, so the default is filtered by its own id). The top Creatives' figures honour
+both filters too. Baselines stay per platform whatever is filtered. The rest of insights still honours `window`.
 
 **Verdicts are decided by the server, not the model.** A model asked to judge noisy numbers finds a story in
 them, so each `byTag` row (and each variant in creative performance) carries a verdict from
@@ -1059,8 +1064,10 @@ have that metric's baseline: `NOT_ENOUGH_DATA` under 3 such posts; `WORKS` when 
 most 1/3 beat it; otherwise `NO_DIFFERENCE`. Rows add `withBaselinePosts`/`beatBaselinePosts` (view lift) and
 `withRetentionBaselinePosts`/`beatRetentionBaselinePosts` (retention lift), so `beatBaselineShare` is
 `beatBaselinePosts / withBaselinePosts`; `viewVerdict` and `retentionVerdict` are the two verdicts, and
-`verdict` with `verdictMetric` (`VIEW_LIFT` | `RETENTION_LIFT`) is the default: for `hookType` and `archetype`
-retention when at least 3 posts have a retention baseline, else views; every other key reads views. Creative
+`verdict` with `verdictMetric` (`VIEW_LIFT` | `RETENTION_LIFT`) is the default, for every tag key: retention only
+when at least 3 posts have a retention baseline and they are at least 2/3 of the posts with a view baseline
+(`RETENTION_COVERAGE_SHARE`), else views. Only YouTube reports `avg_view_pct`, so a few YouTube posts must not
+decide a row that is mostly TikTok or Instagram. Creative
 performance adds `withBaselinePosts`, `beatBaselinePosts`, `viewVerdict` and `retentionVerdict`. The constants
 (`MIN_POSTS`, the 1.2/0.8 lifts and the 2/3, 1/3 shares) are in `LessonVerdictRules`.
 
@@ -1081,8 +1088,8 @@ hooks are working.
 The thresholds are named constants, not configuration: the settle windows in `PostSettleWindows`, the verdict
 rules in `LessonVerdictRules`, and the 90 days and the 10-post minimum in `PostBaselineService`
 (`BASELINE_DAYS`, `MIN_BUCKET_POSTS`). Change them there, and in this section. Baselines and the
-destination-to-tags map are built once per insights request and shared by `byTag`, `playbookEffect` and the top
-Creatives.
+Creatives with their attributed destinations and tags are built once per insights request and shared by `byTag`,
+`playbookEffect` and the top Creatives.
 
 ## Performance and experiments (COND-24 T5)
 

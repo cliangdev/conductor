@@ -208,3 +208,20 @@ describe('Verdicts, evidence window and playbook effect', () => {
     expect(mocked(apiPost).mock.calls[0]![1]).toMatchObject({ tags: { lessons: '#3,#12', previewRounds: '2' } })
   })
 })
+
+describe('Insights filters', () => {
+  it('get_marketing_insights offers brandKitId and sends it with platform to the API', async () => {
+    const props = (TOOLS.find((t) => t.name === 'get_marketing_insights')!.inputSchema as { properties: Record<string, { type?: string }> }).properties
+    expect(props['brandKitId']!.type).toBe('string')
+    mocked(apiGet).mockResolvedValue({
+      window: { from: 'a', to: 'b', days: 30 },
+      totals: { key: 'all', posts: 0, views: 0, likes: 0, comments: 0, shares: 0, saves: 0 },
+      byPlatform: [], byFormat: [], byHour: [], byWeekday: [], byTag: [], topPosts: [], bottomPosts: [], movers: [],
+      coverage: { platforms: [], notes: [] }, creatives: [],
+    })
+    await getMarketingInsights(config, { platform: 'tiktok', brandKitId: 'kit-1' })
+    const url = String(mocked(apiGet).mock.calls[0]![0])
+    expect(url).toContain('platform=tiktok')
+    expect(url).toContain('brandKitId=kit-1')
+  })
+})

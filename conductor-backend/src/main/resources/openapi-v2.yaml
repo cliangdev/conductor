@@ -3075,7 +3075,18 @@ paths:
           required: false
           schema:
             type: string
-          description: Restrict to one platform (facebook, instagram, tiktok, youtube).
+          description: >-
+            Restrict to one platform (facebook, instagram, tiktok, youtube). Applies to everything, including
+            `byTag`, `playbookEffect` and the Creatives' figures; baselines stay per platform.
+        - name: brandKitId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Count only destinations published from Creatives on this Brand Kit in `byTag`, `playbookEffect` and
+            `creatives` (the default kit is addressed by its own id, which Creatives on it store). The other
+            groups are about Posts and ignore it.
       responses:
         "200":
           description: The insights
@@ -13701,7 +13712,7 @@ components:
             (`#3`) has its own row, and `previewRounds` is not grouped. Destinations with no attributed Creative,
             or a Creative with no tags, are left out. Ignores `window`: it always reads the settled posts of the
             trailing 90 days (see `byTagWindow`), because a short window can never contain a settled Facebook
-            post. Rows are sorted by tagKey, then `medianViewLift` descending (nulls last). Each row carries a
+            post. It honours `platform` and `brandKitId`. Rows are sorted by tagKey, then `medianViewLift` descending (nulls last). Each row carries a
             server-decided `verdict`; the model should not re-judge the numbers. May be empty.
         byTagWindow:
           allOf:
@@ -13901,8 +13912,10 @@ components:
             verdictMetric:
               type: string
               description: >-
-                VIEW_LIFT or RETENTION_LIFT. For hookType and archetype it is RETENTION_LIFT when at least 3 posts
-                have a retention baseline, else VIEW_LIFT; every other tag key uses VIEW_LIFT.
+                VIEW_LIFT or RETENTION_LIFT, for every tag key. It is RETENTION_LIFT only when at least 3 posts have a
+                retention baseline and they are at least 2/3 of the posts with a view baseline (only YouTube reports
+                retention, so a few YouTube posts must not decide a row that is mostly other platforms); otherwise
+                VIEW_LIFT.
 
     InsightsPost:
       type: object

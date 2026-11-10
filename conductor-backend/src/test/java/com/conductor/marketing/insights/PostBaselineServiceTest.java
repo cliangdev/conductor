@@ -55,10 +55,10 @@ class PostBaselineServiceTest {
     void theBaselineFallsBackFromPlatformAndFormatToPlatformToNone() {
         List<PostPublishTarget> all = new ArrayList<>();
         List<PostPublishTargetMetric> latest = new ArrayList<>();
-        for (int i = 0; i < 10; i++) add(all, latest, "tiktok", "REEL", NOW.minusDays(10), 1000L);
-        for (int i = 0; i < 2; i++) add(all, latest, "tiktok", "FEED", NOW.minusDays(10), 50L);
-        for (int i = 0; i < 3; i++) add(all, latest, "instagram", "REEL", NOW.minusDays(10), 200L);
-        for (int i = 0; i < 12; i++) add(all, latest, "facebook", "FEED", NOW.minusDays(3), 999L);
+        for (int i = 0; i < 10; i++) add(all, latest, "tiktok", "REEL", NOW.minusDays(10), 1000L, null);
+        for (int i = 0; i < 2; i++) add(all, latest, "tiktok", "FEED", NOW.minusDays(10), 50L, null);
+        for (int i = 0; i < 3; i++) add(all, latest, "instagram", "REEL", NOW.minusDays(10), 200L, null);
+        for (int i = 0; i < 12; i++) add(all, latest, "facebook", "FEED", NOW.minusDays(3), 999L, null);
         when(targets.findPublishedByFireTimeWindow(anyString(), any(), any(), any())).thenReturn(all);
         when(metrics.findLatestAvailableForTargets(anyList())).thenReturn(latest);
 
@@ -137,19 +137,71 @@ class PostBaselineServiceTest {
     }
 
     @Test
-    void theDefaultVerdictReadsRetentionOnlyForHookTypeAndArchetypeWithThreeRetentionPosts() {
-        LiftSummary withRetention = new LiftSummary(1.5, 1.0, 0.05, 0.7, 4, 4, 3, 0, "WORKS", "DOESNT_WORK");
-        LiftSummary fewRetention = new LiftSummary(1.5, 1.0, 0.05, 0.7, 4, 4, 2, 0, "WORKS", "NOT_ENOUGH_DATA");
-
-        assertThat(LessonVerdictRules.defaultFor("hookType", withRetention))
+    void theDefaultVerdictReadsRetentionOnlyWhenEnoughPostsHaveItAndTheyAreMostOfThePosts() {
+        // 3 of 4 posts with retention: at least 3 and at least 2/3, so retention. Same for every tag key.
+        LiftSummary covered = new LiftSummary(1.5, 1.0, 0.05, 0.7, 4, 4, 3, 0, "WORKS", "DOESNT_WORK");
+        assertThat(LessonVerdictRules.defaultFor(covered))
                 .isEqualTo(new LessonVerdictRules.Default("DOESNT_WORK", "RETENTION_LIFT"));
-        assertThat(LessonVerdictRules.defaultFor("archetype", withRetention).metric()).isEqualTo("RETENTION_LIFT");
-        for (String other : List.of("angle", "format", "hypothesis", "lessons")) {
-            assertThat(LessonVerdictRules.defaultFor(other, withRetention))
-                    .isEqualTo(new LessonVerdictRules.Default("WORKS", "VIEW_LIFT"));
+        // Only 2 retention posts: under MIN_POSTS.
+        LiftSummary few = new LiftSummary(1.5, 1.0, 0.05, 0.7, 2, 2, 2, 0, "WORKS", "NOT_ENOUGH_DATA");
+        assertThat(LessonVerdictRules.defaultFor(few)).isEqualTo(new LessonVerdictRules.Default("WORKS", "VIEW_LIFT"));
+        // 3 retention posts but under 2/3 of 5 view posts.
+        LiftSummary thin = new LiftSummary(1.5, 1.0, 0.05, 0.7, 5, 5, 3, 0, "WORKS", "DOESNT_WORK");
+        assertThat(LessonVerdictRules.defaultFor(thin)).isEqualTo(new LessonVerdictRules.Default("WORKS", "VIEW_LIFT"));
+    }
+
+    @Test
+    void twentyTikTokPostsAtViewLiftOnePointFiveBeatThreeYouTubePostsAtRetentionPointSeven() {
+        Baselines b = baselines(Map.of(), Map.of("tiktok", new Baseline(100.0, null), "youtube", new Baseline(100.0, 40.0)));
+        List<Observation> posts = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            posts.add(new Observation("tt" + i, "tiktok", "REEL", NOW.minusDays(9), 150L, 0L, 0L, 0L, 0L, null));
         }
-        assertThat(LessonVerdictRules.defaultFor("hookType", fewRetention))
-                .isEqualTo(new LessonVerdictRules.Default("WORKS", "VIEW_LIFT"));
+        for (int i = 0; i < 3; i++) {
+            posts.add(new Observation("yt" + i, "youtube", "SHORT", NOW.minusDays(9), 150L, 0L, 0L, 0L, 0L, 28.0));
+        }
+
+        LiftSummary lift = b.summarize(posts);
+        LessonVerdictRules.Default verdict = LessonVerdictRules.defaultFor(lift);
+
+        assertThat(lift.withRetentionBaselinePosts()).isEqualTo(3);
+        assertThat(lift.medianRetentionLift()).isCloseTo(0.7, within(1e-9));
+        assertThat(lift.retentionVerdict()).isEqualTo("DOESNT_WORK"); // the YouTube-only read would have said so
+        assertThat(verdict).isEqualTo(new LessonVerdictRules.Default("WORKS", "VIEW_LIFT"));
+    }
+
+    @Test
+    void aBucketNeedsTenPostsWithTheMetricNotTenPostsAndTheBaselineIsChosenPerMetric() {
+        List<PostPublishTarget> all = new ArrayList<>();
+        List<PostPublishTargetMetric> latest = new ArrayList<>();
+        // youtube SHORT: 10 posts, only 1 with retention -> a views baseline, no retention baseline.
+        for (int i = 0; i < 10; i++) {
+            add(all, latest, "youtube", "SHORT", NOW.minusDays(10), 1000L, i == 0 ? 50.0 : null);
+        }
+        // youtube LONG: 10 posts all with retention -> its own retention baseline, and views.
+        for (int i = 0; i < 10; i++) add(all, latest, "youtube", "LONG", NOW.minusDays(10), 2000L, 40.0);
+        when(targets.findPublishedByFireTimeWindow(anyString(), any(), any(), any())).thenReturn(all);
+        when(metrics.findLatestAvailableForTargets(anyList())).thenReturn(latest);
+
+        Baselines b = service.baselines("p", NOW);
+
+        Baseline shortForm = b.forBucket("youtube", "SHORT");
+        assertThat(shortForm.medianViews()).isEqualTo(1000.0);
+        // No retention in SHORT (1 value): that metric falls back to the youtube platform bucket, 11 values.
+        assertThat(shortForm.medianAvgViewPct()).isEqualTo(40.0);
+        assertThat(b.forBucket("youtube", "LONG").medianAvgViewPct()).isEqualTo(40.0);
+
+        // A platform whose only retention values are too few has no retention baseline at all.
+        List<PostPublishTarget> few = new ArrayList<>();
+        List<PostPublishTargetMetric> fewLatest = new ArrayList<>();
+        for (int i = 0; i < 10; i++) {
+            add(few, fewLatest, "youtube", "SHORT", NOW.minusDays(10), 1000L, i < 2 ? 50.0 : null);
+        }
+        when(targets.findPublishedByFireTimeWindow(anyString(), any(), any(), any())).thenReturn(few);
+        when(metrics.findLatestAvailableForTargets(anyList())).thenReturn(fewLatest);
+        Baseline sparse = service.baselines("p", NOW).forBucket("youtube", "SHORT");
+        assertThat(sparse.medianViews()).isEqualTo(1000.0);
+        assertThat(sparse.medianAvgViewPct()).isNull();
     }
 
     @Test
@@ -171,7 +223,7 @@ class PostBaselineServiceTest {
     }
 
     private void add(List<PostPublishTarget> all, List<PostPublishTargetMetric> latest, String platform, String format,
-                     OffsetDateTime fireTime, long views) {
+                     OffsetDateTime fireTime, long views, Double avgViewPct) {
         PostPublishTarget t = new PostPublishTarget();
         t.setId("t" + (++n));
         t.setPlatform(platform);
@@ -181,6 +233,9 @@ class PostBaselineServiceTest {
         PostPublishTargetMetric m = new PostPublishTargetMetric();
         m.setTargetId(t.getId());
         m.setViews(views);
+        if (avgViewPct != null) {
+            m.setExtra(new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("avg_view_pct", avgViewPct));
+        }
         latest.add(m);
     }
 }

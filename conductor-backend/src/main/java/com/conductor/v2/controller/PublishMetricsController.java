@@ -48,9 +48,9 @@ public class PublishMetricsController implements PublishMetricsApi {
 
     @Override
     public ResponseEntity<MarketingInsightsResponse> getMarketingInsights(String projectId, String window,
-                                                                          String platform) {
+                                                                          String platform, String brandKitId) {
         MarketingInsightsQueryService.Insights insights = insightsQueryService.compute(projectId, window, platform,
-                currentUser());
+                brandKitId, currentUser());
         return ResponseEntity.ok(toResponse(insights));
     }
 
