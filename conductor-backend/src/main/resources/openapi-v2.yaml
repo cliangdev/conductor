@@ -3075,7 +3075,31 @@ paths:
           required: false
           schema:
             type: string
-          description: Restrict to one platform (facebook, instagram, tiktok, youtube).
+          description: >-
+            Restrict to one platform (facebook, instagram, tiktok, youtube). With `include=tags` it also filters
+            `byTag` and `playbookEffect`; `creatives` has never honoured it. Baselines stay per platform.
+        - name: brandKitId
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Restrict `creatives` (and, with `include=tags`, `byTag` and `playbookEffect`) to Creatives on this
+            Brand Kit; the default kit is addressed by its own id, which Creatives on it store. The other groups
+            are about Posts and ignore it.
+        - name: include
+          in: query
+          required: false
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [tags]
+          description: >-
+            Opt-in sections. `tags` adds `byTag`, `byTagWindow` and `playbookEffect` and fills the lift and verdict
+            fields of `creatives`; without it none of that is computed and those fields are absent.
       responses:
         "200":
           description: The insights
@@ -13770,6 +13794,29 @@ components:
           items:
             $ref: "#/components/schemas/InsightsGroup"
           description: One row per UTC weekday of the fire time, key = MONDAY..SUNDAY, sorted Monday first.
+        byTag:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsightsTagGroup"
+          description: >-
+            Only with `include=tags`. One row per (tagKey, value) of the tags on the Creative each destination was published from
+            (attributed through the Creative's rendered frames); a `lessons` tag is split so each lesson id
+            (`#3`) has its own row, and `previewRounds` is not grouped. Destinations with no attributed Creative,
+            or a Creative with no tags, are left out. Ignores `window`: it always reads the settled posts of the
+            trailing 90 days (see `byTagWindow`), because a short window can never contain a settled Facebook
+            post. It honours `platform` and `brandKitId`. Rows are sorted by tagKey, then `medianViewLift` descending (nulls last). Each row carries a
+            server-decided `verdict`; the model should not re-judge the numbers. May be empty.
+        byTagWindow:
+          allOf:
+            - $ref: "#/components/schemas/InsightsWindow"
+          description: Only with `include=tags`. The fixed 90-day evidence window `byTag` and `playbookEffect` read, whatever `window` was asked for.
+        playbookEffect:
+          allOf:
+            - $ref: "#/components/schemas/PlaybookEffect"
+          description: >-
+            Only with `include=tags`. Settled posts of the same 90 days that have an attributed Creative, split by whether that Creative has a
+            non-empty `lessons` tag, with each side's median view lift: did following the playbook help at all.
+            Posts with no attributed Creative are on neither side.
         topPosts:
           type: array
           items:
@@ -13864,6 +13911,103 @@ components:
           format: double
           nullable: true
           description: Mean of the destinations' average-view-percentage where a platform reports it (YouTube); null otherwise.
+
+    PlaybookEffect:
+      type: object
+      required:
+        - withLessons
+        - withoutLessons
+      properties:
+        withLessons:
+          $ref: "#/components/schemas/PlaybookEffectSide"
+        withoutLessons:
+          $ref: "#/components/schemas/PlaybookEffectSide"
+
+    PlaybookEffectSide:
+      type: object
+      required:
+        - posts
+      properties:
+        posts:
+          type: integer
+          description: Settled posts on this side of the split.
+        medianViewLift:
+          type: number
+          format: double
+          nullable: true
+          description: Median view lift over the side's posts that have a baseline; null when none has one.
+
+    InsightsTagGroup:
+      description: An `InsightsGroup` for the destinations whose Creative carries one tag value.
+      allOf:
+        - $ref: "#/components/schemas/InsightsGroup"
+        - type: object
+          required:
+            - tagKey
+          properties:
+            tagKey:
+              type: string
+              description: hookType, angle, format, archetype or hypothesis. `key` is the tag's value.
+            unsettledPosts:
+              type: integer
+              description: >-
+                Destinations carrying this tag left out because they are too new (TikTok, Instagram and YouTube
+                72 hours, Facebook 7 days, any other platform 72 hours). The group fields count settled posts only.
+            medianViewLift:
+              type: number
+              format: double
+              nullable: true
+              description: >-
+                Median over the settled posts of views divided by the account's own median views for that
+                platform and format over the trailing 90 days (platform alone when the format bucket has fewer
+                than 10 settled posts). 1.0 is typical. Null when no post has a baseline.
+            beatBaselineShare:
+              type: number
+              format: double
+              nullable: true
+              description: Share of the posts that have a view lift whose lift is above 1; null when none has one.
+            medianEngagementRate:
+              type: number
+              format: double
+              nullable: true
+              description: Median of the settled posts' own engagement rates (not the pooled rate); null when none has views.
+            medianRetentionLift:
+              type: number
+              format: double
+              nullable: true
+              description: Median of avgViewPct divided by the baseline's median avgViewPct, over posts with both; null otherwise.
+            withBaselinePosts:
+              type: integer
+              description: Settled posts with a view lift (a baseline existed). `beatBaselineShare` = `beatBaselinePosts` / this.
+            beatBaselinePosts:
+              type: integer
+              description: Of those, how many have a view lift above 1.
+            withRetentionBaselinePosts:
+              type: integer
+              description: Settled posts with a retention lift.
+            beatRetentionBaselinePosts:
+              type: integer
+              description: Of those, how many have a retention lift above 1.
+            viewVerdict:
+              type: string
+              description: >-
+                WORKS | DOESNT_WORK | NO_DIFFERENCE | NOT_ENOUGH_DATA, decided by the server from the view lift:
+                NOT_ENOUGH_DATA under 3 posts with a baseline; WORKS when the median lift is at least 1.2 and at
+                least 2/3 of the posts beat the baseline; DOESNT_WORK when it is at most 0.8 and at most 1/3 beat
+                it; otherwise NO_DIFFERENCE.
+            retentionVerdict:
+              type: string
+              description: The same rules over the retention lift.
+            verdict:
+              type: string
+              description: The row's default verdict, one of `viewVerdict` or `retentionVerdict` (see `verdictMetric`).
+            verdictMetric:
+              type: string
+              description: >-
+                VIEW_LIFT or RETENTION_LIFT, for every tag key. It is RETENTION_LIFT only when at least 3 posts have a
+                retention baseline and they are at least 2/3 of the posts with a view baseline (only YouTube reports
+                retention, so a few YouTube posts must not decide a row that is mostly other platforms); otherwise
+                VIEW_LIFT.
 
     InsightsPost:
       type: object
@@ -15530,6 +15674,44 @@ components:
         which case the render is local and produces a new MP4 with that sound. MOTION (PR2) is a branded
         animated video rendered by a local job.
 
+    CreativeTags:
+      type: object
+      description: >-
+        Free-form-by-key but closed-set labels that say what kind of idea a Creative is, so performance can be
+        read by hook, angle and so on. Only these seven keys are accepted (hookType, angle, format, archetype, hypothesis, lessons, previewRounds) (any other key is a 422 naming
+        `tags.<key>`); each value is a non-blank string of at most 60 characters (enforced by the server as a 422, not by the schema, so the problem names the field). The values themselves are
+        not enforced: the create skill uses hookType from its voice guide, angle `story-emotion|utility-education|trend-humor`,
+        format `still|carousel|story|motion|clip|film`, archetype a slideshow archetype, hypothesis `H<n>`.
+        Declared open (`additionalProperties`) only so the server can name an unknown key in a 422 instead of
+        silently dropping it; none is ever stored.
+      properties:
+        hookType:
+          type: string
+          description: The shape of the opening hook (e.g. a hookType from the voice guide's shapes table).
+        angle:
+          type: string
+          description: story-emotion, utility-education or trend-humor.
+        format:
+          type: string
+          description: still, carousel, story, motion, clip or film.
+        archetype:
+          type: string
+          description: A slideshow archetype.
+        hypothesis:
+          type: string
+          description: The hypothesis id this Creative tests, H<n>.
+        lessons:
+          type: string
+          description: >-
+            The playbook lessons this Creative followed, as comma-separated ids matching `^#\d+(,#\d+)*$`
+            (e.g. `#3,#12`), at most 60 characters. Insights `byTag` gives each id its own row.
+        previewRounds:
+          type: string
+          description: >-
+            How many preview rounds the Creative took before it was approved, a whole number from 0 to 50 as a
+            string. Recorded for the author; never grouped by insights.
+      additionalProperties: true
+
     CreativeLayoutOverrides:
       type: object
       nullable: true
@@ -15839,6 +16021,10 @@ components:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
           description: The audio of a MOTION, CAROUSEL or CLIP creative, defaults already applied. Null when none was set.
+        tags:
+          allOf:
+            - $ref: "#/components/schemas/CreativeTags"
+          description: The Creative's tags; `{}` when it has none. Always present.
         slideStyle:
           allOf:
             - $ref: "#/components/schemas/SlideshowStyle"
@@ -16034,6 +16220,12 @@ components:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
           description: The audio of a MOTION, CAROUSEL or CLIP creative. Any field left unset gets its documented default.
+        tags:
+          allOf:
+            - $ref: "#/components/schemas/CreativeTags"
+          nullable: true
+          description: >-
+            Tags for the Creative (see `CreativeTags`). Absent or `{}` stores none. 422 on an unknown key or a blank or over-long value.
         slideStyle:
           allOf:
             - $ref: "#/components/schemas/SlideshowStyle"
@@ -16183,6 +16375,14 @@ components:
             - $ref: "#/components/schemas/CreativeAudio"
           nullable: true
           description: The audio of a MOTION, CAROUSEL or CLIP creative. Any field left unset gets its documented default.
+        tags:
+          allOf:
+            - $ref: "#/components/schemas/CreativeTags"
+          nullable: true
+          description: >-
+            Absent: the stored tags are kept. Present: replaces the whole stored map (a key left out is removed).
+            `{}` (or explicit JSON `null`) clears them. 422 on an unknown key or a blank or over-long value.
+          x-field-extra-annotation: "@com.fasterxml.jackson.annotation.JsonSetter(nulls = com.fasterxml.jackson.annotation.Nulls.AS_EMPTY)"
         slideStyle:
           allOf:
             - $ref: "#/components/schemas/SlideshowStyle"
@@ -16219,6 +16419,12 @@ components:
           type: string
           nullable: true
           description: Defaults to a copy of the source Creative's headline.
+        tags:
+          allOf:
+            - $ref: "#/components/schemas/CreativeTags"
+          nullable: true
+          description: >-
+            The variant's own tags. Absent: it inherits the source Creative's tags. Present (even `{}`): replaces them.
         name:
           type: string
           nullable: true
@@ -16973,6 +17179,41 @@ components:
           format: int64
           nullable: true
           description: Summed views at the snapshot nearest at or after each destination's fireTime + 72h; null when no destination has reached that snapshot yet.
+        settledPosts:
+          type: integer
+          nullable: true
+          description: Posts old enough to judge (TikTok, Instagram and YouTube 72 hours, Facebook 7 days); the lift fields use only these.
+        medianViewLift:
+          type: number
+          format: double
+          nullable: true
+          description: Median over settled posts of views divided by the account's own 90-day median views for that platform and format; 1.0 is typical. Null when none has a baseline.
+        medianRetentionLift:
+          type: number
+          format: double
+          nullable: true
+          description: Median over settled posts of avgViewPct divided by the baseline's median avgViewPct; null when not computable.
+        beatBaselineShare:
+          type: number
+          format: double
+          nullable: true
+          description: Share of settled posts with a view lift whose lift is above 1; null when none has one.
+        withBaselinePosts:
+          type: integer
+          nullable: true
+          description: Settled posts with a view lift.
+        beatBaselinePosts:
+          type: integer
+          nullable: true
+          description: Of those, how many have a view lift above 1.
+        viewVerdict:
+          type: string
+          nullable: true
+          description: WORKS | DOESNT_WORK | NO_DIFFERENCE | NOT_ENOUGH_DATA, decided by the server (see InsightsTagGroup.viewVerdict).
+        retentionVerdict:
+          type: string
+          nullable: true
+          description: The same rules over the retention lift.
         byPlatform:
           type: array
           items:

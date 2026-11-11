@@ -994,6 +994,112 @@ only "re-encoding" that happens, and there is no server-side cropping and no Clo
 render is a well-known local (or self-hosted-Workflow) job PUTing frames it already produced; this
 backend's job is bookkeeping, storage and the attach mapping above.
 
+## Tags {#creative-tags}
+
+A Creative carries `tags` (V202, `creative.tags` jsonb, `{}` when none) so performance can be read by the kind
+of idea it was, not only by Creative or platform. Seven optional string keys, nothing else:
+
+| Key | Meaning | Values the skills use |
+|---|---|---|
+| `hookType` | what the opening line does | the hookType column of `voice.md`'s "Shapes, and the hookType each one is tagged" table: `pattern-interrupt`, `relatable-pain`, `story`, `question`, `number`, `bold-claim` |
+| `angle` | the brainstorm angle | `story-emotion`, `utility-education`, `trend-humor` |
+| `format` | the artwork format | `still`, `carousel`, `story`, `motion`, `clip`, `film` |
+| `archetype` | the slideshow hook archetype | one from `slideshow-formats.md`'s "Hook archetypes" table, kebab-cased (e.g. `numbered-list`, `before-after`) |
+| `hypothesis` | the hypothesis the post tests | `H<n>` |
+| `lessons` | the playbook lessons the Creative followed | comma-separated ids matching `^#\d+(,#\d+)*$`, e.g. `#3,#12` (60 characters at most); `byTag` gives each id its own row |
+| `previewRounds` | how many preview rounds it took | a whole number 0-50, as a string; validated, never grouped by insights |
+
+The backend enforces the keys, the length, and the shape of `lessons` and `previewRounds`: any other key, a blank
+value, a value over 60 characters or a malformed `lessons`/`previewRounds` is a 422 naming `tags.<key>`. The other
+vocabularies are the skills' convention, not validated.
+
+Writes: create stores what is sent. `PATCH` leaves the tags alone when `tags` is omitted, **replaces the
+whole map** when it is sent (a key left out is removed), and clears it for `{}`. A lettered variant
+inherits only the descriptive tags (`hookType`, `angle`, `format`, `archetype`) of the Creative it is cut from (cut 1c
+from 1b and it takes 1b's, not the family root's), never `hypothesis`, `lessons` or `previewRounds`; tags in the
+variant request merge over the inherited ones, and a key given as an empty string removes it. A `PATCH` that
+carries only `tags` (and `version`) validates the tags alone, so tagging an old Creative never fails over its
+unrelated content. The draft-spec preview takes `tags`
+like any create field (and overlays them on a `baseCreativeId`'s), and `commit_creative_draft` saves what the
+preview carried, or the `tags` it is given. `GET` always returns `tags`.
+
+Insights read them: `GET .../marketing/insights` adds `byTag`, one row per `(tagKey, value)` (`key` is the
+value) over reporting destinations whose attributed Creative carries that tag. Attribution is
+`CreativeAttributionResolver`'s (see below), through `CreativeTagAttribution`; a destination with no attributed
+Creative, or an untagged one, is left out, and one attributed to several tagged Creatives counts once under
+each distinct tag value.
+
+**Numbers that survive one viral post and a platform mix.** Raw pooled views and engagement are dominated by
+the single best post (views are heavy-tailed) and by which platform a tag happened to be used on, so `byTag`
+reads **settled posts only** and compares each post with the account's own typical post:
+
+- *Settled*: a destination counts once its fire time is at least its platform's window before now,
+  TikTok, Instagram and YouTube 72 h, Facebook 7 d, any other platform 72 h (`PostSettleWindows`). Posts
+  still inside the window are not counted; a row's `unsettledPosts` says how many were left out. A destination
+  with no fire time has no age to judge, so it is never settled and stays out of every baseline, lift and verdict.
+- *Baseline* (`PostBaselineService`): the median views and median `avgViewPct` of settled reporting
+  destinations over the trailing 90 days, independent of the insights `window`. Per platform and format when
+  that bucket has at least 10 settled posts *with a value for that metric*, else per platform when the platform
+  has at least 10, else none, chosen separately for views and for `avgViewPct` (ten posts of which one reports
+  retention have a views baseline and no retention baseline).
+- *Lift*: a post's **view lift** is its views over the baseline median views, and its **retention lift** is its
+  `avgViewPct` over the baseline median `avgViewPct`; 1.0 is typical for this account on that platform (and
+  format). Either is null when the baseline or the post's own value is missing.
+
+Each `byTag` row keeps the group fields (counted over its settled posts) and adds `unsettledPosts`,
+`medianViewLift`, `beatBaselineShare` (share of posts with a lift whose view lift is above 1),
+`medianEngagementRate` (the median of per-post rates, not the pooled rate) and `medianRetentionLift`, each null
+when it cannot be computed. Rows sort by tag key, then `medianViewLift` descending, nulls last. Read the lift
+rather than the pooled views, and `posts` for how much to trust it.
+
+**Opt-in.** The tag data is built only when `GET .../marketing/insights` is called with `include=tags` (the MCP
+`get_marketing_insights` takes `include: ["tags"]`): `byTag`, `byTagWindow`, `playbookEffect` and the lift and verdict
+fields of `creatives`. Without it none of that code runs, the request issues the queries it always did, and those
+fields are absent. `creatives` itself behaves as before: it has never honoured `platform`, and `brandKitId` (new)
+only narrows it to one kit.
+
+**A fixed evidence window, but the same filters.** `byTag` (and `playbookEffect`) ignore the insights `window`: they
+always read the settled posts of the trailing 90 days, and the response says so in `byTagWindow` (`{from, to,
+days: 90}`). A 7-day window could never contain a settled Facebook post. With `include=tags` they honour `platform`, and the new
+`brandKitId` filter (only destinations published from Creatives on that Brand Kit; every Creative stores its kit's
+real id, the default kit's included, so the default is filtered by its own id). Baselines stay per platform whatever is
+filtered. The rest of insights still honours `window`.
+
+**Verdicts are decided by the server, not the model.** A model asked to judge noisy numbers finds a story in
+them, so each `byTag` row (and each variant in creative performance) carries a verdict from
+`LessonVerdictRules`, and the model only writes the words around it. Per metric, over the settled posts that
+have that metric's baseline: `NOT_ENOUGH_DATA` under 3 such posts; `WORKS` when the median lift is at least
+1.2 and at least 2/3 of the posts beat the baseline (lift above 1); `DOESNT_WORK` when it is at most 0.8 and at
+most 1/3 beat it; otherwise `NO_DIFFERENCE`. Rows add `withBaselinePosts`/`beatBaselinePosts` (view lift) and
+`withRetentionBaselinePosts`/`beatRetentionBaselinePosts` (retention lift), so `beatBaselineShare` is
+`beatBaselinePosts / withBaselinePosts`; `viewVerdict` and `retentionVerdict` are the two verdicts, and
+`verdict` with `verdictMetric` (`VIEW_LIFT` | `RETENTION_LIFT`) is the default, for every tag key: retention only
+when at least 3 posts have a retention baseline and they are at least 2/3 of the posts with a view baseline
+(`RETENTION_COVERAGE_SHARE`), else views. Only YouTube reports `avg_view_pct`, so a few YouTube posts must not
+decide a row that is mostly TikTok or Instagram. Creative
+performance (`get_creative`'s per-variant performance, and `creatives` with `include=tags`) adds `withBaselinePosts`, `beatBaselinePosts`, `viewVerdict` and `retentionVerdict`. The constants
+(`MIN_POSTS`, the 1.2/0.8 lifts and the 2/3, 1/3 shares) are in `LessonVerdictRules`.
+
+**Playbook lessons.** A Creative's `lessons` tag records which playbook lessons it followed. `byTag` splits it, one
+row per lesson id (`tagKey` `lessons`, `key` `#3`). `playbookEffect` is `{withLessons: {posts, medianViewLift},
+withoutLessons: {posts, medianViewLift}}` over the same settled 90 days: a post is "with lessons" when its
+attributed Creative has a non-empty `lessons` tag and "without" when its attributed Creative has none; a settled
+post with no attributed Creative is on neither side, so the comparison is only content the skill made; it answers whether
+following the playbook helped at all.
+
+The same service and settled-only rule give each variant in `GET .../marketing/creatives/{id}/performance`
+(and `get_creative`, and insights' `creatives`) `settledPosts`, `medianViewLift`, `medianRetentionLift` and
+`beatBaselineShare`, next to its existing fields. The weekly `conductor-marketing` snapshot carries a
+`byHookType` dimension (hookType only) over the same settled 90 days, ranked on `medianViewLift` and carrying
+`verdict`/`verdictMetric` per row (a hookType with no computable lift is left out), so the digest can say which
+hooks are working.
+
+The thresholds are named constants, not configuration: the settle windows in `PostSettleWindows`, the verdict
+rules in `LessonVerdictRules`, and the 90 days and the 10-post minimum in `PostBaselineService`
+(`BASELINE_DAYS`, `MIN_BUCKET_POSTS`). Change them there, and in this section. Baselines and the
+Creatives with their attributed destinations and tags are built once per insights request and shared by `byTag`,
+`playbookEffect` and the top Creatives.
+
 ## Performance and experiments (COND-24 T5)
 
 **Attribution** (`CreativeAttributionResolver`) answers "which published destinations actually sent this
