@@ -996,7 +996,7 @@ backend's job is bookkeeping, storage and the attach mapping above.
 
 ## Tags {#creative-tags}
 
-A Creative carries `tags` (V201, `creative.tags` jsonb, `{}` when none) so performance can be read by the kind
+A Creative carries `tags` (V202, `creative.tags` jsonb, `{}` when none) so performance can be read by the kind
 of idea it was, not only by Creative or platform. Seven optional string keys, nothing else:
 
 | Key | Meaning | Values the skills use |

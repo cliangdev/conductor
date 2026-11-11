@@ -166,7 +166,7 @@ public class Creative {
     @Column(name = "slideshow_spec", columnDefinition = "jsonb")
     private JsonNode slideshowSpec;
 
-    /** {@code {hookType?, angle?, format?, archetype?, hypothesis?}}; {@code {}} when none. See V201__creative_tags.sql. */
+    /** {@code {hookType?, angle?, format?, archetype?, hypothesis?}}; {@code {}} when none. See V202__creative_tags.sql. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "tags", columnDefinition = "jsonb", nullable = false)
     private JsonNode tags = JsonNodeFactory.instance.objectNode();
