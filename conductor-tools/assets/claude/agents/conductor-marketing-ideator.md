@@ -54,7 +54,12 @@ ideas from your angle, not a safe average.
    media, brief or knowledge; never invent a personal story, result, number, quote or customer
    reaction. Tag each hook type from `voice.md`'s "Shapes, and the hookType each one is tagged"
    table.
-8. Do not name your angle inside an idea. Do not rank your ideas.
+8. The brief may name a pre-registered hypothesis under test (`H<n>`, one variable). Test only that variable and change nothing else about the idea. Across the whole run at most one idea tests
+   it, so mark `Tests: H<n>` on one idea only if your angle fits it best; otherwise mark none. A test
+   idea still follows every rule above.
+9. Where the brief lists playbook lessons with ids, cite the Proven or Leaning ones an idea really
+   follows in its `Follows:` field. Never cite a Didn't work or Taste id.
+10. Do not name your angle inside an idea. Do not rank your ideas.
 
 ## Finish
 

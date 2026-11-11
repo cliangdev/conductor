@@ -71,10 +71,16 @@ against placeholder tokens: gather colours, font, CTA claim and any copy rules o
 with `get_brand_kit` afterward — `configured` should now read `true`. (`references/brand-kit-setup.md`
 walks a person through exactly this.)
 
+Then run the retro in `references/learning-loop.md` (one playbook read, then insights and
+`list_creatives` only when it is due). If the Knowledge Center is off or a call errors, skip it and go on.
+
 ### 2. Pick the angle
 
 Lead with whatever the brand's own message hierarchy puts first — the job the product does end to
 end, not a secondary feature. A supporting capability is proof, not the headline.
+
+Treat the playbook's Proven and Taste lines as constraints and avoid its Didn't work lines
+(`references/learning-loop.md`, "Apply").
 
 Then start from a concept: one visual idea, plus the format that carries it. Not "a headline on a
 photo". Decide what the viewer should see happening (the product doing its job, or a concrete scene
@@ -92,6 +98,11 @@ asterisks: `Every saved link, *finally usable*.` Never zero, never two — `prev
 `create_creative` and `update_creative` refuse a headline that gets this wrong, naming the rule.
 
 Keep it short — checked at thumbnail size, not read up close.
+
+Decide whether this run carries a test (`references/learning-loop.md`, "Explore": the cap, from the
+retro's `list_creatives`). If it does, change one thing: usually the headline against an alternate
+hook from the spare candidates, or the format. Classify each kept hook's `hookType` with the mapping
+there.
 
 ### 4. Obey the brand's copy rules
 
@@ -174,6 +185,11 @@ It renders a contact sheet on this machine and returns it as an image, with the 
 to (`.conductor/drafts/<timestamp>-<slug>/`), the readiness gaps and any render warnings. **Nothing
 has been saved to Conductor.** A copy-rule or accent-phrase violation comes back as an error naming
 the rule and field, without rendering — fix the copy and preview again.
+
+Pass `tags` on every preview and commit: `hookType` (classified from the mapping in
+`references/learning-loop.md`), `angle` if one applies, `format`, `archetype` for a slideshow, and
+`hypothesis` when this Creative is the tested arm, `lessons` (the playbook ids applied, at most 5),
+and `previewRounds` at commit (preview rounds before approval).
 
 To change an existing Creative's copy, layout or photo, preview the edit first with `baseCreativeId`:
 only the fields you pass change, and the commit then updates that Creative instead of creating one.
@@ -260,6 +276,11 @@ call a Creative done while `ready` is false.
 `baseCreativeId`'s), and runs the full-size render in one call, then returns the Creative id and
 display id, the frames and the readiness. It can be run once per draft; if its render fails the
 Creative is already saved — call `render_creative`, don't commit again. Verify with `get_creative`.
+After the commit, capture what was learned (`references/learning-loop.md`, "Capture") and say the
+`Learned:` lines when you report. If the test's hook was kept as a spare, suggest a lettered
+variant (`variantOf`) and `create_experiment`. Pass the variant only the tags that differ (its
+`hookType`, its `hypothesis` if it is the tested arm, its `lessons`); the control keeps no
+`hypothesis` tag. A DECIDED experiment resolves the hypothesis.
 Then `attach_creative_to_post` with the Post's Work Item id — it maps each placement to the right
 destinations (9:16 to TikTok/Reels, 4:5 to Instagram feed, 1:1 to Facebook, story to story targets)
 for every destination that has not set its own custom media, and never touches one that has. Verify
@@ -288,7 +309,7 @@ payoff — the first beat has to earn the next tap on its own, since that's wher
 worst. A logo lockup and CTA claim land on the last beat only by default; `cta: true` on an earlier
 beat overrides that. Set `cta: false` on every beat unless the request opts in to a CTA. A story sequence publishes: attach it to an Instagram or Facebook Story
 destination and each beat goes out as its own story, in order. A carousel renders every card at one shared aspect ratio (`carouselRatio`),
-since the destination platforms require that.
+since the destination platforms require that. Tag and capture as in step 9.
 
 ## Video you already have
 
@@ -315,6 +336,7 @@ confirm every line of text starts below y=290.
    `{"default": mediaId}`. A different cut per placement (e.g. a square edit for feed, a vertical one
    for Reels): `{"9x16": mediaId, "4x5": mediaId}` — `default` still covers any placement without its
    own entry. A reel takes exactly one video, so don't split a reel-eligible placement across two.
+   Pass `tags` (`format: "clip"`) and capture as in step 9.
 3. `render_creative` — instant for a CLIP that keeps its own sound (the backend assembles the frames;
    nothing renders in a browser). With `audio` (below) it encodes a new MP4 on this machine with
    ffmpeg instead.
@@ -356,7 +378,8 @@ thing).
    and `licence` can't exceed 200 characters.
 2. Local files: `preview_creative_draft({kind: "CAROUSEL", brandKitId, caption, slidePaths: {"4x5": [path, ...]}})`
    returns a contact sheet per placement (slides in order), readiness and any violations; look at it
-   with the person, then `commit_creative_draft` (it uploads in order and requests the render).
+   with the person, then `commit_creative_draft` (it uploads in order and requests the render). Pass `tags` and
+   capture as in step 9.
    Media already in the library: `create_creative({kind: "CAROUSEL", brandKitId, slides: {"4x5": [mediaId, ...]}, slideAltText, caption})`
    and then `render_creative` (instant, server-side).
 3. Placements. `slides` is a list per placement key (`4x5`, `9x16`, `1x1`); `default` is the
@@ -423,7 +446,7 @@ destination rewards video over an image.
    video). Judge it the same honest way as step 7 above — does the copy's entrance finish before the
    next beat, does the end card actually hold long enough to read — and get approval before
    spending a full render on it.
-4. `commit_creative_draft` then uploads the media, saves the Creative and runs the local,
+4. `commit_creative_draft` (pass `tags` and capture as in step 9) then uploads the media, saves the Creative and runs the local,
    ffmpeg-driven encode — roughly 20 seconds per placement for an 8-second video. No ffmpeg on this
    machine fails with a clear message naming how to get one rather than silently producing nothing.
 5. `attach_creative_to_post`, same as any Creative — one MP4 per placement.

@@ -410,6 +410,34 @@ Performance shows up in two places: the **Performance** panel on a Creative's ow
 whole lettered family, side by side), and **Marketing → Posts → What's working → Top creatives**, which
 ranks your best-performing variants across the whole project.
 
+## 4b. How it gets better
+
+The creative skill keeps one playbook for your workspace: the Knowledge Center page
+`marketing/playbook.md` (with one section per Brand Kit if you have several). Every run, in Claude
+Code or Desktop, starts by reading it, follows what has proven out, avoids what did not work and
+tests one new idea. After you approve a draft, the skill updates the page by itself and lists what
+changed as "Learned:" lines in its final message. Creatives carry tags (hook type, angle, format,
+slideshow archetype, the hypothesis being tested), so results from Marketing → Posts can be traced
+back to the choice that made them.
+
+The server, not the model, decides what counts. A lesson is Proven only when Conductor's own numbers
+say so: at least three settled posts that beat your account's typical results by about 20%, or a decided
+hook experiment. Likewise for Didn't work. Everything else is Leaning. The playbook also holds your
+Taste and Open hypotheses (tests set up before posting). Results are always compared with your own
+account's typical numbers, never raw totals. A post counts once it has settled: 72 hours for TikTok,
+Instagram and YouTube, 7 days for Facebook. Each lesson has a stable number. Posts record which lessons
+they followed, so results also vote on the lessons: one that keeps failing is marked contested and stops
+steering. A lesson with no new evidence for 90 days is demoted, then dropped. Your Taste lines are
+yours: they come only from what you say, and the skill never removes one. The skill treats the page as
+advice, below your request and your Brand Kit rules.
+
+Each retro also reports whether this is working: median view lift for posts that followed lessons
+against ones that did not, and whether drafts need fewer preview rounds. To check the skill's behaviour,
+see [`marketing-learning-loop-evals.md`](marketing-learning-loop-evals.md).
+
+To change the playbook, edit the page in **Knowledge** like any other page; the next run follows your
+edit. To undo a bad update, open the page's revisions and restore the earlier one.
+
 ## 5. Video
 
 A **Clip** creative uses a finished video as-is — no brand layout, no headline/body rendered onto
