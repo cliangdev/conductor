@@ -4,6 +4,7 @@ import com.conductor.exception.BusinessException;
 import com.conductor.integration.MetricChannel;
 import com.conductor.marketing.overview.MarketingOverviewQueryService;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.ChannelView;
+import com.conductor.marketing.overview.MarketingOverviewQueryService.ConnectionView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.MetricView;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.Snapshot;
 import com.conductor.marketing.overview.MarketingOverviewQueryService.SnapshotChannel;
@@ -49,6 +50,9 @@ import java.util.UUID;
  * <p><b>Reads</b> are never deleted: this service adds them, lists them (retracted ones too, as the audit trail)
  * and can {@linkplain #retract retract} a wrong one, after which it counts nowhere and the previous read of that
  * metric (if any) applies.
+ * A read also remembers the channel's connections when it was recorded and counts only while at least one of them
+ * is still connected, so disconnecting a channel and connecting another account never compares the new account with
+ * a figure read from the old one (reads recorded before that was tracked always count).
  * A read covers an explicit range of days; it is compared with Conductor's figure over exactly those days (a
  * level: its value on the last day; unique visitors: the stored count for a window of that length ending on the
  * last day). A read over days Conductor has not settled yet cannot be compared and counts for nothing, not for a
@@ -249,10 +253,13 @@ public class VerificationLedgerService {
                     + " days; this read covers " + readDays + " days");
         }
 
+        // The connections the read is checked against: it stops counting once none of them is connected.
+        String[] connectionIds = snapshotChannel.view().connections().stream().map(ConnectionView::id)
+                .toArray(String[]::new);
         OffsetDateTime recordedAt = now.truncatedTo(ChronoUnit.MICROS);
         String id = UUID.randomUUID().toString();
         MarketingPlatformRead candidate = new MarketingPlatformRead(id, projectId, channel.name(), metric.key(), from,
-                to, BigDecimal.valueOf(value), source, cleanNote, userId, recordedAt, null, null, null);
+                to, BigDecimal.valueOf(value), source, cleanNote, userId, recordedAt, null, null, null, connectionIds);
         Map<String, MarketingPlatformRead> reads = latestReads(projectId);
         String ref = channel.name() + "." + metric.key();
         reads.put(ref, candidate);
@@ -263,7 +270,7 @@ public class VerificationLedgerService {
         readRepository.save(new MarketingPlatformRead(id, projectId, channel.name(), metric.key(), from, to,
                 candidate.getValue(), source, cleanNote, userId, recordedAt,
                 conductorOverRead == null ? null : BigDecimal.valueOf(conductorOverRead),
-                backendOverRead == null ? null : BigDecimal.valueOf(backendOverRead), row.verdict().name()));
+                backendOverRead == null ? null : BigDecimal.valueOf(backendOverRead), row.verdict().name(), connectionIds));
         return new RecordedRow(row.platformRead(), row);
     }
 
