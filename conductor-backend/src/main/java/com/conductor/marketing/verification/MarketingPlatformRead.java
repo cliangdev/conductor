@@ -8,6 +8,8 @@ import jakarta.persistence.PostPersist;
 import jakarta.persistence.Table;
 import jakarta.persistence.Transient;
 import org.hibernate.annotations.Immutable;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 import org.springframework.data.domain.Persistable;
 
 import java.math.BigDecimal;
@@ -78,6 +80,14 @@ public class MarketingPlatformRead implements Persistable<String> {
     @Column(name = "retraction_reason", length = 500, updatable = false)
     private String retractionReason;
 
+    /**
+     * The channel's active connection ids when the read was recorded; the read counts only while one of them is
+     * still connected. Null for reads recorded before V201, which always count.
+     */
+    @JdbcTypeCode(SqlTypes.ARRAY)
+    @Column(name = "connection_ids", columnDefinition = "varchar(36)[]", updatable = false)
+    private String[] connectionIds;
+
     @Transient
     private boolean fresh = true;
 
@@ -87,7 +97,7 @@ public class MarketingPlatformRead implements Persistable<String> {
     public MarketingPlatformRead(String id, String projectId, String channel, String metric, LocalDate dayFrom,
                                  LocalDate dayTo, BigDecimal value, String sourceName, String note,
                                  String recordedBy, OffsetDateTime recordedAt, BigDecimal conductorValue,
-                                 BigDecimal backendValue, String verdict) {
+                                 BigDecimal backendValue, String verdict, String[] connectionIds) {
         this.id = id;
         this.projectId = projectId;
         this.channel = channel;
@@ -102,6 +112,7 @@ public class MarketingPlatformRead implements Persistable<String> {
         this.conductorValue = conductorValue;
         this.backendValue = backendValue;
         this.verdict = verdict;
+        this.connectionIds = connectionIds;
     }
 
     @Override
@@ -170,6 +181,11 @@ public class MarketingPlatformRead implements Persistable<String> {
 
     public String getVerdict() {
         return verdict;
+    }
+
+    /** Null for a read recorded before V201 (always counts). */
+    public String[] getConnectionIds() {
+        return connectionIds;
     }
 
     public OffsetDateTime getRetractedAt() {

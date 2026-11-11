@@ -13,8 +13,30 @@ export const MAX_REPORT_ADS_COVERAGE = 20
 export const MAX_REPORT_CHANGE_MARKERS = 20
 /** The backend lists up to 50 ASO keywords, best organic rank first; an agent needs the best 20. */
 export const MAX_REPORT_ASO_KEYWORDS = 20
+/**
+ * Open changes and changes reviewed in the window, soonest due first. Each is listed by id, title, status and due
+ * day only: their hypothesis, baseline and evidence fields made up over half of a live report. Changes due for
+ * review keep every field, since judging them needs those.
+ */
+export const MAX_REPORT_CHANGES = 25
+/** The change fields kept on an open or reviewed change: when it went live and, once reviewed, the verdict. */
+const BRIEF_CHANGE_FIELDS = ['liveSince', 'verdict']
 
 type Json = unknown
+
+/** A change without its long fields: enough to name it, see where it stands and fetch it by displayId. */
+function briefChange(change: Json): Json {
+  if (!change || typeof change !== 'object') return change
+  const { fields, ...rest } = change as Record<string, Json>
+  const kept: Record<string, Json> = {}
+  if (fields && typeof fields === 'object') {
+    for (const k of BRIEF_CHANGE_FIELDS) {
+      const v = (fields as Record<string, Json>)[k]
+      if (v !== undefined) kept[k] = v
+    }
+  }
+  return Object.keys(kept).length > 0 ? { ...rest, fields: kept } : rest
+}
 
 /** Rounds to 4 decimals, or to 2 once the magnitude is 100 or more (money and counts need no more). */
 function roundNumber(n: number): number {
@@ -48,6 +70,7 @@ interface ReportPayload extends Record<string, Json> {
   adsCoverage?: Json[]
   changeMarkers?: Json[]
   asoKeywords?: Json[]
+  changes?: { open?: Json[]; dueForReview?: Json[]; reviewedInWindow?: Json[] } | null
 }
 
 const ALWAYS_PRESENT = [
@@ -82,6 +105,8 @@ export async function getMarketingReport(
   const changeMarkers = report.changeMarkers ?? []
   // Arrive best organic rank first, so the head is the part to keep.
   const asoKeywords = report.asoKeywords ?? []
+  const openChanges = report.changes?.open ?? []
+  const reviewedChanges = report.changes?.reviewedInWindow ?? []
   const trimmed = trimReportValue({
     ...report,
     keywords: keywords.slice(0, MAX_REPORT_KEYWORDS),
@@ -89,6 +114,13 @@ export async function getMarketingReport(
     adsCoverage: adsCoverage.slice(0, MAX_REPORT_ADS_COVERAGE),
     changeMarkers: changeMarkers.slice(-MAX_REPORT_CHANGE_MARKERS),
     asoKeywords: asoKeywords.slice(0, MAX_REPORT_ASO_KEYWORDS),
+    changes: report.changes
+      ? {
+          ...report.changes,
+          open: openChanges.slice(0, MAX_REPORT_CHANGES).map(briefChange),
+          reviewedInWindow: reviewedChanges.slice(0, MAX_REPORT_CHANGES).map(briefChange),
+        }
+      : report.changes,
   }) as Record<string, unknown>
   // An emptied section must still read as "none", not as a missing key.
   for (const k of ALWAYS_PRESENT) if (!(k in trimmed)) trimmed[k] = []
@@ -109,6 +141,8 @@ export async function getMarketingReport(
   if (adsCoverage.length > MAX_REPORT_ADS_COVERAGE) totalRows['adsCoverage'] = adsCoverage.length
   if (changeMarkers.length > MAX_REPORT_CHANGE_MARKERS) totalRows['changeMarkers'] = changeMarkers.length
   if (asoKeywords.length > MAX_REPORT_ASO_KEYWORDS) totalRows['asoKeywords'] = asoKeywords.length
+  if (openChanges.length > MAX_REPORT_CHANGES) totalRows['changes.open'] = openChanges.length
+  if (reviewedChanges.length > MAX_REPORT_CHANGES) totalRows['changes.reviewedInWindow'] = reviewedChanges.length
   return Object.keys(totalRows).length > 0 ? { ...trimmed, totalRows } : trimmed
 }
 

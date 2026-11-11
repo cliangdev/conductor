@@ -20,12 +20,20 @@ public interface MarketingPlatformReadRepository extends Repository<MarketingPla
 
     <S extends MarketingPlatformRead> S save(S read);
 
-    /** The newest non-retracted read of each (channel, metric) of the project: one query, a handful of rows. */
+    /**
+     * The newest <em>effective</em> read of each (channel, metric) of the project: one query, a handful of rows.
+     * A read is effective when it is not retracted and either predates V201 (null {@code connection_ids}) or at
+     * least one connection it was recorded against is still an ACTIVE connection of the project. A newer read that
+     * is not effective is skipped, so an older effective one applies.
+     */
     @Query(value = """
-            SELECT DISTINCT ON (channel, metric) *
-            FROM marketing_platform_read
-            WHERE project_id = :projectId AND retracted_at IS NULL
-            ORDER BY channel, metric, recorded_at DESC, id DESC
+            SELECT DISTINCT ON (r.channel, r.metric) r.*
+            FROM marketing_platform_read r
+            WHERE r.project_id = :projectId AND r.retracted_at IS NULL
+              AND (r.connection_ids IS NULL OR EXISTS (
+                    SELECT 1 FROM connection c
+                    WHERE c.project_id = r.project_id AND c.status = 'ACTIVE' AND c.id = ANY(r.connection_ids)))
+            ORDER BY r.channel, r.metric, r.recorded_at DESC, r.id DESC
             """, nativeQuery = true)
     List<MarketingPlatformRead> findLatestByProject(@Param("projectId") String projectId);
 
