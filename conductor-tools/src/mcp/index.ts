@@ -248,6 +248,20 @@ const CREATIVE_FIELD_PROPERTIES = {
     description:
       "CAROUSEL only: compose_slideshow's returned style. On a saved Creative (update_creative) or a draft over baseCreativeId (preview_creative_draft) the recorded style is kept unless the slides change; changing the slides without a slideStyle clears it; an explicit null (or {}) clears it.",
   },
+  tags: {
+    type: 'object',
+    description: "Optional {hookType, angle, format, archetype, hypothesis, lessons, previewRounds}; used by the marketing skill's learning loop.",
+    properties: {
+      hookType: { type: 'string' },
+      angle: { type: 'string' },
+      format: { type: 'string' },
+      archetype: { type: 'string' },
+      hypothesis: { type: 'string' },
+      lessons: { type: 'string', description: 'Playbook lesson ids, comma-separated, e.g. "#3,#12"' },
+      previewRounds: { type: 'string', description: 'Whole number 0-50 as a string' },
+    },
+    additionalProperties: false,
+  },
   slideshow: {
     type: 'object',
     description: 'CAROUSEL only: how the 9x16 slides become a video when audio.source is track. slideDurations: seconds per 9x16 slide, one entry per slide, each 1-10. Omitted: the tool times each slide from its text (clamp(2.4 + 0.14 x words, 3.0, 4.8) s, +0.5 s on the first slide, +0.5 s on an app screen or chart), and 3.5 s first / 3.0 s rest when there is no text. zoom: slow push-in on each slide, default true. Slides cross-fade for 0.5 s, out of each slide\'s time.',
@@ -1401,13 +1415,14 @@ export const TOOLS = [
   },
   {
     name: 'get_marketing_insights',
-    description: 'What is working in marketing. Default include ["posts"]: published Posts only (totals, engagement rate by platform, format and time, best and worst posts, top Creatives, movers vs the prior window). Add "channels" for "how is marketing doing overall / per channel": per-channel status (LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH; `noDataYet` = connected but no complete day of data yet), the acquisition funnel (every stage and `window` share one window ending at the earliest complete day of the channels that feed the funnel, so conversions compare the same days; each channel\'s own metrics keep that channel\'s window), and per metric value, previous, changePct, noise (true = within normal variation, do not call it a trend) and target. Channels are WEB, SEARCH, SOCIAL, ADS, STORE, PRODUCT (the in-app numbers a connected product backend reports: `stages` in funnel order from first open to paid, plus metrics such as cost per trial; the funnel continues into them after store downloads). A metric with `provisional` has newest days that may still change; `smallSample` means too few users or events to call a change real. A metric with a target carries `status` (ON_TRACK = met; WATCH = close, or a rate miss too small a sample to call real; OFF_TRACK = missed by more; TOO_EARLY = no value, or a rate on fewer than 20 observations; STOPPED = a snapshot the feed stopped sending, so it is not judged; `note` says when it was last reported) and `missPct`, the shortfall as a fraction of the target (a count or money total is judged against the target prorated to the window). `basis` COHORT means each day counts the people who first opened that day, followed to now; `funnelBasis` says the in-app funnel is counted that way. A target with `readOnly` is set by the product backend (`setIn` says where) and cannot be changed here. A MISMATCH channel carries `mismatch`: the Conductor figure vs the product backend reference over the same settled days; treat the connector number as the one to trust until the gap is explained. Numbers are platform-reported and cover complete days only (see dataCompleteThrough), so they can differ from a platform UI that shows today. Pass `channel` with "channels" to also get that channel\'s series (weekly buckets: sums for counts and money, means for rates and positions; provisional = may still change) and its top 10 rows per breakdown (referrers, queries, campaigns, platforms, App Store traffic sources). Windows: 7d, 30d, 90d. For channels, 30d is read as the 28-day window, and 90d is valid only with `channel`. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
+    description: 'What is working in marketing. Default include ["posts"]: published Posts only (totals, engagement rate by platform, format and time, best and worst posts, top Creatives, movers vs the prior window). Add "tags" to include for byTag (90-day settled posts vs this account\'s median, with a server verdict to report as given), byTagWindow and playbookEffect; brandKitId filters them. Add "channels" for "how is marketing doing overall / per channel": per-channel status (LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH; `noDataYet` = connected but no complete day of data yet), the acquisition funnel (every stage and `window` share one window ending at the earliest complete day of the channels that feed the funnel, so conversions compare the same days; each channel\'s own metrics keep that channel\'s window), and per metric value, previous, changePct, noise (true = within normal variation, do not call it a trend) and target. Channels are WEB, SEARCH, SOCIAL, ADS, STORE, PRODUCT (the in-app numbers a connected product backend reports: `stages` in funnel order from first open to paid, plus metrics such as cost per trial; the funnel continues into them after store downloads). A metric with `provisional` has newest days that may still change; `smallSample` means too few users or events to call a change real. A metric with a target carries `status` (ON_TRACK = met; WATCH = close, or a rate miss too small a sample to call real; OFF_TRACK = missed by more; TOO_EARLY = no value, or a rate on fewer than 20 observations; STOPPED = a snapshot the feed stopped sending, so it is not judged; `note` says when it was last reported) and `missPct`, the shortfall as a fraction of the target (a count or money total is judged against the target prorated to the window). `basis` COHORT means each day counts the people who first opened that day, followed to now; `funnelBasis` says the in-app funnel is counted that way. A target with `readOnly` is set by the product backend (`setIn` says where) and cannot be changed here. A MISMATCH channel carries `mismatch`: the Conductor figure vs the product backend reference over the same settled days; treat the connector number as the one to trust until the gap is explained. Numbers are platform-reported and cover complete days only (see dataCompleteThrough), so they can differ from a platform UI that shows today. Pass `channel` with "channels" to also get that channel\'s series (weekly buckets: sums for counts and money, means for rates and positions; provisional = may still change) and its top 10 rows per breakdown (referrers, queries, campaigns, platforms, App Store traffic sources). Windows: 7d, 30d, 90d. For channels, 30d is read as the 28-day window, and 90d is valid only with `channel`. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
     inputSchema: {
       type: 'object',
       properties: {
-        include: { type: 'array', items: { type: 'string', enum: ['posts', 'channels'] }, description: 'Sections to return (default ["posts"], the original output)' },
+        include: { type: 'array', items: { type: 'string', enum: ['posts', 'channels', 'tags'] }, description: 'Sections to return (default ["posts"], the original output; "tags" adds the tag sections to the posts)' },
         window: { type: 'string', enum: ['7d', '30d', '90d'], description: 'How far back to look (default 30d). Channels: 30d means 28 days; 90d only with `channel`' },
-        platform: { type: 'string', description: 'Restrict posts to one platform, from the project\'s connected platforms (optional; needs "posts")' },
+        platform: { type: 'string', description: 'Restrict posts to one platform, from the project\'s connected platforms (optional; needs "posts"); also applies to byTag, playbookEffect and topCreatives' },
+        brandKitId: { type: 'string', description: 'Count only destinations published from Creatives on this Brand Kit in byTag, playbookEffect and topCreatives (optional; the default kit is addressed by its own id; needs "posts")' },
         channel: { type: 'string', enum: ['WEB', 'SEARCH', 'SOCIAL', 'ADS', 'STORE', 'PRODUCT'], description: 'With "channels": add this channel\'s series and breakdown tables (optional)' },
       },
     },
@@ -1990,7 +2005,7 @@ export const TOOLS = [
   },
   {
     name: 'get_creative',
-    description: "One Creative in full: its fields (including audio, slideshow and, for a CAROUSEL or CLIP, renderedVideo — the latest video frame), for a CAROUSEL composed with compose_slideshow, slideshowSpec (the editable spec; summarised when large) and textFields (each editable text as {slide, path, text}, slides from 1), latestRevision (the newest slide-text edit: status PENDING / APPLIED / FAILED, error, and failingChecks by slide, ratio and rule) and pendingRevision while one renders, its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
+    description: "One Creative in full: its fields (including audio, slideshow and, for a CAROUSEL or CLIP, renderedVideo — the latest video frame), for a CAROUSEL composed with compose_slideshow, slideshowSpec (the editable spec; summarised when large) and textFields (each editable text as {slide, path, text}, slides from 1), latestRevision (the newest slide-text edit: status PENDING / APPLIED / FAILED, error, and failingChecks by slide, ratio and rule) and pendingRevision while one renders, its readiness checklist (what still blocks it going to review), the other lettered variants in its family, each variant's attributed performance (posts, views, engagement rate, average view percentage, 72h views, plus settled-post lift and a server verdict), and the family's active or most recent hook experiment (state, and once decided, the winner and its numbers). Call after create_creative/update_creative/create_experiment to verify.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -2045,6 +2060,7 @@ export const TOOLS = [
         audio: CREATIVE_FIELD_PROPERTIES.audio,
         slideshow: CREATIVE_FIELD_PROPERTIES.slideshow,
         slideStyle: CREATIVE_FIELD_PROPERTIES.slideStyle,
+        tags: CREATIVE_FIELD_PROPERTIES.tags,
         layout: { type: 'string' },
         theme: { type: 'string', enum: ['dark', 'light'] },
         photoId: { type: 'string' },
@@ -2259,6 +2275,7 @@ export const TOOLS = [
         licence: { type: 'string', description: 'Licence recorded on each uploaded file, e.g. "Own work" (optional)' },
         aiGenerated: { type: 'boolean', description: 'Whether the uploaded files are AI-generated (optional, informational only)' },
         photoChecked: { type: 'boolean', description: 'true only when the person approved the draft after looking at it — records their check that the uploaded photo(s) carry no burned-in text, logo or claim (readiness item photoChecked).' },
+        tags: CREATIVE_FIELD_PROPERTIES.tags,
       },
       required: ['draftDir'],
     },
@@ -3183,7 +3200,8 @@ export async function runMcpServer(): Promise<void> {
             await getMarketingInsights(config, {
               window: params['window'] as '7d' | '30d' | '90d' | undefined,
               platform: params['platform'] as string | undefined,
-              include: params['include'] as ('posts' | 'channels')[] | undefined,
+              brandKitId: params['brandKitId'] as string | undefined,
+              include: params['include'] as ('posts' | 'channels' | 'tags')[] | undefined,
               channel: params['channel'] as string | undefined,
             })
           )
@@ -3696,6 +3714,7 @@ export async function runMcpServer(): Promise<void> {
                 licence: params['licence'] as string | undefined,
                 aiGenerated: params['aiGenerated'] as boolean | undefined,
                 photoChecked: params['photoChecked'] as boolean | undefined,
+                tags: params['tags'] as Record<string, string> | undefined,
               },
               config
             )

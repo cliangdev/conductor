@@ -8,6 +8,10 @@ import com.conductor.generated.v2.model.CreativePerformanceEntry;
 import com.conductor.generated.v2.model.CreativePerformancePlatform;
 import com.conductor.generated.v2.model.InsightsCoverage;
 import com.conductor.generated.v2.model.InsightsGroup;
+import com.conductor.generated.v2.model.InsightsTagGroup;
+import com.conductor.generated.v2.model.PlaybookEffect;
+import com.conductor.generated.v2.model.PlaybookEffectSide;
+import com.conductor.marketing.insights.PostBaselineService;
 import com.conductor.generated.v2.model.InsightsMover;
 import com.conductor.generated.v2.model.InsightsPost;
 import com.conductor.generated.v2.model.InsightsWindow;
@@ -44,9 +48,10 @@ public class PublishMetricsController implements PublishMetricsApi {
 
     @Override
     public ResponseEntity<MarketingInsightsResponse> getMarketingInsights(String projectId, String window,
-                                                                          String platform) {
+                                                                          String platform, String brandKitId,
+                                                                          java.util.List<String> include) {
         MarketingInsightsQueryService.Insights insights = insightsQueryService.compute(projectId, window, platform,
-                currentUser());
+                brandKitId, include != null && include.contains("tags"), currentUser());
         return ResponseEntity.ok(toResponse(insights));
     }
 
@@ -83,7 +88,7 @@ public class PublishMetricsController implements PublishMetricsApi {
     }
 
     private static MarketingInsightsResponse toResponse(MarketingInsightsQueryService.Insights r) {
-        return new MarketingInsightsResponse(toWindow(r.window()), toGroup(r.totals()),
+        MarketingInsightsResponse response = new MarketingInsightsResponse(toWindow(r.window()), toGroup(r.totals()),
                 r.byPlatform().stream().map(PublishMetricsController::toGroup).toList(),
                 r.byFormat().stream().map(PublishMetricsController::toGroup).toList(),
                 r.byHour().stream().map(PublishMetricsController::toGroup).toList(),
@@ -93,6 +98,15 @@ public class PublishMetricsController implements PublishMetricsApi {
                 r.movers().stream().map(PublishMetricsController::toMover).toList(),
                 new InsightsCoverage(r.coverage().platforms(), r.coverage().notes()),
                 r.creatives().stream().map(PublishMetricsController::toCreativeEntry).toList());
+        if (r.byTag() != null) {
+            response.byTag(r.byTag().stream().map(PublishMetricsController::toTagGroup).toList())
+                    .byTagWindow(toWindow(r.byTagWindow()))
+                    .playbookEffect(new PlaybookEffect(new PlaybookEffectSide(r.playbookEffect().withLessons().posts())
+                            .medianViewLift(r.playbookEffect().withLessons().medianViewLift()),
+                            new PlaybookEffectSide(r.playbookEffect().withoutLessons().posts())
+                                    .medianViewLift(r.playbookEffect().withoutLessons().medianViewLift())));
+        }
+        return response;
     }
 
     private static CreativePerformanceEntry toCreativeEntry(CreativePerformanceService.VariantPerformance p) {
@@ -103,11 +117,42 @@ public class PublishMetricsController implements PublishMetricsApi {
                 .headline(p.headline())
                 .engagementRate(p.engagementRate())
                 .avgViewPct(p.avgViewPct())
-                .views72h(p.views72h());
+                .views72h(p.views72h())
+                .settledPosts(p.settledPosts())
+                .medianViewLift(p.medianViewLift())
+                .medianRetentionLift(p.medianRetentionLift())
+                .beatBaselineShare(p.beatBaselineShare())
+                .withBaselinePosts(p.withBaselinePosts())
+                .beatBaselinePosts(p.beatBaselinePosts())
+                .viewVerdict(p.viewVerdict())
+                .retentionVerdict(p.retentionVerdict());
     }
 
     private static InsightsWindow toWindow(MarketingInsightsQueryService.Window w) {
         return new InsightsWindow(w.from(), w.to(), w.days());
+    }
+
+    private static InsightsTagGroup toTagGroup(MarketingInsightsQueryService.TagGroup t) {
+        MarketingInsightsQueryService.Group g = t.group();
+        PostBaselineService.LiftSummary l = t.lift();
+        return new InsightsTagGroup(g.key(), g.posts(), g.views(), g.likes(), g.comments(), g.shares(), g.saves(), t.tagKey())
+                .label(g.label())
+                .engagementRate(g.engagementRate())
+                .medianViews(g.medianViews())
+                .avgViewPct(g.avgViewPct())
+                .unsettledPosts(t.unsettledPosts())
+                .medianViewLift(l.medianViewLift())
+                .beatBaselineShare(l.beatBaselineShare())
+                .medianEngagementRate(l.medianEngagementRate())
+                .medianRetentionLift(l.medianRetentionLift())
+                .withBaselinePosts(l.withBaselinePosts())
+                .beatBaselinePosts(l.beatBaselinePosts())
+                .withRetentionBaselinePosts(l.withRetentionBaselinePosts())
+                .beatRetentionBaselinePosts(l.beatRetentionBaselinePosts())
+                .viewVerdict(l.viewVerdict())
+                .retentionVerdict(l.retentionVerdict())
+                .verdict(t.verdict())
+                .verdictMetric(t.verdictMetric());
     }
 
     private static InsightsGroup toGroup(MarketingInsightsQueryService.Group g) {

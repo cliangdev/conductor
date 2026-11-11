@@ -1,8 +1,11 @@
 package com.conductor.integration.connector.marketing;
 
+import com.conductor.creative.CreativeTagAttribution;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.WorkItem;
+import com.conductor.marketing.insights.LessonVerdictRules;
+import com.conductor.marketing.insights.PostBaselineService;
 import com.conductor.repository.PostPublishTargetMetricRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.WorkItemRepository;
@@ -48,10 +51,16 @@ public class MarketingInsightsSnapshotQuery {
     private final PostPublishTargetRepository targetRepository;
     private final PostPublishTargetMetricRepository metricRepository;
     private final WorkItemRepository workItemRepository;
+    private final CreativeTagAttribution tagAttribution;
+    private final PostBaselineService baselineService;
 
     public MarketingInsightsSnapshotQuery(PostPublishTargetRepository targetRepository,
                                           PostPublishTargetMetricRepository metricRepository,
-                                          WorkItemRepository workItemRepository) {
+                                          WorkItemRepository workItemRepository,
+                                          CreativeTagAttribution tagAttribution,
+                                          PostBaselineService baselineService) {
+        this.tagAttribution = tagAttribution;
+        this.baselineService = baselineService;
         this.targetRepository = targetRepository;
         this.metricRepository = metricRepository;
         this.workItemRepository = workItemRepository;
@@ -82,11 +91,61 @@ public class MarketingInsightsSnapshotQuery {
         }
 
         Map<String, Object> payload = build(targets, latestByTarget, window[0], window[1]);
+        payload.put("byHookType", byHookType(projectId, now.atOffset(ZoneOffset.UTC)));
         Map<String, Object> dueChanges = changesDueForReview(projectId, now);
         if (dueChanges != null) {
             payload.put("changesDueForReview", dueChanges);
         }
         return payload;
+    }
+
+    /**
+     * The weekly hook read: one row per hookType over the settled posts of the trailing 90 days (the same
+     * evidence set as insights' {@code byTag}, not this snapshot's seven-day window, because a week can never
+     * hold a settled Facebook post), through the shared attribution. A row carries the usual counters, the
+     * median view lift and the server's {@code verdict}/{@code verdictMetric} ({@code LessonVerdictRules}); a
+     * hookType with no computable view lift is left out, as the digest ranks on it. Best lift first.
+     */
+    private List<Map<String, Object>> byHookType(String projectId, OffsetDateTime now) {
+        Map<String, java.util.Set<CreativeTagAttribution.TagValue>> tagsByTarget = tagAttribution.tagsByTarget(projectId);
+        if (tagsByTarget.isEmpty()) {
+            return List.of();
+        }
+        PostBaselineService.Baselines evidence = baselineService.baselines(projectId, now);
+        Map<String, List<PostBaselineService.Observation>> byHook = new LinkedHashMap<>();
+        for (PostBaselineService.Observation o : evidence.settled()) {
+            tagsByTarget.getOrDefault(o.targetId(), java.util.Set.of()).stream()
+                    .filter(t -> "hookType".equals(t.key()))
+                    .map(CreativeTagAttribution.TagValue::value)
+                    .distinct()
+                    .forEach(hook -> byHook.computeIfAbsent(hook, k -> new ArrayList<>()).add(o));
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        byHook.forEach((hook, observations) -> {
+            PostBaselineService.LiftSummary lift = evidence.summarize(observations);
+            if (lift.medianViewLift() == null) {
+                return;
+            }
+            long views = 0;
+            long engagements = 0;
+            for (PostBaselineService.Observation o : observations) {
+                views += orZero(o.views());
+                engagements += orZero(o.likes()) + orZero(o.comments()) + orZero(o.shares()) + orZero(o.saves());
+            }
+            LessonVerdictRules.Default verdict = LessonVerdictRules.defaultFor(lift);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("hookType", hook);
+            row.put("posts", (long) observations.size());
+            row.put("views", views);
+            row.put("engagements", engagements);
+            row.put("engagementRate", views > 0 ? (double) engagements / views : 0.0);
+            row.put("medianViewLift", lift.medianViewLift());
+            row.put("verdict", verdict.verdict());
+            row.put("verdictMetric", verdict.metric());
+            rows.add(row);
+        });
+        rows.sort(Comparator.comparingDouble((Map<String, Object> r) -> (double) r.get("medianViewLift")).reversed());
+        return rows;
     }
 
     /**
@@ -170,7 +229,6 @@ public class MarketingInsightsSnapshotQuery {
             if (metric != null) {
                 accumulate(byPlatform, target.getPlatform(), views, engagements);
                 accumulate(byFormat, target.getFormat(), views, engagements);
-
                 if (views >= 1) {
                     WorkItem post = target.getWorkItem();
                     String displayId = post.getProject() != null && post.getProject().getKey() != null

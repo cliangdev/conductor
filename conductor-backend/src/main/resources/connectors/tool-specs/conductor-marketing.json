@@ -25,7 +25,8 @@
         "dimensions": [
           { "key": "topPosts", "label": "Top posts", "idField": "post", "valueField": "views", "topN": 5, "baselineN": 20, "minRelative": 0.30, "minRankMove": 3 },
           { "key": "byPlatform", "label": "By platform", "idField": "platform", "valueField": "engagementRate", "topN": 4, "baselineN": 4, "minRelative": 0.15 },
-          { "key": "byFormat", "label": "By format", "idField": "format", "valueField": "engagementRate", "topN": 4, "baselineN": 4, "minRelative": 0.15 }
+          { "key": "byFormat", "label": "By format", "idField": "format", "valueField": "engagementRate", "topN": 4, "baselineN": 4, "minRelative": 0.15 },
+          { "key": "byHookType", "label": "By hook type (median view lift over settled posts of the last 90 days; verdict is decided by the server)", "idField": "hookType", "valueField": "medianViewLift", "topN": 4, "baselineN": 4, "minRelative": 0.15 }
         ],
         "maxQuietPeriods": 8
       }
