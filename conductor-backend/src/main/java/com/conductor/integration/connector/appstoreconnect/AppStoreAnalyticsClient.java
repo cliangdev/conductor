@@ -257,6 +257,10 @@ public class AppStoreAnalyticsClient {
             if (day.isBefore(from) || day.isAfter(to)) {
                 return;
             }
+            // A day an instance carries rows for is a processed day too, even with no instance of its own: the
+            // history Apple ships in a request's first instances has no per-day instances. A later instance already
+            // replaces such a day whole, so it is complete, and a source's missing row on it is a real zero.
+            covered.computeIfAbsent(day, d -> new java.util.HashSet<>()).addAll(reportMetrics);
             Map<String, Map<String, Double>> target = merged.computeIfAbsent(day, d -> new HashMap<>());
             rows.forEach((source, metrics) ->
                     metrics.forEach((m, v) -> target.computeIfAbsent(source, s -> new HashMap<>()).merge(m, v, Double::sum)));
