@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og'
 
 // Route segment config — this image is static and identical for every link.
-export const alt = 'Conductor: a coordination platform for teams that work with AI agents'
+export const alt = 'Conductor: run your company with a team of AI agents. Agents do the work. Your team approves. Conductor ships it and learns.'
 export const size = { width: 1200, height: 630 }
 export const contentType = 'image/png'
 
@@ -76,7 +76,7 @@ export default function OpengraphImage() {
             color: 'rgba(255,255,255,0.92)',
           }}
         >
-          A coordination platform for teams that work with AI agents
+          Run your company with a team of AI agents
         </div>
 
         <div
@@ -86,7 +86,7 @@ export default function OpengraphImage() {
             color: 'rgba(255,255,255,0.7)',
           }}
         >
-          Write it or let an agent draft it. Your team approves. Conductor ships.
+          Agents do the work. Your team approves. Conductor ships it and learns.
         </div>
       </div>
     ),

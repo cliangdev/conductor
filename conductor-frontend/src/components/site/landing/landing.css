@@ -1,0 +1,73 @@
+/*
+ * Landing-page-only styles. This is the one place raw colour values are allowed.
+ *
+ * The scene-window shadow and the always-dark "ink" blocks (terminal, YAML snippet, dark creative
+ * thumbnails, final CTA band) are deliberate landing-only departures from docs/design-system.md:
+ * the design system uses flat surfaces with no shadows, but the marketing page needs product
+ * "scenes" that lift off the page and a dark block that stays dark in both themes.
+ */
+
+/* Fixed dark palette, the dark-theme values from globals.css, independent of the active theme. */
+.lp-ink {
+  --lp-ink-bg: hsl(213 15% 9%);
+  --lp-ink-bg-raised: hsl(213 15% 12%);
+  --lp-ink-fg: hsl(210 12% 93%);
+  --lp-ink-muted: hsl(214 10% 68%);
+  --lp-ink-accent: hsl(174 51% 56%);
+  --lp-ink-accent-bg: hsl(174 51% 47%);
+  --lp-ink-border: hsl(215 14% 17%);
+  background-color: var(--lp-ink-bg);
+  color: var(--lp-ink-fg);
+}
+
+.lp-window {
+  box-shadow: 0 30px 60px -36px hsl(213 15% 9% / 0.35);
+}
+
+/* Hero scene: the first row's status cycles In review -> Approved -> Published over 9s. */
+.lp-cycle > * {
+  grid-area: 1 / 1;
+  opacity: 0;
+  animation: lp-cycle 9s infinite;
+}
+.lp-cycle > :nth-child(1) {
+  animation-delay: 0s;
+}
+.lp-cycle > :nth-child(2) {
+  animation-delay: 3s;
+}
+.lp-cycle > :nth-child(3) {
+  animation-delay: 6s;
+}
+
+@keyframes lp-cycle {
+  0% {
+    opacity: 0;
+  }
+  4%,
+  30% {
+    opacity: 1;
+  }
+  34%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-cycle > * {
+    animation: none;
+    opacity: 0;
+  }
+  .lp-cycle > :nth-child(1) {
+    opacity: 1;
+  }
+}
+
+/* Sample creative thumbnails: brand-teal ink, so they stay visible on dark surfaces too. */
+.lp-ink.lp-creative {
+  background-color: hsl(175 47% 17%);
+}
+.lp-ink.lp-creative-alt {
+  background-color: hsl(175 28% 27%);
+}
