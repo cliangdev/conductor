@@ -1,7 +1,7 @@
 /*
  * Landing-page-only styles. This is the one place raw colour values are allowed.
  *
- * The scene-window shadow and the always-dark "ink" blocks (terminal, YAML snippet, dark creative
+ * The scene-window shadow and the always-dark "ink" blocks (dark creative
  * thumbnails, final CTA band) are deliberate landing-only departures from docs/design-system.md:
  * the design system uses flat surfaces with no shadows, but the marketing page needs product
  * "scenes" that lift off the page and a dark block that stays dark in both themes.
