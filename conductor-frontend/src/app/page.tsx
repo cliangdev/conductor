@@ -5,7 +5,6 @@ import { LogoStrip } from "@/components/site/landing/LogoStrip";
 import { Departments } from "@/components/site/landing/Departments";
 import { Platform } from "@/components/site/landing/Platform";
 import { Loop } from "@/components/site/landing/Loop";
-import { Tools } from "@/components/site/landing/Tools";
 import { Trust } from "@/components/site/landing/Trust";
 import { Source } from "@/components/site/landing/Source";
 import { FinalCta } from "@/components/site/landing/FinalCta";
@@ -28,7 +27,6 @@ export default function LandingPage() {
       <Departments />
       <Platform />
       <Loop />
-      <Tools />
       <Trust />
       <Source />
       <FinalCta />

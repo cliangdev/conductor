@@ -31,7 +31,7 @@ export const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`
 /** Nav rendered in the header of every public page. */
 const NAV = [
   { href: '/#use-cases', label: 'Product' },
-  { href: '/#platform', label: 'Platform' },
+  { href: '/#features', label: 'Features' },
   { href: '/#how-it-works', label: 'How it works' },
   { href: '/#trust', label: 'Trust' },
   { href: '/#source', label: 'Source' },
