@@ -46,6 +46,7 @@ const PLUGIN_FILES = [
   'skills/conductor-marketing-create/references/shotlist-template.md',
   'skills/conductor-marketing-create/references/slideshow-formats.md',
   'skills/conductor-marketing-create/references/team-run.md',
+  'skills/conductor-marketing-create/references/video-timeline.md',
 ]
 
 // Paths removed in previous versions — deleted on `conductor init` (and a refresh) to clean up stale installs.

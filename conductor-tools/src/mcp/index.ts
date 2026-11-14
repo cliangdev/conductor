@@ -150,6 +150,7 @@ import { generateCreativeImage, type GenerateCreativeImageParams } from './tools
 import { generateCreativeVideo } from './tools/creative-videos.js'
 import { VideoError, type VideoParams } from '../lib/video-common.js'
 import { composeSlideshowTool, type ComposeSlideshowParams } from './tools/slideshow.js'
+import { composeVideoTool, type ComposeVideoParams } from './tools/video-compose.js'
 import { attachSlideshowSpec, type AttachSlideshowSpecParams } from './tools/slideshow-spec.js'
 import { updateCreativeSlideText, type UpdateCreativeSlideTextParams } from './tools/slideshow-text.js'
 import {
@@ -2227,6 +2228,67 @@ export const TOOLS = [
     },
   },
   {
+    name: 'compose_video',
+    description: "Compose one hook-first 1080x1920 MP4 on this machine from a timeline: trimmed clips and still images joined by hard cuts (or a fade), timed text on screen from 0 s in the compose_slideshow look, and optional music, voice and clip sound. Use it for a short-form video that needs a moving opening or edits; use compose_slideshow for a photo post and MOTION for a brand ad. Checks it returns (errors fail it): text on screen in the first second, motion in the opening, stretches over 5 s with no change (warning), text clear of the platform UI. Returns videoPath, frame0Path, a 0-3 s contact sheet image, the timeline, checks, passed and the provenance. If passed is false, fix the spec and call again BEFORE showing anything. Next: preview_creative_draft({kind: \"CLIP\", clipPath: videoPath}), then upload_creative_media + create_creative (a CLIP has no commit step). Nothing is sent to Conductor.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        spec: {
+          type: 'object',
+          description: 'The timeline (local file paths; relative ones resolve against the project root).',
+          properties: {
+            id: { type: 'string', description: 'Names the output folder and file (optional)' },
+            segments: {
+              type: 'array',
+              description: 'In order, 1-20, 3-90 s in all. A clip is trimmed to startSec-endSec and centre-cropped to fill the frame; a still holds for durationSec (zoom adds a slow push-in).',
+              items: {
+                type: 'object',
+                properties: {
+                  clip: { type: 'string', description: 'A video file (use this or image)' },
+                  startSec: { type: 'number', description: 'Clip trim start, default 0' },
+                  endSec: { type: 'number', description: 'Clip trim end, default the clip end' },
+                  mute: { type: 'boolean', description: "Drop this clip's own sound" },
+                  image: { type: 'string', description: 'A PNG, JPEG or WebP still (use this or clip)' },
+                  durationSec: { type: 'number', description: 'Still only, required, 1-10' },
+                  zoom: { type: 'boolean', description: 'Still only: slow push-in' },
+                  transition: { type: 'string', enum: ['cut', 'fade'], description: 'How this segment follows the previous one: cut (default) or a 0.5 s cross-fade' },
+                },
+              },
+            },
+            texts: {
+              type: 'array',
+              description: 'Timed text beats, up to 40. Beats that overlap in time must not overlap in the frame. One beat must start at 0 s and last past 1 s.',
+              items: {
+                type: 'object',
+                properties: {
+                  fromSec: { type: 'number' },
+                  toSec: { type: 'number' },
+                  t: { type: 'string', description: 'The words; \\n starts a new line' },
+                  y: { type: 'number', description: '% of the frame height, keeping clear of the top 15% and bottom 22%' },
+                  fs: { type: 'number', description: 'Font size in px (default from the style)' },
+                  style: { type: 'string', enum: ['box', 'dark', 'stroke', 'sub'] },
+                },
+                required: ['fromSec', 'toSec', 't', 'y'],
+              },
+            },
+            audio: {
+              type: 'object',
+              properties: {
+                clipAudio: { type: 'string', enum: ['keep', 'mute'], description: "Clips' own sound, default keep" },
+                track: { type: 'string', description: 'A music file on this machine, looped to the length' },
+                voicePath: { type: 'string', description: 'A voice-over file on this machine, mixed over the music' },
+                duck: { type: 'boolean', description: 'Duck the music under clip sound and voice, default true' },
+              },
+            },
+          },
+          required: ['segments'],
+        },
+        draftDir: { type: 'string', description: 'Output folder (optional; defaults to <project>/.conductor/videos/<timestamp>-<id>/)' },
+      },
+      required: ['spec'],
+    },
+  },
+  {
     name: 'preview_creative_draft',
     description: "Look at a Creative BEFORE anything is saved: renders a draft on this machine and returns the contact sheet as an image plus the draftDir, readiness gaps and warnings. Takes the create_creative fields, plus local files (photoPath, clipPath, audioPath, per-beat photoPath) that are used for the render only. It never writes to Conductor — no Creative, no upload. It also runs the full render's per-placement checks (text spill, platform safe zones such as TikTok/Reels' overlay band, contrast, fonts, images) without saving anything and returns them as checks plus a passed flag. If passed is false, fix the design (copy, layout, layoutOverrides, typeOverrides) and call this again BEFORE showing the image or asking for approval — a failing check would fail the real render. Only when passed is true, show the image to the person; only after they approve, call commit_creative_draft. To change something, call this again. With baseCreativeId, previews edits on top of a saved Creative. For kind CAROUSEL pass slidePaths instead of a photo (the spec.json compose_slideshow wrote beside them is kept with the draft, or pass slideshowSpecPath): it returns one contact sheet per placement (slides in order), readiness and per-slide aspect violations; with a track (audio.trackId or audioPath) it also renders the slideshow MP4 on this machine and returns its path as slideshowVideoPath, timing each slide from its text when slideDurations is omitted (returns slideDurations, slideshowDurationSeconds and pacing; say the total length when showing it). Finished 9:16 slides (CAROUSEL) and videos (kind CLIP, via clipPath or clipPaths: nothing is sent to Conductor, no commit; then upload_creative_media + create_creative) are read for text under the platform UI: checks with rule safeZoneText (top y<290 is an error on slide 1 and in the first 3 s) or safeZoneUnchecked (could not look); passed false means fix the files and re-preview BEFORE showing them. The image shown for them is the Instagram UI drawn over the slides or the first seconds and each cut; overlaySheets lists the Instagram and TikTok sheets on disk (uiOverlay: instagram | tiktok | both (default) | none). Violations come back as a structured error and nothing is rendered.",
     inputSchema: {
@@ -3676,6 +3738,23 @@ export async function runMcpServer(): Promise<void> {
         }
         case 'compose_slideshow': {
           const result = await composeSlideshowTool(params as unknown as ComposeSlideshowParams, { config })
+          if (!result.ok) return errorResponse(result)
+          const { image, ...meta } = result
+          return image ? imageResponse(image, meta) : successResponse(meta)
+        }
+        case 'compose_video': {
+          const progressToken = request.params._meta?.progressToken
+          let step = 0
+          const onProgress = progressToken === undefined
+            ? undefined
+            : (message: string) => {
+                step += 1
+                void extra.sendNotification({
+                  method: 'notifications/progress',
+                  params: { progressToken, progress: step, message },
+                }).catch(() => {})
+              }
+          const result = await composeVideoTool(params as unknown as ComposeVideoParams, { log: onProgress })
           if (!result.ok) return errorResponse(result)
           const { image, ...meta } = result
           return image ? imageResponse(image, meta) : successResponse(meta)
