@@ -32,8 +32,13 @@ only what the choice needs: one or two follow-up questions, not a form.
 
 ## Which path
 
-- **An organic post or slideshow** (TikTok or Instagram photo post, no paid placement): build native
-  slides with `compose_slideshow`, then post them as a CAROUSEL Creative. Read
+- **An organic post or slideshow** (no paid placement): build native
+  slides with `compose_slideshow`, then post them as a CAROUSEL Creative. Route by platform first:
+  TikTok takes the photo slideshow or a video; Instagram, Facebook and YouTube take video only for
+  organic reach, so a slideshow goes there as its MP4 (with music today; add a spoken first line once
+  a voice is available, and say plainly that it has none until then), not as a photo post. The reason
+  in one line: photo posts on those platforms reach followers only, and a new account has none
+  (`references/platform-specs.md`, "Per-platform format"). Read
   `references/slideshow-formats.md` first; it covers the spec, archetypes, text rules and the flow.
   No logo, badge or offer goes on the slides, and the brand layouts below do not apply.
   Style is native unless the person asks for a kit's look or a kit has a slideshow style; the
@@ -89,8 +94,10 @@ of the problem or the result) before you write a line of copy.
 ### 3. Write the headline
 
 Prefer an approved line from the Knowledge page verbatim. Otherwise write one that names something
-real and specific, not a generic claim. Write 6 to 10 candidates across hook types, score them and
-keep the best two or three: `references/hooks.md`. Every candidate must read like a person posted
+real and specific, not a generic claim. A hook has three layers, all inside the first second: what
+frame 1 shows, the text on screen at 0 s and the first sound. Write 6 to 10 candidates across the
+nine hook types, each as visual, text and sound, score them and keep the best two or three:
+`references/hooks.md`. The product name is never in the hook. Every candidate must read like a person posted
 it: `references/voice.md`.
 
 If the Brand Kit's `accentPhraseRequired` is true, mark exactly one phrase per headline with
@@ -100,9 +107,9 @@ asterisks: `Every saved link, *finally usable*.` Never zero, never two — `prev
 Keep it short — checked at thumbnail size, not read up close.
 
 Decide whether this run carries a test (`references/learning-loop.md`, "Explore": the cap, from the
-retro's `list_creatives`). If it does, change one thing: usually the headline against an alternate
-hook from the spare candidates, or the format. Classify each kept hook's `hookType` with the mapping
-there.
+retro's `list_creatives`). If it does, change one thing: usually the hook type (a different piece
+with a different hook type, not the same piece twice), or the format. Each kept hook's `hookType` is
+its row in `hooks.md`'s hook library.
 
 ### 4. Obey the brand's copy rules
 
@@ -186,16 +193,19 @@ to (`.conductor/drafts/<timestamp>-<slug>/`), the readiness gaps and any render 
 has been saved to Conductor.** A copy-rule or accent-phrase violation comes back as an error naming
 the rule and field, without rendering — fix the copy and preview again.
 
-Pass `tags` on every preview and commit: `hookType` (classified from the mapping in
-`references/learning-loop.md`), `angle` if one applies, `format`, `archetype` for a slideshow, and
+Pass `tags` on every preview and commit. `hookType` (its row in `hooks.md`), `format` and `angle` are
+required (`references/learning-loop.md`, "Tag vocabulary"); add `archetype` for a slideshow, and
 `hypothesis` when this Creative is the tested arm, `lessons` (the playbook ids applied, at most 5),
 and `previewRounds` at commit (preview rounds before approval).
 
 To change an existing Creative's copy, layout or photo, preview the edit first with `baseCreativeId`:
 only the fields you pass change, and the commit then updates that Creative instead of creating one.
 
-To test a headline variant of an existing concept, preview the new headline the same way
-(`baseCreativeId` plus `headline`) so the person sees it on the artwork — but do **not** commit that
+A headline variant of an existing concept (`baseCreativeId` plus `headline`) is for an ad, a
+cross-platform use or a paid comparison. Never post the same body twice on one account and platform
+with only the hook changed: all four platforms treat that as duplicate content. To test a hook type,
+make a different piece instead (`references/learning-loop.md`, "Explore"). To cut a variant, preview
+the new headline the same way so the person sees it on the artwork — but do **not** commit that
 draft, since a commit would update the original. Once they approve, call `create_creative` with
 `variantOf` and the headline instead: it inherits everything else and gets the next letter.
 
@@ -277,10 +287,9 @@ call a Creative done while `ready` is false.
 display id, the frames and the readiness. It can be run once per draft; if its render fails the
 Creative is already saved — call `render_creative`, don't commit again. Verify with `get_creative`.
 After the commit, capture what was learned (`references/learning-loop.md`, "Capture") and say the
-`Learned:` lines when you report. If the test's hook was kept as a spare, suggest a lettered
-variant (`variantOf`) and `create_experiment`. Pass the variant only the tags that differ (its
-`hookType`, its `hypothesis` if it is the tested arm, its `lessons`); the control keeps no
-`hypothesis` tag. A DECIDED experiment resolves the hypothesis.
+`Learned:` lines when you report. A kept spare hook is a later piece with its own body, not a lettered variant on the same account and
+platform. Suggest `variantOf` plus `create_experiment` only for a cross-platform or paid comparison
+(`references/learning-loop.md`, "Explore", step 5), passing the variant only the tags that differ.
 Then `attach_creative_to_post` with the Post's Work Item id — it maps each placement to the right
 destinations (9:16 to TikTok/Reels, 4:5 to Instagram feed, 1:1 to Facebook, story to story targets)
 for every destination that has not set its own custom media, and never touches one that has. Verify
@@ -412,7 +421,8 @@ thing).
    accepts a chosen track on photos, so each destination sends it as `carouselAs: "photos"`
    (silent) or `"video"` (the slideshow MP4 with the track). Attach defaults to video for TikTok
    and YouTube and photos for Instagram and Facebook feed, and writes the choice into the target's
-   options; change it with `set_publish_targets` (`conductor-marketing-publish` skill). Mind each platform's length limit
+   options. For organic reach set Instagram and Facebook to `"video"` too: photo posts there reach
+   followers only. Change it with `set_publish_targets` (`conductor-marketing-publish` skill). Mind each platform's length limit
    for the video.
 
 ## Short videos from a photo or clip
@@ -421,6 +431,12 @@ A MOTION Creative animates the same brand layout from steps 1-5 above into a sho
 of a static frame — no separate video tool needed. Use it when a still doesn't hold attention, or a
 destination rewards video over an image.
 
+For an organic post, a MOTION follows the native look (no lockup, eyebrow label or kit accent on the
+first frame; `references/layout-guide.md`, "Where brand layouts apply") over a moving background (a
+filmed clip, or a generated one below), so frame 1 already shows a concrete subject in motion and the
+headline is on screen at frame 0 (`motion.preset` `none`, below). Brand-layout MOTION with animated
+presets is for ads.
+
 1. Pick a photo (step 5; a generated photo works here too) or, for a moving background, a video — check `list_creative_media({kind:
    "VIDEO"})` first and use its media id if something fits; otherwise pass the local file as
    `clipPath` (previewed from disk, uploaded on commit). For background music,
@@ -428,7 +444,9 @@ destination rewards video over an image.
 2. `preview_creative_draft` with `kind: "MOTION"` (to change a saved MOTION Creative, `baseCreativeId`
    instead) plus:
    - `motion.preset` — how the copy enters: `fade-up` (default), `word-by-word`, `accent-pop`, or
-     `none` (everything visible from the first frame).
+     `none` (everything visible from the first frame). For an organic post use `none`, so the
+     headline is on screen at frame 0 (a fade-in leaves frame 0 with no text); the animated presets
+     stay for ads.
    - `motion.durationSec` — 3 to 60, default 8.
    - `motion.background` — `source: "photo"` (default; `motion: "zoom-in"` (default), `zoom-out`,
      `pan-left`, `pan-right`, or `none`) or `source: "clip"` with `clipMediaId` (from step 1) and

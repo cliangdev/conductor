@@ -149,7 +149,10 @@ import { CodexConfirmationRequired } from '../lib/image-generation.js'
 import { generateCreativeImage, type GenerateCreativeImageParams } from './tools/creative-images.js'
 import { generateCreativeVideo } from './tools/creative-videos.js'
 import { VideoError, type VideoParams } from '../lib/video-common.js'
+import { generateVoiceLine } from './tools/creative-voice.js'
+import { VoiceError, type VoiceParams } from '../lib/voice-common.js'
 import { composeSlideshowTool, type ComposeSlideshowParams } from './tools/slideshow.js'
+import { composeVideoTool, type ComposeVideoParams } from './tools/video-compose.js'
 import { attachSlideshowSpec, type AttachSlideshowSpecParams } from './tools/slideshow-spec.js'
 import { updateCreativeSlideText, type UpdateCreativeSlideTextParams } from './tools/slideshow-text.js'
 import {
@@ -250,9 +253,11 @@ const CREATIVE_FIELD_PROPERTIES = {
   },
   tags: {
     type: 'object',
-    description: "Optional {hookType, angle, format, archetype, hypothesis, lessons, previewRounds}; used by the marketing skill's learning loop.",
+    description: "Optional {hookType, visualHook, soundHook, angle, format, archetype, hypothesis, lessons, previewRounds}; used by the marketing skill's learning loop. visualHook is what the first frame shows, soundHook what the first second sounds like.",
     properties: {
       hookType: { type: 'string' },
+      visualHook: { type: 'string', description: 'First frame, e.g. result-first, motion, odd-object, before-after, screen, face, text-only' },
+      soundHook: { type: 'string', description: 'First second, e.g. spoken-line, action-sound, music-only, none' },
       angle: { type: 'string' },
       format: { type: 'string' },
       archetype: { type: 'string' },
@@ -1390,7 +1395,7 @@ export const TOOLS = [
   },
   {
     name: 'get_post_analytics',
-    description: 'What happened to a Post after it went out: views, likes, comments and shares per destination as the platform reports them, with the series of snapshots and the totals. Empty until the connection\'s post_metrics feed has read the counters (every six hours after publishing).',
+    description: 'What happened to a Post after it went out: views, likes, comments and shares per destination as the platform reports them, with the series of snapshots and the totals. Instagram, Facebook and YouTube also give hookRate (share who stayed past the opening) and holdRate (watch time over length) when reported, never 0; TikTok reports neither. Empty until the connection\'s post_metrics feed has read the counters (every six hours after publishing).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1402,11 +1407,11 @@ export const TOOLS = [
   },
   {
     name: 'list_top_posts',
-    description: 'The project\'s best-performing published destinations ranked by one metric (views by default; likes, comments, shares, saves, reach, impressions), each with its Post, account and permalink.',
+    description: 'The project\'s best-performing published destinations ranked by one metric (views by default; likes, comments, shares, saves, reach, impressions, hook_rate), each with its Post, account and permalink.',
     inputSchema: {
       type: 'object',
       properties: {
-        metric: { type: 'string', description: 'views (default), likes, comments, shares, saves, reach or impressions' },
+        metric: { type: 'string', description: 'views (default), likes, comments, shares, saves, reach, impressions or hook_rate (share who stayed past the opening; Instagram, Facebook, YouTube only, TikTok is left out; `rate` is the 0-1 fraction, `value` is basis points)' },
         platform: { type: 'string', description: 'Only destinations on this platform (optional)' },
         since: { type: 'string', description: 'ISO-8601; only destinations read at or after this (optional)' },
         limit: { type: 'number', description: 'Rows, up to 100 (default 20)' },
@@ -1415,7 +1420,7 @@ export const TOOLS = [
   },
   {
     name: 'get_marketing_insights',
-    description: 'What is working in marketing. Default include ["posts"]: published Posts only (totals, engagement rate by platform, format and time, best and worst posts, top Creatives, movers vs the prior window). Add "tags" to include for byTag (90-day settled posts vs this account\'s median, with a server verdict to report as given), byTagWindow and playbookEffect; brandKitId filters them. Add "channels" for "how is marketing doing overall / per channel": per-channel status (LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH; `noDataYet` = connected but no complete day of data yet), the acquisition funnel (every stage and `window` share one window ending at the earliest complete day of the channels that feed the funnel, so conversions compare the same days; each channel\'s own metrics keep that channel\'s window), and per metric value, previous, changePct, noise (true = within normal variation, do not call it a trend) and target. Channels are WEB, SEARCH, SOCIAL, ADS, STORE, PRODUCT (the in-app numbers a connected product backend reports: `stages` in funnel order from first open to paid, plus metrics such as cost per trial; the funnel continues into them after store downloads). A metric with `provisional` has newest days that may still change; `smallSample` means too few users or events to call a change real. A metric with a target carries `status` (ON_TRACK = met; WATCH = close, or a rate miss too small a sample to call real; OFF_TRACK = missed by more; TOO_EARLY = no value, or a rate on fewer than 20 observations; STOPPED = a snapshot the feed stopped sending, so it is not judged; `note` says when it was last reported) and `missPct`, the shortfall as a fraction of the target (a count or money total is judged against the target prorated to the window). `basis` COHORT means each day counts the people who first opened that day, followed to now; `funnelBasis` says the in-app funnel is counted that way. A target with `readOnly` is set by the product backend (`setIn` says where) and cannot be changed here. A MISMATCH channel carries `mismatch`: the Conductor figure vs the product backend reference over the same settled days; treat the connector number as the one to trust until the gap is explained. Numbers are platform-reported and cover complete days only (see dataCompleteThrough), so they can differ from a platform UI that shows today. Pass `channel` with "channels" to also get that channel\'s series (weekly buckets: sums for counts and money, means for rates and positions; provisional = may still change) and its top 10 rows per breakdown (referrers, queries, campaigns, platforms, App Store traffic sources). Windows: 7d, 30d, 90d. For channels, 30d is read as the 28-day window, and 90d is valid only with `channel`. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
+    description: 'What is working in marketing. Default include ["posts"]: published Posts only (totals, engagement rate by platform, format and time, best and worst posts, top Creatives, movers vs the prior window). Add "tags" to include for byTag (90-day settled posts vs this account\'s median, with a server verdict to report as given: HOOK_LIFT when most posts report a hook rate, which TikTok never does), byTagWindow and playbookEffect; brandKitId filters them. Add "channels" for "how is marketing doing overall / per channel": per-channel status (LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH; `noDataYet` = connected but no complete day of data yet), the acquisition funnel (every stage and `window` share one window ending at the earliest complete day of the channels that feed the funnel, so conversions compare the same days; each channel\'s own metrics keep that channel\'s window), and per metric value, previous, changePct, noise (true = within normal variation, do not call it a trend) and target. Channels are WEB, SEARCH, SOCIAL, ADS, STORE, PRODUCT (the in-app numbers a connected product backend reports: `stages` in funnel order from first open to paid, plus metrics such as cost per trial; the funnel continues into them after store downloads). A metric with `provisional` has newest days that may still change; `smallSample` means too few users or events to call a change real. A metric with a target carries `status` (ON_TRACK = met; WATCH = close, or a rate miss too small a sample to call real; OFF_TRACK = missed by more; TOO_EARLY = no value, or a rate on fewer than 20 observations; STOPPED = a snapshot the feed stopped sending, so it is not judged; `note` says when it was last reported) and `missPct`, the shortfall as a fraction of the target (a count or money total is judged against the target prorated to the window). `basis` COHORT means each day counts the people who first opened that day, followed to now; `funnelBasis` says the in-app funnel is counted that way. A target with `readOnly` is set by the product backend (`setIn` says where) and cannot be changed here. A MISMATCH channel carries `mismatch`: the Conductor figure vs the product backend reference over the same settled days; treat the connector number as the one to trust until the gap is explained. Numbers are platform-reported and cover complete days only (see dataCompleteThrough), so they can differ from a platform UI that shows today. Pass `channel` with "channels" to also get that channel\'s series (weekly buckets: sums for counts and money, means for rates and positions; provisional = may still change) and its top 10 rows per breakdown (referrers, queries, campaigns, platforms, App Store traffic sources). Windows: 7d, 30d, 90d. For channels, 30d is read as the 28-day window, and 90d is valid only with `channel`. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2212,6 +2217,22 @@ export const TOOLS = [
     },
   },
   {
+    name: 'generate_voice_line',
+    description: "Make a spoken line (a hook or short narration, up to 60 words / 400 characters) as a voice file for compose_video, on this machine's Google Cloud credentials (billed to the person; fractions of a cent, so no confirmation under $0.05 and the cost is in the result). A hook line is about 8 words per 3 s. Returns audioPath (wav), durationSec, words [{w, fromSec, toSec}], timing (provider | estimated), captionBeats ready for compose_video spec.texts, and a provenance sidecar marking the voice AI-generated. Next: pass audioPath as spec.audio.voicePath with duck: true and paste captionBeats into spec.texts. A synthetic voice in realistic content needs the AI label (compliance checklist). Without a configured Google project or with the Text-to-Speech API disabled it returns a structured error with the fix.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The words to speak; plain text, punctuation shapes the pacing' },
+        voice: { type: 'string', description: 'Voice name <locale>-<family>-<voice> (default en-US-Chirp3-HD-Aoede; others: Kore, Puck, Charon, Leda, Fenrir). Families: Chirp3-HD, Neural2, Wavenet, Standard' },
+        speakingRate: { type: 'number', description: '0.25 to 2, default 1' },
+        offsetSec: { type: 'number', description: 'Where the voice starts in the video, default 0; shifts the caption beats' },
+        outDir: { type: 'string', description: 'Output folder (optional)' },
+        confirmCost: { type: 'boolean', description: 'Only after the person agreed to an estimate above $0.05' },
+      },
+      required: ['text'],
+    },
+  },
+  {
     name: 'compose_slideshow',
     description: "Compose organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Native look by default; brandKitId applies that kit's slideshowStyle and style overrides on top. Slide types: photo, screen, notes, grid, stack, tier, week, receipt, placard, messages. Returns paths, checks, passed, the resolved `style` (spec.json keeps your input style and adds it as `resolvedStyle`) and the first slide as an image. If passed is false, fix and call again. Next: preview_creative_draft({kind: \"CAROUSEL\", slidePaths, slideStyle: style}); the spec.json beside the slides travels with the Creative at commit, which makes its text editable later. Nothing is sent to Conductor.",
     inputSchema: {
@@ -2224,6 +2245,67 @@ export const TOOLS = [
         style: { ...SLIDESHOW_STYLE_SCHEMA, type: ['object', 'null'], description: 'One-off style, applied over the kit style, the spec\'s own style and the native look (optional). A field you leave out inherits from the layer below; a field set to null resets that field to the native value (fontFamily: null = bundled TikTok Sans and no fontUrl).' },
         draftDir: { type: 'string', description: 'Output folder (optional; defaults to <project>/.conductor/slideshows/<timestamp>-<id>/)' },
       },
+    },
+  },
+  {
+    name: 'compose_video',
+    description: "Compose one hook-first 1080x1920 MP4 on this machine from a timeline: trimmed clips and still images joined by hard cuts (or a fade), timed text on screen from 0 s in the compose_slideshow look, and optional music, voice and clip sound. Use it for a short-form video that needs a moving opening or edits; use compose_slideshow for a photo post and MOTION for a brand ad. Checks it returns (errors fail it): text on screen in the first second, motion in the opening, stretches over 5 s with no change (warning), text clear of the platform UI. Returns videoPath, frame0Path, a 0-3 s contact sheet image, the timeline, checks, passed and the provenance. If passed is false, fix the spec and call again BEFORE showing anything. Next: preview_creative_draft({kind: \"CLIP\", clipPath: videoPath}), then upload_creative_media + create_creative (a CLIP has no commit step). Nothing is sent to Conductor.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        spec: {
+          type: 'object',
+          description: 'The timeline (local file paths; relative ones resolve against the project root).',
+          properties: {
+            id: { type: 'string', description: 'Names the output folder and file (optional)' },
+            segments: {
+              type: 'array',
+              description: 'In order, 1-20, 3-90 s in all. A clip is trimmed to startSec-endSec and centre-cropped to fill the frame; a still holds for durationSec (zoom adds a slow push-in).',
+              items: {
+                type: 'object',
+                properties: {
+                  clip: { type: 'string', description: 'A video file (use this or image)' },
+                  startSec: { type: 'number', description: 'Clip trim start, default 0' },
+                  endSec: { type: 'number', description: 'Clip trim end, default the clip end' },
+                  mute: { type: 'boolean', description: "Drop this clip's own sound" },
+                  image: { type: 'string', description: 'A PNG, JPEG or WebP still (use this or clip)' },
+                  durationSec: { type: 'number', description: 'Still only, required, 1-10' },
+                  zoom: { type: 'boolean', description: 'Still only: slow push-in' },
+                  transition: { type: 'string', enum: ['cut', 'fade'], description: 'How this segment follows the previous one: cut (default) or a 0.5 s cross-fade' },
+                },
+              },
+            },
+            texts: {
+              type: 'array',
+              description: 'Timed text beats, up to 40. Beats that overlap in time must not overlap in the frame. One beat must start at 0 s and last past 1 s.',
+              items: {
+                type: 'object',
+                properties: {
+                  fromSec: { type: 'number' },
+                  toSec: { type: 'number' },
+                  t: { type: 'string', description: 'The words; \\n starts a new line' },
+                  y: { type: 'number', description: '% of the frame height, keeping clear of the top 15% and bottom 22%' },
+                  fs: { type: 'number', description: 'Font size in px (default from the style)' },
+                  style: { type: 'string', enum: ['box', 'dark', 'stroke', 'sub'] },
+                },
+                required: ['fromSec', 'toSec', 't', 'y'],
+              },
+            },
+            audio: {
+              type: 'object',
+              properties: {
+                clipAudio: { type: 'string', enum: ['keep', 'mute'], description: "Clips' own sound, default keep" },
+                track: { type: 'string', description: 'A music file on this machine, looped to the length' },
+                voicePath: { type: 'string', description: 'A voice-over file on this machine, mixed over the music' },
+                duck: { type: 'boolean', description: 'Duck the music under clip sound and voice, default true' },
+              },
+            },
+          },
+          required: ['segments'],
+        },
+        draftDir: { type: 'string', description: 'Output folder (optional; defaults to <project>/.conductor/videos/<timestamp>-<id>/)' },
+      },
+      required: ['spec'],
     },
   },
   {
@@ -2342,7 +2424,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         creativeId: { type: 'string', description: 'Any Creative in the family — a lettered variant or the root; resolved automatically' },
-        metric: { type: 'string', enum: ['views', 'engagement_rate', 'avg_view_pct'], description: 'Optional — defaults to views. The decision prefers avg_view_pct whenever every variant reports it, regardless of this choice.' },
+        metric: { type: 'string', enum: ['views', 'engagement_rate', 'avg_view_pct', 'hook_rate'], description: 'Optional — defaults to views. The decision prefers avg_view_pct whenever every variant reports it, regardless of this choice, unless hook_rate is chosen and every variant reports a hook rate (not TikTok).' },
         windowHours: { type: 'number', description: 'Hours after each variant fires before it counts toward the decision (optional, default 72)' },
       },
       required: ['creativeId'],
@@ -3674,8 +3756,33 @@ export async function runMcpServer(): Promise<void> {
             return errorResponse({ code: err.code, error: err.message, ...err.details })
           }
         }
+        case 'generate_voice_line': {
+          try {
+            return successResponse(await generateVoiceLine(params as unknown as VoiceParams))
+          } catch (err) {
+            if (!(err instanceof VoiceError)) throw err
+            return errorResponse({ code: err.code, error: err.message, ...err.details })
+          }
+        }
         case 'compose_slideshow': {
           const result = await composeSlideshowTool(params as unknown as ComposeSlideshowParams, { config })
+          if (!result.ok) return errorResponse(result)
+          const { image, ...meta } = result
+          return image ? imageResponse(image, meta) : successResponse(meta)
+        }
+        case 'compose_video': {
+          const progressToken = request.params._meta?.progressToken
+          let step = 0
+          const onProgress = progressToken === undefined
+            ? undefined
+            : (message: string) => {
+                step += 1
+                void extra.sendNotification({
+                  method: 'notifications/progress',
+                  params: { progressToken, progress: step, message },
+                }).catch(() => {})
+              }
+          const result = await composeVideoTool(params as unknown as ComposeVideoParams, { log: onProgress })
           if (!result.ok) return errorResponse(result)
           const { image, ...meta } = result
           return image ? imageResponse(image, meta) : successResponse(meta)

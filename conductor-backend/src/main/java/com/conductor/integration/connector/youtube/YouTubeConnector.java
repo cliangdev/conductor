@@ -448,6 +448,12 @@ public class YouTubeConnector implements OAuth2Connector, ActionConnector, Chann
                 if (analytics.averageViewDurationSeconds() != null) {
                     row.put("avg_view_duration_s", analytics.averageViewDurationSeconds());
                 }
+                if (analytics.engagedViews() != null) {
+                    row.put("engaged_views", Math.round(analytics.engagedViews()));
+                }
+                if (analytics.openingHold() != null) {
+                    row.put("opening_hold", analytics.openingHold());
+                }
             }
             rows.add(row);
         }

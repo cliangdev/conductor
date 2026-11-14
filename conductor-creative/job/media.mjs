@@ -5,6 +5,8 @@
  *                                historical volume + fade-out, byte-for-byte) and the loudness-
  *                                normalised paths below.
  *   - buildSlideshowArgs         CAROUSEL: N slides + a track -> one 1080x1920 H.264/AAC mp4.
+ *   - buildVideoComposeArgs      compose_video: trimmed clips and stills with hard cuts or fades, timed text PNGs
+ *                                overlaid, clip audio / music / voice mixed. Measure pass: buildVideoComposeMeasureArgs.
  *   - buildClipAudioArgs         CLIP: replace (`track`), duck-mix (`mix`) or strip (`none`) a clip's sound.
  *   - buildSlideshowMeasureArgs / buildClipAudioMeasureArgs   loudnorm pass 1 for the two above.
  *   - parseLoudnormJson / runLoudnormTwoPass                  the two-pass driver.
@@ -147,7 +149,7 @@ export function slideshowDuration(durations, crossfadeSec = CROSSFADE_SEC) {
   return Math.round((sum - crossfadeSec * (durations.length - 1)) * 1000) / 1000;
 }
 
-function slideChain(zoom, d) {
+export function slideChain(zoom, d) {
   if (zoom) {
     const frames = Math.round(d * SLIDE_FPS);
     return `scale=4320:7680:force_original_aspect_ratio=increase:out_range=tv,crop=4320:7680,setsar=1,format=yuv420p,`
@@ -219,6 +221,168 @@ export function buildSlideshowArgs(spec, inputs, measured) {
   args.push(...VIDEO_ENCODE, ...COLOR_TAGS);
   if (audioPath) args.push(...AUDIO_ENCODE);
   args.push('-t', num(T), '-movflags', '+faststart', '-y', outPath);
+  return args;
+}
+
+/* ── compose_video (timeline of clips + stills + timed text) ─────────────── */
+
+const AUDIO_FMT = 'aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo';
+
+/** One clip segment: trimmed to [startSec, startSec + d), filled to 1080x1920, held on its last frame if the source runs short, exactly d long. */
+export function trimmedClipChain(startSec, d) {
+  return `trim=start=${num(startSec)}:duration=${num(d)},setpts=PTS-STARTPTS,fps=${SLIDE_FPS},`
+    + `scale=${SLIDE_W}:${SLIDE_H}:force_original_aspect_ratio=increase:out_range=tv,crop=${SLIDE_W}:${SLIDE_H},setsar=1,format=yuv420p,`
+    + `tpad=stop_mode=clone:stop_duration=1,trim=duration=${num(d)},setpts=PTS-STARTPTS,settb=1/${SLIDE_FPS}`;
+}
+
+/* The input argv in order: segments, then text PNGs, then music, then voice; plus each group's input index. */
+function composeInputs(plan, inputs) {
+  const args = [];
+  const idx = { text: [], music: null, voice: null };
+  plan.segments.forEach((seg, i) => {
+    const p = inputs.segmentPaths[i];
+    if (seg.kind === 'clip' || seg.zoom) args.push('-i', p);
+    else args.push('-loop', '1', '-framerate', String(SLIDE_FPS), '-t', num(seg.durationSec), '-i', p);
+  });
+  let n = plan.segments.length;
+  (inputs.textPaths || []).forEach((p) => {
+    args.push('-loop', '1', '-framerate', String(SLIDE_FPS), '-t', num(plan.totalSec), '-i', p);
+    idx.text.push(n);
+    n += 1;
+  });
+  if (inputs.musicPath) { args.push('-stream_loop', '-1', '-i', inputs.musicPath); idx.music = n; n += 1; }
+  if (inputs.voicePath) { args.push('-i', inputs.voicePath); idx.voice = n; n += 1; }
+  return { args, idx };
+}
+
+/* The audio filter lines (the last label is [a]), or null when the video has no sound at all. */
+function composeAudioGraph(plan, idx, measured) {
+  const T = plan.totalSec;
+  const lines = [];
+  const hasBed = plan.segments.some((s) => Boolean(s.useAudio));
+  if (!hasBed && idx.music == null && idx.voice == null) return null;
+  const a = plan.audio || {};
+
+  let dialog = null;
+  if (hasBed) {
+    plan.segments.forEach((seg, i) => {
+      const d = seg.durationSec;
+      if (seg.useAudio) {
+        lines.push(`[${i}:a]atrim=start=${num(seg.startSec || 0)}:duration=${num(d)},asetpts=PTS-STARTPTS,aresample=48000,${AUDIO_FMT},apad=whole_dur=${num(d)},atrim=0:${num(d)},asetpts=PTS-STARTPTS[ca${i}]`);
+      } else {
+        lines.push(`anullsrc=r=48000:cl=stereo,atrim=0:${num(d)},asetpts=PTS-STARTPTS[ca${i}]`);
+      }
+    });
+    let prev = 'ca0';
+    for (let k = 1; k < plan.segments.length; k += 1) {
+      const out = `cb${k}`;
+      if (plan.segments[k].transitionIn === 'fade') lines.push(`[${prev}][ca${k}]acrossfade=d=${CROSSFADE_SEC}[${out}]`);
+      else lines.push(`[${prev}][ca${k}]concat=n=2:v=0:a=1[${out}]`);
+      prev = out;
+    }
+    lines.push(`[${prev}]${AUDIO_FMT}[bed]`);
+    dialog = 'bed';
+  }
+  if (idx.voice != null) {
+    lines.push(`[${idx.voice}:a]aresample=48000,${AUDIO_FMT},asetpts=PTS-STARTPTS[vo]`);
+    if (dialog) {
+      lines.push('[bed][vo]amix=inputs=2:duration=longest:normalize=0[dlg]');
+      dialog = 'dlg';
+    } else {
+      dialog = 'vo';
+    }
+  }
+  if (dialog) lines.push(`[${dialog}]apad=whole_dur=${num(T)},atrim=0:${num(T)},asetpts=PTS-STARTPTS[dialog]`);
+
+  let mix = 'dialog';
+  if (idx.music != null) {
+    const musicVol = dialog ? (a.musicVolume != null ? a.musicVolume : 0.3) : 1;
+    lines.push(`[${idx.music}:a]atrim=0:${num(T)},asetpts=PTS-STARTPTS,aresample=48000,${AUDIO_FMT},volume=${musicVol}[mu]`);
+    if (!dialog) {
+      mix = 'mu';
+    } else if (a.duck !== false) {
+      lines.push('[dialog]asplit=2[dl][sc]');
+      lines.push('[mu][sc]sidechaincompress=threshold=0.05:ratio=4:attack=20:release=400[duck]');
+      lines.push('[dl][duck]amix=inputs=2:duration=first:normalize=0[mix]');
+      mix = 'mix';
+    } else {
+      lines.push('[dialog][mu]amix=inputs=2:duration=first:normalize=0[mix]');
+      mix = 'mix';
+    }
+  }
+  lines.push(`[${mix}]${buildAudioFilter({
+    durationSec: T, volume: 1, foldVolume: false, normalize: true, fadeInSec: 0,
+    fadeOutSec: a.fadeOutSec != null ? a.fadeOutSec : 1, targetLufs: a.targetLufs, measured,
+  })}[a]`);
+  return lines;
+}
+
+/** Whether a compose_video plan makes any sound (so the encode needs the loudnorm measure pass). */
+export function videoComposeHasAudio(plan, inputs) {
+  return plan.segments.some((s) => s.useAudio) || Boolean(inputs.musicPath) || Boolean(inputs.voicePath);
+}
+
+/**
+ * Pass-1 (measure only) argv for a compose_video mix; null when the plan has no audio.
+ *   plan  { segments: [{ kind, startSec, durationSec, useAudio, transitionIn }], totalSec,
+ *           audio?: { duck, musicVolume, fadeOutSec, targetLufs } }
+ */
+export function buildVideoComposeMeasureArgs(plan, inputs) {
+  const { args, idx } = composeInputs(plan, inputs);
+  const audio = composeAudioGraph(plan, idx, null);
+  if (!audio) return null;
+  return [...args, '-filter_complex', audio.join(';'), '-map', '[a]', '-t', num(plan.totalSec), '-f', 'null', '-'];
+}
+
+/**
+ * Full compose_video encode argv: 1080x1920, 30 fps, H.264 + AAC (audio only when there is some).
+ *   plan    { segments: [{ kind: 'clip'|'image', startSec, durationSec, zoom?, useAudio?, transitionIn: 'cut'|'fade' }],
+ *             texts: [{ fromSec, toSec }], totalSec, audio? }
+ *   inputs  { segmentPaths, textPaths (one PNG per plan.texts entry), musicPath?, voicePath?, outPath }
+ *   measured  loudnorm pass-1 JSON (required when the plan has audio)
+ * The caller has already resolved durations: a 'fade' boundary overlaps the previous segment by 0.5 s, so the
+ * xfade offset here is the running length minus 0.5 (the same sum the caller used for totalSec and the text times).
+ */
+export function buildVideoComposeArgs(plan, inputs, measured) {
+  const n = plan.segments.length;
+  if (!n) throw new Error('compose_video needs at least one segment');
+  const { args, idx } = composeInputs(plan, inputs);
+  const graph = plan.segments.map((seg, i) => (seg.kind === 'clip'
+    ? `[${i}:v]${trimmedClipChain(seg.startSec || 0, seg.durationSec)}[s${i}]`
+    : `[${i}:v]${slideChain(Boolean(seg.zoom), seg.durationSec)}[s${i}]`));
+  let cur = 's0';
+  let acc = plan.segments[0].durationSec;
+  for (let k = 1; k < n; k += 1) {
+    const seg = plan.segments[k];
+    const out = `x${k}`;
+    if (seg.transitionIn === 'fade') {
+      const offset = Math.round((acc - CROSSFADE_SEC) * 1000) / 1000;
+      graph.push(`[${cur}][s${k}]xfade=transition=fade:duration=${CROSSFADE_SEC}:offset=${num(offset)}[${out}]`);
+      acc = offset + seg.durationSec;
+    } else {
+      // No fps filter after the concat: it drops the last frame of the joined stream and every later cut drifts.
+      graph.push(`[${cur}][s${k}]concat=n=2:v=1:a=0,settb=1/${SLIDE_FPS}[${out}]`);
+      acc += seg.durationSec;
+    }
+    cur = out;
+  }
+  (plan.texts || []).forEach((t, j) => {
+    graph.push(`[${idx.text[j]}:v]format=rgba,setpts=PTS-STARTPTS[t${j}]`);
+    graph.push(`[${cur}][t${j}]overlay=0:0:format=auto:enable='between(t,${num(t.fromSec)},${num(t.toSec)})'[o${j}]`);
+    cur = `o${j}`;
+  });
+  graph.push(`[${cur}]format=yuv420p[vout]`);
+  const hasAudio = videoComposeHasAudio(plan, inputs);
+  if (hasAudio) {
+    if (!measured) throw new Error('buildVideoComposeArgs: loudnorm measurements are required when there is audio');
+    graph.push(...composeAudioGraph(plan, idx, measured));
+  }
+  args.push('-filter_complex', graph.join(';'), '-map', '[vout]');
+  if (hasAudio) args.push('-map', '[a]');
+  args.push(...VIDEO_ENCODE, '-r', String(SLIDE_FPS), ...COLOR_TAGS);
+  if (hasAudio) args.push(...AUDIO_ENCODE);
+  else args.push('-an');
+  args.push('-t', num(plan.totalSec), '-movflags', '+faststart', '-y', inputs.outPath);
   return args;
 }
 

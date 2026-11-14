@@ -226,13 +226,15 @@ conversation:
 3. **Ideas.** Three ideators with different angles (story and emotion, utility and education, trend
    and humor) each write four ideas without seeing each other's.
 4. **Judging.** The ideas are shuffled, stripped of their source and given neutral IDs. A judge on a
-   different model tier scores each against a seven-criterion rubric (hook strength, audience
+   different model tier scores each against a eight-criterion rubric (visual hook, text and spoken hook, audience
    relevance, reads like a person, brand fit, feasibility with assets on hand, novelty, shareability), writing its reasoning
    before each score, and picks three finalists. Each finalist that can be rendered gets a quick local
    draft, and the judge then looks at the actual images, compares the finalists pairwise in both orders
    (a split counts as a tie) and argues against its own leader before naming a winner.
-5. **Script and direction.** A scriptwriter writes the hook (landing in the first three seconds),
-   timed beats, payoff, call to action and captions; an art director turns that into visual
+5. **Script and direction.** A scriptwriter writes the hook in three layers (what the first frame shows,
+   the text on screen at 0 s, the first sound, all in the first second, with no product name), timed
+   beats, a payoff inside the first third, one planted reason to comment, a loop ending for short pieces,
+   call to action and captions; an art director turns that into visual
    direction and the exact spec for the draft renderer.
 6. **Publish pack and checks.** Before you see the draft, the team runs a pre-publish checklist and
    writes a publish pack (below).
@@ -242,14 +244,14 @@ once, at the final draft preview: you see the draft, the runners-up's sheets and
 winner won and a short pack summary, then choose *Approve & upload*, *Use runner-up*, *Request changes* or *Stop*. Nothing is
 uploaded to Conductor until you approve. The run ends at a committed Creative and **never creates a
 Post**; make the Post afterwards with the `conductor-marketing-publish` skill. To test a
-runner-up's hook, cut it as a lettered variant of the Creative (see section 4).
+runner-up's hook, make it its own piece, not a second post of the same body (see section 4).
 
 **The publish pack.** Each run also leaves `publish-pack.md` (for you) and `publish-pack.json` (for
 the publisher) in its folder. Per platform it holds the final caption with the search keyword in the
 first line and a call to action that names the app, 3 to 5 hashtags, a pinned comment (you post that by hand; Conductor cannot post
 comments), a reminder to repost to Stories with a link sticker, the cover frame, alt text for every image or card, where the on-screen text sits, the
 sound and its licence, a posting window from your insights (or "no data yet"), and 2 to 3 alternate
-hooks, each tagged with a hook type, ready to cut as lettered variants for a hook test. When you make
+hooks, each tagged with a hook type, kept as spares for later pieces. When you make
 the Post from the Creative with the `conductor-marketing-publish` skill, it finds the pack and
 pre-fills each destination's caption and publish options. You see them in the confirmation table and
 can change any of them, and the Post still goes through the normal review.
@@ -282,12 +284,12 @@ idea that fails one in a way copy cannot fix is dropped and the decision says so
 public guidance (the FTC's endorsement FAQ and the TikTok, Meta and YouTube AI-disclosure rules) and
 are a safeguard, not legal advice.
 
-**The learning loop.** Each run records its idea's hook type, angle and format. At the start of the
+**The learning loop.** Each run records its idea's hook type, angle and format (all three are required on every commit). At the start of the
 next run, the team reads those tags for every earlier run that has a Creative, together with how that
 Creative performed (views, engagement, average view percentage and any hook experiment result), and
 writes `context/learning.md`: which hook types and angles did well. The strategist uses it in the
-next brief. With no data yet, it says so. Posting a runner-up's hook as a lettered variant is what
-turns this into a real comparison.
+next brief. With no data yet, it says so. Hook types are compared across different pieces by tag, not by
+posting one body twice (section 4).
 
 **Filming ideas.** An idea is either `RENDER`, meaning Conductor can render it (a still, carousel,
 story sequence, or motion text over photos or clips you already have), or `FILM`, meaning it needs a
@@ -393,8 +395,13 @@ From here, submit the Post for review the same way you always have — see
 ## 4. Variants and hook experiments
 
 Cut a lettered variant (`12b` from `12a`) with its own headline — same photo, layout, and body,
-different hook. Publish both under similar conditions (same time of day, same platform) so the
-comparison is fair, then open **Start experiment** on either variant's editor page and choose a
+different hook — for an ad, or to compare across two platforms. **Do not post the same body twice on
+one account and platform with only the hook changed:** TikTok, Instagram, Facebook and YouTube all treat
+that as duplicate content and cut its reach. To learn which kind of hook works, make different pieces with
+different hook types and read the results by tag (see section 4b): the skill tags every Creative with its
+hook type, format and angle, and on a workspace whose Creatives are still untagged it tags the last 90 days
+first. When you do have a cross-platform or paid pair, publish both under similar conditions (same time of
+day), then open **Start experiment** on either variant's editor page and choose a
 metric (views, engagement rate, or average view %) and a window in hours (72 by default).
 
 Conductor checks in on its own once every variant has published and reached its window — you can

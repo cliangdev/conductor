@@ -7,6 +7,15 @@ choose it for the hardest placement, usually 9:16. Never rely on the registry de
 These notes come from rendering the same photo and headline in every layout with
 `preview_creative_draft`.
 
+## Where brand layouts apply
+
+Brand layouts (everything below) are for ads and STILL artwork. For an organic post, the first frame
+of a video and slide 1 of a slideshow use the native look instead: plain platform-style text (the
+`box` and `stroke` styles `compose_slideshow` already has), no eyebrow label, no kit accent colour on
+words, no lockup or logo, no CTA badge. A MOTION made for organic use is the same: no lockup, no
+accent phrase, and `motion.preset` `none` so the headline is on screen at frame 0. Slideshows and
+clips bypass the Brand Kit's styling by design; do not push kit styling onto them.
+
 ## Default
 
 - 9:16 enabled: **`bleed`**. Use **`card`** when the photo itself must stay bright and readable.

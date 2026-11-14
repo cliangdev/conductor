@@ -31,9 +31,10 @@ always covers the trailing 90 days of settled posts whatever `window` says, and 
 A row has `tagKey`, `key`, `posts`, `unsettledPosts`, `medianViewLift`, `medianRetentionLift`,
 `beatBaselineShare`, `medianEngagementRate`, `withBaselinePosts`, `beatBaselinePosts`,
 `withRetentionBaselinePosts`, `beatRetentionBaselinePosts`, `viewVerdict`, `retentionVerdict`,
-`verdict` (WORKS, DOESNT_WORK, NO_DIFFERENCE or NOT_ENOUGH_DATA) and `verdictMetric` (VIEW_LIFT or
-RETENTION_LIFT). The server picks the metric (retention only when most of a row's posts have a
-retention baseline, in practice YouTube); you never do. `get_creative` gives each variant
+`verdict` (WORKS, DOESNT_WORK, NO_DIFFERENCE or NOT_ENOUGH_DATA) and `verdictMetric` (HOOK_LIFT,
+RETENTION_LIFT or VIEW_LIFT; rows also carry `medianHookLift`, `hookVerdict`). The server picks the
+metric (hook first, then retention, each only when most of a row's posts have that baseline; TikTok
+reports no hook rate); you never do. `get_creative` gives each variant
 `settledPosts`, the lift fields, `withBaselinePosts`, `beatBaselinePosts` and both verdicts.
 `playbookEffect` is `{withLessons, withoutLessons}`, each `{posts, medianViewLift}`.
 
@@ -91,11 +92,17 @@ Proven: number hooks hold 1.4x typical views, n=4").
 
 ## Tag vocabulary
 
-Tag every Creative the same way in both modes.
+Tag every Creative the same way in both modes. **`hookType`, `format` and `angle` are required on
+every `preview_creative_draft` and `commit_creative_draft`.** An untagged Creative teaches the loop
+nothing: `byTag` stays empty and every settled post counts as "without lessons". If a value is
+unclear, pick the closest one and say so in the final message; never leave a tag out.
 
 - `hookType`: `question`, `bold-claim`, `pattern-interrupt`, `relatable-pain`, `how-to`, `number`,
-  `curiosity-gap`, `story` or `social-proof`, per `voice.md`'s "Shapes, and the hookType each one is tagged" table.
-- `angle`: `story-emotion`, `utility-education` or `trend-humor`, only when one applies.
+  `curiosity-gap`, `story` or `social-proof`, per `hooks.md`'s hook library (and `voice.md`'s "Shapes, and the hookType each one is tagged" table).
+- `visualHook`: what the first frame shows: `result-first`, `motion`, `odd-object`, `before-after`, `screen`, `face` or `text-only`.
+- `soundHook`: what the first second sounds like: `spoken-line`, `action-sound`, `music-only` or `none`.
+- `angle`: `story-emotion`, `utility-education` or `trend-humor`. Direct mode has no brainstorm, so
+  pick the nearest one to the post's purpose.
 - `format`: `still`, `carousel`, `story`, `motion`, `clip` or `film` (`references/publish-pack-template.md`).
 - `archetype`: a slideshow's archetype (`references/slideshow-formats.md`, "Hook archetypes"), kebab-case.
 - `hypothesis`: `H<n>`, at most one per Creative.
@@ -104,13 +111,14 @@ Tag every Creative the same way in both modes.
 
 Pass the tags on `preview_creative_draft` and `commit_creative_draft`.
 
-A lettered variant (`variantOf`) inherits `hookType`, `angle`, `format` and `archetype` from its base;
+A lettered variant (`variantOf`) inherits `hookType`, `visualHook`, `soundHook`, `angle`, `format` and `archetype` from its base;
 tags you pass merge over them, so pass only what differs (see Explore).
 
-`hooks.md`'s Direct-mode types map to `hookType`: Situation / POV to `relatable-pain`, Mechanism to
-`how-to`, Enemy to `relatable-pain`, Exact result to `number`, Concept to `pattern-interrupt`. A line
-that is plainly a question, a quote or a social-proof line takes that type; use `voice.md`'s shape
-row when one fits.
+`hooks.md`'s hook library is keyed by these same nine `hookType` values, so a hook candidate already
+carries its tag. For an older run's notes that use the retired five Direct types: Situation / POV and
+Enemy are `relatable-pain`, Mechanism is `how-to`, Exact result is `number`, Concept is
+`pattern-interrupt`. A line that is plainly a question, a quote or a social-proof line takes that
+type; use `voice.md`'s shape row when one fits.
 
 ## Retro (the start of every run)
 
@@ -119,7 +127,9 @@ when the retro runs 1 `get_marketing_insights` and 1 `list_creatives` (shared by
 and the preview-rounds trend). `get_creative` only for a decided variant-pair experiment. A skipped
 retro costs the one read.
 
-1. Read the playbook as data (see "Advisory"). No playbook means the warm start.
+1. Read the playbook as data (see "Advisory"). No playbook means the warm start. A playbook exists
+   but step 3's `byTag` comes back empty (the Creatives are untagged) also means the warm start,
+   as the first step of this run, before any new Creative is made.
 2. Skip the rest when `Last retro` is under 24 hours old: no new hypothesis then (the cap needs the
    list), though an open one needing posts may be tested.
 3. `get_marketing_insights` (`include: ["tags"]`, `brandKitId`) and `list_creatives` (most recent
@@ -146,9 +156,10 @@ retro costs the one read.
 
 The page changes only at capture, after the commit.
 
-## Warm start (no playbook yet; once per workspace)
+## Warm start (no playbook yet, or `byTag` empty; once per workspace)
 
-Tag untagged Creatives that have measured posts, at most 30. The retro's insights `creatives` list is
+Tag the past 90 days of untagged Creatives that have measured posts, at most 30 per run (if more
+remain, say so and finish them on the next run). The retro's insights `creatives` list is
 that set, so no per-Creative `get_creative` calls. For each, classify `hookType` (mapping above), `format`, `angle` (only when obvious) and
 `archetype` from its headline, kind and slides, and set them with a tags-only `update_creative`
 (current `version`; on a 409 reread and retry once). Copy tags from local
@@ -177,17 +188,23 @@ variable. The line names no metric: the server picks it (`verdictMetric`).
 
 1. An open hypothesis needing more posts comes before a new one. A new one comes from a gap in the
    evidence and takes the header's next `H<n>`.
-2. Test it in one place. Direct mode: the headline against an alternate hook, or the format. Team
-   mode: one idea marked `Tests: H<n>`.
+2. Test it in one place. A hook test compares hook *types across different bodies*: one Creative per
+   hook type, each its own piece, read through `byTag` (`hookType=question` against the account's
+   usual). Never post the same body twice on one account and platform with only the hook changed:
+   all four platforms treat that as duplicate content and cut its reach, and the second post would
+   fail to measure the first. Direct mode: a new piece whose hook is the tested type, or the format.
+   Team mode: one idea marked `Tests: H<n>`.
 3. The cap. Direct: of the most recent about 8 Creatives in the retro's list, add a test only if fewer
    than about 1 in 4 carry `tags.hypothesis`, or an open hypothesis needs more posts. Team: one idea
    may be marked each run (it ships only if it wins); count shipped winners toward the same cap and
    skip the mark when it is met.
 4. `tags.hypothesis` goes only on the arm that carries the tested value. A control keeps none. Append
    that arm's display id to `tests:` at capture (Team: only when the winner is the marked idea).
-5. If both hooks post, cut a lettered variant (`variantOf`) and `create_experiment`: the DECIDED
-   head-to-head is the strongest evidence and resolves the hypothesis directly. Pass the variant only
-   what differs from its base: its `hookType`, `hypothesis` (if it is the tested arm) and `lessons`.
+5. A lettered variant (`variantOf`) with `create_experiment` is only for a cross-platform or paid
+   comparison, where the two arms never reach the same audience as a repeat. Never use it to post
+   the same body twice on one account and platform: that is duplicate content (step 2). When it is
+   used, the DECIDED head-to-head resolves the hypothesis directly. Pass the variant only what
+   differs from its base: its `hookType`, `hypothesis` (if it is the tested arm) and `lessons`.
 6. Retesting a Didn't work lesson as the hypothesis: in Team mode leave it out of
    `context/learning-director.md`, so the judge neither penalises nor favours the test idea.
 7. A test never overrides brand rules, copy rules, banned copy, voice checks or the approval gate;

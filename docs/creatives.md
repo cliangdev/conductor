@@ -268,6 +268,34 @@ opening of a CLIP; its sound is chosen with `audio.source` (`clip`, `mix`, `trac
 Veo 3.1 GA on Vertex lists retirement as "Nov 17, 2026 or later" with no replacement named. Output carries
 Google's SynthID watermark and counts as AI-generated for platform labels.
 
+## Spoken lines (`generate_voice_line`) {#spoken-lines}
+
+A local MCP tool that turns one spoken line into a voice file for `compose_video`'s `audio.voicePath`, plus
+word times and caption beats. Why: a human voice in the first 3 s held viewers about 25% better to second
+10 than music alone, and narration-free slideshows are named in YouTube's inauthentic-content policy. It is
+a hook or short-narration tool, not long-form: the hard limit is 60 words and 400 characters per call.
+
+- **Route.** Google Cloud Text-to-Speech (`texttospeech.googleapis.com`) billed to the project in
+  `vertexProject` (the one used for video), with the person's gcloud token; no API key. Default voice
+  `en-US-Chirp3-HD-Aoede` (Chirp 3: HD, $30 per 1M characters, 1M free a month); `voice` accepts any
+  `<locale>-<Chirp3-HD|Neural2|Wavenet|Standard>-<name>`; `speakingRate` 0.25 to 2. The API must be enabled
+  on the project: if not, the tool returns `VOICE_API_DISABLED` with `gcloud services enable
+  texttospeech.googleapis.com --project <id>` (it never enables anything itself).
+- **Word timing.** Chirp 3: HD does not support SSML `<mark>`, so its word times are `timing: "estimated"`:
+  the measured audio length (ffprobe, WAV header as a fallback) spread over the words by letter count, with
+  a pause weight after commas and sentence ends. The Neural2, WaveNet and Standard families go through the
+  `v1beta1` SSML-mark route and return `timing: "provider"`. No speech-recognition dependency.
+- **Output.** `<project>/.conductor/generated/<timestamp>-voice-<slug>/voice.wav` (16-bit mono, 24 kHz), a
+  `voice.wav.provenance.json` (`aiGenerated: true`, voice, SHA-256 of the text, characters, timing, cost
+  estimate), and in the result `durationSec`, `words[]`, `captionBeats[]` (`{fromSec, toSec, t, y: 62,
+  style: "sub"}`, at most 4 words and about 1.2 s each, shifted by `offsetSec`, the first one starting at the
+  offset and lasting past 1 s), a pointer to the AI-label rules in the skill's compliance checklist, and the
+  `nextStep` wiring (`voicePath`, `duck: true`, `texts`).
+- **Cost gate.** Characters x the rate table (override per family in config `voiceRates`). Above the
+  per-call cap (`voicePerCallCapUsd`, default $0.25) or the daily cap (`voiceDailyCapUsd`, default $2, its own
+  ledger `~/.conductor/voice-spend.json`) the call is refused; at or under `voiceConfirmAboveUsd` (default
+  $0.05) it just runs and reports the estimate; above it, it needs `confirmCost: true`.
+
 ## Attach — "Use in Post"
 
 `POST .../creatives/{creativeId}/attach` links a `SUCCEEDED` render's frames to a Post as its own Assets (one per frame, same stored object, nothing copied) and
@@ -494,6 +522,46 @@ part of each `slideAltText` entry (`Text: "line one" / "line two"`, or `Text: no
 The 0.5 s cross-fade comes out of each slide's time. The preview reports the durations and the
 total, and warns when a slide gets under 0.25 s per word, or under 3 s with two or more lines. With
 no text at all the fallback is 3.5 s for the first slide and 3.0 s for the rest.
+
+## Composed videos (`compose_video`) {#composed-videos}
+
+A hook-first short-form video: trimmed clips and still images on one timeline, hard cuts, timed text on
+screen from 0 s. It runs on this machine like the other local renders (never a backend job): the pure
+timeline math and checks are in `conductor-tools/src/lib/video/` (`timeline.ts`, `text-beats.ts`,
+`render.ts`), the ffmpeg argument builders in `conductor-creative/job/media.mjs` (`buildVideoComposeArgs`;
+the audio chain reuses `buildAudioFilter` and the two-pass loudnorm of the slideshow and CLIP renders).
+Use it when a video needs a moving opening or edits; `compose_slideshow` stays the photo-post tool and
+MOTION the brand ad. Nothing is sent to Conductor.
+
+- **Spec.** `segments[]` in order (1 to 20, 3 to 90 s in all): `{clip, startSec?, endSec?, mute?}` or
+  `{image, durationSec (1-10), zoom?}`, each with an optional `transition: "fade"` (a 0.5 s cross-fade into
+  that segment; the default is a hard cut). `texts[]`: `{fromSec, toSec, t, y, fs?, style?}`, drawn with
+  the `compose_slideshow` text renderer and its `box` / `dark` / `stroke` / `sub` styles (native look: no
+  Brand Kit fonts, lockups or CTAs), overlaid by ffmpeg only between `fromSec` and `toSec`. `audio`:
+  `{clipAudio: keep|mute, track?, voicePath?, duck?}`, local files; the music loops to the length and is
+  loudness-normalised, ducking under clip sound and voice by default.
+- **Output.** `<project>/.conductor/videos/<timestamp>-<id>/<id>.mp4` (1080x1920, 30 fps, H.264/AAC), a
+  `spec.json` (resolved paths, `layout: 2`), `frame0.png`, `contact-0-3s.jpg` (frames at 0, 0.5 ... 3 s;
+  the one image the tool returns) and a `<id>.mp4.provenance.json` when every input file has a sidecar
+  (otherwise the result lists the inputs that lack one). Clips are centre-cropped to fill the frame; a
+  source that must be upscaled warns, and one that needs more than 2x is refused.
+- **Checks** (`checks[]` in the `preview_creative_draft` shape; an error sets `passed: false`):
+  `firstSecondText` (error: no beat covers 0 to 1 s), `textOverlap` (error: two beats on screen together
+  share rows of the frame), the slide rules per beat (`safeZone`, `spill`, `wordsPerLine`, `textSize`),
+  `firstSecondMotion` (below), `staticStretch` (warning: more than 5 s with no cut and no text change,
+  with the time ranges) and the OCR safe-zone pass on the finished file (`safeZoneText`). Spec-level errors
+  are found before encoding and stop the render (`rendered: false`).
+- **Motion in the first second.** The mean absolute grey difference between frame 0 and frame 0.8 s,
+  both at 108x192. Under 0.25 is an error (completely static); otherwise an opening on a still image is a
+  warning (a moving clip hooks better) and an opening on a clip passes. Measured on this pipeline: a still
+  with text 0.01-0.02, a still with the 3 s slow zoom 0.39-0.47, a test-pattern clip 1.4-1.6, drifting or
+  zooming synthetic clips 13-20. The slow zoom of a 10 s still is three times weaker and can fall under the
+  threshold; text over a locked-off but noisy shot counts as change (a false pass, never a false fail).
+- **Next.** `preview_creative_draft({kind: "CLIP", clipPath})` for the platform-UI overlay, then
+  `upload_creative_media` + `create_creative` with kind CLIP: a CLIP has no commit step.
+
+Not in this tool: Brand Kit styling, speech (a voice file comes from `generate_voice_line` or elsewhere; see [Spoken lines](#spoken-lines)), library
+`trackId` music (pass a local file), per-segment speed or effects, and anything over 90 s.
 
 ## Organic slideshows {#organic-slideshows}
 
@@ -997,11 +1065,13 @@ backend's job is bookkeeping, storage and the attach mapping above.
 ## Tags {#creative-tags}
 
 A Creative carries `tags` (V202, `creative.tags` jsonb, `{}` when none) so performance can be read by the kind
-of idea it was, not only by Creative or platform. Seven optional string keys, nothing else:
+of idea it was, not only by Creative or platform. Nine optional string keys, nothing else:
 
 | Key | Meaning | Values the skills use |
 |---|---|---|
-| `hookType` | what the opening line does | the hookType column of `voice.md`'s "Shapes, and the hookType each one is tagged" table: `pattern-interrupt`, `relatable-pain`, `story`, `question`, `number`, `bold-claim` |
+| `hookType` | what the opening line does | the nine values of `hooks.md`'s hook library (also the hookType column of `voice.md`'s "Shapes" table): `question`, `bold-claim`, `pattern-interrupt`, `relatable-pain`, `how-to`, `number`, `curiosity-gap`, `story`, `social-proof` |
+| `visualHook` | what the first frame shows | `result-first`, `motion`, `odd-object`, `before-after`, `screen`, `face`, `text-only` |
+| `soundHook` | what the first second sounds like | `spoken-line`, `action-sound`, `music-only`, `none` |
 | `angle` | the brainstorm angle | `story-emotion`, `utility-education`, `trend-humor` |
 | `format` | the artwork format | `still`, `carousel`, `story`, `motion`, `clip`, `film` |
 | `archetype` | the slideshow hook archetype | one from `slideshow-formats.md`'s "Hook archetypes" table, kebab-cased (e.g. `numbered-list`, `before-after`) |
@@ -1015,7 +1085,7 @@ vocabularies are the skills' convention, not validated.
 
 Writes: create stores what is sent. `PATCH` leaves the tags alone when `tags` is omitted, **replaces the
 whole map** when it is sent (a key left out is removed), and clears it for `{}`. A lettered variant
-inherits only the descriptive tags (`hookType`, `angle`, `format`, `archetype`) of the Creative it is cut from (cut 1c
+inherits only the descriptive tags (`hookType`, `visualHook`, `soundHook`, `angle`, `format`, `archetype`) of the Creative it is cut from (cut 1c
 from 1b and it takes 1b's, not the family root's), never `hypothesis`, `lessons` or `previewRounds`; tags in the
 variant request merge over the inherited ones, and a key given as an empty string removes it. A `PATCH` that
 carries only `tags` (and `version`) validates the tags alone, so tagging an old Creative never fails over its
@@ -1041,15 +1111,34 @@ reads **settled posts only** and compares each post with the account's own typic
   destinations over the trailing 90 days, independent of the insights `window`. Per platform and format when
   that bucket has at least 10 settled posts *with a value for that metric*, else per platform when the platform
   has at least 10, else none, chosen separately for views and for `avgViewPct` (ten posts of which one reports
-  retention have a views baseline and no retention baseline).
-- *Lift*: a post's **view lift** is its views over the baseline median views, and its **retention lift** is its
-  `avgViewPct` over the baseline median `avgViewPct`; 1.0 is typical for this account on that platform (and
-  format). Either is null when the baseline or the post's own value is missing.
+  retention have a views baseline and no retention baseline). The same per-metric rule gives a median
+  `hookRate` and a median `holdRate` (see *Hook and hold*, below).
+- *Lift*: a post's **view lift** is its views over the baseline median views, its **retention lift** is its
+  `avgViewPct` over the baseline median `avgViewPct`, and its **hook lift** and **hold lift** are its `hookRate`
+  and `holdRate` over the baseline medians; 1.0 is typical for this account on that platform (and
+  format). Any is null when the baseline or the post's own value is missing.
+
+**Hook and hold.** Instagram, Facebook and YouTube report how a short video opens; TikTok's API reports
+nothing of the kind, so a TikTok destination has no `hookRate` or `holdRate` (null, never 0). Each snapshot keeps the
+raw numbers in `extra` and `HookMetrics` derives two rates from them, both 0 to 1:
+
+| Platform | Read (snapshot `extra`) | `hookRate`: share who stayed past the opening | `holdRate`: average watch time over duration, capped at 1 |
+|---|---|---|---|
+| Instagram Reels | `reels_skip_rate` (Meta labels it estimated), `ig_reels_avg_watch_time` and `ig_reels_video_view_total_time` (ms), from the media insights edge | 1 minus the skip rate (first 3 s) | null: the Graph API exposes no video duration |
+| Facebook Reels | `post_video_avg_time_watched` (ms) and the 3 s point of `post_video_retention_graph` (`video_retention_3s`), from `video_insights`; the Reel's `length` (`video_duration_s`) | retention at 3 s | average watch time over `length` (replays can push it past 1) |
+| YouTube | `engaged_views` and the first bucket of `audienceWatchRatio` over `elapsedVideoTimeRatio` (`opening_hold`), from the Analytics API; one extra report per video | that first bucket, capped at 1 | `avg_view_pct / 100` |
+| TikTok | nothing | null | null |
+
+The three hook numbers are different measures (a 3 s skip, a 3 s retention point, the opening percent of a video).
+That is acceptable because a lift is only ever taken against the baseline of the same platform and format, never
+across platforms. Every new field is optional: a metric Meta or Google refuses for one post is left absent without
+costing that post its counts. No new OAuth scope is needed (`instagram_manage_insights`, `read_insights`,
+`yt-analytics.readonly` already cover them).
 
 Each `byTag` row keeps the group fields (counted over its settled posts) and adds `unsettledPosts`,
 `medianViewLift`, `beatBaselineShare` (share of posts with a lift whose view lift is above 1),
-`medianEngagementRate` (the median of per-post rates, not the pooled rate) and `medianRetentionLift`, each null
-when it cannot be computed. Rows sort by tag key, then `medianViewLift` descending, nulls last. Read the lift
+`medianEngagementRate` (the median of per-post rates, not the pooled rate), `medianRetentionLift`,
+`medianHookLift` and `medianHoldLift`, each null when it cannot be computed. Rows sort by tag key, then `medianViewLift` descending, nulls last. Read the lift
 rather than the pooled views, and `posts` for how much to trust it.
 
 **Opt-in.** The tag data is built only when `GET .../marketing/insights` is called with `include=tags` (the MCP
@@ -1071,13 +1160,16 @@ them, so each `byTag` row (and each variant in creative performance) carries a v
 have that metric's baseline: `NOT_ENOUGH_DATA` under 3 such posts; `WORKS` when the median lift is at least
 1.2 and at least 2/3 of the posts beat the baseline (lift above 1); `DOESNT_WORK` when it is at most 0.8 and at
 most 1/3 beat it; otherwise `NO_DIFFERENCE`. Rows add `withBaselinePosts`/`beatBaselinePosts` (view lift) and
-`withRetentionBaselinePosts`/`beatRetentionBaselinePosts` (retention lift), so `beatBaselineShare` is
-`beatBaselinePosts / withBaselinePosts`; `viewVerdict` and `retentionVerdict` are the two verdicts, and
-`verdict` with `verdictMetric` (`VIEW_LIFT` | `RETENTION_LIFT`) is the default, for every tag key: retention only
-when at least 3 posts have a retention baseline and they are at least 2/3 of the posts with a view baseline
-(`RETENTION_COVERAGE_SHARE`), else views. Only YouTube reports `avg_view_pct`, so a few YouTube posts must not
-decide a row that is mostly TikTok or Instagram. Creative
-performance (`get_creative`'s per-variant performance, and `creatives` with `include=tags`) adds `withBaselinePosts`, `beatBaselinePosts`, `viewVerdict` and `retentionVerdict`. The constants
+`withRetentionBaselinePosts`/`beatRetentionBaselinePosts` (retention lift) and
+`withHookBaselinePosts`/`beatHookBaselinePosts` (hook lift), so `beatBaselineShare` is
+`beatBaselinePosts / withBaselinePosts`; `viewVerdict`, `retentionVerdict` and `hookVerdict` are the three verdicts, and
+`verdict` with `verdictMetric` (`HOOK_LIFT` | `RETENTION_LIFT` | `VIEW_LIFT`) is the default, for every tag key.
+Precedence is hook first (the opening is what the tags describe), then retention, then views: hook when at least
+3 posts have a hook baseline and they are at least 2/3 of the posts with a view baseline
+(`HOOK_COVERAGE_SHARE`), else retention on the same rule (`RETENTION_COVERAGE_SHARE`), else views. Only some platforms
+report these (TikTok neither; only YouTube reports `avg_view_pct`), so a few posts from one platform must not
+decide a row that is mostly from the others. Creative
+performance (`get_creative`'s per-variant performance, and `creatives` with `include=tags`) adds `withBaselinePosts`, `beatBaselinePosts`, `viewVerdict`, `retentionVerdict`, `hookVerdict`, `medianHookLift` and the mean `hookRate`/`holdRate`. The constants
 (`MIN_POSTS`, the 1.2/0.8 lifts and the 2/3, 1/3 shares) are in `LessonVerdictRules`.
 
 **Playbook lessons.** A Creative's `lessons` tag records which playbook lessons it followed. `byTag` splits it, one
@@ -1117,13 +1209,20 @@ latest snapshot. `GET .../marketing/creatives/{creativeId}/performance` returns 
 lettered sibling); `GET .../marketing/insights` carries the top ten variants by views inside its window as
 `creatives`, the same way it carries top/bottom posts.
 
-**`creative_experiment`** (V143) is a hook experiment: two or more variants of one family, each published
+A hook test in the skill compares hook *types across different bodies*, read through `byTag`; it does not
+post one body twice. The same body posted twice on one account and platform with only the hook changed counts
+as duplicate content on all four platforms, so `variantOf` plus an experiment is for cross-platform or paid
+comparisons only. The skill requires `hookType`, `format` and `angle` on every commit (a Creative with empty
+tags teaches the loop nothing) and tags the past 90 days of Creatives first when `byTag` comes back empty.
+
+**`creative_experiment`** (V143) is an experiment between variants: two or more variants of one family, each published
 as its own Post, decided by `CreativeExperimentService`. `create` needs the family to have at least two
 variants and refuses a second `RUNNING` experiment on the same family with 409 (`uq_creative_experiment_
 running_per_family`). `decide` — called on demand via `POST .../experiments/{id}/decide`, or by the
 `conductor-marketing` weekly feed pull for every `RUNNING` experiment in the project — settles once every
 variant has at least one published, attributed destination with a snapshot at or after `fireTime +
-windowHours` (default 72): the comparison metric is `avg_view_pct` when every variant reports it, else the
+windowHours` (default 72): the comparison metric is `hook_rate` when the experiment asked for it and every variant reports one
+(Instagram, Facebook, YouTube; never TikTok), else `avg_view_pct` when every variant reports it, else the
 metric requested at creation (default `views`); an exact tie among the leaders settles `INCONCLUSIVE`
 immediately (the window has, by definition, already fully elapsed for everyone at that point). While any
 variant is still short of its own deadline, `decide` is a safe no-op that leaves the experiment `RUNNING`

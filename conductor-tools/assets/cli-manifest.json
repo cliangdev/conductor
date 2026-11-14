@@ -1249,9 +1249,25 @@
       ]
     },
     {
+      "name": "generate_voice_line",
+      "description": "Make a spoken hook or short narration line (up to 60 words) as a WAV voice file with Google Cloud Text-to-Speech, with word times and caption beats ready for compose_video. Costs fractions of a cent (confirmCost above $0.05); a provenance sidecar marks the voice AI-generated.",
+      "category": "marketing",
+      "requiredParams": [
+        "text"
+      ]
+    },
+    {
       "name": "compose_slideshow",
       "description": "Compose organic slideshow slides (TikTok/Reels style) from a spec on this machine, with layout checks. Native look by default; brandKitId applies a kit's slideshow style and style overrides on top. Returns the resolved style to pass as slideStyle to preview_creative_draft as a CAROUSEL; its spec.json travels with the Creative at commit, making the text editable later.",
       "category": "marketing"
+    },
+    {
+      "name": "compose_video",
+      "description": "Compose one hook-first 1080x1920 MP4 on this machine from a timeline of trimmed clips and still images (hard cuts or fades) with timed text on screen from 0 s and optional music, voice and clip sound. Checks text in the first second, motion in the opening, long static stretches and platform safe zones. Returns the MP4, frame 0 and a 0-3 s contact sheet; next, preview_creative_draft as a CLIP.",
+      "category": "marketing",
+      "requiredParams": [
+        "spec"
+      ]
     },
     {
       "name": "attach_slideshow_spec",

@@ -10,9 +10,13 @@ Heading: `## Idea <n>: <title>` where the title is 8 words or fewer.
 ## Idea <n>: <title, max 8 words>
 
 - **Concept:** <one line, max 25 words: what the viewer sees and why it works>
-- **Hook, spoken:** <max 12 words, or "none (text only)">
-- **Hook, on screen:** <max 12 words; on the artwork aim for about 8 or fewer, `voice.md`>
-- **Hook type:** <question | bold-claim | pattern-interrupt | relatable-pain | how-to | number | curiosity-gap | story | social-proof; tag it from `voice.md`'s "Shapes, and the hookType each one is tagged" table>
+- **Hook, visual:** <max 15 words: what frame 1 shows. A concrete subject, already moving, the result or the odd thing; never a title card, logo or empty scene>
+- **Hook, on screen:** <text at 0 s, max 12 words; on the artwork aim for about 8 or fewer, `voice.md`>
+- **Hook, spoken or sound:** <max 12 words, or the sound that belongs to the action, or "none" (photo slideshow only)>
+- **Hook type:** <question | bold-claim | pattern-interrupt | relatable-pain | how-to | number | curiosity-gap | story | social-proof; tag it from `hooks.md`'s hook library (or `voice.md`'s "Shapes, and the hookType each one is tagged" table)>
+- **Comment trigger:** <max 15 words: one planted, honest reason to comment or send (a choice to argue about, a question only the viewer can answer, a deliberate small omission); never "comment YES" bait>
+- **Loop:** <pieces of 15 s or less: how the last frame flows into the first, max 15 words; otherwise "none">
+- **Payoff at:** <seconds; must fall inside the first third of the piece>
 - **Format:** <slideshow | still | carousel | story sequence | motion text over photo | motion text over clip | talking head | demo | skit | other>
 - **Platform:** <primary platform, then any others>
 - **Tag:** RENDER | FILM
@@ -38,6 +42,12 @@ Draft spec (RENDER only):
 The idea's format maps to the publish pack's `tags.format` as: slideshow -> `carousel`; still -> `still`; carousel ->
 `carousel`; story sequence -> `story`; motion text over photo or clip -> `motion`; talking head,
 demo, skit or other -> `film`.
+
+## Hook rules
+
+The hook has three layers, all in the first second (`hooks.md`). The product or brand name is never
+in it. Frame 1 passes the "what was that?" test. Organic video and slide 1 take the native look
+(plain platform-style text; `slideshow-formats.md`).
 
 ## Sound
 
