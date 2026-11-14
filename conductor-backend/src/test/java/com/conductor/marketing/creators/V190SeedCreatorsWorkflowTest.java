@@ -61,7 +61,7 @@ class V190SeedCreatorsWorkflowTest {
                            || '|' || jsonb_array_length(w.definition -> 'fields')
                     FROM workflow_definitions w
                     WHERE w.project_id = '%s' AND w.definition ->> 'id' = 'CREATORS'
-                    """.formatted(projectA))).isEqualTo("PUBLISHED|MARKETING|true|Creator|7");
+                    """.formatted(projectA))).isEqualTo("PUBLISHED|MARKETING|true|Partner|7");
             assertThat(queryForString(connection, """
                     SELECT COUNT(*)::text FROM workflow_definition_versions v
                     JOIN workflow_definitions w ON w.id = v.workflow_definition_id

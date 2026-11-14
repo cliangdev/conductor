@@ -5,6 +5,7 @@
   "version": 1,
   "state": "PUBLISHED",
   "noun": "Task",
+  "description": "Smaller pieces of work broken out of a larger item.",
   "default_view": "list",
   "types": ["TASK"],
   "asset_types": ["github_pr"],

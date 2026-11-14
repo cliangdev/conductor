@@ -60,6 +60,8 @@ export interface WorkflowView {
   fields?: WorkflowFieldView[]
   /** What the Workflow calls a Work Item's due date (e.g. "Review on"). */
   dueLabel?: string | null
+  /** One or two plain sentences saying what this Workflow's list page is for; absent shows no line. */
+  description?: string | null
 }
 
 export type WorkflowFieldType = 'text' | 'longtext' | 'date' | 'number' | 'enum' | 'url'

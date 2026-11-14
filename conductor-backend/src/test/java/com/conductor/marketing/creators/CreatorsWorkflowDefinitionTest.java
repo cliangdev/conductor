@@ -47,7 +47,7 @@ class CreatorsWorkflowDefinitionTest {
 
         assertThat(chart.slug()).isEqualTo("CREATORS");
         assertThat(chart.area()).isEqualTo("MARKETING");
-        assertThat(chart.noun()).isEqualTo("Creator");
+        assertThat(chart.noun()).isEqualTo("Partner");
         assertThat(chart.types()).containsExactly("CREATOR");
         assertThat(chart.version()).isEqualTo(1);
         assertThat(chart.state()).isEqualTo("PUBLISHED");

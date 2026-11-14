@@ -5,6 +5,7 @@
   "version": 1,
   "state": "PUBLISHED",
   "noun": "Post",
+  "description": "Posts that are scheduled and published without a review step.",
   "default_view": "calendar",
   "types": ["POST"],
   "asset_types": ["facebook_post", "instagram_post", "youtube_video", "tiktok_post"],

@@ -80,6 +80,12 @@
       "minLength": 1,
       "maxLength": 32
     },
+    "description": {
+      "description": "Optional one or two plain sentences saying what this Workflow's list page is for; shown under the page title. Absent shows no line.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 240
+    },
     "metric": {
       "description": "Optional Outcome Metric kept as a time series. null/absent means the Workflow opts out (e.g. Engineering).",
       "oneOf": [

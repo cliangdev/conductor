@@ -7772,6 +7772,13 @@ components:
           type: string
           nullable: true
           description: What this Workflow calls a Work Item's due date (e.g. "Review on").
+        description:
+          type: string
+          nullable: true
+          maxLength: 240
+          description: >-
+            One or two plain sentences saying what this Workflow's list page is for; shown under the page
+            title. Null when the Workflow does not say.
 
     WorkflowFieldView:
       type: object
