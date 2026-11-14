@@ -5,6 +5,7 @@
   "version": 1,
   "state": "PUBLISHED",
   "noun": "Change",
+  "description": "Changes to your listing, ads, pricing or product, recorded so you can review their effect later.",
   "default_view": "list",
   "types": ["LISTING", "ADS", "PRICING", "PRODUCT", "CONTENT", "BASELINE", "OTHER"],
   "metric": null,
