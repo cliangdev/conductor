@@ -53,7 +53,8 @@ never a better template; it is a point of view and one true detail.
 
 ## Shapes, and the hookType each one is tagged
 
-A shape is how a line is said; the `hookType` is what it does. Tag the hookType from this table so
+A shape is how a line is said; the `hookType` is what it does. Tag the hookType from this table (or
+`hooks.md`'s hook library, which keys the same nine values to a Visual, Text and Sound example) so
 results stay comparable. Examples are instances from different domains; each assumes its facts are
 true for that brand.
 
@@ -68,6 +69,9 @@ true for that brand.
 | Enemy, with attitude | relatable-pain | "the subscription you forgot you pay for" |
 | Exact result, from the record | number | "dinner in 22 minutes. dishes: one pan" |
 | Self-aware brand | bold-claim | "Don't be scared. It's just water." (Liquid Death) |
+| Mechanism, one plain step | how-to | "paste a link. skip the rereading." |
+| Small gap, closed soon | curiosity-gap | "the third one is why it works" |
+| Real proof, figure first | social-proof | "212 people saved this last week" (only with a real count) |
 
 Longer real lines that work as captions, not artwork: "PLEASE bring back your balsamic date
 vinaigrette it was the only reason why I came" (Cava, a plea); "When the tweets are as broken as the

@@ -6,8 +6,9 @@ ranking signals without notice, and the brief's own platform list always wins.
 
 ## Craft that holds on every platform
 
-- Hook in the first 0 to 3 seconds, both spoken and on screen. The first frame is the thumbnail
-  and the ad.
+- Hook in three layers, all inside the first second: what frame 1 shows, the text on screen at 0 s,
+  and the first sound (`hooks.md`). The first frame is the thumbnail and the ad, so it is never a
+  title card or a logo.
 - A new beat or pattern interrupt every 3 to 5 seconds (a cut, a new line of text, a zoom, a
   reveal), then a payoff, then one call to action.
 - Captions on screen so it works with the sound off. Decide sound design on purpose: sound-on
@@ -15,6 +16,24 @@ ranking signals without notice, and the brief's own platform list always wins.
 - Vertical 9:16 for TikTok, Reels, Stories and Shorts. Keep text out of the platform's own UI.
 - Plan for retention, not reach: a shorter piece that is watched to the end beats a longer one that
   is abandoned.
+
+## Per-platform format
+
+Route the format by platform before choosing a layout.
+
+| Platform | Organic format | Not this |
+|---|---|---|
+| TikTok | Photo slideshow or video | n/a |
+| Instagram | Video (Reel) | Photo or carousel feed post |
+| Facebook | Video (Reel) | Photo or carousel feed post |
+| YouTube | Video (Short) | Photo post (YouTube has none) |
+
+The reason, in one line: photo posts on Instagram and Facebook reach followers only, and a new
+account has none. A slideshow bound for Instagram, Facebook or YouTube goes as its MP4 (the preview's
+`slideshowVideoPath`; `carouselAs: "video"` on the destination), with a spoken first line once a
+voice is available and, until then, an honest note that it has none. Photo posts to those platforms
+stay possible when the person chooses them: say the reason once and offer the video form; the person
+decides. Paid ads follow the ad's own placement rules and are not covered by this row.
 
 ## Safe zone (9:16, 1080x1920)
 

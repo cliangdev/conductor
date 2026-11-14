@@ -1001,7 +1001,7 @@ of idea it was, not only by Creative or platform. Seven optional string keys, no
 
 | Key | Meaning | Values the skills use |
 |---|---|---|
-| `hookType` | what the opening line does | the hookType column of `voice.md`'s "Shapes, and the hookType each one is tagged" table: `pattern-interrupt`, `relatable-pain`, `story`, `question`, `number`, `bold-claim` |
+| `hookType` | what the opening line does | the nine values of `hooks.md`'s hook library (also the hookType column of `voice.md`'s "Shapes" table): `question`, `bold-claim`, `pattern-interrupt`, `relatable-pain`, `how-to`, `number`, `curiosity-gap`, `story`, `social-proof` |
 | `angle` | the brainstorm angle | `story-emotion`, `utility-education`, `trend-humor` |
 | `format` | the artwork format | `still`, `carousel`, `story`, `motion`, `clip`, `film` |
 | `archetype` | the slideshow hook archetype | one from `slideshow-formats.md`'s "Hook archetypes" table, kebab-cased (e.g. `numbered-list`, `before-after`) |
@@ -1117,7 +1117,13 @@ latest snapshot. `GET .../marketing/creatives/{creativeId}/performance` returns 
 lettered sibling); `GET .../marketing/insights` carries the top ten variants by views inside its window as
 `creatives`, the same way it carries top/bottom posts.
 
-**`creative_experiment`** (V143) is a hook experiment: two or more variants of one family, each published
+A hook test in the skill compares hook *types across different bodies*, read through `byTag`; it does not
+post one body twice. The same body posted twice on one account and platform with only the hook changed counts
+as duplicate content on all four platforms, so `variantOf` plus an experiment is for cross-platform or paid
+comparisons only. The skill requires `hookType`, `format` and `angle` on every commit (a Creative with empty
+tags teaches the loop nothing) and tags the past 90 days of Creatives first when `byTag` comes back empty.
+
+**`creative_experiment`** (V143) is an experiment between variants: two or more variants of one family, each published
 as its own Post, decided by `CreativeExperimentService`. `create` needs the family to have at least two
 variants and refuses a second `RUNNING` experiment on the same family with 409 (`uq_creative_experiment_
 running_per_family`). `decide` — called on demand via `POST .../experiments/{id}/decide`, or by the

@@ -31,7 +31,7 @@ do not post it.
   `commit_creative_draft` upload the media, save the Creative and run the full render. Never commit
   a draft the person has not seen and approved.
 - **Learns as it goes.** Read the workspace playbook first (the retro), follow it, test one new
-  thing now and then (about 1 Creative in 4), commit with `tags`, then write back what was learned
+  thing now and then (about 1 Creative in 4), commit with `tags` (`hookType`, `format` and `angle` required), then write back what was learned
   as edits to single lessons and list them as `Learned:` lines in the final message. The server's
   verdicts, not the model, decide what counts as a lesson, and the playbook is advisory. A test never overrides brand or copy rules or the approval gate. See
   `references/learning-loop.md`.
@@ -58,7 +58,7 @@ preview, check and commit steps (S6 reads `references/direct.md`).
 - `references/team-run.md`: the Team flow (run folder, stages S0 to S6, FILM ideas, final message, failure handling).
 - `references/brand-kit-setup.md`: check the Brand Kit and set it up from a website, a brand doc or direct answers; "Make a kit style from slides" (Direct mode) turns slides the person likes into a slideshow style on a new or existing kit.
 - `references/learning-loop.md`: the thresholds, the playbook, tag vocabulary, retro, pre-registered tests and what gets captured (both modes).
-- `references/hooks.md`: writing and scoring headline candidates.
+- `references/hooks.md`: the three-layer hook (visual, text, sound), the frame-1 test and the hook library keyed by the nine `hookType` values (both modes).
 - `references/voice.md`: making every line read like a person posted it, with the self-check every
   hook, card and caption passes (both modes).
 - `references/layout-guide.md`: choosing a layout, resolution and safe zones.
