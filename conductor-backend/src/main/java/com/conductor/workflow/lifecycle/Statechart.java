@@ -33,13 +33,14 @@ public final class Statechart {
     private final String publishesFrom;
     private final List<StatechartField> fields;
     private final String dueLabel;
+    private final String description;
     private final Map<String, StatechartStatus> statusById;
 
     private Statechart(String slug, String area, Integer version, String state, Integer schemaVersion,
                        String noun, String defaultView, List<String> types, List<String> assetTypes,
                        List<StatechartStatus> statuses, List<StatechartTransition> transitions,
                        StatechartMetric metric, String publishesFrom,
-                       List<StatechartField> fields, String dueLabel) {
+                       List<StatechartField> fields, String dueLabel, String description) {
         this.slug = slug;
         this.area = area;
         this.version = version;
@@ -55,6 +56,7 @@ public final class Statechart {
         this.publishesFrom = publishesFrom;
         this.fields = List.copyOf(fields);
         this.dueLabel = dueLabel;
+        this.description = description;
         Map<String, StatechartStatus> byId = new LinkedHashMap<>();
         for (StatechartStatus s : statuses) {
             byId.put(s.id(), s);
@@ -95,7 +97,8 @@ public final class Statechart {
                 StatechartMetric.parse(def.get("metric")),
                 Json.text(def, "publishes_from"),
                 fields,
-                Json.text(def, "dueLabel"));
+                Json.text(def, "dueLabel"),
+                Json.text(def, "description"));
     }
 
     public String slug() { return slug; }
@@ -123,6 +126,8 @@ public final class Statechart {
     public List<StatechartField> fields() { return fields; }
     /** What this Workflow calls a Work Item's due date, or null when it does not say. */
     public String dueLabel() { return dueLabel; }
+    /** One or two plain sentences saying what this Workflow's list page is for, or null when it does not say. */
+    public String description() { return description; }
 
     public Optional<StatechartField> field(String key) {
         return fields.stream().filter(f -> f.key().equals(key)).findFirst();

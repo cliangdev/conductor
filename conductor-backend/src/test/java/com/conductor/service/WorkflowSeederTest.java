@@ -263,7 +263,7 @@ class WorkflowSeederTest {
         assertThat(header.getSchemaVersion()).isEqualTo(1);
         assertThat(header.isSidebarEnabled()).isTrue();
         assertThat(header.isLifecycle()).isTrue();
-        assertThat(header.getDefinition().get("noun").asText()).isEqualTo("Creator");
+        assertThat(header.getDefinition().get("noun").asText()).isEqualTo("Partner");
 
         ArgumentCaptor<WorkflowDefinitionVersion> versionCaptor = ArgumentCaptor.forClass(WorkflowDefinitionVersion.class);
         verify(versionRepository).save(versionCaptor.capture());
