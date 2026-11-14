@@ -24,6 +24,11 @@ export interface SidecarData extends SidecarProvenance {
   /** Google embeds SynthID in Veo and Omni output. */
   synthId?: boolean
   durationSeconds?: number
+  /** Synthetic voice (generate_voice_line): the voice, a hash of the spoken text (not the text) and how words were timed. */
+  voice?: string
+  textSha256?: string
+  characters?: number
+  timing?: string
 }
 
 export const sidecarPath = (filePath: string): string => `${filePath}.provenance.json`

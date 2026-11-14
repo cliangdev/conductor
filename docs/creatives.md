@@ -268,6 +268,34 @@ opening of a CLIP; its sound is chosen with `audio.source` (`clip`, `mix`, `trac
 Veo 3.1 GA on Vertex lists retirement as "Nov 17, 2026 or later" with no replacement named. Output carries
 Google's SynthID watermark and counts as AI-generated for platform labels.
 
+## Spoken lines (`generate_voice_line`) {#spoken-lines}
+
+A local MCP tool that turns one spoken line into a voice file for `compose_video`'s `audio.voicePath`, plus
+word times and caption beats. Why: a human voice in the first 3 s held viewers about 25% better to second
+10 than music alone, and narration-free slideshows are named in YouTube's inauthentic-content policy. It is
+a hook or short-narration tool, not long-form: the hard limit is 60 words and 400 characters per call.
+
+- **Route.** Google Cloud Text-to-Speech (`texttospeech.googleapis.com`) billed to the project in
+  `vertexProject` (the one used for video), with the person's gcloud token; no API key. Default voice
+  `en-US-Chirp3-HD-Aoede` (Chirp 3: HD, $30 per 1M characters, 1M free a month); `voice` accepts any
+  `<locale>-<Chirp3-HD|Neural2|Wavenet|Standard>-<name>`; `speakingRate` 0.25 to 2. The API must be enabled
+  on the project: if not, the tool returns `VOICE_API_DISABLED` with `gcloud services enable
+  texttospeech.googleapis.com --project <id>` (it never enables anything itself).
+- **Word timing.** Chirp 3: HD does not support SSML `<mark>`, so its word times are `timing: "estimated"`:
+  the measured audio length (ffprobe, WAV header as a fallback) spread over the words by letter count, with
+  a pause weight after commas and sentence ends. The Neural2, WaveNet and Standard families go through the
+  `v1beta1` SSML-mark route and return `timing: "provider"`. No speech-recognition dependency.
+- **Output.** `<project>/.conductor/generated/<timestamp>-voice-<slug>/voice.wav` (16-bit mono, 24 kHz), a
+  `voice.wav.provenance.json` (`aiGenerated: true`, voice, SHA-256 of the text, characters, timing, cost
+  estimate), and in the result `durationSec`, `words[]`, `captionBeats[]` (`{fromSec, toSec, t, y: 62,
+  style: "sub"}`, at most 4 words and about 1.2 s each, shifted by `offsetSec`, the first one starting at the
+  offset and lasting past 1 s), a pointer to the AI-label rules in the skill's compliance checklist, and the
+  `nextStep` wiring (`voicePath`, `duck: true`, `texts`).
+- **Cost gate.** Characters x the rate table (override per family in config `voiceRates`). Above the
+  per-call cap (`voicePerCallCapUsd`, default $0.25) or the daily cap (`voiceDailyCapUsd`, default $2, its own
+  ledger `~/.conductor/voice-spend.json`) the call is refused; at or under `voiceConfirmAboveUsd` (default
+  $0.05) it just runs and reports the estimate; above it, it needs `confirmCost: true`.
+
 ## Attach — "Use in Post"
 
 `POST .../creatives/{creativeId}/attach` links a `SUCCEEDED` render's frames to a Post as its own Assets (one per frame, same stored object, nothing copied) and
@@ -532,7 +560,7 @@ MOTION the brand ad. Nothing is sent to Conductor.
 - **Next.** `preview_creative_draft({kind: "CLIP", clipPath})` for the platform-UI overlay, then
   `upload_creative_media` + `create_creative` with kind CLIP: a CLIP has no commit step.
 
-Not in this tool: Brand Kit styling, speech or captions (a voice file comes from elsewhere), library
+Not in this tool: Brand Kit styling, speech (a voice file comes from `generate_voice_line` or elsewhere; see [Spoken lines](#spoken-lines)), library
 `trackId` music (pass a local file), per-segment speed or effects, and anything over 90 s.
 
 ## Organic slideshows {#organic-slideshows}
