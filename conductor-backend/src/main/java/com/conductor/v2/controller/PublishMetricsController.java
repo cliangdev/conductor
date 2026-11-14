@@ -80,6 +80,7 @@ public class PublishMetricsController implements PublishMetricsApi {
         }
         return ResponseEntity.ok(rows.stream()
                 .map(r -> new TopPostEntry(r.workItemId(), r.targetId(), r.platform(), r.metric(), r.value(), r.observedAt())
+                        .rate(r.rate())
                         .displayId(r.displayId())
                         .title(r.title())
                         .accountLabel(r.accountLabel())
@@ -125,7 +126,11 @@ public class PublishMetricsController implements PublishMetricsApi {
                 .withBaselinePosts(p.withBaselinePosts())
                 .beatBaselinePosts(p.beatBaselinePosts())
                 .viewVerdict(p.viewVerdict())
-                .retentionVerdict(p.retentionVerdict());
+                .retentionVerdict(p.retentionVerdict())
+                .hookRate(p.hookRate())
+                .holdRate(p.holdRate())
+                .medianHookLift(p.medianHookLift())
+                .hookVerdict(p.hookVerdict());
     }
 
     private static InsightsWindow toWindow(MarketingInsightsQueryService.Window w) {
@@ -151,6 +156,11 @@ public class PublishMetricsController implements PublishMetricsApi {
                 .beatRetentionBaselinePosts(l.beatRetentionBaselinePosts())
                 .viewVerdict(l.viewVerdict())
                 .retentionVerdict(l.retentionVerdict())
+                .medianHookLift(l.medianHookLift())
+                .medianHoldLift(l.medianHoldLift())
+                .withHookBaselinePosts(l.withHookBaselinePosts())
+                .beatHookBaselinePosts(l.beatHookBaselinePosts())
+                .hookVerdict(l.hookVerdict())
                 .verdict(t.verdict())
                 .verdictMetric(t.verdictMetric());
     }
@@ -188,7 +198,8 @@ public class PublishMetricsController implements PublishMetricsApi {
     private static PublishMetricSnapshot toSnapshot(PublishMetricsQueryService.Snapshot s) {
         return new PublishMetricSnapshot(s.observedAt(), s.unavailable())
                 .views(s.views()).likes(s.likes()).comments(s.comments()).shares(s.shares()).saves(s.saves())
-                .reach(s.reach()).impressions(s.impressions()).watchTimeSeconds(s.watchTimeSeconds());
+                .reach(s.reach()).impressions(s.impressions()).watchTimeSeconds(s.watchTimeSeconds())
+                .hookRate(s.hookRate()).holdRate(s.holdRate());
     }
 
     private User currentUser() {

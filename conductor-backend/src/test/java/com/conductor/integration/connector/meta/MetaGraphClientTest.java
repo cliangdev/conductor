@@ -281,6 +281,10 @@ class MetaGraphClientTest {
                         + "{\"name\":\"post_impressions_unique\",\"values\":[{\"value\":199}]},"
                         + "{\"name\":\"post_video_view_time\",\"values\":[{\"value\":464000}]}]}",
                         MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/3056753194668979/video_insights?metric=post_video_retention_graph")))
+                .andRespond(withSuccess("{\"data\":[]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/3056753194668979?fields=length")))
+                .andRespond(withSuccess("{\"id\":\"3056753194668979\"}", MediaType.APPLICATION_JSON));
 
         java.util.List<MetaGraphClient.PostMetrics> metrics =
                 client.readPostMetrics(java.util.List.of("3056753194668979"), "page-token");
@@ -316,6 +320,12 @@ class MetaGraphClientTest {
                 .andRespond(withSuccess("{\"data\":[]}", MediaType.APPLICATION_JSON));
         server.expect(requestTo(org.hamcrest.Matchers.endsWith("/video_insights?metric=post_video_view_time")))
                 .andRespond(withSuccess("{\"data\":[]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(org.hamcrest.Matchers.endsWith("/video_insights?metric=post_video_avg_time_watched")))
+                .andRespond(withSuccess("{\"data\":[]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/777/video_insights?metric=post_video_retention_graph")))
+                .andRespond(withSuccess("{\"data\":[]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/777?fields=length")))
+                .andRespond(withSuccess("{\"id\":\"777\"}", MediaType.APPLICATION_JSON));
 
         assertThat(client.readPostMetrics(java.util.List.of("777"), "t")).singleElement().satisfies(m -> {
             assertThat(m.views()).isEqualTo(9L);
@@ -408,6 +418,12 @@ class MetaGraphClientTest {
                         + "{\"name\":\"shares\",\"values\":[{\"value\":2}]},"
                         + "{\"name\":\"total_interactions\",\"values\":[{\"value\":112}]}]}",
                         MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/m1/insights?metric=reels_skip_rate,ig_reels_avg_watch_time")))
+                .andRespond(withSuccess("{\"data\":["
+                        + "{\"name\":\"reels_skip_rate\",\"values\":[{\"value\":0.35}]},"
+                        + "{\"name\":\"ig_reels_avg_watch_time\",\"values\":[{\"value\":6200}]},"
+                        + "{\"name\":\"ig_reels_video_view_total_time\",\"total_value\":{\"value\":620000}}]}",
+                        MediaType.APPLICATION_JSON));
 
         java.util.List<MetaGraphClient.PostMetrics> metrics = client.readMediaMetrics(java.util.List.of("m1"), "token");
 
@@ -421,7 +437,127 @@ class MetaGraphClientTest {
             assertThat(m.totalInteractions()).isEqualTo(112L);
             assertThat(m.unavailable()).isFalse();
             assertThat(m.insightsForbidden()).isFalse();
+            assertThat(m.extra()).containsEntry("reels_skip_rate", 0.35)
+                    .containsEntry("ig_reels_avg_watch_time", 6200.0)
+                    .containsEntry("ig_reels_video_view_total_time", 620000.0);
         });
+    }
+
+    @Test
+    void readMediaMetrics_hookMetricsRefused_keepsViewsAndLeavesTheHookAbsent() {
+        server.expect(requestTo(containsString("/v21.0/m4?fields=")))
+                .andRespond(withSuccess("{\"id\":\"m4\",\"like_count\":1,\"comments_count\":0}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/m4/insights?metric=views,reach")))
+                .andRespond(withSuccess("{\"data\":[{\"name\":\"views\",\"values\":[{\"value\":50}]}]}",
+                        MediaType.APPLICATION_JSON));
+        // The combined hook read is refused, and so is reels_skip_rate on its own: nothing more is asked.
+        server.expect(requestTo(containsString("/v21.0/m4/insights?metric=reels_skip_rate,ig_reels")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withBadRequest().body("{\"error\":{\"message\":\"metric not supported\"}}")
+                        .contentType(MediaType.APPLICATION_JSON));
+        server.expect(requestTo(org.hamcrest.Matchers.endsWith("/v21.0/m4/insights?metric=reels_skip_rate")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
+                        .withBadRequest().body("{\"error\":{\"message\":\"metric not supported\"}}")
+                        .contentType(MediaType.APPLICATION_JSON));
+
+        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readMediaMetrics(java.util.List.of("m4"), "token");
+
+        assertThat(metrics).singleElement().satisfies(m -> {
+            assertThat(m.views()).isEqualTo(50L);
+            assertThat(m.extra()).isEmpty();
+            assertThat(m.insightsForbidden()).isFalse();
+        });
+        server.verify();
+    }
+
+    @Test
+    void readMediaMetrics_combinedHookReadRefused_fallsBackToEachMetricOnItsOwn() {
+        server.expect(requestTo(containsString("/v21.0/m5?fields=")))
+                .andRespond(withSuccess("{\"id\":\"m5\",\"like_count\":1,\"comments_count\":0}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/m5/insights?metric=views,reach")))
+                .andRespond(withSuccess("{\"data\":[]}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/m5/insights?metric=reels_skip_rate,ig_reels")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest());
+        server.expect(requestTo(org.hamcrest.Matchers.endsWith("/v21.0/m5/insights?metric=reels_skip_rate")))
+                .andRespond(withSuccess("{\"data\":[{\"name\":\"reels_skip_rate\",\"values\":[{\"value\":40}]}]}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(org.hamcrest.Matchers.endsWith("/v21.0/m5/insights?metric=ig_reels_avg_watch_time")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest());
+        server.expect(requestTo(org.hamcrest.Matchers.endsWith("/v21.0/m5/insights?metric=ig_reels_video_view_total_time")))
+                .andRespond(withSuccess("{\"data\":[{\"name\":\"ig_reels_video_view_total_time\",\"values\":[{\"value\":9000}]}]}",
+                        MediaType.APPLICATION_JSON));
+
+        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readMediaMetrics(java.util.List.of("m5"), "token");
+
+        assertThat(metrics).singleElement().satisfies(m ->
+                assertThat(m.extra()).containsOnlyKeys("reels_skip_rate", "ig_reels_video_view_total_time"));
+        server.verify();
+    }
+
+    @Test
+    void readPostMetrics_reel_readsAverageWatchTimeRetentionAtThreeSecondsAndLength() {
+        server.expect(requestTo(containsString("/v21.0/555?fields=")))
+                .andRespond(withSuccess("{\"id\":\"555\",\"likes\":{\"summary\":{\"total_count\":4}},"
+                        + "\"comments\":{\"summary\":{\"total_count\":1}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/555/video_insights?metric=fb_reels_total_plays")))
+                .andRespond(withSuccess("{\"data\":["
+                        + "{\"name\":\"fb_reels_total_plays\",\"values\":[{\"value\":900}]},"
+                        + "{\"name\":\"post_video_view_time\",\"values\":[{\"value\":4500000}]},"
+                        + "{\"name\":\"post_video_avg_time_watched\",\"values\":[{\"value\":5000}]}]}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/555/video_insights?metric=post_video_retention_graph")))
+                .andRespond(withSuccess("{\"data\":[{\"name\":\"post_video_retention_graph\","
+                        + "\"values\":[{\"value\":{\"0\":1.0,\"1\":0.8,\"3\":0.55,\"10\":0.2}}]}]}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/555?fields=length")))
+                .andRespond(withSuccess("{\"length\":20.5,\"id\":\"555\"}", MediaType.APPLICATION_JSON));
+
+        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readPostMetrics(java.util.List.of("555"), "token");
+
+        assertThat(metrics).singleElement().satisfies(m -> {
+            assertThat(m.views()).isEqualTo(900L);
+            assertThat(m.watchTimeSeconds()).isEqualTo(4500L);
+            assertThat(m.extra()).containsEntry("post_video_avg_time_watched", 5000L)
+                    .containsEntry("video_retention_3s", 0.55)
+                    .containsEntry("video_duration_s", 20.5);
+        });
+        server.verify();
+    }
+
+    @Test
+    void readPostMetrics_reel_retentionGraphRefused_keepsTheRestWithoutFailing() {
+        server.expect(requestTo(containsString("/v21.0/556?fields=")))
+                .andRespond(withSuccess("{\"id\":\"556\",\"likes\":{\"summary\":{\"total_count\":4}},"
+                        + "\"comments\":{\"summary\":{\"total_count\":1}}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/556/video_insights?metric=fb_reels_total_plays")))
+                .andRespond(withSuccess("{\"data\":[{\"name\":\"fb_reels_total_plays\",\"values\":[{\"value\":10}]}]}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("metric=post_video_retention_graph")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest());
+        server.expect(requestTo(containsString("/v21.0/556?fields=length")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest());
+
+        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readPostMetrics(java.util.List.of("556"), "token");
+
+        assertThat(metrics).singleElement().satisfies(m -> {
+            assertThat(m.views()).isEqualTo(10L);
+            assertThat(m.unavailable()).isFalse();
+            assertThat(m.extra()).isEmpty();
+        });
+    }
+
+    @Test
+    void retentionAt3s_readsObjectOrArrayCurvesAndNeverGuesses() throws Exception {
+        com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
+        assertThat(MetaGraphClient.retentionAt3s(om.readTree("{\"3\":61}"))).isEqualTo(0.61);
+        assertThat(MetaGraphClient.retentionAt3s(om.readTree("[{\"time\":1,\"value\":0.9},{\"time\":3,\"value\":0.5}]")))
+                .isEqualTo(0.5);
+        assertThat(MetaGraphClient.retentionAt3s(om.readTree("{\"1\":0.9}"))).isNull();
+        assertThat(MetaGraphClient.retentionAt3s(om.readTree("[0.9,0.8,0.7,0.6]"))).isNull();
+        assertThat(MetaGraphClient.retentionAt3s(om.readTree("0.5"))).isNull();
+        assertThat(MetaGraphClient.retentionAt3s(null)).isNull();
     }
 
     @Test
@@ -457,6 +593,10 @@ class MetaGraphClientTest {
                 .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators
                         .withBadRequest().body("{\"error\":{\"message\":\"metric not supported\"}}")
                         .contentType(MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/m3/insights?metric=reels_skip_rate,ig_reels")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest());
+        server.expect(requestTo(org.hamcrest.Matchers.endsWith("/v21.0/m3/insights?metric=reels_skip_rate")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest());
 
         java.util.List<MetaGraphClient.PostMetrics> metrics = client.readMediaMetrics(java.util.List.of("m3"), "token");
 

@@ -250,9 +250,11 @@ const CREATIVE_FIELD_PROPERTIES = {
   },
   tags: {
     type: 'object',
-    description: "Optional {hookType, angle, format, archetype, hypothesis, lessons, previewRounds}; used by the marketing skill's learning loop.",
+    description: "Optional {hookType, visualHook, soundHook, angle, format, archetype, hypothesis, lessons, previewRounds}; used by the marketing skill's learning loop. visualHook is what the first frame shows, soundHook what the first second sounds like.",
     properties: {
       hookType: { type: 'string' },
+      visualHook: { type: 'string', description: 'First frame, e.g. result-first, motion, odd-object, before-after, screen, face, text-only' },
+      soundHook: { type: 'string', description: 'First second, e.g. spoken-line, action-sound, music-only, none' },
       angle: { type: 'string' },
       format: { type: 'string' },
       archetype: { type: 'string' },
@@ -1390,7 +1392,7 @@ export const TOOLS = [
   },
   {
     name: 'get_post_analytics',
-    description: 'What happened to a Post after it went out: views, likes, comments and shares per destination as the platform reports them, with the series of snapshots and the totals. Empty until the connection\'s post_metrics feed has read the counters (every six hours after publishing).',
+    description: 'What happened to a Post after it went out: views, likes, comments and shares per destination as the platform reports them, with the series of snapshots and the totals. Instagram, Facebook and YouTube also give hookRate (share who stayed past the opening) and holdRate (watch time over length) when reported, never 0; TikTok reports neither. Empty until the connection\'s post_metrics feed has read the counters (every six hours after publishing).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1402,11 +1404,11 @@ export const TOOLS = [
   },
   {
     name: 'list_top_posts',
-    description: 'The project\'s best-performing published destinations ranked by one metric (views by default; likes, comments, shares, saves, reach, impressions), each with its Post, account and permalink.',
+    description: 'The project\'s best-performing published destinations ranked by one metric (views by default; likes, comments, shares, saves, reach, impressions, hook_rate), each with its Post, account and permalink.',
     inputSchema: {
       type: 'object',
       properties: {
-        metric: { type: 'string', description: 'views (default), likes, comments, shares, saves, reach or impressions' },
+        metric: { type: 'string', description: 'views (default), likes, comments, shares, saves, reach, impressions or hook_rate (share who stayed past the opening; Instagram, Facebook, YouTube only, TikTok is left out; `rate` is the 0-1 fraction, `value` is basis points)' },
         platform: { type: 'string', description: 'Only destinations on this platform (optional)' },
         since: { type: 'string', description: 'ISO-8601; only destinations read at or after this (optional)' },
         limit: { type: 'number', description: 'Rows, up to 100 (default 20)' },
@@ -1415,7 +1417,7 @@ export const TOOLS = [
   },
   {
     name: 'get_marketing_insights',
-    description: 'What is working in marketing. Default include ["posts"]: published Posts only (totals, engagement rate by platform, format and time, best and worst posts, top Creatives, movers vs the prior window). Add "tags" to include for byTag (90-day settled posts vs this account\'s median, with a server verdict to report as given), byTagWindow and playbookEffect; brandKitId filters them. Add "channels" for "how is marketing doing overall / per channel": per-channel status (LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH; `noDataYet` = connected but no complete day of data yet), the acquisition funnel (every stage and `window` share one window ending at the earliest complete day of the channels that feed the funnel, so conversions compare the same days; each channel\'s own metrics keep that channel\'s window), and per metric value, previous, changePct, noise (true = within normal variation, do not call it a trend) and target. Channels are WEB, SEARCH, SOCIAL, ADS, STORE, PRODUCT (the in-app numbers a connected product backend reports: `stages` in funnel order from first open to paid, plus metrics such as cost per trial; the funnel continues into them after store downloads). A metric with `provisional` has newest days that may still change; `smallSample` means too few users or events to call a change real. A metric with a target carries `status` (ON_TRACK = met; WATCH = close, or a rate miss too small a sample to call real; OFF_TRACK = missed by more; TOO_EARLY = no value, or a rate on fewer than 20 observations; STOPPED = a snapshot the feed stopped sending, so it is not judged; `note` says when it was last reported) and `missPct`, the shortfall as a fraction of the target (a count or money total is judged against the target prorated to the window). `basis` COHORT means each day counts the people who first opened that day, followed to now; `funnelBasis` says the in-app funnel is counted that way. A target with `readOnly` is set by the product backend (`setIn` says where) and cannot be changed here. A MISMATCH channel carries `mismatch`: the Conductor figure vs the product backend reference over the same settled days; treat the connector number as the one to trust until the gap is explained. Numbers are platform-reported and cover complete days only (see dataCompleteThrough), so they can differ from a platform UI that shows today. Pass `channel` with "channels" to also get that channel\'s series (weekly buckets: sums for counts and money, means for rates and positions; provisional = may still change) and its top 10 rows per breakdown (referrers, queries, campaigns, platforms, App Store traffic sources). Windows: 7d, 30d, 90d. For channels, 30d is read as the 28-day window, and 90d is valid only with `channel`. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
+    description: 'What is working in marketing. Default include ["posts"]: published Posts only (totals, engagement rate by platform, format and time, best and worst posts, top Creatives, movers vs the prior window). Add "tags" to include for byTag (90-day settled posts vs this account\'s median, with a server verdict to report as given: HOOK_LIFT when most posts report a hook rate, which TikTok never does), byTagWindow and playbookEffect; brandKitId filters them. Add "channels" for "how is marketing doing overall / per channel": per-channel status (LIVE, STALE, NOT_CONNECTED, COMING_SOON, MISMATCH; `noDataYet` = connected but no complete day of data yet), the acquisition funnel (every stage and `window` share one window ending at the earliest complete day of the channels that feed the funnel, so conversions compare the same days; each channel\'s own metrics keep that channel\'s window), and per metric value, previous, changePct, noise (true = within normal variation, do not call it a trend) and target. Channels are WEB, SEARCH, SOCIAL, ADS, STORE, PRODUCT (the in-app numbers a connected product backend reports: `stages` in funnel order from first open to paid, plus metrics such as cost per trial; the funnel continues into them after store downloads). A metric with `provisional` has newest days that may still change; `smallSample` means too few users or events to call a change real. A metric with a target carries `status` (ON_TRACK = met; WATCH = close, or a rate miss too small a sample to call real; OFF_TRACK = missed by more; TOO_EARLY = no value, or a rate on fewer than 20 observations; STOPPED = a snapshot the feed stopped sending, so it is not judged; `note` says when it was last reported) and `missPct`, the shortfall as a fraction of the target (a count or money total is judged against the target prorated to the window). `basis` COHORT means each day counts the people who first opened that day, followed to now; `funnelBasis` says the in-app funnel is counted that way. A target with `readOnly` is set by the product backend (`setIn` says where) and cannot be changed here. A MISMATCH channel carries `mismatch`: the Conductor figure vs the product backend reference over the same settled days; treat the connector number as the one to trust until the gap is explained. Numbers are platform-reported and cover complete days only (see dataCompleteThrough), so they can differ from a platform UI that shows today. Pass `channel` with "channels" to also get that channel\'s series (weekly buckets: sums for counts and money, means for rates and positions; provisional = may still change) and its top 10 rows per breakdown (referrers, queries, campaigns, platforms, App Store traffic sources). Windows: 7d, 30d, 90d. For channels, 30d is read as the 28-day window, and 90d is valid only with `channel`. Read-only. Use get_post_analytics for one Post\'s series and list_top_posts for a full ranking by one metric.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2342,7 +2344,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         creativeId: { type: 'string', description: 'Any Creative in the family — a lettered variant or the root; resolved automatically' },
-        metric: { type: 'string', enum: ['views', 'engagement_rate', 'avg_view_pct'], description: 'Optional — defaults to views. The decision prefers avg_view_pct whenever every variant reports it, regardless of this choice.' },
+        metric: { type: 'string', enum: ['views', 'engagement_rate', 'avg_view_pct', 'hook_rate'], description: 'Optional — defaults to views. The decision prefers avg_view_pct whenever every variant reports it, regardless of this choice, unless hook_rate is chosen and every variant reports a hook rate (not TikTok).' },
         windowHours: { type: 'number', description: 'Hours after each variant fires before it counts toward the decision (optional, default 72)' },
       },
       required: ['creativeId'],

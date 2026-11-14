@@ -220,6 +220,99 @@ class PostBaselineServiceTest {
         assertThat(TagGrouping.followedLessons("other", tags)).isFalse();
     }
 
+    private static Observation hookObs(String id, String platform, Double hookRate) {
+        return new Observation(id, platform, "REEL", NOW.minusDays(9), 100L, 0L, 0L, 0L, 0L, null, hookRate, null);
+    }
+
+    @Test
+    void hookBaselinesCountOnlyNonNullValuesPerPlatformAndFormatBucket() {
+        List<PostPublishTarget> all = new ArrayList<>();
+        List<PostPublishTargetMetric> latest = new ArrayList<>();
+        // instagram REEL: 10 posts with a skip rate -> hook baseline (median hookRate of 0.6).
+        for (int i = 0; i < 10; i++) addHook(all, latest, "instagram", "REEL", "{\"reels_skip_rate\":0.4}");
+        // facebook REEL: 10 posts, only 2 report retention -> no hook baseline for the bucket or the platform.
+        for (int i = 0; i < 10; i++) {
+            addHook(all, latest, "facebook", "REEL", i < 2 ? "{\"video_retention_3s\":0.5}" : "{}");
+        }
+        // tiktok: never reports a hook.
+        for (int i = 0; i < 12; i++) addHook(all, latest, "tiktok", "REEL", "{\"reels_skip_rate\":0.1}");
+        when(targets.findPublishedByFireTimeWindow(anyString(), any(), any(), any())).thenReturn(all);
+        when(metrics.findLatestAvailableForTargets(anyList())).thenReturn(latest);
+
+        Baselines b = service.baselines("p", NOW);
+
+        assertThat(b.forBucket("instagram", "REEL").medianHookRate()).isCloseTo(0.6, within(1e-9));
+        assertThat(b.forBucket("facebook", "REEL").medianHookRate()).isNull();
+        assertThat(b.forBucket("tiktok", "REEL").medianHookRate()).isNull();
+        // Instagram has no duration, so no hold baseline either.
+        assertThat(b.forBucket("instagram", "REEL").medianHoldRate()).isNull();
+    }
+
+    @Test
+    void aPostsHookLiftIsItsRateOverTheBaselineAndTheSummaryJudgesIt() {
+        Baselines b = baselines(Map.of(PostBaselineService.key("instagram", "REEL"),
+                new Baseline(100.0, null, 0.5, 0.4)), Map.of());
+        List<Observation> posts = new ArrayList<>();
+        posts.add(hookObs("a", "instagram", 0.7));
+        posts.add(hookObs("b", "instagram", 0.75));
+        posts.add(hookObs("c", "instagram", 0.8));
+        posts.add(hookObs("d", "instagram", null)); // reported nothing: counted in no hook figure
+
+        assertThat(b.lift(posts.get(0)).hookLift()).isCloseTo(1.4, within(1e-9));
+        assertThat(b.lift(posts.get(3)).hookLift()).isNull();
+        LiftSummary s = b.summarize(posts);
+        assertThat(s.withHookBaselinePosts()).isEqualTo(3);
+        assertThat(s.beatHookBaselinePosts()).isEqualTo(3);
+        assertThat(s.medianHookLift()).isCloseTo(1.5, within(1e-9));
+        assertThat(s.hookVerdict()).isEqualTo("WORKS");
+    }
+
+    @Test
+    void theDefaultVerdictPrefersHookThenRetentionThenViewsWithTheSameCoverageRule() {
+        // 4 of 5 view posts have a hook baseline (at least 3 and at least 2/3): hook wins even over retention.
+        LiftSummary hookAndRetention = new LiftSummary(1.5, 1.0, 0.05, 0.7, 5, 5, 5, 0, "WORKS", "DOESNT_WORK",
+                0.5, null, 4, 0, "DOESNT_WORK");
+        assertThat(LessonVerdictRules.defaultFor(hookAndRetention))
+                .isEqualTo(new LessonVerdictRules.Default("DOESNT_WORK", "HOOK_LIFT"));
+        // Hook thin (3 of 5 is under 2/3): retention, which covers, is next.
+        LiftSummary thinHook = new LiftSummary(1.5, 1.0, 0.05, 0.7, 5, 5, 5, 0, "WORKS", "DOESNT_WORK",
+                0.5, null, 3, 0, "DOESNT_WORK");
+        assertThat(LessonVerdictRules.defaultFor(thinHook))
+                .isEqualTo(new LessonVerdictRules.Default("DOESNT_WORK", "RETENTION_LIFT"));
+        // Fewer than 3 hook posts, no retention: views.
+        LiftSummary fewHook = new LiftSummary(1.5, 1.0, 0.05, null, 2, 2, 0, 0, "WORKS", "NOT_ENOUGH_DATA",
+                1.2, null, 2, 0, "NOT_ENOUGH_DATA");
+        assertThat(LessonVerdictRules.defaultFor(fewHook)).isEqualTo(new LessonVerdictRules.Default("WORKS", "VIEW_LIFT"));
+        // The hook verdict uses the same thresholds as the others.
+        assertThat(LessonVerdictRules.verdict(3, 0, 0.7)).isEqualTo("DOESNT_WORK");
+    }
+
+    @Test
+    void aFewInstagramPostsWithAHookDoNotDecideARowThatIsMostlyTikTok() {
+        Baselines b = baselines(Map.of(), Map.of("tiktok", new Baseline(100.0, null),
+                "instagram", new Baseline(100.0, null, 0.5, null)));
+        List<Observation> posts = new ArrayList<>();
+        for (int i = 0; i < 20; i++) {
+            posts.add(new Observation("tt" + i, "tiktok", "REEL", NOW.minusDays(9), 150L, 0L, 0L, 0L, 0L, null));
+        }
+        for (int i = 0; i < 3; i++) posts.add(hookObs("ig" + i, "instagram", 0.3));
+
+        LiftSummary lift = b.summarize(posts);
+
+        assertThat(lift.hookVerdict()).isEqualTo("DOESNT_WORK");
+        assertThat(LessonVerdictRules.defaultFor(lift)).isEqualTo(new LessonVerdictRules.Default("WORKS", "VIEW_LIFT"));
+    }
+
+    private void addHook(List<PostPublishTarget> all, List<PostPublishTargetMetric> latest, String platform,
+                         String format, String extraJson) {
+        add(all, latest, platform, format, NOW.minusDays(10), 100L, null);
+        try {
+            latest.get(latest.size() - 1).setExtra(new com.fasterxml.jackson.databind.ObjectMapper().readTree(extraJson));
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     private Observation obs(String platform, String format, long views) {
         return new Observation("o" + (++n), platform, format, NOW.minusDays(9), views, 0L, 0L, 0L, 0L, null);
     }

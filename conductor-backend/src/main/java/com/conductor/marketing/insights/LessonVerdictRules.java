@@ -29,6 +29,7 @@ public final class LessonVerdictRules {
 
     public static final String VIEW_LIFT = "VIEW_LIFT";
     public static final String RETENTION_LIFT = "RETENTION_LIFT";
+    public static final String HOOK_LIFT = "HOOK_LIFT";
 
     /**
      * The default verdict reads retention only when posts with a retention baseline are at least this share of
@@ -36,6 +37,12 @@ public final class LessonVerdictRules {
      * posts must not decide a verdict for a row that is mostly TikTok or Instagram.
      */
     public static final double RETENTION_COVERAGE_SHARE = 2.0 / 3.0;
+
+    /**
+     * The hook coverage rule mirrors {@link #RETENTION_COVERAGE_SHARE}: HOOK_LIFT is used only when at least
+     * this share of the posts with a view baseline also have a hook baseline.
+     */
+    public static final double HOOK_COVERAGE_SHARE = 2.0 / 3.0;
 
     private LessonVerdictRules() {}
 
@@ -58,11 +65,19 @@ public final class LessonVerdictRules {
     public record Default(String verdict, String metric) {}
 
     /**
-     * The row's default verdict, for every tag key: retention when at least {@link #MIN_POSTS} posts have a
+     * The row's default verdict, for every tag key. Precedence: HOOK_LIFT first (the opening is what the tags
+     * describe, and Instagram, Facebook and YouTube all report it), then RETENTION_LIFT, then VIEW_LIFT. Hook
+     * when at least {@link #MIN_POSTS} posts have a hook baseline and they are at least
+     * {@link #HOOK_COVERAGE_SHARE} of the posts with a view baseline; else retention when at least {@link #MIN_POSTS} posts have a
      * retention baseline and they are at least {@link #RETENTION_COVERAGE_SHARE} of the posts with a view
      * baseline; otherwise views.
      */
     public static Default defaultFor(PostBaselineService.LiftSummary lift) {
+        boolean hookCovers = lift.withHookBaselinePosts() >= MIN_POSTS
+                && lift.withHookBaselinePosts() * 3 >= lift.withBaselinePosts() * 2;
+        if (hookCovers) {
+            return new Default(lift.hookVerdict(), HOOK_LIFT);
+        }
         boolean retentionCovers = lift.withRetentionBaselinePosts() >= MIN_POSTS
                 && lift.withRetentionBaselinePosts() * 3 >= lift.withBaselinePosts() * 2;
         return retentionCovers ? new Default(lift.retentionVerdict(), RETENTION_LIFT)

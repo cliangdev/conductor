@@ -21,7 +21,8 @@ import java.util.stream.Collectors;
  * average-view-percentage of settled reporting destinations over the trailing {@value #BASELINE_DAYS} days,
  * kept per platform and format, falling back to the platform alone, then to nothing. A post's <em>view
  * lift</em> is its views over the baseline median (1.0 is typical); its <em>retention lift</em> is its
- * avgViewPct over the baseline's. Both are null when either side is missing. The window is independent of
+ * avgViewPct over the baseline's; its <em>hook lift</em> is its hookRate over the baseline's (and its hold lift
+ * likewise for holdRate, see {@link HookMetrics}). Each is null when either side is missing. The window is independent of
  * any insights window. Shared by marketing insights' {@code byTag}, per-Creative performance and the weekly
  * snapshot, so all three speak the same lift.
  */
@@ -36,7 +37,13 @@ public class PostBaselineService {
 
     /** One reporting destination's numbers. */
     public record Observation(String targetId, String platform, String format, OffsetDateTime fireTime, Long views, Long likes,
-                              Long comments, Long shares, Long saves, Double avgViewPct) {
+                              Long comments, Long shares, Long saves, Double avgViewPct,
+                              Double hookRate, Double holdRate) {
+
+        public Observation(String targetId, String platform, String format, OffsetDateTime fireTime, Long views,
+                           Long likes, Long comments, Long shares, Long saves, Double avgViewPct) {
+            this(targetId, platform, format, fireTime, views, likes, comments, shares, saves, avgViewPct, null, null);
+        }
 
         Double engagementRate() {
             if (views == null || views <= 0) {
@@ -49,10 +56,20 @@ public class PostBaselineService {
     }
 
     /** A bucket's medians; either may be null (no destination reported it). */
-    public record Baseline(Double medianViews, Double medianAvgViewPct) {}
+    public record Baseline(Double medianViews, Double medianAvgViewPct, Double medianHookRate,
+                           Double medianHoldRate) {
+        public Baseline(Double medianViews, Double medianAvgViewPct) {
+            this(medianViews, medianAvgViewPct, null, null);
+        }
+    }
 
     /** The per-post lifts plus engagement rate, any null when not computable. */
-    public record PostLift(Double viewLift, Double retentionLift, Double engagementRate) {}
+    public record PostLift(Double viewLift, Double retentionLift, Double engagementRate, Double hookLift,
+                           Double holdLift) {
+        public PostLift(Double viewLift, Double retentionLift, Double engagementRate) {
+            this(viewLift, retentionLift, engagementRate, null, null);
+        }
+    }
 
     /**
      * Medians over a set of settled posts: {@code medianViewLift}, {@code beatBaselineShare} (share of posts
@@ -62,7 +79,17 @@ public class PostBaselineService {
     public record LiftSummary(Double medianViewLift, Double beatBaselineShare, Double medianEngagementRate,
                               Double medianRetentionLift, int withBaselinePosts, int beatBaselinePosts,
                               int withRetentionBaselinePosts, int beatRetentionBaselinePosts, String viewVerdict,
-                              String retentionVerdict) {}
+                              String retentionVerdict, Double medianHookLift, Double medianHoldLift,
+                              int withHookBaselinePosts, int beatHookBaselinePosts, String hookVerdict) {
+        public LiftSummary(Double medianViewLift, Double beatBaselineShare, Double medianEngagementRate,
+                           Double medianRetentionLift, int withBaselinePosts, int beatBaselinePosts,
+                           int withRetentionBaselinePosts, int beatRetentionBaselinePosts, String viewVerdict,
+                           String retentionVerdict) {
+            this(medianViewLift, beatBaselineShare, medianEngagementRate, medianRetentionLift, withBaselinePosts,
+                    beatBaselinePosts, withRetentionBaselinePosts, beatRetentionBaselinePosts, viewVerdict,
+                    retentionVerdict, null, null, 0, 0, LessonVerdictRules.NOT_ENOUGH_DATA);
+        }
+    }
 
     /** Baselines for one project at one moment. */
     public static final class Baselines {
@@ -109,14 +136,27 @@ public class PostBaselineService {
             Double views = pf != null && pf.medianViews() != null ? pf.medianViews() : p != null ? p.medianViews() : null;
             Double retention = pf != null && pf.medianAvgViewPct() != null ? pf.medianAvgViewPct()
                     : p != null ? p.medianAvgViewPct() : null;
-            return views == null && retention == null ? null : new Baseline(views, retention);
+            Double hook = pf != null && pf.medianHookRate() != null ? pf.medianHookRate()
+                    : p != null ? p.medianHookRate() : null;
+            Double hold = pf != null && pf.medianHoldRate() != null ? pf.medianHoldRate()
+                    : p != null ? p.medianHoldRate() : null;
+            return views == null && retention == null && hook == null && hold == null ? null
+                    : new Baseline(views, retention, hook, hold);
         }
 
         public PostLift lift(Observation o) {
             Baseline b = forBucket(o.platform(), o.format());
             Double viewLift = null;
             Double retentionLift = null;
+            Double hookLift = null;
+            Double holdLift = null;
             if (b != null) {
+                if (o.hookRate() != null && b.medianHookRate() != null && b.medianHookRate() > 0) {
+                    hookLift = o.hookRate() / b.medianHookRate();
+                }
+                if (o.holdRate() != null && b.medianHoldRate() != null && b.medianHoldRate() > 0) {
+                    holdLift = o.holdRate() / b.medianHoldRate();
+                }
                 if (o.views() != null && b.medianViews() != null && b.medianViews() > 0) {
                     viewLift = o.views() / b.medianViews();
                 }
@@ -124,13 +164,17 @@ public class PostBaselineService {
                     retentionLift = o.avgViewPct() / b.medianAvgViewPct();
                 }
             }
-            return new PostLift(viewLift, retentionLift, o.engagementRate());
+            return new PostLift(viewLift, retentionLift, o.engagementRate(), hookLift, holdLift);
         }
 
         public LiftSummary summarize(List<Observation> settled) {
             List<PostLift> lifts = settled.stream().map(this::lift).toList();
             List<Double> viewLifts = lifts.stream().map(PostLift::viewLift).filter(java.util.Objects::nonNull).toList();
             List<Double> retentionLifts = lifts.stream().map(PostLift::retentionLift).filter(java.util.Objects::nonNull).toList();
+            List<Double> hookLifts = lifts.stream().map(PostLift::hookLift).filter(java.util.Objects::nonNull).toList();
+            List<Double> holdLifts = lifts.stream().map(PostLift::holdLift).filter(java.util.Objects::nonNull).toList();
+            int beatHook = (int) hookLifts.stream().filter(l -> l > 1).count();
+            Double medianHook = median(hookLifts);
             int beat = (int) viewLifts.stream().filter(l -> l > 1).count();
             int beatRetention = (int) retentionLifts.stream().filter(l -> l > 1).count();
             Double medianView = median(viewLifts);
@@ -139,7 +183,9 @@ public class PostBaselineService {
                     median(lifts.stream().map(PostLift::engagementRate).filter(java.util.Objects::nonNull).toList()),
                     medianRetention, viewLifts.size(), beat, retentionLifts.size(), beatRetention,
                     LessonVerdictRules.verdict(viewLifts.size(), beat, medianView),
-                    LessonVerdictRules.verdict(retentionLifts.size(), beatRetention, medianRetention));
+                    LessonVerdictRules.verdict(retentionLifts.size(), beatRetention, medianRetention),
+                    medianHook, median(holdLifts), hookLifts.size(), beatHook,
+                    LessonVerdictRules.verdict(hookLifts.size(), beatHook, medianHook));
         }
     }
 
@@ -175,8 +221,10 @@ public class PostBaselineService {
             if (m == null) {
                 continue;
             }
+            HookMetrics.Rates rates = HookMetrics.of(t.getPlatform(), m.getExtra());
             Observation o = new Observation(t.getId(), t.getPlatform(), t.getFormat(), t.getFireTime(), m.getViews(),
-                    m.getLikes(), m.getComments(), m.getShares(), m.getSaves(), avgViewPct(m.getExtra()));
+                    m.getLikes(), m.getComments(), m.getShares(), m.getSaves(), avgViewPct(m.getExtra()),
+                    rates.hookRate(), rates.holdRate());
             (PostSettleWindows.isSettled(t.getPlatform(), t.getFireTime(), now) ? settled : unsettled).add(o);
         }
 
@@ -200,10 +248,16 @@ public class PostBaselineService {
                     .map(Long::doubleValue).toList();
             List<Double> retention = observations.stream().map(Observation::avgViewPct)
                     .filter(java.util.Objects::nonNull).toList();
+            List<Double> hook = observations.stream().map(Observation::hookRate)
+                    .filter(java.util.Objects::nonNull).toList();
+            List<Double> hold = observations.stream().map(Observation::holdRate)
+                    .filter(java.util.Objects::nonNull).toList();
+            Double medianHook = hook.size() >= MIN_BUCKET_POSTS ? median(hook) : null;
+            Double medianHold = hold.size() >= MIN_BUCKET_POSTS ? median(hold) : null;
             Double medianViews = views.size() >= MIN_BUCKET_POSTS ? median(views) : null;
             Double medianRetention = retention.size() >= MIN_BUCKET_POSTS ? median(retention) : null;
-            if (medianViews != null || medianRetention != null) {
-                out.put(k, new Baseline(medianViews, medianRetention));
+            if (medianViews != null || medianRetention != null || medianHook != null || medianHold != null) {
+                out.put(k, new Baseline(medianViews, medianRetention, medianHook, medianHold));
             }
         });
         return out;

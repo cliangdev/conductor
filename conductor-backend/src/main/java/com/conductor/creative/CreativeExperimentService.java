@@ -1,5 +1,6 @@
 package com.conductor.creative;
 
+import com.conductor.marketing.insights.HookMetrics;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.User;
@@ -55,7 +56,8 @@ public class CreativeExperimentService {
     static final int INCONCLUSIVE_GRACE_DAYS = 7;
 
     private static final Set<String> ALLOWED_METRICS = Set.of(
-            CreativeExperiment.METRIC_VIEWS, CreativeExperiment.METRIC_ENGAGEMENT_RATE, CreativeExperiment.METRIC_AVG_VIEW_PCT);
+            CreativeExperiment.METRIC_VIEWS, CreativeExperiment.METRIC_ENGAGEMENT_RATE, CreativeExperiment.METRIC_AVG_VIEW_PCT,
+            CreativeExperiment.METRIC_HOOK_RATE);
 
     private final CreativeExperimentRepository experimentRepository;
     private final CreativeRepository creativeRepository;
@@ -83,7 +85,7 @@ public class CreativeExperimentService {
 
     /** One variant's numbers at the experiment's decision window, or the lack of them. */
     private record VariantWindowData(boolean hasData, Long views, Double engagementRate, Double avgViewPct,
-                                     OffsetDateTime earliestFireTime) {}
+                                     Double hookRate, OffsetDateTime earliestFireTime) {}
 
     @Transactional
     public CreativeExperiment create(String projectId, String creativeId, String metricRaw, Integer windowHours, User caller) {
@@ -209,7 +211,13 @@ public class CreativeExperimentService {
         }
 
         boolean allHaveAvgViewPct = dataByCreative.values().stream().allMatch(d -> d.avgViewPct() != null);
-        String comparisonMetric = allHaveAvgViewPct ? CreativeExperiment.METRIC_AVG_VIEW_PCT : experiment.getMetric();
+        // hook_rate is compared only when the experiment asked for it and every variant reports it (TikTok never
+        // does); otherwise the rule is the one that always applied.
+        boolean hookRequested = CreativeExperiment.METRIC_HOOK_RATE.equals(experiment.getMetric());
+        boolean allHaveHookRate = dataByCreative.values().stream().allMatch(d -> d.hookRate() != null);
+        String comparisonMetric = hookRequested && allHaveHookRate ? CreativeExperiment.METRIC_HOOK_RATE
+                : allHaveAvgViewPct ? CreativeExperiment.METRIC_AVG_VIEW_PCT
+                : hookRequested ? CreativeExperiment.METRIC_VIEWS : experiment.getMetric();
 
         Map<String, Double> comparisonValues = new LinkedHashMap<>();
         for (Creative variant : family) {
@@ -277,6 +285,7 @@ public class CreativeExperimentService {
         long views = 0;
         long engagementNumerator = 0;
         List<Double> avgViewPcts = new ArrayList<>();
+        List<Double> hookRates = new ArrayList<>();
         boolean any = false;
         for (PostPublishTarget target : targets) {
             OffsetDateTime deadline = target.getFireTime().plusHours(windowHours);
@@ -292,14 +301,20 @@ public class CreativeExperimentService {
             if (avgPct != null) {
                 avgViewPcts.add(avgPct);
             }
+            Double hook = HookMetrics.of(target.getPlatform(), m.getExtra()).hookRate();
+            if (hook != null) {
+                hookRates.add(hook);
+            }
         }
         if (!any) {
-            return new VariantWindowData(false, null, null, null, earliest);
+            return new VariantWindowData(false, null, null, null, null, earliest);
         }
         Double engagementRate = views > 0 ? (double) engagementNumerator / views : 0.0;
         Double avgViewPct = avgViewPcts.isEmpty() ? null
                 : avgViewPcts.stream().mapToDouble(Double::doubleValue).average().orElse(0);
-        return new VariantWindowData(true, views, engagementRate, avgViewPct, earliest);
+        Double hookRate = hookRates.isEmpty() ? null
+                : hookRates.stream().mapToDouble(Double::doubleValue).average().orElse(0);
+        return new VariantWindowData(true, views, engagementRate, avgViewPct, hookRate, earliest);
     }
 
     /** The instant after which a variant still missing window data is "overdue" rather than "not due yet". */
@@ -312,6 +327,7 @@ public class CreativeExperimentService {
     private double comparisonValue(VariantWindowData data, String metric) {
         return switch (metric) {
             case CreativeExperiment.METRIC_AVG_VIEW_PCT -> data.avgViewPct() != null ? data.avgViewPct() : 0.0;
+            case CreativeExperiment.METRIC_HOOK_RATE -> data.hookRate() != null ? data.hookRate() : 0.0;
             case CreativeExperiment.METRIC_ENGAGEMENT_RATE -> data.engagementRate() != null ? data.engagementRate() : 0.0;
             default -> data.views() != null ? data.views() : 0.0;
         };
@@ -344,6 +360,9 @@ public class CreativeExperimentService {
             }
             if (data.avgViewPct() != null) {
                 row.put("avgViewPct", data.avgViewPct());
+            }
+            if (data.hookRate() != null) {
+                row.put("hookRate", data.hookRate());
             }
         }
         return root;
@@ -383,7 +402,7 @@ public class CreativeExperimentService {
             return CreativeExperiment.METRIC_VIEWS;
         }
         if (!ALLOWED_METRICS.contains(raw)) {
-            throw new BusinessException("Unknown metric '" + raw + "'; expected views, engagement_rate or avg_view_pct");
+            throw new BusinessException("Unknown metric '" + raw + "'; expected views, engagement_rate, avg_view_pct or hook_rate");
         }
         return raw;
     }

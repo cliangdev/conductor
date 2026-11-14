@@ -161,6 +161,30 @@ class PublishMetricsQueryServiceTest {
     }
 
     @Test
+    void hookRateRanksOnlyDestinationsThatReportOneAndSnapshotsCarryTheRates() {
+        PostPublishTargetMetric ig1 = snapshot("t-ig", "instagram", T2, 900L, 8L, false);
+        ig1.setExtra(new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("reels_skip_rate", 0.4));
+        PostPublishTargetMetric yt = snapshot("t-yt", "youtube", T2, 100L, 1L, false);
+        yt.setExtra(new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode()
+                .put("opening_hold", 0.9).put("avg_view_pct", 50.0));
+        PostPublishTargetMetric tiktok = snapshot("t-tt", "tiktok", T2, 5000L, 80L, false);
+        when(metricRepository.findLatestPerTarget(eq("proj-1"), isNull(), any())).thenReturn(List.of(ig1, yt, tiktok));
+
+        List<PublishMetricsQueryService.TopPost> ranked = service.topPosts("proj-1", "hook_rate", null, null, 20, caller);
+
+        // TikTok has the most views but reports no hook rate: left out, not ranked last.
+        assertThat(ranked).extracting(PublishMetricsQueryService.TopPost::targetId).containsExactly("t-yt", "t-ig");
+        assertThat(ranked.get(0).rate()).isCloseTo(0.9, org.assertj.core.api.Assertions.within(1e-9));
+        assertThat(ranked.get(0).value()).isEqualTo(9000L);
+        assertThat(ranked.get(0).metric()).isEqualTo("hook_rate");
+
+        PublishMetricsQueryService.Snapshot snap = PublishMetricsQueryService.Snapshot.of(yt);
+        assertThat(snap.hookRate()).isCloseTo(0.9, org.assertj.core.api.Assertions.within(1e-9));
+        assertThat(snap.holdRate()).isCloseTo(0.5, org.assertj.core.api.Assertions.within(1e-9));
+        assertThat(PublishMetricsQueryService.Snapshot.of(tiktok).hookRate()).isNull();
+    }
+
+    @Test
     void aNonMemberSeesNothing() {
         User stranger = new User();
         stranger.setId("u-2");

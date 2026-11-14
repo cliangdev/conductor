@@ -3,6 +3,7 @@ package com.conductor.creative;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.User;
+import com.conductor.marketing.insights.HookMetrics;
 import com.conductor.marketing.insights.LessonVerdictRules;
 import com.conductor.marketing.insights.PostBaselineService;
 import com.conductor.marketing.insights.PostSettleWindows;
@@ -41,7 +42,9 @@ public class CreativePerformanceService {
                                      List<PlatformBreakdown> byPlatform, Integer settledPosts,
                                      Double medianViewLift, Double medianRetentionLift,
                                      Double beatBaselineShare, Integer withBaselinePosts,
-                                     Integer beatBaselinePosts, String viewVerdict, String retentionVerdict) {}
+                                     Integer beatBaselinePosts, String viewVerdict, String retentionVerdict,
+                                     Double hookRate, Double holdRate, Double medianHookLift,
+                                     String hookVerdict) {}
 
     /** The whole family (the requested Creative plus every lettered sibling), oldest letter first. */
     public record FamilyPerformance(String creativeId, List<VariantPerformance> family) {}
@@ -167,6 +170,8 @@ public class CreativePerformanceService {
         long views = 0;
         long engagementNumerator = 0;
         List<Double> avgViewPcts = new ArrayList<>();
+        List<Double> hookRates = new ArrayList<>();
+        List<Double> holdRates = new ArrayList<>();
         Map<String, long[]> byPlatform = new LinkedHashMap<>();
         long views72hSum = 0;
         boolean any72h = false;
@@ -187,10 +192,17 @@ public class CreativePerformanceService {
             if (avgPct != null) {
                 avgViewPcts.add(avgPct);
             }
+            HookMetrics.Rates rates = HookMetrics.of(target.getPlatform(), latest.getExtra());
+            if (rates.hookRate() != null) {
+                hookRates.add(rates.hookRate());
+            }
+            if (rates.holdRate() != null) {
+                holdRates.add(rates.holdRate());
+            }
             if (PostSettleWindows.isSettled(target.getPlatform(), target.getFireTime(), now)) {
                 settled.add(new PostBaselineService.Observation(target.getId(), target.getPlatform(), target.getFormat(),
                         target.getFireTime(), latest.getViews(), latest.getLikes(), latest.getComments(),
-                        latest.getShares(), latest.getSaves(), avgPct));
+                        latest.getShares(), latest.getSaves(), avgPct, rates.hookRate(), rates.holdRate()));
             }
 
             long[] bucket = byPlatform.computeIfAbsent(target.getPlatform(), k -> new long[3]);
@@ -215,6 +227,8 @@ public class CreativePerformanceService {
         Double avgViewPct = avgViewPcts.isEmpty() ? null
                 : avgViewPcts.stream().mapToDouble(Double::doubleValue).average().orElse(0);
         Long views72h = any72h ? views72hSum : null;
+        Double hookRate = mean(hookRates);
+        Double holdRate = mean(holdRates);
 
         List<PlatformBreakdown> platformBreakdown = byPlatform.entrySet().stream()
                 .map(e -> new PlatformBreakdown(e.getKey(), (int) e.getValue()[0], e.getValue()[1],
@@ -224,24 +238,32 @@ public class CreativePerformanceService {
 
         if (!lift) {
             return new VariantPerformance(creative.getId(), creative.displayId(), creative.getHeadline(), posts, views,
-                    engagementRate, avgViewPct, views72h, platformBreakdown, null, null, null, null, null, null, null, null);
+                    engagementRate, avgViewPct, views72h, platformBreakdown, null, null, null, null, null, null, null, null,
+                    hookRate, holdRate, null, null);
         }
         PostBaselineService.LiftSummary summary =
                 (baselines != null ? baselines : PostBaselineService.Baselines.empty(now)).summarize(settled);
         return new VariantPerformance(creative.getId(), creative.displayId(), creative.getHeadline(), posts, views,
                 engagementRate, avgViewPct, views72h, platformBreakdown, settled.size(), summary.medianViewLift(),
                 summary.medianRetentionLift(), summary.beatBaselineShare(), summary.withBaselinePosts(),
-                summary.beatBaselinePosts(), summary.viewVerdict(), summary.retentionVerdict());
+                summary.beatBaselinePosts(), summary.viewVerdict(), summary.retentionVerdict(), hookRate, holdRate,
+                summary.medianHookLift(), summary.hookVerdict());
     }
 
     private VariantPerformance empty(Creative creative, boolean lift) {
         if (!lift) {
             return new VariantPerformance(creative.getId(), creative.displayId(), creative.getHeadline(), 0, 0,
-                    null, null, null, List.of(), null, null, null, null, null, null, null, null);
+                    null, null, null, List.of(), null, null, null, null, null, null, null, null,
+                    null, null, null, null);
         }
         return new VariantPerformance(creative.getId(), creative.displayId(), creative.getHeadline(), 0, 0,
                 null, null, null, List.of(), 0, null, null, null, 0, 0,
-                LessonVerdictRules.NOT_ENOUGH_DATA, LessonVerdictRules.NOT_ENOUGH_DATA);
+                LessonVerdictRules.NOT_ENOUGH_DATA, LessonVerdictRules.NOT_ENOUGH_DATA, null, null, null,
+                LessonVerdictRules.NOT_ENOUGH_DATA);
+    }
+
+    private static Double mean(List<Double> values) {
+        return values.isEmpty() ? null : values.stream().mapToDouble(Double::doubleValue).average().orElse(0);
     }
 
     private static Double avgViewPct(JsonNode extra) {

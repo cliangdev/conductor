@@ -158,6 +158,40 @@ class CreativeExperimentServiceIntegrationTest extends AbstractNoneWebIntegratio
     }
 
     @Test
+    void decideComparesOnHookRateWhenRequestedAndEveryVariantReportsOne() {
+        OffsetDateTime now = OffsetDateTime.now();
+        Creative a = newVariant("a", null, "Hook A");
+        Creative b = newVariant("b", a.getId(), "Hook B");
+        // A has the higher avg_view_pct and views; B holds more viewers past the opening: hook_rate decides.
+        publishWithHook(a, now.minusHours(200), 5000L, 80.0, 0.5, now.minusHours(200).plusHours(73));
+        publishWithHook(b, now.minusHours(200), 1000L, 40.0, 0.9, now.minusHours(200).plusHours(73));
+
+        CreativeExperiment experiment = experimentService.create(project.getId(), a.getId(), "hook_rate", 72, admin);
+        CreativeExperiment decided = experimentService.decide(project.getId(), experiment.getId(), admin);
+
+        assertThat(decided.getState()).isEqualTo(CreativeExperiment.STATE_DECIDED);
+        assertThat(decided.getWinnerCreativeId()).isEqualTo(b.getId());
+        assertThat(decided.getSummary().get("comparisonMetric").asText()).isEqualTo("hook_rate");
+        assertThat(decided.getSummary().get("variants").get(0).get("hookRate").asDouble()).isEqualTo(0.5);
+    }
+
+    @Test
+    void decideFallsBackWhenHookRateWasRequestedButAVariantReportsNone() {
+        OffsetDateTime now = OffsetDateTime.now();
+        Creative a = newVariant("a", null, "Hook A");
+        Creative b = newVariant("b", a.getId(), "Hook B");
+        publishWithHook(a, now.minusHours(200), 5000L, 40.0, 0.5, now.minusHours(200).plusHours(73));
+        // B reports no opening hold (and no avg view pct): not comparable on hook_rate, and views decide.
+        publishAsPost(b, now.minusHours(200), 1000L, 0L, 0L, 0L, 0L, now.minusHours(200).plusHours(73));
+
+        CreativeExperiment experiment = experimentService.create(project.getId(), a.getId(), "hook_rate", 72, admin);
+        CreativeExperiment decided = experimentService.decide(project.getId(), experiment.getId(), admin);
+
+        assertThat(decided.getWinnerCreativeId()).isEqualTo(a.getId());
+        assertThat(decided.getSummary().get("comparisonMetric").asText()).isEqualTo("views");
+    }
+
+    @Test
     void decideSettlesInconclusiveOnAnExactTie() {
         OffsetDateTime now = OffsetDateTime.now();
         Creative a = newVariant("a", null, "Hook A");
@@ -279,6 +313,21 @@ class CreativeExperimentServiceIntegrationTest extends AbstractNoneWebIntegratio
         newAttachedAsset(post, newFrameFor(creative));
         PostPublishTarget target = newTarget(post, "youtube", fireTime);
         newSnapshot(target, observedAt, views, 0L, 0L, 0L, 0L, avgViewPct);
+    }
+
+    private void publishWithHook(Creative creative, OffsetDateTime fireTime, Long views, Double avgViewPct,
+                                 Double openingHold, OffsetDateTime observedAt) {
+        WorkItem post = newPost("Post for " + creative.displayId());
+        newAttachedAsset(post, newFrameFor(creative));
+        PostPublishTarget target = newTarget(post, "youtube", fireTime);
+        newSnapshot(target, observedAt, views, 0L, 0L, 0L, 0L, avgViewPct);
+        PostPublishTargetMetric metric = metricRepository.findAllByTargetIdInOrderByTargetIdAscObservedAtAsc(
+                java.util.List.of(target.getId())).get(0);
+        ObjectNode extra = objectMapper.createObjectNode();
+        extra.put("avg_view_pct", avgViewPct);
+        extra.put("opening_hold", openingHold);
+        metric.setExtra(extra);
+        metricRepository.saveAndFlush(metric);
     }
 
     private Creative newVariant(String letter, String parentId, String headline) {
