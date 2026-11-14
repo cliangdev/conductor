@@ -12,14 +12,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The one place that knows a Creative's tag keys: validates a request's {@link CreativeTags} (only the five
+ * The one place that knows a Creative's tag keys: validates a request's {@link CreativeTags} (only the known
  * keys, each a non-blank string of at most {@value #MAX_LENGTH} characters), and converts to and from the stored
  * {@code creative.tags} JSON. Values' vocabularies are the skills' business, not enforced here.
  */
 public final class CreativeTagsSupport {
 
     public static final int MAX_LENGTH = 60;
-    public static final List<String> KEYS = List.of("hookType", "angle", "format", "archetype", "hypothesis",
+    public static final List<String> KEYS = List.of("hookType", "visualHook", "soundHook", "angle", "format", "archetype", "hypothesis",
             "lessons", "previewRounds");
 
     /** {@code lessons}: playbook lesson ids, e.g. {@code #3,#12}. */
@@ -90,7 +90,7 @@ public final class CreativeTagsSupport {
     }
 
     /** The descriptive keys a variant inherits from the Creative it is cut from; the rest describe one piece of work. */
-    public static final List<String> INHERITED_BY_VARIANTS = List.of("hookType", "angle", "format", "archetype");
+    public static final List<String> INHERITED_BY_VARIANTS = List.of("hookType", "visualHook", "soundHook", "angle", "format", "archetype");
 
     /**
      * A new variant's tags: the descriptive keys of its source, with the request's tags merged over them (a
@@ -133,6 +133,8 @@ public final class CreativeTagsSupport {
             }
             switch (key) {
                 case "hookType" -> tags.setHookType(v.asText());
+                case "visualHook" -> tags.setVisualHook(v.asText());
+                case "soundHook" -> tags.setSoundHook(v.asText());
                 case "angle" -> tags.setAngle(v.asText());
                 case "format" -> tags.setFormat(v.asText());
                 case "archetype" -> tags.setArchetype(v.asText());
@@ -170,6 +172,8 @@ public final class CreativeTagsSupport {
     private static String valueOf(CreativeTags t, String key) {
         return switch (key) {
             case "hookType" -> t.getHookType();
+            case "visualHook" -> t.getVisualHook();
+            case "soundHook" -> t.getSoundHook();
             case "angle" -> t.getAngle();
             case "format" -> t.getFormat();
             case "archetype" -> t.getArchetype();

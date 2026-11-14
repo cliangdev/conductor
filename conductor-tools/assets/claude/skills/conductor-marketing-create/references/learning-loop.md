@@ -31,9 +31,10 @@ always covers the trailing 90 days of settled posts whatever `window` says, and 
 A row has `tagKey`, `key`, `posts`, `unsettledPosts`, `medianViewLift`, `medianRetentionLift`,
 `beatBaselineShare`, `medianEngagementRate`, `withBaselinePosts`, `beatBaselinePosts`,
 `withRetentionBaselinePosts`, `beatRetentionBaselinePosts`, `viewVerdict`, `retentionVerdict`,
-`verdict` (WORKS, DOESNT_WORK, NO_DIFFERENCE or NOT_ENOUGH_DATA) and `verdictMetric` (VIEW_LIFT or
-RETENTION_LIFT). The server picks the metric (retention only when most of a row's posts have a
-retention baseline, in practice YouTube); you never do. `get_creative` gives each variant
+`verdict` (WORKS, DOESNT_WORK, NO_DIFFERENCE or NOT_ENOUGH_DATA) and `verdictMetric` (HOOK_LIFT,
+RETENTION_LIFT or VIEW_LIFT; rows also carry `medianHookLift`, `hookVerdict`). The server picks the
+metric (hook first, then retention, each only when most of a row's posts have that baseline; TikTok
+reports no hook rate); you never do. `get_creative` gives each variant
 `settledPosts`, the lift fields, `withBaselinePosts`, `beatBaselinePosts` and both verdicts.
 `playbookEffect` is `{withLessons, withoutLessons}`, each `{posts, medianViewLift}`.
 
@@ -98,6 +99,8 @@ unclear, pick the closest one and say so in the final message; never leave a tag
 
 - `hookType`: `question`, `bold-claim`, `pattern-interrupt`, `relatable-pain`, `how-to`, `number`,
   `curiosity-gap`, `story` or `social-proof`, per `hooks.md`'s hook library (and `voice.md`'s "Shapes, and the hookType each one is tagged" table).
+- `visualHook`: what the first frame shows: `result-first`, `motion`, `odd-object`, `before-after`, `screen`, `face` or `text-only`.
+- `soundHook`: what the first second sounds like: `spoken-line`, `action-sound`, `music-only` or `none`.
 - `angle`: `story-emotion`, `utility-education` or `trend-humor`. Direct mode has no brainstorm, so
   pick the nearest one to the post's purpose.
 - `format`: `still`, `carousel`, `story`, `motion`, `clip` or `film` (`references/publish-pack-template.md`).
@@ -108,7 +111,7 @@ unclear, pick the closest one and say so in the final message; never leave a tag
 
 Pass the tags on `preview_creative_draft` and `commit_creative_draft`.
 
-A lettered variant (`variantOf`) inherits `hookType`, `angle`, `format` and `archetype` from its base;
+A lettered variant (`variantOf`) inherits `hookType`, `visualHook`, `soundHook`, `angle`, `format` and `archetype` from its base;
 tags you pass merge over them, so pass only what differs (see Explore).
 
 `hooks.md`'s hook library is keyed by these same nine `hookType` values, so a hook candidate already

@@ -47,7 +47,7 @@ describe('Creative tags', () => {
     for (const name of ['create_creative', 'update_creative', 'commit_creative_draft', 'preview_creative_draft']) {
       const t = props(name)['tags']!
       expect(t.type).toBe('object')
-      expect(Object.keys(t.properties!)).toEqual(['hookType', 'angle', 'format', 'archetype', 'hypothesis', 'lessons', 'previewRounds'])
+      expect(Object.keys(t.properties!)).toEqual(['hookType', 'visualHook', 'soundHook', 'angle', 'format', 'archetype', 'hypothesis', 'lessons', 'previewRounds'])
     }
   })
 
@@ -198,6 +198,37 @@ describe('Verdicts, evidence window and playbook effect', () => {
     })
     const result = await getCreative({ creativeId: 'c-1' }, config)
     expect((result['performance'] as Array<Record<string, unknown>>)[0]).toMatchObject({ withBaselinePosts: 3, beatBaselinePosts: 2, viewVerdict: 'WORKS', retentionVerdict: 'NOT_ENOUGH_DATA' })
+  })
+
+  it('passes the hook fields through byTag and get_creative, and the tags schema carries visualHook and soundHook', async () => {
+    mocked(apiGet).mockResolvedValue({
+      window: { from: 'a', to: 'b', days: 7 },
+      totals: { key: 'all', posts: 0, views: 0, likes: 0, comments: 0, shares: 0, saves: 0 },
+      byPlatform: [], byFormat: [], byHour: [], byWeekday: [], topPosts: [], bottomPosts: [], movers: [],
+      coverage: { platforms: [], notes: [] }, creatives: [],
+      byTag: [{ key: 'result-first', tagKey: 'visualHook', posts: 4, views: 400, likes: 0, comments: 0, shares: 0, saves: 0,
+        medianHookLift: 1.31234, medianHoldLift: null, withHookBaselinePosts: 4, beatHookBaselinePosts: 3,
+        hookVerdict: 'WORKS', verdict: 'WORKS', verdictMetric: 'HOOK_LIFT' }],
+    })
+    const insights = (await getMarketingInsights({ window: '7d', tags: true }, config)) as Record<string, unknown>
+    const row = (insights['byTag'] as Array<Record<string, unknown>>)[0]!
+    expect(row).toMatchObject({ tagKey: 'visualHook', medianHookLift: 1.3123, hookVerdict: 'WORKS', verdictMetric: 'HOOK_LIFT', withHookBaselinePosts: 4 })
+    expect(row).not.toHaveProperty('medianHoldLift')
+
+    mocked(apiGet).mockImplementation(async (url: string) => {
+      if (url.endsWith('/readiness')) return { ready: true, items: [] }
+      if (url.endsWith('/performance')) return { family: [{ creativeId: 'c-1', label: '1a', posts: 3, views: 10, hookRate: 0.61234, holdRate: null, medianHookLift: 1.2, hookVerdict: 'NO_DIFFERENCE' }] }
+      if (url.includes('/experiments')) return []
+      if (url.endsWith('/c-1')) return { id: 'c-1', number: 1 }
+      return [{ id: 'c-1', number: 1 }]
+    })
+    const creative = await getCreative({ creativeId: 'c-1' }, config)
+    expect((creative['performance'] as Array<Record<string, unknown>>)[0]).toMatchObject({ hookRate: 0.6123, medianHookLift: 1.2, hookVerdict: 'NO_DIFFERENCE' })
+
+    const tags = (TOOLS.find((t) => t.name === 'create_creative')!.inputSchema.properties as Record<string, any>)['tags']
+    expect(Object.keys(tags.properties)).toEqual(expect.arrayContaining(['visualHook', 'soundHook']))
+    expect(TOOLS.find((t) => t.name === 'list_top_posts')!.inputSchema.properties!['metric']!.description).toContain('hook_rate')
+    expect(TOOLS.find((t) => t.name === 'get_post_analytics')!.description).toContain('TikTok reports neither')
   })
 
   it('create_creative sends lessons and previewRounds', async () => {

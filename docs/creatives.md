@@ -1065,11 +1065,13 @@ backend's job is bookkeeping, storage and the attach mapping above.
 ## Tags {#creative-tags}
 
 A Creative carries `tags` (V202, `creative.tags` jsonb, `{}` when none) so performance can be read by the kind
-of idea it was, not only by Creative or platform. Seven optional string keys, nothing else:
+of idea it was, not only by Creative or platform. Nine optional string keys, nothing else:
 
 | Key | Meaning | Values the skills use |
 |---|---|---|
 | `hookType` | what the opening line does | the nine values of `hooks.md`'s hook library (also the hookType column of `voice.md`'s "Shapes" table): `question`, `bold-claim`, `pattern-interrupt`, `relatable-pain`, `how-to`, `number`, `curiosity-gap`, `story`, `social-proof` |
+| `visualHook` | what the first frame shows | `result-first`, `motion`, `odd-object`, `before-after`, `screen`, `face`, `text-only` |
+| `soundHook` | what the first second sounds like | `spoken-line`, `action-sound`, `music-only`, `none` |
 | `angle` | the brainstorm angle | `story-emotion`, `utility-education`, `trend-humor` |
 | `format` | the artwork format | `still`, `carousel`, `story`, `motion`, `clip`, `film` |
 | `archetype` | the slideshow hook archetype | one from `slideshow-formats.md`'s "Hook archetypes" table, kebab-cased (e.g. `numbered-list`, `before-after`) |
@@ -1083,7 +1085,7 @@ vocabularies are the skills' convention, not validated.
 
 Writes: create stores what is sent. `PATCH` leaves the tags alone when `tags` is omitted, **replaces the
 whole map** when it is sent (a key left out is removed), and clears it for `{}`. A lettered variant
-inherits only the descriptive tags (`hookType`, `angle`, `format`, `archetype`) of the Creative it is cut from (cut 1c
+inherits only the descriptive tags (`hookType`, `visualHook`, `soundHook`, `angle`, `format`, `archetype`) of the Creative it is cut from (cut 1c
 from 1b and it takes 1b's, not the family root's), never `hypothesis`, `lessons` or `previewRounds`; tags in the
 variant request merge over the inherited ones, and a key given as an empty string removes it. A `PATCH` that
 carries only `tags` (and `version`) validates the tags alone, so tagging an old Creative never fails over its
@@ -1109,15 +1111,34 @@ reads **settled posts only** and compares each post with the account's own typic
   destinations over the trailing 90 days, independent of the insights `window`. Per platform and format when
   that bucket has at least 10 settled posts *with a value for that metric*, else per platform when the platform
   has at least 10, else none, chosen separately for views and for `avgViewPct` (ten posts of which one reports
-  retention have a views baseline and no retention baseline).
-- *Lift*: a post's **view lift** is its views over the baseline median views, and its **retention lift** is its
-  `avgViewPct` over the baseline median `avgViewPct`; 1.0 is typical for this account on that platform (and
-  format). Either is null when the baseline or the post's own value is missing.
+  retention have a views baseline and no retention baseline). The same per-metric rule gives a median
+  `hookRate` and a median `holdRate` (see *Hook and hold*, below).
+- *Lift*: a post's **view lift** is its views over the baseline median views, its **retention lift** is its
+  `avgViewPct` over the baseline median `avgViewPct`, and its **hook lift** and **hold lift** are its `hookRate`
+  and `holdRate` over the baseline medians; 1.0 is typical for this account on that platform (and
+  format). Any is null when the baseline or the post's own value is missing.
+
+**Hook and hold.** Instagram, Facebook and YouTube report how a short video opens; TikTok's API reports
+nothing of the kind, so a TikTok destination has no `hookRate` or `holdRate` (null, never 0). Each snapshot keeps the
+raw numbers in `extra` and `HookMetrics` derives two rates from them, both 0 to 1:
+
+| Platform | Read (snapshot `extra`) | `hookRate`: share who stayed past the opening | `holdRate`: average watch time over duration, capped at 1 |
+|---|---|---|---|
+| Instagram Reels | `reels_skip_rate` (Meta labels it estimated), `ig_reels_avg_watch_time` and `ig_reels_video_view_total_time` (ms), from the media insights edge | 1 minus the skip rate (first 3 s) | null: the Graph API exposes no video duration |
+| Facebook Reels | `post_video_avg_time_watched` (ms) and the 3 s point of `post_video_retention_graph` (`video_retention_3s`), from `video_insights`; the Reel's `length` (`video_duration_s`) | retention at 3 s | average watch time over `length` (replays can push it past 1) |
+| YouTube | `engaged_views` and the first bucket of `audienceWatchRatio` over `elapsedVideoTimeRatio` (`opening_hold`), from the Analytics API; one extra report per video | that first bucket, capped at 1 | `avg_view_pct / 100` |
+| TikTok | nothing | null | null |
+
+The three hook numbers are different measures (a 3 s skip, a 3 s retention point, the opening percent of a video).
+That is acceptable because a lift is only ever taken against the baseline of the same platform and format, never
+across platforms. Every new field is optional: a metric Meta or Google refuses for one post is left absent without
+costing that post its counts. No new OAuth scope is needed (`instagram_manage_insights`, `read_insights`,
+`yt-analytics.readonly` already cover them).
 
 Each `byTag` row keeps the group fields (counted over its settled posts) and adds `unsettledPosts`,
 `medianViewLift`, `beatBaselineShare` (share of posts with a lift whose view lift is above 1),
-`medianEngagementRate` (the median of per-post rates, not the pooled rate) and `medianRetentionLift`, each null
-when it cannot be computed. Rows sort by tag key, then `medianViewLift` descending, nulls last. Read the lift
+`medianEngagementRate` (the median of per-post rates, not the pooled rate), `medianRetentionLift`,
+`medianHookLift` and `medianHoldLift`, each null when it cannot be computed. Rows sort by tag key, then `medianViewLift` descending, nulls last. Read the lift
 rather than the pooled views, and `posts` for how much to trust it.
 
 **Opt-in.** The tag data is built only when `GET .../marketing/insights` is called with `include=tags` (the MCP
@@ -1139,13 +1160,16 @@ them, so each `byTag` row (and each variant in creative performance) carries a v
 have that metric's baseline: `NOT_ENOUGH_DATA` under 3 such posts; `WORKS` when the median lift is at least
 1.2 and at least 2/3 of the posts beat the baseline (lift above 1); `DOESNT_WORK` when it is at most 0.8 and at
 most 1/3 beat it; otherwise `NO_DIFFERENCE`. Rows add `withBaselinePosts`/`beatBaselinePosts` (view lift) and
-`withRetentionBaselinePosts`/`beatRetentionBaselinePosts` (retention lift), so `beatBaselineShare` is
-`beatBaselinePosts / withBaselinePosts`; `viewVerdict` and `retentionVerdict` are the two verdicts, and
-`verdict` with `verdictMetric` (`VIEW_LIFT` | `RETENTION_LIFT`) is the default, for every tag key: retention only
-when at least 3 posts have a retention baseline and they are at least 2/3 of the posts with a view baseline
-(`RETENTION_COVERAGE_SHARE`), else views. Only YouTube reports `avg_view_pct`, so a few YouTube posts must not
-decide a row that is mostly TikTok or Instagram. Creative
-performance (`get_creative`'s per-variant performance, and `creatives` with `include=tags`) adds `withBaselinePosts`, `beatBaselinePosts`, `viewVerdict` and `retentionVerdict`. The constants
+`withRetentionBaselinePosts`/`beatRetentionBaselinePosts` (retention lift) and
+`withHookBaselinePosts`/`beatHookBaselinePosts` (hook lift), so `beatBaselineShare` is
+`beatBaselinePosts / withBaselinePosts`; `viewVerdict`, `retentionVerdict` and `hookVerdict` are the three verdicts, and
+`verdict` with `verdictMetric` (`HOOK_LIFT` | `RETENTION_LIFT` | `VIEW_LIFT`) is the default, for every tag key.
+Precedence is hook first (the opening is what the tags describe), then retention, then views: hook when at least
+3 posts have a hook baseline and they are at least 2/3 of the posts with a view baseline
+(`HOOK_COVERAGE_SHARE`), else retention on the same rule (`RETENTION_COVERAGE_SHARE`), else views. Only some platforms
+report these (TikTok neither; only YouTube reports `avg_view_pct`), so a few posts from one platform must not
+decide a row that is mostly from the others. Creative
+performance (`get_creative`'s per-variant performance, and `creatives` with `include=tags`) adds `withBaselinePosts`, `beatBaselinePosts`, `viewVerdict`, `retentionVerdict`, `hookVerdict`, `medianHookLift` and the mean `hookRate`/`holdRate`. The constants
 (`MIN_POSTS`, the 1.2/0.8 lifts and the 2/3, 1/3 shares) are in `LessonVerdictRules`.
 
 **Playbook lessons.** A Creative's `lessons` tag records which playbook lessons it followed. `byTag` splits it, one
@@ -1197,7 +1221,8 @@ variants and refuses a second `RUNNING` experiment on the same family with 409 (
 running_per_family`). `decide` — called on demand via `POST .../experiments/{id}/decide`, or by the
 `conductor-marketing` weekly feed pull for every `RUNNING` experiment in the project — settles once every
 variant has at least one published, attributed destination with a snapshot at or after `fireTime +
-windowHours` (default 72): the comparison metric is `avg_view_pct` when every variant reports it, else the
+windowHours` (default 72): the comparison metric is `hook_rate` when the experiment asked for it and every variant reports one
+(Instagram, Facebook, YouTube; never TikTok), else `avg_view_pct` when every variant reports it, else the
 metric requested at creation (default `views`); an exact tie among the leaders settles `INCONCLUSIVE`
 immediately (the window has, by definition, already fully elapsed for everyone at that point). While any
 variant is still short of its own deadline, `decide` is a safe no-op that leaves the experiment `RUNNING`

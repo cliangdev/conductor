@@ -2991,7 +2991,10 @@ paths:
           required: false
           schema:
             type: string
-          description: views (default), likes, comments, shares, saves, reach or impressions.
+          description: >-
+            views (default), likes, comments, shares, saves, reach, impressions or hook_rate. hook_rate ranks
+            only destinations that report it (Instagram, Facebook, YouTube; never TikTok), so a destination
+            without it is left out rather than ranked last.
         - name: platform
           in: query
           required: false
@@ -11597,6 +11600,22 @@ components:
           type: integer
           format: int64
           nullable: true
+        hookRate:
+          type: number
+          format: double
+          nullable: true
+          description: >-
+            0 to 1, the share of viewers who stayed past the opening: Instagram 1 minus Reels skip rate (estimated,
+            first 3 seconds), Facebook Reel retention at 3 seconds, YouTube the first bucket of the audience
+            retention curve. Null when the platform does not report it (TikTok never does), never 0. Comparable
+            only within one platform and format.
+        holdRate:
+          type: number
+          format: double
+          nullable: true
+          description: >-
+            0 to 1, average watch time over video duration, capped at 1. Null when either is not reported
+            (Instagram does not expose duration), never 0.
         unavailable:
           type: boolean
           description: The platform no longer returns this post (deleted there, or the account lost it).
@@ -11677,6 +11696,12 @@ components:
         value:
           type: integer
           format: int64
+          description: The ranked metric. For a rate metric (hook_rate) it is the rate in basis points (0 to 10000); `rate` carries the fraction.
+        rate:
+          type: number
+          format: double
+          nullable: true
+          description: The ranked rate as a 0 to 1 fraction; set only for a rate metric (hook_rate), null otherwise.
         observedAt:
           type: string
           format: date-time
@@ -13947,7 +13972,7 @@ components:
           properties:
             tagKey:
               type: string
-              description: hookType, angle, format, archetype or hypothesis. `key` is the tag's value.
+              description: hookType, visualHook, soundHook, angle, format, archetype, hypothesis or lessons. `key` is the tag's value.
             unsettledPosts:
               type: integer
               description: >-
@@ -13998,16 +14023,37 @@ components:
             retentionVerdict:
               type: string
               description: The same rules over the retention lift.
+            medianHookLift:
+              type: number
+              format: double
+              nullable: true
+              description: >-
+                Median of hookRate divided by the baseline's median hookRate (same platform and format), over posts
+                with both; null otherwise. TikTok reports no hook rate.
+            medianHoldLift:
+              type: number
+              format: double
+              nullable: true
+              description: Median of holdRate divided by the baseline's median holdRate, over posts with both; null otherwise.
+            withHookBaselinePosts:
+              type: integer
+              description: Settled posts with a hook lift.
+            beatHookBaselinePosts:
+              type: integer
+              description: Of those, how many have a hook lift above 1.
+            hookVerdict:
+              type: string
+              description: The same rules over the hook lift.
             verdict:
               type: string
-              description: The row's default verdict, one of `viewVerdict` or `retentionVerdict` (see `verdictMetric`).
+              description: The row's default verdict, one of `hookVerdict`, `retentionVerdict` or `viewVerdict` (see `verdictMetric`).
             verdictMetric:
               type: string
               description: >-
-                VIEW_LIFT or RETENTION_LIFT, for every tag key. It is RETENTION_LIFT only when at least 3 posts have a
-                retention baseline and they are at least 2/3 of the posts with a view baseline (only YouTube reports
-                retention, so a few YouTube posts must not decide a row that is mostly other platforms); otherwise
-                VIEW_LIFT.
+                HOOK_LIFT, RETENTION_LIFT or VIEW_LIFT, for every tag key. HOOK_LIFT when at least 3 posts have a hook
+                baseline and they are at least 2/3 of the posts with a view baseline; else RETENTION_LIFT on the same
+                coverage rule (only YouTube reports retention, so a few YouTube posts must not decide a row that is
+                mostly other platforms); otherwise VIEW_LIFT.
 
     InsightsPost:
       type: object
@@ -15678,7 +15724,7 @@ components:
       type: object
       description: >-
         Free-form-by-key but closed-set labels that say what kind of idea a Creative is, so performance can be
-        read by hook, angle and so on. Only these seven keys are accepted (hookType, angle, format, archetype, hypothesis, lessons, previewRounds) (any other key is a 422 naming
+        read by hook, angle and so on. Only these nine keys are accepted (hookType, visualHook, soundHook, angle, format, archetype, hypothesis, lessons, previewRounds) (any other key is a 422 naming
         `tags.<key>`); each value is a non-blank string of at most 60 characters (enforced by the server as a 422, not by the schema, so the problem names the field). The values themselves are
         not enforced: the create skill uses hookType from its voice guide, angle `story-emotion|utility-education|trend-humor`,
         format `still|carousel|story|motion|clip|film`, archetype a slideshow archetype, hypothesis `H<n>`.
@@ -15688,6 +15734,12 @@ components:
         hookType:
           type: string
           description: The shape of the opening hook (e.g. a hookType from the voice guide's shapes table).
+        visualHook:
+          type: string
+          description: What the first frame shows, e.g. result-first, motion, odd-object, before-after, screen, face or text-only. Variants inherit it.
+        soundHook:
+          type: string
+          description: What the first second sounds like, e.g. spoken-line, action-sound, music-only or none. Variants inherit it.
         angle:
           type: string
           description: story-emotion, utility-education or trend-humor.
@@ -17214,6 +17266,25 @@ components:
           type: string
           nullable: true
           description: The same rules over the retention lift.
+        hookRate:
+          type: number
+          format: double
+          nullable: true
+          description: Mean hook rate (0 to 1) over the attributed destinations that report one; null when none does (TikTok never does).
+        holdRate:
+          type: number
+          format: double
+          nullable: true
+          description: Mean hold rate (0 to 1, average watch time over duration) where reported; null otherwise.
+        medianHookLift:
+          type: number
+          format: double
+          nullable: true
+          description: Median over settled posts of hookRate divided by the baseline's median hookRate (same platform and format); null when not computable.
+        hookVerdict:
+          type: string
+          nullable: true
+          description: The same rules as viewVerdict over the hook lift.
         byPlatform:
           type: array
           items:
@@ -17656,9 +17727,11 @@ components:
         - views
         - engagement_rate
         - avg_view_pct
+        - hook_rate
       description: >-
         The metric requested at creation. The decision itself prefers avg_view_pct whenever every variant
-        reports it, regardless of this value — see CreativeExperimentService.
+        reports it, regardless of this value — unless hook_rate was requested and every variant reports a
+        hook rate (Instagram, Facebook, YouTube), in which case hook_rate decides. See CreativeExperimentService.
 
     CreativeExperimentState:
       type: string

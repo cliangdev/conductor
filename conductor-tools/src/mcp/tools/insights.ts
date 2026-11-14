@@ -42,6 +42,11 @@ interface InsightsTagGroup extends InsightsGroup {
   beatRetentionBaselinePosts?: number | null
   viewVerdict?: string | null
   retentionVerdict?: string | null
+  medianHookLift?: number | null
+  medianHoldLift?: number | null
+  withHookBaselinePosts?: number | null
+  beatHookBaselinePosts?: number | null
+  hookVerdict?: string | null
   verdict?: string | null
   verdictMetric?: string | null
 }
@@ -108,6 +113,10 @@ interface CreativePerformanceEntry {
   beatBaselinePosts?: number | null
   viewVerdict?: string | null
   retentionVerdict?: string | null
+  hookRate?: number | null
+  holdRate?: number | null
+  medianHookLift?: number | null
+  hookVerdict?: string | null
   byPlatform: CreativePerformancePlatform[]
 }
 
@@ -159,6 +168,8 @@ function trimTagGroup(group: InsightsTagGroup): Record<string, unknown> {
     beatBaselineShare: round4(group.beatBaselineShare),
     medianEngagementRate: round4(group.medianEngagementRate),
     medianRetentionLift: round4(group.medianRetentionLift),
+    medianHookLift: round4(group.medianHookLift),
+    medianHoldLift: round4(group.medianHoldLift),
   })
 }
 
@@ -204,6 +215,10 @@ function trimCreative(entry: CreativePerformanceEntry): Record<string, unknown> 
     beatBaselinePosts: entry.beatBaselinePosts,
     viewVerdict: entry.viewVerdict,
     retentionVerdict: entry.retentionVerdict,
+    hookRate: round4(entry.hookRate),
+    holdRate: round4(entry.holdRate),
+    medianHookLift: round4(entry.medianHookLift),
+    hookVerdict: entry.hookVerdict,
   })
 }
 

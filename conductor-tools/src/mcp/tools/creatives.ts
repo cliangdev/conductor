@@ -63,6 +63,10 @@ function trimPerformanceEntry(entry: Record<string, unknown>): Record<string, un
     beatBaselinePosts: entry['beatBaselinePosts'],
     viewVerdict: entry['viewVerdict'],
     retentionVerdict: entry['retentionVerdict'],
+    hookRate: round4(entry['hookRate']),
+    holdRate: round4(entry['holdRate']),
+    medianHookLift: round4(entry['medianHookLift']),
+    hookVerdict: entry['hookVerdict'],
   }
 }
 
@@ -447,7 +451,7 @@ export interface CreativeFields {
   slideshow?: Record<string, unknown>
   /** CAROUSEL only: the look the slides were composed with (compose_slideshow's `style`), so it can be reused as a kit style. */
   slideStyle?: Record<string, unknown> | null
-  /** hookType, angle, format, archetype, hypothesis (each at most 60 characters). On update: omitted keeps, an object replaces whole, {} clears. */
+  /** hookType, visualHook, soundHook, angle, format, archetype, hypothesis (each at most 60 characters). On update: omitted keeps, an object replaces whole, {} clears. */
   tags?: Record<string, string>
   /** CAROUSEL only: the editable slideshow spec the slides were composed from, every image a `media:<id>`. Sent by
    * commit_creative_draft and attach_slideshow_spec, which upload the images and rewrite the references. */
