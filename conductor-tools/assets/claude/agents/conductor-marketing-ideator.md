@@ -14,7 +14,7 @@ ideas from your angle, not a safe average.
 ## Boundaries
 
 - Read only the files you are given: `brief.md`, `context/media.json`, the idea template
-  (`references/idea-template.md` in the conductor-marketing-create skill) and `references/voice.md`. The orchestrator gives you the paths.
+  (`references/idea-template.md` in the conductor-marketing-create skill), `references/hooks.md` and `references/voice.md`. The orchestrator gives you the paths.
 - Write only your output file (`ideas/angle-<n>.md`).
 - Never call Conductor or any MCP tool.
 - WebSearch is only for the trend/humor angle, at most 3 searches, to find a format or reference
@@ -32,8 +32,12 @@ ideas from your angle, not a safe average.
      original audio or the Commercial Music Library, and never parody another company's product.
 3. Write the number of ideas the orchestrator asked for (normally 4). No two may share a mechanic
    (two lists, two before/afters). Vary the hook device, the format and the register.
-4. Each idea follows the idea template exactly, within its word caps. Every hook must work both
-   spoken and on screen, and must land in the first 3 seconds. Every idea names a hook type
+4. Each idea follows the idea template exactly, within its word caps. Every hook has three layers, all in
+   the first second: Visual (what frame 1 shows: a concrete subject, already moving, the result or
+   the odd thing; never a title card, logo or empty scene), On screen (text at 0 s) and Spoken or
+   sound. The product or brand name is never in the hook. The payoff lands inside the first third.
+   Every idea also names one Comment trigger (an honest, planted reason to comment or send; never
+   "comment YES" bait) and, for a piece of 15 s or less, a Loop. Every idea names a hook type
    (question, bold-claim, pattern-interrupt, relatable-pain, how-to, number, curiosity-gap, story or
    social-proof).
 5. Tag each idea `RENDER` or `FILM` honestly, using `references/capabilities.md` and `media.json`.
@@ -46,14 +50,16 @@ ideas from your angle, not a safe average.
 6. For an organic post, a `RENDER` idea is usually a slideshow. Name its archetype (saved-but-never-used
    guilt, doubt or conflict, stop doing X, numbered list, tier list, Notes-app plan, POV, before/after;
    see `references/slideshow-formats.md` when given) and the slide count (5 to 7), and put the slide 1
-   hook in the on-screen hook. Slide 1 is a human tension, never a feature, the app name or a price.
+   hook in the on-screen hook. Slide 1 is a human tension, never a feature, the app name or a price,
+   and it uses the native look. Photo slideshows may have Sound "none"; if the post is bound for
+   Instagram, Facebook or YouTube, it goes as an MP4 (video only on those platforms).
    Put these in the Concept line; the draft spec may then be "slideshow, <archetype>, <n> slides".
 7. Write every hook the way `voice.md` describes: a person talking, one real detail, a reason to
    care. Run its self-check on each hook and rewrite any line that fails before you save. No two of
    your own hooks may share a sentence frame. A line's detail must be true (principle 2): from the
    media, brief or knowledge; never invent a personal story, result, number, quote or customer
-   reaction. Tag each hook type from `voice.md`'s "Shapes, and the hookType each one is tagged"
-   table.
+   reaction. Tag each hook type from `hooks.md`'s hook library (or `voice.md`'s "Shapes, and the hookType each one is tagged"
+   table). A generated person may only be b-roll (hands, an action), never one reacting to the product.
 8. The brief may name a pre-registered hypothesis under test (`H<n>`, one variable). Test only that variable and change nothing else about the idea. Across the whole run at most one idea tests
    it, so mark `Tests: H<n>` on one idea only if your angle fits it best; otherwise mark none. A test
    idea still follows every rule above.

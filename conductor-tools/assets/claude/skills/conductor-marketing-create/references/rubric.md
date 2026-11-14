@@ -19,11 +19,13 @@ failure mode, so follow it as written.
 
 ## Criteria and weights
 
-Score each 1 to 5. Weighted total = sum(score x weight) / 5, so the maximum is 100.
+Score each 1 to 5. Weighted total = sum(score x weight) / 5, so the maximum is 100. The weights
+total 100 (10 + 10 + 20 + 15 + 10 + 15 + 10 + 10).
 
 | Criterion | Weight | 1 | 3 | 5 |
 |---|---|---|---|---|
-| Hook strength | 20 | Opens on a greeting, a logo or context; nothing makes a stranger stay | A clear promise or question, but generic; could open any account's post | A specific, surprising or tension-filled claim a stranger understands in 1s, spoken and on screen |
+| Visual hook | 10 | A static, branded, title-card or empty first frame (logo, eyebrow label, raw or unfinished state, nothing moving) | A concrete subject, but still or generic; could open any account's post | A concrete subject already moving in frame 1, showing the result or the odd thing; passes the "what was that?" test in `hooks.md`; no product name or lockup |
+| Text and spoken hook | 10 | Opens on a greeting, a logo, the product name or context; nothing makes a stranger stay | A clear promise or question, but generic; could open any account's post | A specific, surprising or tension-filled claim a stranger understands in 1s, on screen at 0 s and in the first-second sound; the payoff lands inside the first third |
 | Audience relevance | 20 | Aimed at "everyone"; ignores the brief's tension; or repeats a Didn't work line from `learning-director.md` | Names the audience's topic but not their actual friction | Opens on a friction the brief names and the audience would recognise as theirs; follows a Proven line from `learning-director.md` where one fits |
 | Reads like a person | 15 | A template frame ("X but Y"), brand words, a described picture or an explained joke; nobody would say it out loud | Plain and correct, but no speaker or attitude; reads as a caption, not a post | Someone is talking, with one real detail and a reason to care; passes every question in `voice.md`'s self-check |
 | Brand fit | 10 | Breaks a copy rule or approved-line, or reads off-voice | Within the rules but could be any brand | Uses an approved line or the knowledge page's voice naturally; no rule risk |
@@ -62,12 +64,19 @@ For each pair of finalists (for three: (A,B), (A,C), (B,C); for two, the one pai
 
 ## Judging a rendered draft
 
-Look at the actual image file, not the text description. Check:
+Look at the actual image file, not the text description. A video draft is judged from frame 0 plus
+the 0 to 3 s frames when the draft provides them (a 0 to 3 s contact sheet, or the key-moment frames
+the preview gives today); say which frames you had. Check:
 
 - Readability at phone size: shrink it mentally to a thumbnail. Can the headline be read in a glance?
 - Hook legibility in 1 second: is the first thing seen the hook, in high contrast?
+- Visual hook: score it from frame 0. A static, branded, title-card or empty first frame (a logo,
+  an eyebrow label, a raw or unfinished state, an accent-coloured headline over a still) is 1, and
+  nothing in the body wins that back. With only a single still, say the motion could not be judged.
 - Safe zones: text out of the platform UI (see `platform-specs.md`), nothing sitting on a face.
-- Brand look: tokens, font, logo lockup, accent phrase on the words that carry the meaning.
+- Brand look: for a still, ad or brand-layout creative, tokens, font, logo lockup, accent phrase on
+  the words that carry the meaning. For organic video and slideshows, the opposite: native look
+  (plain platform-style text), no lockup, eyebrow label, kit accent or badge on frame 1 or slide 1.
 - Craft: score the criteria in `design-critique.md`. For a still, ad or brand-layout creative, the
   six STILL criteria (thumb-stop, headline size and position, empty space, photo and copy together,
   product shown, not a banner ad). For a slideshow, the five slideshow criteria (slide 1 stops the
@@ -112,7 +121,7 @@ caption line is not a disqualifier; note it.
 ## Tie-break rule
 
 If two ideas are within 3 points of weighted total, or tied on the pairwise tally, prefer in order:
-1. the higher hook-strength score;
+1. the higher visual-hook score, then the higher text-and-spoken-hook score;
 2. the idea buildable entirely from assets on hand (`RENDER` over `FILM`);
 3. the higher novelty score;
 4. the lower ID number (an arbitrary but fixed choice, so no one can say the order was chosen).

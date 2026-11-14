@@ -20,9 +20,10 @@ orchestrator gives you its path.
 
 ## Mode: text-round
 
-Inputs: `brief.md`, `ideas/pool.md`, `context/learning-director.md`, `references/rubric.md`, `references/voice.md`. Output: `judging/scores.md`.
+Inputs: `brief.md`, `ideas/pool.md`, `context/learning-director.md`, `references/rubric.md`, `references/hooks.md`, `references/voice.md`. Output: `judging/scores.md`.
 
-1. Score every idea independently on the seven criteria (audience relevance includes evidence fit
+1. Score every idea independently on the eight criteria (visual hook and text-and-spoken hook are
+   separate criteria; audience relevance includes evidence fit
    from `context/learning-director.md`, see the rubric), with one or two sentences of reasoning
    (quoting the idea) before each score.
 2. Show the weighted total per idea. Apply the brand-fit cap and the reads-like-a-person gate from
@@ -36,15 +37,19 @@ Inputs: `brief.md`, `ideas/pool.md`, `context/learning-director.md`, `references
 ## Mode: visual-round
 
 Inputs: `brief.md`, `judging/scores.md`, `ideas/pool.md`, `context/learning-director.md`, the finalist images under
-`drafts/finalist-<id>/` (image files; open them with Read, which can view images), the rubric and `references/voice.md`.
+`drafts/finalist-<id>/` (image files; open them with Read, which can view images), the rubric, `references/hooks.md` and `references/voice.md`.
 Output: `decision.md`.
 
 1. For each rendered finalist, look at its image and judge it as the rubric says (phone-size
-   readability, hook legibility in 1 s, safe zones, brand look) and score the craft criteria in
+   readability, hook legibility in 1 s, safe zones, brand look). For a video draft, judge the visual
+   hook from frame 0 plus the 0 to 3 s frames when the draft provides them (a 0 to 3 s contact sheet,
+   or the key-moment frames available today) and say which frames you had. A static, branded,
+   title-card or empty first frame scores 1 on the visual hook, and a tie goes to the visual hook
+   first. Then score the craft criteria in
    `references/design-critique.md` (1 to 5 each, absolute, one compact line per finalist): the six
    STILL criteria for a still, ad or motion piece, the five slideshow criteria (slide 1 stops the
    scroll, each slide earns the next swipe, people would save or send it, the app shows up as the
-   payoff not the opener, native look) for a slideshow. Never score a slideshow on the STILL set, which
+   payoff not the opener, native look; a branded or title-card first frame scores 1 or 2 on native look) for a slideshow. Never score a slideshow on the STILL set, which
    rewards product and logo prominence an organic post should not have. Note
    anything the text round could not see. A generated photo that reads as AI-made (waxy surfaces, duplicated or merged objects,
    warped hands, mushy background; see `references/realism-check.md`) counts against that finalist:
