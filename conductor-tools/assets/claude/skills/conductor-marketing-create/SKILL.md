@@ -65,6 +65,7 @@ preview, check and commit steps (S6 reads `references/direct.md`).
 - `references/design-critique.md`: the six-criterion score applied to every draft before it is shown.
 - `references/realism-check.md`: the check every generated or library photo passes, and the video and audio tells for generated clips.
 - `references/slideshow-formats.md`: native slideshow spec, style (native default, kit style, one-off style), archetypes and text rules for organic posts.
+- `references/video-timeline.md`: `compose_video`, a hook-first video from trimmed clips, stills and timed text (the spec, the recipe, the checks, preview and commit).
 - `references/rubric.md`: the judging rubric the creative director uses (Team).
 - `references/capabilities.md`: what Conductor can render, and what needs filming (Team).
 - `references/platform-specs.md`: per-platform formats, lengths and limits (Team).

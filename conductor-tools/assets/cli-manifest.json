@@ -1254,6 +1254,14 @@
       "category": "marketing"
     },
     {
+      "name": "compose_video",
+      "description": "Compose one hook-first 1080x1920 MP4 on this machine from a timeline of trimmed clips and still images (hard cuts or fades) with timed text on screen from 0 s and optional music, voice and clip sound. Checks text in the first second, motion in the opening, long static stretches and platform safe zones. Returns the MP4, frame 0 and a 0-3 s contact sheet; next, preview_creative_draft as a CLIP.",
+      "category": "marketing",
+      "requiredParams": [
+        "spec"
+      ]
+    },
+    {
       "name": "attach_slideshow_spec",
       "description": "Backfill a slideshow spec onto a CAROUSEL Creative committed without one: re-composes it locally, compares every slide with the stored image (SSIM, refuses below 0.95 unless force), uploads the spec's images and saves the spec. Call get_creative to verify slideshowSpec and textFields.",
       "category": "marketing",

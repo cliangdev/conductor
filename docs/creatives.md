@@ -495,6 +495,46 @@ The 0.5 s cross-fade comes out of each slide's time. The preview reports the dur
 total, and warns when a slide gets under 0.25 s per word, or under 3 s with two or more lines. With
 no text at all the fallback is 3.5 s for the first slide and 3.0 s for the rest.
 
+## Composed videos (`compose_video`) {#composed-videos}
+
+A hook-first short-form video: trimmed clips and still images on one timeline, hard cuts, timed text on
+screen from 0 s. It runs on this machine like the other local renders (never a backend job): the pure
+timeline math and checks are in `conductor-tools/src/lib/video/` (`timeline.ts`, `text-beats.ts`,
+`render.ts`), the ffmpeg argument builders in `conductor-creative/job/media.mjs` (`buildVideoComposeArgs`;
+the audio chain reuses `buildAudioFilter` and the two-pass loudnorm of the slideshow and CLIP renders).
+Use it when a video needs a moving opening or edits; `compose_slideshow` stays the photo-post tool and
+MOTION the brand ad. Nothing is sent to Conductor.
+
+- **Spec.** `segments[]` in order (1 to 20, 3 to 90 s in all): `{clip, startSec?, endSec?, mute?}` or
+  `{image, durationSec (1-10), zoom?}`, each with an optional `transition: "fade"` (a 0.5 s cross-fade into
+  that segment; the default is a hard cut). `texts[]`: `{fromSec, toSec, t, y, fs?, style?}`, drawn with
+  the `compose_slideshow` text renderer and its `box` / `dark` / `stroke` / `sub` styles (native look: no
+  Brand Kit fonts, lockups or CTAs), overlaid by ffmpeg only between `fromSec` and `toSec`. `audio`:
+  `{clipAudio: keep|mute, track?, voicePath?, duck?}`, local files; the music loops to the length and is
+  loudness-normalised, ducking under clip sound and voice by default.
+- **Output.** `<project>/.conductor/videos/<timestamp>-<id>/<id>.mp4` (1080x1920, 30 fps, H.264/AAC), a
+  `spec.json` (resolved paths, `layout: 2`), `frame0.png`, `contact-0-3s.jpg` (frames at 0, 0.5 ... 3 s;
+  the one image the tool returns) and a `<id>.mp4.provenance.json` when every input file has a sidecar
+  (otherwise the result lists the inputs that lack one). Clips are centre-cropped to fill the frame; a
+  source that must be upscaled warns, and one that needs more than 2x is refused.
+- **Checks** (`checks[]` in the `preview_creative_draft` shape; an error sets `passed: false`):
+  `firstSecondText` (error: no beat covers 0 to 1 s), `textOverlap` (error: two beats on screen together
+  share rows of the frame), the slide rules per beat (`safeZone`, `spill`, `wordsPerLine`, `textSize`),
+  `firstSecondMotion` (below), `staticStretch` (warning: more than 5 s with no cut and no text change,
+  with the time ranges) and the OCR safe-zone pass on the finished file (`safeZoneText`). Spec-level errors
+  are found before encoding and stop the render (`rendered: false`).
+- **Motion in the first second.** The mean absolute grey difference between frame 0 and frame 0.8 s,
+  both at 108x192. Under 0.25 is an error (completely static); otherwise an opening on a still image is a
+  warning (a moving clip hooks better) and an opening on a clip passes. Measured on this pipeline: a still
+  with text 0.01-0.02, a still with the 3 s slow zoom 0.39-0.47, a test-pattern clip 1.4-1.6, drifting or
+  zooming synthetic clips 13-20. The slow zoom of a 10 s still is three times weaker and can fall under the
+  threshold; text over a locked-off but noisy shot counts as change (a false pass, never a false fail).
+- **Next.** `preview_creative_draft({kind: "CLIP", clipPath})` for the platform-UI overlay, then
+  `upload_creative_media` + `create_creative` with kind CLIP: a CLIP has no commit step.
+
+Not in this tool: Brand Kit styling, speech or captions (a voice file comes from elsewhere), library
+`trackId` music (pass a local file), per-segment speed or effects, and anything over 90 s.
+
 ## Organic slideshows {#organic-slideshows}
 
 Organic posts (TikTok photo posts, Instagram carousels) are native-looking slideshows, not brand-layout
