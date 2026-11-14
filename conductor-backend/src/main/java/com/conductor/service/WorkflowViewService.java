@@ -173,6 +173,7 @@ public class WorkflowViewService {
             view.setFields(statechart.fields().stream().map(this::toFieldView).toList());
         }
         view.setDueLabel(statechart.dueLabel());
+        view.setDescription(statechart.description());
         StatechartMetric metric = statechart.metric();
         if (metric != null) {
             WorkflowMetricView metricView = new WorkflowMetricView();

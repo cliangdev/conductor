@@ -65,6 +65,9 @@ import type {
 import type { MemberRole } from '@/types'
 import { can, memberRoles } from '@/lib/permissions'
 
+/** The built-in Partners Workflow (internal id kept from when the page was called Creators). */
+const PARTNERS_SLUG = 'CREATORS'
+
 /** Non-list tabs, selected through the same `?view=` param: Plans / Roadmap on a PRD Workflow,
  *  What's working on a publishing (Posts) Workflow. */
 type PanelView = 'plans' | 'roadmap' | 'insights'
@@ -393,6 +396,7 @@ export function WorkItemListView({
     <PageContainer>
       <PageHeader
         title={title}
+        description={workflowView?.description || undefined}
         breadcrumbs={crumbs}
         actions={
           canEdit ? (
@@ -538,6 +542,39 @@ export function WorkItemListView({
           noun={noun}
           workflowView={workflowView}
           issues={listState.filteredIssues}
+        />
+      ) : mode === 'board' && workflowView && counts.all === 0 && !creativeFilter && !mediaFilter ? (
+        // A board with nothing on it at all: one explanation instead of an empty box per column.
+        <EmptyState
+          icon={Inbox}
+          title={`No ${lowerNoun} yet`}
+          description={
+            slug === PARTNERS_SLUG
+              ? 'Add an outside creator you brief or pay to post about your product.'
+              : workflowView.description || undefined
+          }
+          action={
+            <div className="flex flex-col items-center gap-3">
+              {canEdit && (
+                <Button size="sm" onClick={startCreating}>
+                  <Plus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                  New {noun}
+                </Button>
+              )}
+              {slug === PARTNERS_SLUG && (
+                <p className="text-sm text-muted-foreground">
+                  Looking for your artwork? See{' '}
+                  <Link
+                    prefetch={false}
+                    href={`/app/projects/${projectId}/marketing/creatives`}
+                    className="underline underline-offset-2 hover:text-foreground"
+                  >
+                    Creatives
+                  </Link>
+                </p>
+              )}
+            </div>
+          }
         />
       ) : mode === 'board' && workflowView ? (
         <WorkItemBoardView

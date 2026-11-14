@@ -51,6 +51,8 @@ export async function listWorkflows(
       // Present only on Workflows that declare them, so the common listing stays small.
       ...(def?.['fields'] ? { fields: def['fields'] } : {}),
       ...(def?.['dueLabel'] ? { dueLabel: def['dueLabel'] } : {}),
+      // One plain sentence on what the Workflow is for, when it declares one.
+      ...(def?.['description'] ? { description: def['description'] } : {}),
     }
   })
 }

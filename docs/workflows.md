@@ -1828,10 +1828,19 @@ migration V198 hid it in existing ones): open Changes show on Marketing Overview
 any exist) and the list is at `/marketing/changes`. Changes are written via MCP, the change-log import and the
 marketing report skill.
 
-The built-in `CREATORS` lifecycle ("Creator": `PROSPECT -> BRIEFED -> POSTED -> PAID_OUT`, or `DROPPED`) runs a creator
-partnership: handle, platform, offer code, fee, link token and brief, with the due date labelled "Post by". Its results
+The built-in `CREATORS` lifecycle (shown as **Partners**, noun "Partner": `PROSPECT -> BRIEFED -> POSTED -> PAID_OUT`, or
+`DROPPED`) runs an outside creator or partner you brief or pay to post about your product (the internal id `CREATORS`,
+the `CREATOR` type and `get_creator_results` keep the old name; migration V203 renamed the noun in existing workspaces
+that still had the seeded "Creator"): handle, platform, offer code, fee, link token and brief, with the due date labelled "Post by". Its results
 (posts, campaign-link downloads, offer-code redemptions) come from `GET /marketing/creators/{workItemId}/results`. It
 is seeded into new workspaces and (migration V190) every existing one.
+
+Every lifecycle Workflow may carry an optional `description` (plain text, 1 to 240 characters) saying what its list page
+is for. It is shown as muted text directly under the page title, and in the Workflow editor under "Workflow". An absent
+description shows no line. All built-in Workflows ship one; migration V203 added it to existing workspaces' built-ins
+that were still unmodified (the header named after its slug, the built-in noun, no description of their own), and left
+customised copies alone. An entirely empty board shows one empty state ("No partners yet", the Workflow's description)
+instead of an empty box per column.
 
 ### System triggers (event-driven auto-transitions)
 

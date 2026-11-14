@@ -64,6 +64,8 @@ export interface StatechartDefinition {
   /** Typed Work Item fields; the editor does not author these yet but round-trips them untouched. */
   fields?: WorkflowFieldView[]
   dueLabel?: string
+  /** One or two plain sentences shown under the list page title (max 240 characters). */
+  description?: string
   statuses: StatechartStatus[]
   transitions: StatechartTransition[]
 }
@@ -154,6 +156,7 @@ export function definitionFromWorkflowView(view: WorkflowView): StatechartDefini
       : null,
     ...(view.fields?.length ? { fields: view.fields.map((f) => ({ ...f })) } : {}),
     ...(view.dueLabel ? { dueLabel: view.dueLabel } : {}),
+    ...(view.description ? { description: view.description } : {}),
     statuses: view.statuses.map((s) => ({
       id: s.id,
       label: s.label,

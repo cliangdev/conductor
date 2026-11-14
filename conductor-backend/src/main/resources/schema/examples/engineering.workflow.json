@@ -5,6 +5,7 @@
   "version": 1,
   "state": "PUBLISHED",
   "noun": "Issue",
+  "description": "Specs, feature requests and bug reports, from draft through review and development to done.",
   "default_view": "list",
   "types": ["PRD", "FEATURE_REQUEST", "BUG_REPORT"],
   "asset_types": ["github_pr"],

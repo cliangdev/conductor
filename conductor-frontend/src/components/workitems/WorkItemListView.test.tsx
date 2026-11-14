@@ -1016,3 +1016,61 @@ describe('delivery tracking', () => {
     expect(rowOrder()).toEqual(['COND-2'])
   })
 })
+
+describe('page description and empty board', () => {
+  const PARTNERS_VIEW: WorkflowView = {
+    ...BASE_VIEW,
+    slug: 'CREATORS',
+    noun: 'Partner',
+    area: 'MARKETING',
+    defaultView: 'board',
+    types: ['CREATOR'],
+    statuses: [
+      { id: 'PROSPECT', label: 'Prospect', category: 'open' },
+      { id: 'BRIEFED', label: 'Briefed', category: 'in_progress' },
+      { id: 'POSTED', label: 'Posted', category: 'in_progress' },
+    ],
+    description: 'Outside creators and partners you brief or pay to post about your product.',
+  }
+
+  it('shows the Workflow description under the title', async () => {
+    VIEW = { ...BASE_VIEW, description: 'Specs and bugs, from draft to done.' }
+    await renderList()
+    expect(screen.getByText('Specs and bugs, from draft to done.')).toBeInTheDocument()
+  })
+
+  it('shows no description line when the Workflow has none', async () => {
+    await renderList()
+    expect(screen.queryByText('Specs and bugs, from draft to done.')).not.toBeInTheDocument()
+  })
+
+  it('shows one empty state with a Creatives link on an empty Partners board', async () => {
+    VIEW = PARTNERS_VIEW
+    issues = []
+    render(<WorkItemListView projectId="proj-1" slug="CREATORS" noun="Partner" />)
+    expect(await screen.findByText('No partners yet')).toBeInTheDocument()
+    expect(screen.getByText(/Add an outside creator you brief or pay/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Creatives' }).getAttribute('href')).toBe('/app/projects/proj-1/marketing/creatives')
+    // One explanation, not an empty box per column.
+    expect(screen.queryAllByText('No partners')).toHaveLength(0)
+  })
+
+  it('keeps the per-column boxes once the board has an item', async () => {
+    VIEW = PARTNERS_VIEW
+    issues = [
+      { id: 'p1', title: 'Jo', type: 'CREATOR', status: 'PROSPECT', updatedAt: '2026-01-01T00:00:00Z', createdAt: '2026-01-01T00:00:00Z', displayId: 'P-1' },
+    ]
+    render(<WorkItemListView projectId="proj-1" slug="CREATORS" noun="Partner" />)
+    expect((await screen.findAllByText('Jo')).length).toBeGreaterThan(0)
+    expect(screen.queryByText('No partners yet')).not.toBeInTheDocument()
+    expect(screen.getAllByText('No partners').length).toBeGreaterThan(0)
+  })
+
+  it('shows no Creatives link on another workflow empty board', async () => {
+    VIEW = { ...PARTNERS_VIEW, slug: 'OTHER', noun: 'Lead', description: undefined }
+    issues = []
+    render(<WorkItemListView projectId="proj-1" slug="OTHER" noun="Lead" />)
+    expect(await screen.findByText('No leads yet')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Creatives' })).not.toBeInTheDocument()
+  })
+})

@@ -47,6 +47,7 @@ semantics:
 | `publishes_from` | – | The status Work Items wait in for their fire time (publishing Workflows only). Required, at publish, when `asset_types` names a publishable platform; a chart without it falls back to a status literally named `SCHEDULED`. See [`publishing.md`](publishing.md#which-status-is-scheduled). |
 | `fields` | – | `{key, label, type: text\|longtext\|date\|number\|enum\|url, options?, requiredIn?}`; ≤20. Typed values a Work Item carries; see [`workflows.md`](workflows.md#fields-and-due-dates). |
 | `dueLabel` | – | What the Workflow calls a Work Item's due date (e.g. `Review on`). |
+| `description` | – | One or two plain sentences (1 to 240 characters) saying what the Workflow's list page is for. Shown under the page title; absent shows no line. The seeded Workflows ship one. |
 | `metric` | – | `null` to opt out, else `{name, unit?, direction}`. |
 | `statuses` | ✓ | `{id, label?, category, initial?, terminal?}`; ≤10. `label` is the human display name (falls back to a humanized id). |
 | `transitions` | ✓ | `{from, to, label, requiresReview?, reviewOutcomes?, reviewerRole?, requireIndependentReviewer?, trigger?, steps?}`. |
