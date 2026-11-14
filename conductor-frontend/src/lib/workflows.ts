@@ -735,7 +735,11 @@ export async function resolveWorkflowByAreaNoun(
 function matchAreaNoun(areaSeg: string, nounSeg: string): (wf: WorkflowDefinitionDto) => boolean {
   const area = areaSeg.toLowerCase()
   const noun = nounSeg.toLowerCase()
-  return (wf) => wf.area?.toLowerCase() === area && pluralizeNoun(wf.noun ?? wf.name).toLowerCase() === noun
+  return (wf) =>
+    wf.area?.toLowerCase() === area &&
+    (pluralizeNoun(wf.noun ?? wf.name).toLowerCase() === noun ||
+      // The built-in CREATORS Workflow was renamed Partners; links and bookmarks to /marketing/creators keep working.
+      (wf.slug === 'CREATORS' && noun === 'creators'))
 }
 
 /** Every published lifecycle Workflow, including the ones hidden from the sidebar. */

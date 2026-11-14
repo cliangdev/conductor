@@ -585,7 +585,7 @@ export const TOOLS = [
   },
   {
     name: 'list_workflows',
-    description: 'List the project\'s Workflows, each flattened to {slug, name, area, noun, kind, state, version, workflowId, types, statuses}. Discovery entry point: filter by kind=LIFECYCLE and match the user\'s intent to a Workflow (its area + allowed types) to pick the slug for create_work_item; kind=AUTOMATION lists YAML run-automations.',
+    description: 'List the project\'s Workflows, each flattened to {slug, name, area, noun, kind, state, version, workflowId, types, statuses} (plus description, a one-line summary of what the Workflow is for, when it has one). Discovery entry point: filter by kind=LIFECYCLE and match the user\'s intent to a Workflow (its area + allowed types) to pick the slug for create_work_item; kind=AUTOMATION lists YAML run-automations.',
     inputSchema: {
       type: 'object',
       properties: {

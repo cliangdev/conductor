@@ -253,6 +253,15 @@ export function StatechartEditor({
           </Field>
         </div>
 
+        <Field label="Description (shown under the page title, optional)">
+          <Input
+            value={value.description ?? ''}
+            maxLength={240}
+            placeholder="One or two plain sentences on what this page is for"
+            onChange={(e) => update({ description: e.target.value || undefined })}
+          />
+        </Field>
+
         <Field label="Types (allowed Work Item types)">
           <TagInput values={value.types} onChange={(types) => update({ types })} />
         </Field>

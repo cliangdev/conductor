@@ -44,15 +44,15 @@ class V203WorkflowDescriptionsMigrationTest {
             String project = insertProject(c);
             String seededCreators = insertWorkflow(c, project, "CREATORS", "CREATORS", "Creator", null);
             String seededMarketing = insertWorkflow(c, project, "MARKETING", "MARKETING", "Post", null);
-            String customised = insertWorkflow(c, project, "Custom Creators", "CREATORS", "Influencer", null);
+            String customised = insertWorkflow(c, insertProject(c), "Custom Creators", "CREATORS", "Influencer", null);
             String ownCopy = insertWorkflow(c, project, "ENGINEERING", "ENGINEERING", "Issue", "Our own words.");
 
             flyway(url).load().migrate();
 
             assertThat(noun(c, "workflow_definitions", seededCreators)).isEqualTo("Partner");
             assertThat(description(c, "workflow_definitions", seededCreators)).startsWith("Outside creators and partners");
-            assertThat(noun(c, "workflow_definition_versions", seededCreators + "-v")).isEqualTo("Partner");
-            assertThat(description(c, "workflow_definition_versions", seededCreators + "-v")).startsWith("Outside creators");
+            assertThat(noun(c, "workflow_definition_versions", seededCreators)).isEqualTo("Partner");
+            assertThat(description(c, "workflow_definition_versions", seededCreators)).startsWith("Outside creators");
             // Internal id is unchanged.
             assertThat(query(c, "SELECT definition ->> 'id' FROM workflow_definitions WHERE id = '" + seededCreators + "'"))
                     .isEqualTo("CREATORS");
@@ -64,7 +64,7 @@ class V203WorkflowDescriptionsMigrationTest {
             assertThat(description(c, "workflow_definitions", customised)).isNull();
 
             assertThat(description(c, "workflow_definitions", ownCopy)).isEqualTo("Our own words.");
-            assertThat(description(c, "workflow_definition_versions", ownCopy + "-v")).isEqualTo("Our own words.");
+            assertThat(description(c, "workflow_definition_versions", ownCopy)).isEqualTo("Our own words.");
         }
         // Replay-safe: running the migrations again changes nothing.
         flyway(url).load().migrate();
@@ -93,7 +93,7 @@ class V203WorkflowDescriptionsMigrationTest {
         return projectId;
     }
 
-    /** Header id is returned; its snapshot id is "&lt;id&gt;-v". */
+    /** Returns the header id; the snapshot is found by workflow_definition_id. */
     private static String insertWorkflow(Connection c, String project, String name, String slug, String noun,
                                          String description) throws SQLException {
         String id = UUID.randomUUID().toString();
@@ -114,7 +114,7 @@ class V203WorkflowDescriptionsMigrationTest {
                 INSERT INTO workflow_definition_versions (id, workflow_definition_id, version, definition, schema_version, published_at)
                 VALUES (?, ?, 1, ?::jsonb, 1, NOW())
                 """)) {
-            p.setString(1, id + "-v");
+            p.setString(1, UUID.randomUUID().toString());
             p.setString(2, id);
             p.setString(3, json);
             p.executeUpdate();
@@ -123,11 +123,15 @@ class V203WorkflowDescriptionsMigrationTest {
     }
 
     private static String noun(Connection c, String table, String id) throws SQLException {
-        return query(c, "SELECT definition ->> 'noun' FROM " + table + " WHERE id = '" + id + "'");
+        return query(c, "SELECT definition ->> 'noun' FROM " + table + " WHERE " + keyColumn(table) + " = '" + id + "'");
+    }
+
+    private static String keyColumn(String table) {
+        return table.equals("workflow_definition_versions") ? "workflow_definition_id" : "id";
     }
 
     private static String description(Connection c, String table, String id) throws SQLException {
-        return query(c, "SELECT definition ->> 'description' FROM " + table + " WHERE id = '" + id + "'");
+        return query(c, "SELECT definition ->> 'description' FROM " + table + " WHERE " + keyColumn(table) + " = '" + id + "'");
     }
 
     private static String query(Connection c, String sql) throws SQLException {
