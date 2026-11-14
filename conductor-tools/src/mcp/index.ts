@@ -149,6 +149,8 @@ import { CodexConfirmationRequired } from '../lib/image-generation.js'
 import { generateCreativeImage, type GenerateCreativeImageParams } from './tools/creative-images.js'
 import { generateCreativeVideo } from './tools/creative-videos.js'
 import { VideoError, type VideoParams } from '../lib/video-common.js'
+import { generateVoiceLine } from './tools/creative-voice.js'
+import { VoiceError, type VoiceParams } from '../lib/voice-common.js'
 import { composeSlideshowTool, type ComposeSlideshowParams } from './tools/slideshow.js'
 import { composeVideoTool, type ComposeVideoParams } from './tools/video-compose.js'
 import { attachSlideshowSpec, type AttachSlideshowSpecParams } from './tools/slideshow-spec.js'
@@ -2213,6 +2215,22 @@ export const TOOLS = [
     },
   },
   {
+    name: 'generate_voice_line',
+    description: "Make a spoken line (a hook or short narration, up to 60 words / 400 characters) as a voice file for compose_video, on this machine's Google Cloud credentials (billed to the person; fractions of a cent, so no confirmation under $0.05 and the cost is in the result). A hook line is about 8 words per 3 s. Returns audioPath (wav), durationSec, words [{w, fromSec, toSec}], timing (provider | estimated), captionBeats ready for compose_video spec.texts, and a provenance sidecar marking the voice AI-generated. Next: pass audioPath as spec.audio.voicePath with duck: true and paste captionBeats into spec.texts. A synthetic voice in realistic content needs the AI label (compliance checklist). Without a configured Google project or with the Text-to-Speech API disabled it returns a structured error with the fix.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The words to speak; plain text, punctuation shapes the pacing' },
+        voice: { type: 'string', description: 'Voice name <locale>-<family>-<voice> (default en-US-Chirp3-HD-Aoede; others: Kore, Puck, Charon, Leda, Fenrir). Families: Chirp3-HD, Neural2, Wavenet, Standard' },
+        speakingRate: { type: 'number', description: '0.25 to 2, default 1' },
+        offsetSec: { type: 'number', description: 'Where the voice starts in the video, default 0; shifts the caption beats' },
+        outDir: { type: 'string', description: 'Output folder (optional)' },
+        confirmCost: { type: 'boolean', description: 'Only after the person agreed to an estimate above $0.05' },
+      },
+      required: ['text'],
+    },
+  },
+  {
     name: 'compose_slideshow',
     description: "Compose organic slideshow slides (TikTok/Reels style, no brand lockup) from a spec on this machine: PNGs at 9x16 and 4x5, plus layout checks (safe zones, spill, text size, words per line, images, font). Native look by default; brandKitId applies that kit's slideshowStyle and style overrides on top. Slide types: photo, screen, notes, grid, stack, tier, week, receipt, placard, messages. Returns paths, checks, passed, the resolved `style` (spec.json keeps your input style and adds it as `resolvedStyle`) and the first slide as an image. If passed is false, fix and call again. Next: preview_creative_draft({kind: \"CAROUSEL\", slidePaths, slideStyle: style}); the spec.json beside the slides travels with the Creative at commit, which makes its text editable later. Nothing is sent to Conductor.",
     inputSchema: {
@@ -3733,6 +3751,14 @@ export async function runMcpServer(): Promise<void> {
             return image ? imageResponse(image, meta) : successResponse(meta)
           } catch (err) {
             if (!(err instanceof VideoError)) throw err
+            return errorResponse({ code: err.code, error: err.message, ...err.details })
+          }
+        }
+        case 'generate_voice_line': {
+          try {
+            return successResponse(await generateVoiceLine(params as unknown as VoiceParams))
+          } catch (err) {
+            if (!(err instanceof VoiceError)) throw err
             return errorResponse({ code: err.code, error: err.message, ...err.details })
           }
         }

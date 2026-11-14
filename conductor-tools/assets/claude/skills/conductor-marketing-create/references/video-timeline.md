@@ -59,6 +59,30 @@ texts:    [ {fromSec: 0,   toSec: 3.4,  t: "The hook line",  y: 30, style: "box"
 audio:    { track: "music.mp3" }
 ```
 
+## Voice
+
+A human voice in the first 3 s held viewers about 25% better to second 10 than music alone, and a
+narration-free slideshow reads as inauthentic content on YouTube. So every video bound for Instagram,
+Facebook or YouTube opens on a spoken line (TikTok: add one when the hook is a statement, skip it for
+a trend-sound post).
+
+1. Write the line to be said, not read: at most 8 words per 3 s, the same words as the first text beat.
+2. `generate_voice_line({text})` makes a WAV on the person's Google Cloud project (fractions of a cent;
+   it only asks to confirm above $0.05). It needs `conductor config set-vertex-project` and the
+   Text-to-Speech API enabled; if it returns `VOICE_API_DISABLED`, tell the person the `gcloud` command
+   in the error and do not run it for them.
+3. Put `audioPath` in `audio.voicePath` with `duck: true`, and paste `captionBeats` into `texts`. They
+   are `{fromSec, toSec, t, y, style}` chunks of 4 words or fewer at `y: 62`, clear of the platform UI.
+   Add your own hook beats at other `y` values: beats on screen together must not share rows.
+4. The first word must be heard inside 0.5 s and every spoken word must be on screen as a caption.
+   If the voice starts later in the video, pass `offsetSec` so the beats move with it.
+5. `timing: "estimated"` means word times are spread over the measured length by letter count, close
+   but not exact: look at the contact sheet and move a beat if a caption lands on the wrong word.
+6. The voice is synthetic: apply the AI label rules in `references/compliance-checklist.md`, section 2.
+   The audio's `.provenance.json` records it.
+
+Narration longer than about 60 words is not supported: cut the script instead.
+
 ## The checks
 
 The result has `checks` and `passed`. An error means fix the spec and call again before showing anything.
