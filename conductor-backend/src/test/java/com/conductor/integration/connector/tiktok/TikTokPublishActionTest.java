@@ -78,6 +78,8 @@ class TikTokPublishActionTest {
     private static final long VIDEO_SIZE = 45L * 1024 * 1024;
     /** A real 5–10 MB upload (7.6 MB): above the 5 MB floor, below one target chunk. TikTok rejected it as "chunk size is invalid". */
     private static final long SUB_TARGET_VIDEO_SIZE = 7_927_414L;
+    /** Prod Post RE-183's 13.6 MB video: between one and two target chunks. TikTok rejected it as "chunk size is invalid". */
+    private static final long BETWEEN_ONE_AND_TWO_CHUNKS_VIDEO_SIZE = 13_569_989L;
 
     private TikTokClient client;
     private AssetRepository assetRepository;
@@ -142,6 +144,7 @@ class TikTokPublishActionTest {
             9_200_502L,
             TikTokClient.TARGET_CHUNK_BYTES - 1,
             TikTokClient.TARGET_CHUNK_BYTES,
+            BETWEEN_ONE_AND_TWO_CHUNKS_VIDEO_SIZE,
             12L * 1024 * 1024,
             2 * TikTokClient.TARGET_CHUNK_BYTES - 1,
             2 * TikTokClient.TARGET_CHUNK_BYTES,
@@ -161,7 +164,7 @@ class TikTokPublishActionTest {
                         .as("chunk size for %d bytes", size)
                         .isBetween(TikTokClient.MIN_CHUNK_BYTES, TikTokClient.MAX_CHUNK_BYTES);
             }
-            if (size < TikTokClient.TARGET_CHUNK_BYTES) {
+            if (size < 2 * TikTokClient.TARGET_CHUNK_BYTES) {
                 assertThat(plan.totalChunkCount()).as("one whole-file chunk for %d bytes", size).isEqualTo(1);
                 assertThat(plan.chunkSize()).as("whole-file chunk for %d bytes", size).isEqualTo(size);
             }
@@ -174,6 +177,38 @@ class TikTokPublishActionTest {
             }
             assertThat(covered).as("chunks cover the whole file").isEqualTo(size);
         }
+    }
+
+    @Test
+    void chunkPlan_fileBetweenOneAndTwoTargetChunks_goesWhole() {
+        ChunkPlan plan = TikTokClient.planChunks(BETWEEN_ONE_AND_TWO_CHUNKS_VIDEO_SIZE);
+
+        assertThat(plan.totalChunkCount()).isEqualTo(1);
+        assertThat(plan.chunkSize()).isEqualTo(BETWEEN_ONE_AND_TWO_CHUNKS_VIDEO_SIZE);
+        assertThat(plan.videoSize()).isEqualTo(BETWEEN_ONE_AND_TWO_CHUNKS_VIDEO_SIZE);
+    }
+
+    @Test
+    void chunkPlan_boundariesAroundTwoTargetChunks() {
+        long two = 2 * TikTokClient.TARGET_CHUNK_BYTES;
+
+        ChunkPlan justUnder = TikTokClient.planChunks(two - 1);
+        assertThat(justUnder.totalChunkCount()).isEqualTo(1);
+        assertThat(justUnder.chunkSize()).isEqualTo(two - 1);
+
+        ChunkPlan atTwo = TikTokClient.planChunks(two);
+        assertThat(atTwo.totalChunkCount()).isEqualTo(2);
+        assertThat(atTwo.chunkSize()).isEqualTo(TikTokClient.TARGET_CHUNK_BYTES);
+
+        ChunkPlan justOver = TikTokClient.planChunks(two + 1);
+        assertThat(justOver.totalChunkCount()).isEqualTo(2);
+        assertThat(justOver.chunkSize()).isEqualTo(TikTokClient.TARGET_CHUNK_BYTES);
+        assertThat(justOver.chunkLength(1)).as("last chunk absorbs the remainder")
+                .isEqualTo(TikTokClient.TARGET_CHUNK_BYTES + 1);
+
+        ChunkPlan small = TikTokClient.planChunks(TikTokClient.MIN_CHUNK_BYTES);
+        assertThat(small.totalChunkCount()).isEqualTo(1);
+        assertThat(small.chunkSize()).isEqualTo(TikTokClient.MIN_CHUNK_BYTES);
     }
 
     @Test
@@ -479,6 +514,88 @@ class TikTokPublishActionTest {
                 .toList();
         assertThat(ranges).containsExactly(
                 "bytes 0-" + (SUB_TARGET_VIDEO_SIZE - 1) + "/" + SUB_TARGET_VIDEO_SIZE);
+    }
+
+    @Test
+    void wireLevel_videoBetweenOneAndTwoTargetChunks_isDeclaredWholeAsOneChunk() throws Exception {
+        long size = BETWEEN_ONE_AND_TWO_CHUNKS_VIDEO_SIZE;
+        when(assetRepository.findById(ASSET_ID)).thenReturn(Optional.of(videoAsset(ASSET_ID, size)));
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(videoAsset(ASSET_ID, size)));
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        List<HttpEntity<?>> sent = new ArrayList<>();
+        stubTikTokHttp(restTemplate, sent, okEnvelope());
+        TikTokPublishAction wired = newAction(new TikTokClient(restTemplate));
+
+        ActionResult result = wired.publish(schedulerInput(), context());
+
+        assertThat(result.success()).isTrue();
+        String initBody = objectMapper.writeValueAsString(sent.get(0).getBody());
+        assertThat(initBody).contains("\"video_size\":" + size);
+        assertThat(initBody).contains("\"chunk_size\":" + size);
+        assertThat(initBody).contains("\"total_chunk_count\":1");
+        List<String> ranges = sent.stream()
+                .map(entity -> entity.getHeaders().getFirst(HttpHeaders.CONTENT_RANGE))
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        assertThat(ranges).containsExactly("bytes 0-" + (size - 1) + "/" + size);
+    }
+
+    @Test
+    void publish_resumesFromTheCheckpointsOwnPlanEvenWhenTodaysPlanWouldDiffer() {
+        // An upload opened as 1 chunk of 10 MiB over a 13.6 MB file (a plan planChunks no longer produces
+        // for it); the retry must keep it instead of discarding it and opening a second TikTok upload.
+        long size = BETWEEN_ONE_AND_TWO_CHUNKS_VIDEO_SIZE;
+        when(assetRepository.findById(ASSET_ID)).thenReturn(Optional.of(videoAsset(ASSET_ID, size)));
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(videoAsset(ASSET_ID, size)));
+        ChunkPlan stored = new ChunkPlan(size, TikTokClient.TARGET_CHUNK_BYTES, 1);
+        storedCheckpoint.set(checkpointJson(ASSET_ID, stored, 0));
+        when(client.fetchPublishStatus(anyString(), anyString()))
+                .thenReturn(new PublishStatus("PUBLISH_COMPLETE", "7280001", null, null));
+
+        ActionResult result = action.publish(schedulerInput(), context());
+
+        assertThat(result.success()).isTrue();
+        verify(client, never()).initFileUpload(anyString(), any(), any());
+        assertThat(requestedRanges).hasSize(1);
+        assertThat(requestedRanges.get(0)).containsExactly(0L, size);
+    }
+
+    @Test
+    void publish_destinationSelectionNamesTheLaterVideo_thatOneIsUploadedNotTheEarliest() {
+        Asset earlier = videoAsset("asset-old", VIDEO_SIZE);
+        earlier.setCreatedAt(OffsetDateTime.parse("2026-08-01T09:00:00Z"));
+        Asset later = videoAsset("asset-new", VIDEO_SIZE);
+        later.setGcsPath("projects/p1/assets/asset-new.mp4");
+        later.setCreatedAt(OffsetDateTime.parse("2026-08-05T09:00:00Z"));
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(earlier, later));
+        stubHappyPath();
+        Map<String, Object> input = schedulerInput();
+        input.put("asset_ids", List.of("asset-new"));
+        java.util.List<String> paths = new ArrayList<>();
+        TikTokPublishAction selecting = new TikTokPublishAction(client, assetRepository, targetRepository,
+                actionInvocationService, objectMapper, (gcsPath, offset, length) -> {
+                    paths.add(gcsPath);
+                    return new ByteArrayInputStream(new byte[] {1});
+                }, storageService);
+        selecting.pollIntervalMillis = 0L;
+
+        ActionResult result = selecting.publish(input, context());
+
+        assertThat(result.success()).isTrue();
+        assertThat(paths).isNotEmpty().containsOnly("projects/p1/assets/asset-new.mp4");
+    }
+
+    @Test
+    void publish_selectionWithNoUploadedVideo_failsPermanentlyInsteadOfFallingBackToThePost() {
+        when(assetRepository.findAllByWorkItemId(WORK_ITEM_ID)).thenReturn(List.of(videoAsset(ASSET_ID, VIDEO_SIZE)));
+        Map<String, Object> input = schedulerInput();
+        input.put("asset_ids", List.of("not-on-this-post"));
+
+        ActionResult result = action.publish(input, context());
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.message()).contains("holds no uploaded video");
+        verify(client, never()).initFileUpload(anyString(), any(), any());
     }
 
     @Test

@@ -60,6 +60,7 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     @Autowired private PostPublishTargetRepository targetRepository;
     @Autowired private PostPublishTargetAssetRepository targetAssetRepository;
     @Autowired private AssetRepository assetRepository;
+    @Autowired private com.conductor.service.PublishTargetMediaResolver mediaResolver;
     @Autowired private StorageService storageService;
     @Autowired private WorkItemService workItemService;
     @Autowired private WorkflowSeeder workflowSeeder;
@@ -212,6 +213,126 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         assertThat(second.assets()).extracting(CreativeAttachService.AttachedAsset::assetId)
                 .containsExactlyInAnyOrderElementsOf(
                         first.assets().stream().map(CreativeAttachService.AttachedAsset::assetId).toList());
+    }
+
+    // ── a Post holds one render of a Creative ───────────────────────────────────────────────────
+
+    @Test
+    void attachingANewerRenderReplacesTheOlderRendersAssetsOnThePost() {
+        CreativeRender first = threeFrameRender();
+        CreativeAttachService.AttachResult one = attachService.attach(project.getId(), creative.getId(),
+                first.getId(), post.getId(), admin);
+        CreativeRender second = threeFrameRender();
+
+        CreativeAttachService.AttachResult two = attachService.attach(project.getId(), creative.getId(),
+                second.getId(), post.getId(), admin);
+
+        List<Asset> onPost = assetRepository.findAllByWorkItemId(post.getId());
+        assertThat(onPost).hasSize(3);
+        assertThat(onPost).extracting(Asset::getId).containsExactlyInAnyOrderElementsOf(
+                two.assets().stream().map(CreativeAttachService.AttachedAsset::assetId).toList());
+        assertThat(onPost).extracting(Asset::getId).doesNotContainAnyElementsOf(
+                one.assets().stream().map(CreativeAttachService.AttachedAsset::assetId).toList());
+        // The old render's frames belong to the Creative and stay.
+        assertThat(frameRepository.findAllByRenderId(first.getId())).hasSize(3);
+    }
+
+    @Test
+    void aTargetWithItsOwnMediaHasTheOlderRendersAssetSwappedInPlaceKeepingOrderAndOptions() {
+        CreativeRender first = threeFrameRender();
+        CreativeAttachService.AttachResult one = attachService.attach(project.getId(), creative.getId(),
+                first.getId(), post.getId(), admin);
+        PostPublishTarget facebook = targetOf("facebook");
+        String oldFacebook = assetIdFor(one, "1x1");
+        Asset uploaded = newExistingAsset();
+        // The author's own order: their upload first, the Creative's frame second.
+        targetAssetRepository.deleteAll(targetAssetRepository.findAllByTargetId(facebook.getId()));
+        targetAssetRepository.flush();
+        targetAssetRepository.save(new PostPublishTargetAsset(facebook.getId(), uploaded.getId(), 0));
+        targetAssetRepository.save(new PostPublishTargetAsset(facebook.getId(), oldFacebook, 1));
+        facebook.setCustomMedia(true);
+        facebook.setCaptionOverride("Facebook only caption");
+        targetRepository.save(facebook);
+
+        CreativeRender second = threeFrameRender();
+        CreativeAttachService.AttachResult two = attachService.attach(project.getId(), creative.getId(),
+                second.getId(), post.getId(), admin);
+
+        assertThat(storedAssetIds(facebook.getId())).containsExactly(uploaded.getId(), assetIdFor(two, "1x1"));
+        PostPublishTarget reloaded = targetRepository.findById(facebook.getId()).orElseThrow();
+        assertThat(reloaded.isCustomMedia()).isTrue();
+        assertThat(reloaded.getCaptionOverride()).isEqualTo("Facebook only caption");
+        assertThat(assetRepository.findById(oldFacebook)).isEmpty();
+        assertThat(assetRepository.findById(uploaded.getId())).isPresent();
+        // The other destinations moved to the new render too.
+        assertThat(storedAssetIds(targetOf("tiktok").getId())).containsExactly(assetIdFor(two, "9x16"));
+    }
+
+    @Test
+    void anOlderAssetWithNoMatchingFrameInTheNewRenderIsDroppedFromACustomSelection() {
+        CreativeRender first = threeFrameRender();
+        CreativeAttachService.AttachResult one = attachService.attach(project.getId(), creative.getId(),
+                first.getId(), post.getId(), admin);
+        PostPublishTarget facebook = targetOf("facebook");
+        Asset uploaded = newExistingAsset();
+        targetAssetRepository.save(new PostPublishTargetAsset(facebook.getId(), uploaded.getId(), 1));
+
+        CreativeRender second = newRender();
+        newFrame(second, "9x16", null, "tiktok", 1080, 1920);
+        newFrame(second, "4x5", null, "instagram", 1080, 1350);
+        attachService.attach(project.getId(), creative.getId(), second.getId(), post.getId(), admin);
+
+        assertThat(storedAssetIds(facebook.getId())).containsExactly(uploaded.getId());
+        assertThat(assetRepository.findById(assetIdFor(one, "1x1"))).isEmpty();
+    }
+
+    @Test
+    void aTargetInheritingMediaSeesOnlyTheNewRendersAsset() {
+        CreativeRender first = threeFrameRender();
+        attachService.attach(project.getId(), creative.getId(), first.getId(), post.getId(), admin);
+        PostPublishTarget tiktok = targetOf("tiktok");
+        targetAssetRepository.deleteAll(targetAssetRepository.findAllByTargetId(tiktok.getId()));
+        targetAssetRepository.flush();
+        tiktok.setCustomMedia(false);
+        targetRepository.save(tiktok);
+
+        CreativeRender second = threeFrameRender();
+        CreativeAttachService.AttachResult two = attachService.attach(project.getId(), creative.getId(),
+                second.getId(), post.getId(), admin);
+
+        PostPublishTarget reloaded = targetRepository.findById(tiktok.getId()).orElseThrow();
+        assertThat(mediaResolver.effectiveMedia(reloaded).assets()).extracting(Asset::getId)
+                .containsExactly(assetIdFor(two, "9x16"));
+    }
+
+    @Test
+    void anotherCreativesAssetsUploadsAndOtherTargetsAreNeverTouchedByAReAttach() {
+        Creative original = creative;
+        Creative other = newCreative(brandKitService.resolveDefault(project.getId()), 2);
+        creative = other;
+        CreativeRender otherRender = newRender();
+        newFrame(otherRender, "1x1", null, "facebook", 1080, 1080);
+        CreativeAttachService.AttachResult otherAttach = attachService.attach(project.getId(), other.getId(),
+                otherRender.getId(), post.getId(), admin);
+        creative = original;
+        Asset uploaded = newExistingAsset();
+
+        CreativeRender first = threeFrameRender();
+        attachService.attach(project.getId(), creative.getId(), first.getId(), post.getId(), admin);
+        CreativeRender second = threeFrameRender();
+        attachService.attach(project.getId(), creative.getId(), second.getId(), post.getId(), admin);
+
+        assertThat(assetRepository.findById(assetIdFor(otherAttach, "1x1"))).isPresent();
+        assertThat(assetRepository.findById(uploaded.getId())).isPresent();
+        assertThat(assetRepository.findAllByWorkItemId(post.getId())).hasSize(3 + 1 + 1);
+    }
+
+    private CreativeRender threeFrameRender() {
+        CreativeRender render = newRender();
+        newFrame(render, "9x16", null, "tiktok", 1080, 1920);
+        newFrame(render, "4x5", null, "instagram", 1080, 1350);
+        newFrame(render, "1x1", null, "facebook", 1080, 1080);
+        return render;
     }
 
     @Test
@@ -1031,6 +1152,10 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
     }
 
     private Creative newCreative(BrandKit kit) {
+        return newCreative(kit, 1);
+    }
+
+    private Creative newCreative(BrandKit kit, int number) {
         Creative c = new Creative();
         c.setProjectId(project.getId());
         c.setBrandKitId(kit.getId());
@@ -1043,7 +1168,7 @@ class CreativeAttachServiceIntegrationTest extends AbstractNoneWebIntegrationTes
         c.setSequence(objectMapper.valueToTree(List.of()));
         c.setTypeOverrides(objectMapper.createObjectNode());
         c.setCreatedBy(admin.getId());
-        c.setNumber(1);
+        c.setNumber(number);
         return creativeRepository.save(c);
     }
 
