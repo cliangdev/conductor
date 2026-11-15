@@ -150,9 +150,15 @@ public class CreativeAttachService {
         // Attaching the same render again (say, to fill a destination added afterwards) reuses the frames
         // already on this Post instead of copying them a second time.
         Map<String, Asset> alreadyAttached = new LinkedHashMap<>();
-        for (Asset existing : assetRepository.findAllByWorkItemId(workItemId)) {
+        List<Asset> postAssets = assetRepository.findAllByWorkItemId(workItemId);
+        for (Asset existing : postAssets) {
             if (existing.getCreativeFrameId() != null) alreadyAttached.putIfAbsent(existing.getCreativeFrameId(), existing);
         }
+        Map<String, CreativeRenderFrame> creativeFrameById = new LinkedHashMap<>();
+        if (!alreadyAttached.isEmpty()) {
+            frameRepository.findAllByCreativeId(creativeId).forEach(f -> creativeFrameById.put(f.getId(), f));
+        }
+        List<Asset> staleAssets = staleRenderAssets(postAssets, creativeFrameById, renderId);
 
         // Frames not yet on the Post become Assets in ONE call (one set of workflow checks, one batched
         // insert); the response and the placement map are then built in render order, as before.
@@ -182,6 +188,20 @@ public class CreativeAttachService {
             placements.add(frame, asset.getId());
         }
 
+        // A Post holds one render of a Creative: each older render's asset is swapped, in the selections
+        // attach leaves alone, for this render's frame in the same slot (dropped when there is none).
+        Map<String, String> replacementOf = new LinkedHashMap<>();
+        if (!staleAssets.isEmpty()) {
+            Map<String, String> newAssetByKey = new LinkedHashMap<>();
+            for (CreativeRenderFrame frame : frames) {
+                newAssetByKey.putIfAbsent(frameKey(frame), attachedAssets.stream()
+                        .filter(a -> a.frameId().equals(frame.getId())).findFirst().orElseThrow().assetId());
+            }
+            for (Asset stale : staleAssets) {
+                replacementOf.put(stale.getId(), newAssetByKey.get(frameKey(creativeFrameById.get(stale.getCreativeFrameId()))));
+            }
+        }
+
         List<TargetUpdate> updates = new ArrayList<>();
         List<TargetSkip> skipped = new ArrayList<>();
         List<PublishTargetService.TargetSelection> selections = new ArrayList<>();
@@ -197,7 +217,7 @@ public class CreativeAttachService {
             if (target.isCustomMedia() && !explicitlyEmpty) {
                 skipped.add(new TargetSkip(target.getId(), target.getPlatform(),
                         "This destination already has its own chosen media"));
-                selections.add(selectionFor(target, ownAssetIds));
+                selections.add(selectionFor(target, swapAssetIds(ownAssetIds, replacementOf)));
                 continue;
             }
             List<String> matched = placements.mediaFor(target);
@@ -248,6 +268,12 @@ public class CreativeAttachService {
         }
 
         publishTargetService.replaceSelection(projectId, workItemId, selections, caller);
+
+        if (!staleAssets.isEmpty()) {
+            // Only the Post's Asset rows go; the frames and stored objects belong to the Creative.
+            assetRepository.flush();
+            assetRepository.deleteAll(staleAssets);
+        }
 
         CreativeService.AttachStateOutcome outcome = creativeService.promoteOnAttach(creative);
         return new AttachResult(attachedAssets, updates, skipped, outcome.state(), outcome.note());
@@ -349,13 +375,7 @@ public class CreativeAttachService {
         List<PublishTargetService.TargetSelection> selections = new ArrayList<>();
         for (PostPublishTarget target : targets) {
             List<String> own = target.isCustomMedia() ? customAssetIds.getOrDefault(target.getId(), List.of()) : List.of();
-            List<String> remapped = new ArrayList<>();
-            for (String id : own) {
-                String swapped = replacementOf.getOrDefault(id, id);
-                if (!remapped.contains(swapped)) {
-                    remapped.add(swapped);
-                }
-            }
+            List<String> remapped = swapAssetIds(own, replacementOf);
             selections.add(selectionFor(target, remapped, target.isCustomMedia() && remapped.isEmpty()));
         }
         publishTargetService.replaceSelection(projectId, workItemId, selections, null,
@@ -364,6 +384,31 @@ public class CreativeAttachService {
         assetRepository.flush();
         assetRepository.deleteAll(stale);
         return new ReattachResult(stale.size());
+    }
+
+    /**
+     * {@code ids} with each key of {@code replacementOf} swapped in place for its value; a key mapped to
+     * null is dropped, and a duplicate produced by the swap is kept once. Shared by {@link #attach} and
+     * {@link #reattach}.
+     */
+    private static List<String> swapAssetIds(List<String> ids, Map<String, String> replacementOf) {
+        List<String> out = new ArrayList<>();
+        for (String id : ids) {
+            String swapped = replacementOf.containsKey(id) ? replacementOf.get(id) : id;
+            if (swapped != null && !out.contains(swapped)) {
+                out.add(swapped);
+            }
+        }
+        return out;
+    }
+
+    /** The Post's assets linked to a frame of this Creative that belongs to a render other than {@code renderId}. */
+    private static List<Asset> staleRenderAssets(List<Asset> postAssets,
+                                                 Map<String, CreativeRenderFrame> ofCreative, String renderId) {
+        return postAssets.stream()
+                .filter(a -> a.getCreativeFrameId() != null && ofCreative.containsKey(a.getCreativeFrameId()))
+                .filter(a -> !renderId.equals(ofCreative.get(a.getCreativeFrameId()).getRenderId()))
+                .toList();
     }
 
     /** Which slot of a render a frame fills: placement, slide index and image-or-video. */

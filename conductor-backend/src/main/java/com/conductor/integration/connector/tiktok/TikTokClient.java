@@ -298,10 +298,12 @@ public class TikTokClient {
      * no more than {@link #MAX_CHUNK_COUNT} of them.
      *
      * <p>The chunk size is the target, grown only far enough to keep the count inside the cap (at the
-     * 4 GB ceiling that never binds: 4 GB / 10 MB is 410 chunks). A file smaller than that chunk size
-     * cannot be split, and declaring a {@code chunk_size} larger than {@code video_size} is rejected
-     * by TikTok as "The chunk size is invalid", so it goes as a single whole-file chunk, which is what
-     * TikTok prescribes for that case. Files from one chunk size up keep the plan they always had.
+     * 4 GB ceiling that never binds: 4 GB / 10 MB is 410 chunks). TikTok floors the chunk count, so a
+     * file smaller than <em>two</em> chunks would be declared as one chunk with a {@code chunk_size}
+     * smaller than {@code video_size}, which TikTok rejects as "The chunk size is invalid" (seen live
+     * on a 13.6 MB file). Such a file, as long as it fits the 64 MB single-chunk ceiling, goes as one
+     * whole-file chunk with {@code chunk_size == video_size}, which is what TikTok prescribes for it.
+     * A resumed upload does not call this again: it keeps the plan stored in its checkpoint.
      */
     public static ChunkPlan planChunks(long videoSize) {
         if (videoSize <= 0) {
@@ -313,8 +315,8 @@ public class TikTokClient {
         }
         long chunkSize = Math.max(TARGET_CHUNK_BYTES, ceilDiv(videoSize, MAX_CHUNK_COUNT));
         chunkSize = Math.min(Math.max(chunkSize, MIN_CHUNK_BYTES), MAX_CHUNK_BYTES);
-        // chunkSize is never below the target, so this also covers files at or under the 5 MB floor.
-        if (videoSize < chunkSize) {
+        // Under two chunks the floored count would be 1 with a chunk_size below video_size: send it whole.
+        if (videoSize < 2 * chunkSize && videoSize <= MAX_CHUNK_BYTES) {
             return new ChunkPlan(videoSize, videoSize, 1);
         }
         int totalChunkCount = (int) Math.max(1, videoSize / chunkSize);
