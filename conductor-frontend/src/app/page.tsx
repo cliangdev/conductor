@@ -6,6 +6,7 @@ import { Departments } from "@/components/site/landing/Departments";
 import { Platform } from "@/components/site/landing/Platform";
 import { Loop } from "@/components/site/landing/Loop";
 import { Tools } from "@/components/site/landing/Tools";
+import { GetStarted } from "@/components/site/landing/GetStarted";
 import { Trust } from "@/components/site/landing/Trust";
 import { Source } from "@/components/site/landing/Source";
 import { FinalCta } from "@/components/site/landing/FinalCta";
@@ -29,6 +30,7 @@ export default function LandingPage() {
       <Platform />
       <Loop />
       <Tools />
+      <GetStarted />
       <Trust />
       <Source />
       <FinalCta />

@@ -1,6 +1,6 @@
 # Conductor
 
-**Agentic software development — from idea to launch, with AI and humans in the loop.**
+**Coordination platform for agentic organizations — AI agents do the work, humans review, approve, and steer.**
 
 [![npm](https://img.shields.io/npm/v/@cliangdev/conductor)](https://www.npmjs.com/package/@cliangdev/conductor)
 
