@@ -49,6 +49,8 @@ public interface CommentRepository extends JpaRepository<Comment, String> {
     @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author LEFT JOIN FETCH c.resolvedBy WHERE c.projectDoc.id = :docId ORDER BY c.createdAt")
     List<Comment> findListByProjectDocId(@Param("docId") String docId);
 
+    List<Comment> findAllByDocumentIdAndResolvedAtIsNull(String documentId);
+
     List<Comment> findAllByProjectDocIdAndResolvedAtIsNull(String projectDocId);
 
     /** A comment with its authors fetch-joined, for mapping after the transaction closes. */

@@ -78,6 +78,10 @@ public class Comment {
     @Column(name = "line_stale", nullable = false)
     private boolean lineStale = false;
 
+    /** ANCHORED / ORPHANED after the last re-anchor on save; null until the document is first saved after V206. */
+    @Column(name = "anchor_status", columnDefinition = "TEXT")
+    private String anchorStatus;
+
     @Column(name = "resolved_at")
     private OffsetDateTime resolvedAt;
 
@@ -172,6 +176,9 @@ public class Comment {
     public boolean isOutdatedAgainst(String currentDocumentHash) {
         return documentHash != null && currentDocumentHash != null && !documentHash.equals(currentDocumentHash);
     }
+
+    public String getAnchorStatus() { return anchorStatus; }
+    public void setAnchorStatus(String anchorStatus) { this.anchorStatus = anchorStatus; }
 
     public boolean isLineStale() { return lineStale; }
     public void setLineStale(boolean lineStale) { this.lineStale = lineStale; }

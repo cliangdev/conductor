@@ -1,0 +1,378 @@
+[
+  {
+    "name": "moved paragraph: exact text still unique after the paragraph moved",
+    "doc": "<h1>Report</h1><p>Reached 20 of 26 users.</p><p>Other notes here.</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "20 of 26 users",
+      "prefix": "Other notes here. Reached ",
+      "suffix": "."
+    },
+    "expected": {
+      "found": true,
+      "start": 15,
+      "end": 29
+    }
+  },
+  {
+    "name": "duplicate phrase disambiguated by prefix",
+    "doc": "<p>Total: 20 of 26 users.</p><p>Later: 20 of 26 signups.</p><p>Last: 20 of 26 posts.</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "20 of 26",
+      "prefix": "Later: ",
+      "suffix": " signups."
+    },
+    "expected": {
+      "found": true,
+      "start": 30,
+      "end": 38
+    }
+  },
+  {
+    "name": "duplicate phrase disambiguated by suffix when prefix is shared",
+    "doc": "<p>see item one.</p><p>see item two.</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "item",
+      "prefix": "see ",
+      "suffix": " two."
+    },
+    "expected": {
+      "found": true,
+      "start": 18,
+      "end": 22
+    }
+  },
+  {
+    "name": "duplicate phrase with no context agreement takes the first",
+    "doc": "<p>foo bar</p><p>foo baz</p><p>foo qux</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "foo",
+      "prefix": "zzz",
+      "suffix": "qqq"
+    },
+    "expected": {
+      "found": true,
+      "start": 0,
+      "end": 3
+    }
+  },
+  {
+    "name": "whitespace and newline differences",
+    "doc": "<p>Reached   20 of\n   26\tusers\n in total.</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "20 of 26 users in total",
+      "prefix": "Reached ",
+      "suffix": "."
+    },
+    "expected": {
+      "found": true,
+      "start": 8,
+      "end": 31
+    }
+  },
+  {
+    "name": "quote itself carries odd whitespace",
+    "doc": "<p>one two three</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "two\n  three",
+      "prefix": "one ",
+      "suffix": ""
+    },
+    "expected": {
+      "found": true,
+      "start": 4,
+      "end": 13
+    }
+  },
+  {
+    "name": "inline tags split the quote",
+    "doc": "<p>Reached <b>20</b> of <i>26</i> users</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "20 of 26 users",
+      "prefix": "Reached ",
+      "suffix": ""
+    },
+    "expected": {
+      "found": true,
+      "start": 8,
+      "end": 22
+    }
+  },
+  {
+    "name": "inline tags with no space between them add none",
+    "doc": "<p>un<b>bro</b>ken word</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "unbroken word",
+      "prefix": "",
+      "suffix": ""
+    },
+    "expected": {
+      "found": true,
+      "start": 0,
+      "end": 13
+    }
+  },
+  {
+    "name": "one space at a block boundary",
+    "doc": "<h2>Goals</h2><p>Ship it</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "Goals Ship it",
+      "prefix": "",
+      "suffix": ""
+    },
+    "expected": {
+      "found": true,
+      "start": 0,
+      "end": 13
+    }
+  },
+  {
+    "name": "one space at a br",
+    "doc": "<p>first line<br>second line</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "first line second line",
+      "prefix": "",
+      "suffix": ""
+    },
+    "expected": {
+      "found": true,
+      "start": 0,
+      "end": 22
+    }
+  },
+  {
+    "name": "table cells are block boundaries",
+    "doc": "<table><tr><td>Name</td><td>Count</td></tr><tr><td>Posts</td><td>12</td></tr></table>",
+    "docType": "html",
+    "quote": {
+      "exact": "Count Posts",
+      "prefix": "Name ",
+      "suffix": " 12"
+    },
+    "expected": {
+      "found": true,
+      "start": 5,
+      "end": 16
+    }
+  },
+  {
+    "name": "non-breaking space and entities",
+    "doc": "<p>Fish &amp; chips&nbsp;cost&nbsp;&lt;5</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "Fish & chips cost <5",
+      "prefix": "",
+      "suffix": ""
+    },
+    "expected": {
+      "found": true,
+      "start": 0,
+      "end": 20
+    }
+  },
+  {
+    "name": "deleted quote is not found",
+    "doc": "<p>The paragraph was rewritten entirely.</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "20 of 26 users",
+      "prefix": "Reached ",
+      "suffix": " in total."
+    },
+    "expected": {
+      "found": false
+    }
+  },
+  {
+    "name": "quote spanning a deleted word is not found",
+    "doc": "<p>Reached 20 users</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "20 of 26 users",
+      "prefix": "Reached ",
+      "suffix": ""
+    },
+    "expected": {
+      "found": false
+    }
+  },
+  {
+    "name": "script and style text is ignored",
+    "doc": "<p>Hello</p><script>var token = \"abc\";</script><style>.x{color:red}</style><p>World</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "token",
+      "prefix": "",
+      "suffix": ""
+    },
+    "expected": {
+      "found": false
+    }
+  },
+  {
+    "name": "text on either side of a script reads as adjacent blocks",
+    "doc": "<p>Hello</p><script>var a = 1;</script><p>World</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "Hello World",
+      "prefix": "",
+      "suffix": ""
+    },
+    "expected": {
+      "found": true,
+      "start": 0,
+      "end": 11
+    }
+  },
+  {
+    "name": "template and noscript text is ignored",
+    "doc": "<p>Shown</p><template><p>Template only</p></template><noscript>No script only</noscript>",
+    "docType": "html",
+    "quote": {
+      "exact": "Template only",
+      "prefix": "",
+      "suffix": ""
+    },
+    "expected": {
+      "found": false
+    }
+  },
+  {
+    "name": "hidden element text is ignored",
+    "doc": "<p>Visible</p><p hidden>Secret sauce</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "Secret sauce",
+      "prefix": "",
+      "suffix": ""
+    },
+    "expected": {
+      "found": false
+    }
+  },
+  {
+    "name": "visible copy wins over a hidden copy",
+    "doc": "<p hidden>Same words</p><p>Same words</p>",
+    "docType": "html",
+    "quote": {
+      "exact": "Same words",
+      "prefix": "",
+      "suffix": ""
+    },
+    "expected": {
+      "found": true
+    }
+  },
+  {
+    "name": "markdown emphasis and links",
+    "doc": "We **really** need the [launch plan](https://example.test/plan) _soon_.",
+    "docType": "markdown",
+    "quote": {
+      "exact": "really need the launch plan soon",
+      "prefix": "We ",
+      "suffix": "."
+    },
+    "expected": {
+      "found": true,
+      "start": 3,
+      "end": 35
+    }
+  },
+  {
+    "name": "markdown list items",
+    "doc": "Steps:\n\n- first item\n- second item\n- third item\n",
+    "docType": "markdown",
+    "quote": {
+      "exact": "first item second item",
+      "prefix": "Steps: ",
+      "suffix": " third item"
+    },
+    "expected": {
+      "found": true,
+      "start": 7,
+      "end": 29
+    }
+  },
+  {
+    "name": "markdown heading then paragraph",
+    "doc": "# Title\n\nBody text here.\n",
+    "docType": "markdown",
+    "quote": {
+      "exact": "Title Body text here",
+      "prefix": "",
+      "suffix": "."
+    },
+    "expected": {
+      "found": true,
+      "start": 0,
+      "end": 20
+    }
+  },
+  {
+    "name": "markdown inline code and strikethrough",
+    "doc": "Run `make build` then ~~skip~~ ship.",
+    "docType": "markdown",
+    "quote": {
+      "exact": "Run make build then skip ship",
+      "prefix": "",
+      "suffix": "."
+    },
+    "expected": {
+      "found": true,
+      "start": 0,
+      "end": 29
+    }
+  },
+  {
+    "name": "markdown moved section",
+    "doc": "## B\n\nSecond section.\n\n## A\n\nFirst section moved here.\n",
+    "docType": "markdown",
+    "quote": {
+      "exact": "First section moved here",
+      "prefix": "A ",
+      "suffix": "."
+    },
+    "expected": {
+      "found": true,
+      "start": 20,
+      "end": 44
+    }
+  },
+  {
+    "name": "markdown deleted quote is not found",
+    "doc": "# Title\n\nCompletely different text.\n",
+    "docType": "markdown",
+    "quote": {
+      "exact": "Body text here",
+      "prefix": "Title ",
+      "suffix": "."
+    },
+    "expected": {
+      "found": false
+    }
+  },
+  {
+    "name": "markdown duplicate phrase disambiguated by context",
+    "doc": "Alpha: the plan.\n\nBeta: the plan.\n\nGamma: the plan.\n",
+    "docType": "markdown",
+    "quote": {
+      "exact": "the plan",
+      "prefix": "Beta: ",
+      "suffix": "."
+    },
+    "expected": {
+      "found": true,
+      "start": 23,
+      "end": 31
+    }
+  }
+]

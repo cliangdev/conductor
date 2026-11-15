@@ -34,7 +34,8 @@ public record CommentWithRepliesView(
         CommentAuthorAgentView authorAgent,
         OffsetDateTime editedAt,
         String resolvedByName,
-        OffsetDateTime updatedAt) {
+        OffsetDateTime updatedAt,
+        String anchorStatus) {
 
     /** The original Work Item shape: a user-authored comment on a Work Item document. */
     public CommentWithRepliesView(
@@ -45,6 +46,6 @@ public record CommentWithRepliesView(
                 outdated, documentName, resolvedAt, replies,
                 anchor != null ? CommentKind.QUOTE
                         : (lineNumber != null && lineNumber > 0 ? CommentKind.LINE : CommentKind.DOCUMENT),
-                null, null, null, "USER", null, null, null, null);
+                null, null, null, "USER", null, null, null, null, null);
     }
 }

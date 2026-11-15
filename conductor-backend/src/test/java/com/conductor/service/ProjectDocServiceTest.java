@@ -48,7 +48,7 @@ class ProjectDocServiceTest {
     private ProjectRepository projectRepository;
 
     @Mock
-    private DocCommentService docCommentService;
+    private com.conductor.service.anchoring.CommentAnchorService commentAnchorService;
 
     private ProjectDocService service;
     private ProjectDoc doc;
@@ -58,9 +58,9 @@ class ProjectDocServiceTest {
     void setUp() {
         service = new ProjectDocService(
                 projectDocRepository, docVersionRepository, docFolderService, projectRepository);
-        // docCommentService is @Lazy field-injected in production; set it here so "never called" is a
+        // commentAnchorService is @Lazy field-injected in production; set it here so "never called" is a
         // real assertion rather than a null-reference accident.
-        ReflectionTestUtils.setField(service, "docCommentService", docCommentService);
+        ReflectionTestUtils.setField(service, "commentAnchorService", commentAnchorService);
 
         User user = new User();
         user.setId("user-1");
@@ -135,13 +135,13 @@ class ProjectDocServiceTest {
     }
 
     @Test
-    void neitherMintsAVersionNorMarksCommentsStale() {
+    void neitherMintsAVersionNorReanchorsComments() {
         toggle("- [ ] alpha", 1, true);
 
         // Both are what updateDoc does and what makes it unusable for a checkbox click: one history
         // entry per tick, and every unresolved comment flagged stale even though no line moved.
         verify(docVersionRepository, never()).save(any());
-        verify(docCommentService, never()).markCommentsStale(anyString());
+        verify(commentAnchorService, never()).reanchor(any(), any(), any(), any());
         verify(projectDocRepository).save(doc);
     }
 

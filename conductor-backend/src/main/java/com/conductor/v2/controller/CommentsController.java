@@ -186,6 +186,8 @@ public class CommentsController implements CommentsApi {
                 .quotedText(v.quotedText() == null || v.quotedText().isEmpty() ? null : v.quotedText())
                 .anchor(toV2Anchor(v.anchor()))
                 .documentHash(v.documentHash())
+                .anchorStatus(v.anchorStatus() == null ? null
+                        : CommentThreadResponse.AnchorStatusEnum.fromValue(v.anchorStatus()))
                 .resolvedAt(v.resolvedAt())
                 .resolvedByName(v.resolvedByName())
                 .editedAt(v.editedAt())
