@@ -1,7 +1,5 @@
 package com.conductor.controller;
 
-import com.conductor.entity.DocComment;
-import com.conductor.entity.DocCommentReply;
 import com.conductor.entity.DocFolder;
 import com.conductor.entity.DocVersion;
 import com.conductor.entity.ProjectDoc;
@@ -26,11 +24,12 @@ import com.conductor.generated.model.RenameDocRequest;
 import com.conductor.generated.model.RenameFolderRequest;
 import com.conductor.generated.model.SetDocTaskStateRequest;
 import com.conductor.generated.model.UpdateDocRequest;
-import com.conductor.repository.DocCommentReplyRepository;
 import com.conductor.repository.DocVersionRepository;
 import com.conductor.repository.ProjectDocRepository;
 import com.conductor.service.ProjectActor;
 import com.conductor.service.DocCommentService;
+import com.conductor.service.view.CommentReplyView;
+import com.conductor.service.view.CommentWithRepliesView;
 import com.conductor.service.DocImageMarkers;
 import com.conductor.service.DocFolderService;
 import com.conductor.service.DocVersionService;
@@ -66,7 +65,6 @@ public class ProjectDocsController implements ProjectDocsApi {
     private final ProjectDocService projectDocService;
     private final DocVersionService docVersionService;
     private final DocCommentService docCommentService;
-    private final DocCommentReplyRepository docCommentReplyRepository;
     private final StorageService storageService;
     private final ProjectSecurityService projectSecurityService;
     /** Doc images are display-only and embedded in Markdown; a longer, stable URL keeps them browser-cacheable. */
@@ -79,7 +77,6 @@ public class ProjectDocsController implements ProjectDocsApi {
             ProjectDocService projectDocService,
             DocVersionService docVersionService,
             DocCommentService docCommentService,
-            DocCommentReplyRepository docCommentReplyRepository,
             StorageService storageService,
             ProjectSecurityService projectSecurityService,
             @Value("${gcp.signed-url.expiry-minutes:15}") int signedUrlExpiryMinutes) {
@@ -87,7 +84,6 @@ public class ProjectDocsController implements ProjectDocsApi {
         this.projectDocService = projectDocService;
         this.docVersionService = docVersionService;
         this.docCommentService = docCommentService;
-        this.docCommentReplyRepository = docCommentReplyRepository;
         this.storageService = storageService;
         this.projectSecurityService = projectSecurityService;
         this.signedUrlExpiryMinutes = signedUrlExpiryMinutes;
@@ -249,9 +245,9 @@ public class ProjectDocsController implements ProjectDocsApi {
 
     @Override
     public ResponseEntity<List<DocCommentResponse>> listDocComments(String projectId, String docId) {
-        requireDocAccess(projectId);
-        List<DocCommentResponse> response = docCommentService.listThreads(projectId, docId).stream()
-                .map(t -> toCommentResponse(t.comment(), t.replies()))
+        ProjectActor actor = requireDocAccess(projectId);
+        List<DocCommentResponse> response = docCommentService.listThreads(projectId, docId, actor).stream()
+                .map(this::toCommentResponse)
                 .collect(Collectors.toList());
         return ResponseEntity.ok(response);
     }
@@ -259,7 +255,7 @@ public class ProjectDocsController implements ProjectDocsApi {
     @Override
     public ResponseEntity<DocCommentResponse> createDocComment(String projectId, String docId, CreateDocCommentRequest createDocCommentRequest) {
         ProjectActor actor = requireDocAccess(projectId);
-        DocComment comment = docCommentService.createComment(
+        CommentWithRepliesView comment = docCommentService.createComment(
                 projectId,
                 docId,
                 actor,
@@ -279,7 +275,7 @@ public class ProjectDocsController implements ProjectDocsApi {
     @Override
     public ResponseEntity<DocCommentReplyResponse> addDocCommentReply(String projectId, String docId, String commentId, CreateDocCommentReplyRequest createDocCommentReplyRequest) {
         ProjectActor actor = requireDocAccess(projectId);
-        DocCommentReply reply = docCommentService.addReply(
+        CommentReplyView reply = docCommentService.addReply(
                 projectId,
                 docId,
                 commentId,
@@ -291,7 +287,7 @@ public class ProjectDocsController implements ProjectDocsApi {
     @Override
     public ResponseEntity<DocCommentResponse> resolveDocComment(String projectId, String docId, String commentId) {
         ProjectActor actor = requireDocAccess(projectId);
-        DocComment comment = docCommentService.resolveThread(projectId, docId, commentId, actor);
+        CommentWithRepliesView comment = docCommentService.resolveThread(projectId, docId, commentId, actor);
         return ResponseEntity.ok(toCommentResponse(comment));
     }
 
@@ -424,42 +420,38 @@ public class ProjectDocsController implements ProjectDocsApi {
         return response;
     }
 
-    private DocCommentResponse toCommentResponse(DocComment comment) {
-        return toCommentResponse(comment, docCommentReplyRepository.findByCommentIdOrderByCreatedAtAsc(comment.getId()));
-    }
-
-    private DocCommentResponse toCommentResponse(DocComment comment, List<DocCommentReply> replies) {
-        List<DocCommentReplyResponse> replyResponses = replies.stream()
+    private DocCommentResponse toCommentResponse(CommentWithRepliesView comment) {
+        List<DocCommentReplyResponse> replyResponses = comment.replies().stream()
                 .map(this::toReplyResponse)
                 .collect(Collectors.toList());
 
         DocCommentResponse response = new DocCommentResponse();
-        response.setId(comment.getId());
-        response.setDocId(comment.getDoc().getId());
-        response.setAuthorId(authorId(comment.getAuthor()));
-        response.setAuthorName(displayName(comment.getAuthor(), comment.getAuthorLabel()));
-        response.setContent(comment.getContent());
-        response.setLineNumber(comment.getLineNumber());
-        response.setQuotedText(comment.getQuotedText());
-        response.setLineStale(comment.isLineStale());
-        response.setResolvedAt(comment.getResolvedAt());
-        response.setResolvedByName(comment.getResolvedAt() == null
-                ? null
-                : displayName(comment.getResolvedBy(), comment.getResolvedByLabel()));
-        response.setCreatedAt(comment.getCreatedAt());
-        response.setUpdatedAt(comment.getUpdatedAt());
+        response.setId(comment.id());
+        response.setDocId(comment.projectDocId());
+        response.setAuthorId(comment.authorId());
+        response.setAuthorName(comment.authorName());
+        response.setContent(comment.content());
+        // The unified model stores "no line" as 0 and "no quote" as ""; this API has always said null.
+        response.setLineNumber(comment.lineNumber() != null && comment.lineNumber() > 0 ? comment.lineNumber() : null);
+        response.setQuotedText(comment.quotedText() == null || comment.quotedText().isEmpty()
+                ? null : comment.quotedText());
+        response.setLineStale(comment.lineStale());
+        response.setResolvedAt(comment.resolvedAt());
+        response.setResolvedByName(comment.resolvedByName());
+        response.setCreatedAt(comment.createdAt());
+        response.setUpdatedAt(comment.updatedAt());
         response.setReplies(replyResponses);
         return response;
     }
 
-    private DocCommentReplyResponse toReplyResponse(DocCommentReply reply) {
+    private DocCommentReplyResponse toReplyResponse(CommentReplyView reply) {
         DocCommentReplyResponse response = new DocCommentReplyResponse();
-        response.setId(reply.getId());
-        response.setCommentId(reply.getComment().getId());
-        response.setAuthorId(authorId(reply.getAuthor()));
-        response.setAuthorName(displayName(reply.getAuthor(), reply.getAuthorLabel()));
-        response.setContent(reply.getContent());
-        response.setCreatedAt(reply.getCreatedAt());
+        response.setId(reply.id());
+        response.setCommentId(reply.commentId());
+        response.setAuthorId(reply.authorId());
+        response.setAuthorName(reply.authorName());
+        response.setContent(reply.content());
+        response.setCreatedAt(reply.createdAt());
         return response;
     }
 

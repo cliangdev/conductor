@@ -22,16 +22,29 @@ public class Comment {
     private String id;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "work_item_id", nullable = false)
+    @JoinColumn(name = "work_item_id")
     private WorkItem workItem;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "document_id", nullable = false)
+    @JoinColumn(name = "document_id")
     private Document document;
 
+    /** The project doc this comment is on; set instead of workItem + document (exactly one target). */
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "author_id", nullable = false)
+    @JoinColumn(name = "project_doc_id")
+    private ProjectDoc projectDoc;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "author_id")
     private User author;
+
+    /** Byline of a machine author (an agent run); set when {@code author} is null. */
+    @Column(name = "author_label", columnDefinition = "TEXT")
+    private String authorLabel;
+
+    /** The agent that wrote this comment, when known. */
+    @Column(name = "author_agent_id", length = 36)
+    private String authorAgentId;
 
     @Column(name = "content", columnDefinition = "TEXT", nullable = false)
     private String content;
@@ -72,6 +85,12 @@ public class Comment {
     @JoinColumn(name = "resolved_by")
     private User resolvedBy;
 
+    @Column(name = "resolved_by_label", columnDefinition = "TEXT")
+    private String resolvedByLabel;
+
+    @Column(name = "edited_at")
+    private OffsetDateTime editedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
 
@@ -101,8 +120,23 @@ public class Comment {
     public Document getDocument() { return document; }
     public void setDocument(Document document) { this.document = document; }
 
+    public ProjectDoc getProjectDoc() { return projectDoc; }
+    public void setProjectDoc(ProjectDoc projectDoc) { this.projectDoc = projectDoc; }
+
     public User getAuthor() { return author; }
     public void setAuthor(User author) { this.author = author; }
+
+    public String getAuthorLabel() { return authorLabel; }
+    public void setAuthorLabel(String authorLabel) { this.authorLabel = authorLabel; }
+
+    public String getAuthorAgentId() { return authorAgentId; }
+    public void setAuthorAgentId(String authorAgentId) { this.authorAgentId = authorAgentId; }
+
+    public String getResolvedByLabel() { return resolvedByLabel; }
+    public void setResolvedByLabel(String resolvedByLabel) { this.resolvedByLabel = resolvedByLabel; }
+
+    public OffsetDateTime getEditedAt() { return editedAt; }
+    public void setEditedAt(OffsetDateTime editedAt) { this.editedAt = editedAt; }
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }

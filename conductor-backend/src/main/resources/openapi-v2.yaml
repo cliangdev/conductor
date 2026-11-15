@@ -62,6 +62,8 @@ tags:
     description: Task breakdown stored on a Work Item
   - name: work-item-comments
     description: Comments and replies on a Work Item's documents
+  - name: comments
+    description: Comment threads on Work Item documents and project docs, by people and agents
   - name: work-item-reviews
     description: Review verdicts on a Work Item
   - name: work-item-assets
@@ -2113,6 +2115,396 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments:
+    get:
+      tags:
+        - comments
+      summary: List comment threads on a document
+      description: |
+        Threads on one document, oldest first, each with its replies. The document is a Work Item document
+        (`workItemId` + `documentId`) or a project doc (`projectDocId`); give exactly one of the two. Passing
+        only `workItemId` lists every document of that Work Item. See docs/comments.md.
+      operationId: listComments
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: documentId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: projectDocId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          description: Which threads to return. Default `all`.
+          schema:
+            type: string
+            enum: [open, resolved, all]
+            default: all
+      responses:
+        "200":
+          description: Threads with nested replies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CommentThreadResponse"
+        "400":
+          description: Neither or both targets given, or an unknown status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item, document or project doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - comments
+      summary: Comment on a document
+      description: |
+        Creates a thread. With neither `anchor` nor `lineNumber` it is a whole-document comment (kind
+        DOCUMENT); with `anchor` a text-quote comment (QUOTE, any document); with `lineNumber` a line comment
+        (LINE, not on HTML documents). `anchor` and `lineNumber` together are rejected. Callable by people and
+        by agents (run tokens, API keys).
+      operationId: createComment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommentThreadRequest"
+      responses:
+        "201":
+          description: Thread created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentThreadResponse"
+        "400":
+          description: Invalid target, anchor or line
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item, document or project doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments/{commentId}:
+    patch:
+      tags:
+        - comments
+      summary: Edit a comment, or resolve or reopen its thread
+      description: |
+        `content` edits the text and is for the comment's author only (an agent: only comments an agent wrote);
+        it stamps `editedAt`. `status` RESOLVED or OPEN is open to anyone with access; OPEN reopens the thread
+        and clears who resolved it. Send either or both.
+      operationId: updateComment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCommentRequest"
+      responses:
+        "200":
+          description: The updated thread
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentThreadResponse"
+        "400":
+          description: Nothing to update, or blank content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Editing someone else's comment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - comments
+      summary: Delete a comment thread (author or project admin; an agent only its own)
+      operationId: deleteComment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Comment deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not the author or an admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments/{commentId}/replies:
+    post:
+      tags:
+        - comments
+      summary: Reply to a comment thread
+      operationId: createCommentReply
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddCommentReplyRequest"
+      responses:
+        "201":
+          description: Reply created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentThreadReplyResponse"
+        "400":
+          description: Blank content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments/{commentId}/replies/{replyId}:
+    patch:
+      tags:
+        - comments
+      summary: Edit a reply (its author only)
+      operationId: updateCommentReply
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: replyId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCommentReplyRequest"
+      responses:
+        "200":
+          description: The updated reply
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentThreadReplyResponse"
+        "400":
+          description: Blank content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not the author
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment or reply not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - comments
+      summary: Delete a reply (author or project admin; an agent only its own)
+      operationId: deleteCommentReply
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: replyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Reply deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not the author or an admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment or reply not found
           content:
             application/json:
               schema:
@@ -10937,6 +11329,219 @@ components:
         content:
           type: string
           nullable: true
+
+    CommentTargetRequest:
+      type: object
+      description: |
+        The document a comment is on: a Work Item document (`workItemId` and `documentId`) or a project doc
+        (`projectDocId`). Exactly one of the two forms.
+      properties:
+        workItemId:
+          type: string
+        documentId:
+          type: string
+        projectDocId:
+          type: string
+
+    CreateCommentThreadRequest:
+      type: object
+      required:
+        - target
+        - content
+      properties:
+        target:
+          $ref: "#/components/schemas/CommentTargetRequest"
+        content:
+          type: string
+        anchor:
+          $ref: "#/components/schemas/TextQuoteAnchor"
+        lineNumber:
+          type: integer
+          minimum: 1
+          description: A markdown source line. Rejected on HTML documents and together with `anchor`.
+        documentHash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: |
+            The `contentHash` of the document version the commenter was looking at (Work Item documents).
+            Omit it to stamp the document's current hash.
+
+    UpdateCommentRequest:
+      type: object
+      properties:
+        content:
+          type: string
+          description: New text. Author only.
+        status:
+          type: string
+          enum: [OPEN, RESOLVED]
+          description: RESOLVED resolves the thread; OPEN reopens it. Anyone with access.
+
+    UpdateCommentReplyRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+
+    CommentAuthorAvatar:
+      type: object
+      properties:
+        emoji:
+          type: string
+        color:
+          type: string
+
+    CommentAuthorAgent:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        avatar:
+          $ref: "#/components/schemas/CommentAuthorAvatar"
+
+    CommentThreadReplyResponse:
+      type: object
+      required:
+        - id
+        - commentId
+        - authorKind
+        - content
+        - createdAt
+      properties:
+        id:
+          type: string
+        commentId:
+          type: string
+        authorId:
+          type: string
+          nullable: true
+          description: The author's user id; null when an agent wrote it.
+        authorKind:
+          type: string
+          enum: [USER, AGENT]
+        authorName:
+          type: string
+          nullable: true
+        authorAgent:
+          allOf:
+            - $ref: "#/components/schemas/CommentAuthorAgent"
+          nullable: true
+          description: The agent behind the reply, when known.
+        content:
+          type: string
+        editedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    CommentThreadResponse:
+      type: object
+      description: |
+        A comment thread: the first comment and its replies, on a Work Item document (`workItemId` +
+        `documentId`) or a project doc (`projectDocId`).
+      required:
+        - id
+        - kind
+        - status
+        - authorKind
+        - content
+        - lineStale
+        - outdated
+        - createdAt
+        - replies
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [QUOTE, LINE, DOCUMENT]
+          description: What it is anchored to (derived).
+        status:
+          type: string
+          enum: [OPEN, RESOLVED]
+        workItemId:
+          type: string
+          nullable: true
+        documentId:
+          type: string
+          nullable: true
+        projectDocId:
+          type: string
+          nullable: true
+        documentName:
+          type: string
+          nullable: true
+        authorId:
+          type: string
+          nullable: true
+          description: The author's user id; null when an agent wrote it.
+        authorKind:
+          type: string
+          enum: [USER, AGENT]
+        authorName:
+          type: string
+          nullable: true
+        authorAgent:
+          allOf:
+            - $ref: "#/components/schemas/CommentAuthorAgent"
+          nullable: true
+          description: The agent behind the comment, when known.
+        content:
+          type: string
+        lineNumber:
+          type: integer
+          nullable: true
+          description: Set for kind LINE only.
+        quotedText:
+          type: string
+          nullable: true
+        anchor:
+          allOf:
+            - $ref: "#/components/schemas/TextQuoteAnchor"
+          nullable: true
+          description: Text-quote anchor; set for kind QUOTE only.
+        documentHash:
+          type: string
+          nullable: true
+        lineStale:
+          type: boolean
+        outdated:
+          type: boolean
+          description: |
+            Work Item documents: the document's current `contentHash` differs from the one the comment was
+            stamped with (false when either is unknown). Always false on project docs for now.
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        resolvedByName:
+          type: string
+          nullable: true
+        editedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        replies:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentThreadReplyResponse"
 
     SubmitReviewRequest:
       type: object

@@ -74,6 +74,12 @@ class CommentServiceTest {
     @Mock
     private ProjectSecurityService projectSecurityService;
 
+    @Mock
+    private com.conductor.repository.ProjectDocRepository projectDocRepository;
+
+    @Mock
+    private com.conductor.agent.AgentRepository agentRepository;
+
     @InjectMocks
     private CommentService commentService;
 
@@ -154,7 +160,7 @@ class CommentServiceTest {
             return c;
         });
 
-        Comment response = commentService.createComment("proj-1", "issue-1", "doc-1", "Looks good", 2, null, null, author).comment();
+        Comment response = commentService.createComment("proj-1", "issue-1", "doc-1", "Looks good", 2, null, null, ProjectActor.of(author)).comment();
 
         assertThat(response.getLineNumber()).isEqualTo(2);
         assertThat(response.getContent()).isEqualTo("Looks good");
@@ -175,7 +181,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Needs clarification", 2, null, null, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Needs clarification", 2, null, null, ProjectActor.of(author));
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -196,7 +202,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on first line", 1, null, null, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on first line", 1, null, null, ProjectActor.of(author));
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -217,7 +223,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on line 99", 99, null, null, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment on line 99", 99, null, null, ProjectActor.of(author));
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -237,7 +243,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment", 1, null, null, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "Comment", 1, null, null, ProjectActor.of(author));
 
         ArgumentCaptor<Comment> captor = ArgumentCaptor.forClass(Comment.class);
         verify(commentRepository).save(captor.capture());
@@ -278,7 +284,7 @@ class CommentServiceTest {
         givenMarkdownDocument("# Spec");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Missing lineNumber", null, null, null, author))
+                "proj-1", "issue-1", "doc-1", "Missing lineNumber", null, null, null, ProjectActor.of(author)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("lineNumber");
         verify(commentRepository, never()).save(any());
@@ -289,7 +295,7 @@ class CommentServiceTest {
         givenMarkdownDocument("# Spec");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Anchored", null, ANCHOR, null, author))
+                "proj-1", "issue-1", "doc-1", "Anchored", null, ANCHOR, null, ProjectActor.of(author)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("anchor");
         verify(commentRepository, never()).save(any());
@@ -300,7 +306,7 @@ class CommentServiceTest {
         givenMarkdownDocument("# Spec");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Both", 1, ANCHOR, null, author))
+                "proj-1", "issue-1", "doc-1", "Both", 1, ANCHOR, null, ProjectActor.of(author)))
                 .isInstanceOf(BusinessException.class);
         verify(commentRepository, never()).save(any());
     }
@@ -310,7 +316,7 @@ class CommentServiceTest {
         givenHtmlDocument("<p>20 of 26</p>");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Old client", 3, null, null, author))
+                "proj-1", "issue-1", "doc-1", "Old client", 3, null, null, ProjectActor.of(author)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("lineNumber");
         verify(commentRepository, never()).save(any());
@@ -321,7 +327,7 @@ class CommentServiceTest {
         givenHtmlDocument("<p>20 of 26</p>");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Both", 3, ANCHOR, null, author))
+                "proj-1", "issue-1", "doc-1", "Both", 3, ANCHOR, null, ProjectActor.of(author)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("lineNumber");
         verify(commentRepository, never()).save(any());
@@ -332,7 +338,7 @@ class CommentServiceTest {
         givenHtmlDocument("<p>20 of 26</p>");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Nothing", null, null, null, author))
+                "proj-1", "issue-1", "doc-1", "Nothing", null, null, null, ProjectActor.of(author)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("anchor");
         verify(commentRepository, never()).save(any());
@@ -346,7 +352,7 @@ class CommentServiceTest {
         document.setFilename("Mockup.HTM");
 
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Old client", 3, null, null, author))
+                "proj-1", "issue-1", "doc-1", "Old client", 3, null, null, ProjectActor.of(author)))
                 .isInstanceOf(BusinessException.class);
     }
 
@@ -356,7 +362,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         Comment created = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Check this number", null, ANCHOR, null, author).comment();
+                "proj-1", "issue-1", "doc-1", "Check this number", null, ANCHOR, null, ProjectActor.of(author)).comment();
 
         assertThat(created.getQuotedText()).isEqualTo("20 of 26");
         assertThat(created.getAnchorExact()).isEqualTo("20 of 26");
@@ -375,7 +381,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         Comment created = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Hash me", null, ANCHOR, null, author).comment();
+                "proj-1", "issue-1", "doc-1", "Hash me", null, ANCHOR, null, ProjectActor.of(author)).comment();
 
         assertThat(created.getDocumentHash()).isEqualTo(DocumentContent.sha256Hex("<p>20 of 26</p>"));
     }
@@ -386,7 +392,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         Comment created = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Line comment", 2, null, null, author).comment();
+                "proj-1", "issue-1", "doc-1", "Line comment", 2, null, null, ProjectActor.of(author)).comment();
 
         assertThat(created.getDocumentHash()).isEqualTo(DocumentContent.sha256Hex("line one\nline two"));
         assertThat(created.getAnchorExact()).isNull();
@@ -401,7 +407,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         Comment created = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "No content", 1, null, null, author).comment();
+                "proj-1", "issue-1", "doc-1", "No content", 1, null, null, ProjectActor.of(author)).comment();
 
         assertThat(created.getDocumentHash()).isNull();
     }
@@ -415,7 +421,7 @@ class CommentServiceTest {
         document.setContentHash("new-hash");
         stubListWithDocumentHash(document.getContentHash());
 
-        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, ProjectActor.of(author));
 
         assertThat(results.get(0).outdated()).isTrue();
         assertThat(results.get(0).anchor().exact()).isEqualTo("20 of 26");
@@ -427,7 +433,7 @@ class CommentServiceTest {
         document.setContentHash("same");
         stubListWithDocumentHash(document.getContentHash());
 
-        assertThat(commentService.listComments("proj-1", "issue-1", null, author).get(0).outdated()).isFalse();
+        assertThat(commentService.listComments("proj-1", "issue-1", null, ProjectActor.of(author)).get(0).outdated()).isFalse();
     }
 
     @Test
@@ -436,7 +442,7 @@ class CommentServiceTest {
         document.setContentHash("new-hash");
         stubListWithDocumentHash(document.getContentHash());
 
-        assertThat(commentService.listComments("proj-1", "issue-1", null, author).get(0).outdated()).isFalse();
+        assertThat(commentService.listComments("proj-1", "issue-1", null, ProjectActor.of(author)).get(0).outdated()).isFalse();
     }
 
     @Test
@@ -445,7 +451,7 @@ class CommentServiceTest {
         document.setContentHash(null);
         stubListWithDocumentHash(null);
 
-        assertThat(commentService.listComments("proj-1", "issue-1", null, author).get(0).outdated()).isFalse();
+        assertThat(commentService.listComments("proj-1", "issue-1", null, ProjectActor.of(author)).get(0).outdated()).isFalse();
     }
 
     @Test
@@ -466,7 +472,7 @@ class CommentServiceTest {
                 .thenReturn(java.util.Collections.singletonList(
                         new Object[]{"doc-1", "spec.md", "new-hash"}));
 
-        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, ProjectActor.of(author));
 
         assertThat(results).extracting(CommentWithRepliesView::outdated).containsExactly(true, true);
         verify(commentRepository, times(1)).findDocumentFilenames(org.mockito.ArgumentMatchers.anyCollection());
@@ -479,7 +485,7 @@ class CommentServiceTest {
         when(commentRepository.save(any(Comment.class))).thenReturn(comment);
         when(documentRepository.findContentHashById("doc-1")).thenReturn("new-hash");
 
-        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", author).outdated()).isTrue();
+        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", ProjectActor.of(author)).outdated()).isTrue();
     }
 
     @Test
@@ -488,7 +494,7 @@ class CommentServiceTest {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
         when(commentRepository.save(any(Comment.class))).thenReturn(comment);
 
-        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", author).outdated()).isFalse();
+        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", ProjectActor.of(author)).outdated()).isFalse();
         verify(documentRepository, never()).findContentHashById(any());
     }
 
@@ -499,7 +505,7 @@ class CommentServiceTest {
         when(commentRepository.save(any(Comment.class))).thenReturn(comment);
         when(documentRepository.findContentHashById("doc-1")).thenReturn(null);
 
-        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", author).outdated()).isFalse();
+        assertThat(commentService.resolveComment("proj-1", "issue-1", "comment-1", ProjectActor.of(author)).outdated()).isFalse();
     }
 
     // --- documentHash: the version the reviewer was looking at ---
@@ -512,7 +518,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         CommentService.CommentResult result = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Stale view", null, ANCHOR, OLD_HASH, author);
+                "proj-1", "issue-1", "doc-1", "Stale view", null, ANCHOR, OLD_HASH, ProjectActor.of(author));
 
         assertThat(result.comment().getDocumentHash()).isEqualTo(OLD_HASH);
         assertThat(result.outdated()).isTrue();
@@ -524,7 +530,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         CommentService.CommentResult result = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Fresh view", null, ANCHOR, document.getContentHash(), author);
+                "proj-1", "issue-1", "doc-1", "Fresh view", null, ANCHOR, document.getContentHash(), ProjectActor.of(author));
 
         assertThat(result.comment().getDocumentHash()).isEqualTo(document.getContentHash());
         assertThat(result.outdated()).isFalse();
@@ -536,7 +542,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         CommentService.CommentResult result = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Old client", null, ANCHOR, null, author);
+                "proj-1", "issue-1", "doc-1", "Old client", null, ANCHOR, null, ProjectActor.of(author));
 
         assertThat(result.comment().getDocumentHash()).isEqualTo(document.getContentHash());
         assertThat(result.outdated()).isFalse();
@@ -548,7 +554,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         CommentService.CommentResult result = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Line", 2, null, OLD_HASH, author);
+                "proj-1", "issue-1", "doc-1", "Line", 2, null, OLD_HASH, ProjectActor.of(author));
 
         assertThat(result.comment().getDocumentHash()).isEqualTo(OLD_HASH);
         assertThat(result.outdated()).isTrue();
@@ -562,7 +568,7 @@ class CommentServiceTest {
         givenSaveAssignsIds();
 
         CommentService.CommentResult result = commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "No content", 1, null, OLD_HASH, author);
+                "proj-1", "issue-1", "doc-1", "No content", 1, null, OLD_HASH, ProjectActor.of(author));
 
         assertThat(result.outdated()).isFalse();
     }
@@ -578,7 +584,7 @@ class CommentServiceTest {
             "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"})
     void createCommentWithAMalformedDocumentHashIsRejected(String malformed) {
         assertThatThrownBy(() -> commentService.createComment(
-                "proj-1", "issue-1", "doc-1", "Bad hash", null, ANCHOR, malformed, author))
+                "proj-1", "issue-1", "doc-1", "Bad hash", null, ANCHOR, malformed, ProjectActor.of(author)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("documentHash");
         verify(commentRepository, never()).save(any());
@@ -590,7 +596,7 @@ class CommentServiceTest {
         givenHtmlDocument("<p>funnel: 20 of 26 signed up</p>");
         givenSaveAssignsIds();
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", "One query", null, ANCHOR, OLD_HASH, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", "One query", null, ANCHOR, OLD_HASH, ProjectActor.of(author));
 
         verify(documentRepository, never()).findContentHashById(any());
     }
@@ -604,7 +610,7 @@ class CommentServiceTest {
         document.setContentType("text/html");
         stubListWithDocumentHash(document.getContentHash());
 
-        CommentWithRepliesView view = commentService.listComments("proj-1", "issue-1", null, author).get(0);
+        CommentWithRepliesView view = commentService.listComments("proj-1", "issue-1", null, ProjectActor.of(author)).get(0);
 
         assertThat(view.lineNumber()).isEqualTo(7);
         assertThat(view.quotedText()).isEqualTo("old line");
@@ -634,7 +640,7 @@ class CommentServiceTest {
 
         when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of(reply));
 
-        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, ProjectActor.of(author));
 
         assertThat(results).hasSize(1);
         assertThat(results.get(0).id()).isEqualTo("comment-1");
@@ -654,7 +660,7 @@ class CommentServiceTest {
             return r;
         });
 
-        CommentReplyView response = commentService.addReply("proj-1", "issue-1", "comment-1", "Great point!", author);
+        CommentReplyView response = commentService.addReply("proj-1", "issue-1", "comment-1", "Great point!", ProjectActor.of(author));
 
         assertThat(response.id()).isEqualTo("new-reply-id");
         assertThat(response.content()).isEqualTo("Great point!");
@@ -672,7 +678,7 @@ class CommentServiceTest {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
         when(commentRepository.save(any(Comment.class))).thenReturn(comment);
 
-        Comment response = commentService.resolveComment("proj-1", "issue-1", "comment-1", author).comment();
+        Comment response = commentService.resolveComment("proj-1", "issue-1", "comment-1", ProjectActor.of(author)).comment();
 
         assertThat(comment.getResolvedAt()).isNotNull();
         assertThat(comment.getResolvedBy()).isEqualTo(author);
@@ -683,7 +689,7 @@ class CommentServiceTest {
     void deleteCommentByAuthorSucceeds() {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
 
-        commentService.deleteComment("proj-1", "issue-1", "comment-1", author);
+        commentService.deleteComment("proj-1", "issue-1", "comment-1", ProjectActor.of(author));
 
         verify(commentRepository).delete(comment);
     }
@@ -693,7 +699,7 @@ class CommentServiceTest {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
         when(projectSecurityService.isEditor("proj-1", "user-2")).thenReturn(false);
 
-        assertThatThrownBy(() -> commentService.deleteComment("proj-1", "issue-1", "comment-1", otherUser))
+        assertThatThrownBy(() -> commentService.deleteComment("proj-1", "issue-1", "comment-1", ProjectActor.of(otherUser)))
                 .isInstanceOf(ForbiddenException.class);
     }
 
@@ -702,7 +708,7 @@ class CommentServiceTest {
         when(commentRepository.findById("comment-1")).thenReturn(Optional.of(comment));
         when(projectSecurityService.isEditor("proj-1", "user-2")).thenReturn(true);
 
-        commentService.deleteComment("proj-1", "issue-1", "comment-1", otherUser);
+        commentService.deleteComment("proj-1", "issue-1", "comment-1", ProjectActor.of(otherUser));
 
         verify(commentRepository).delete(comment);
     }
@@ -715,7 +721,7 @@ class CommentServiceTest {
         when(commentRepository.findListByWorkItemId("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
 
-        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, ProjectActor.of(author));
 
         verify(commentRepository).findListByWorkItemId("issue-1");
         assertThat(results).hasSize(1);
@@ -739,7 +745,7 @@ class CommentServiceTest {
                 .thenReturn(List.of(resolvedComment));
         when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
 
-        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", true, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", true, ProjectActor.of(author));
 
         verify(commentRepository).findListByWorkItemIdResolved("issue-1");
         assertThat(results).hasSize(1);
@@ -752,7 +758,7 @@ class CommentServiceTest {
         when(commentRepository.findListByWorkItemIdUnresolved("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
 
-        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", false, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", false, ProjectActor.of(author));
 
         verify(commentRepository).findListByWorkItemIdUnresolved("issue-1");
         assertThat(results).hasSize(1);
@@ -769,7 +775,7 @@ class CommentServiceTest {
         when(commentRepository.findListByWorkItemId("issue-1")).thenReturn(List.of(comment));
         when(commentReplyRepository.findAllByCommentIdIn(org.mockito.ArgumentMatchers.anyCollection())).thenReturn(List.of());
 
-        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, author);
+        List<CommentWithRepliesView> results = commentService.listComments("proj-1", "issue-1", null, ProjectActor.of(author));
 
         assertThat(results).hasSize(1);
         CommentWithRepliesView response = results.get(0);
@@ -861,7 +867,7 @@ class CommentServiceTest {
             return c;
         });
 
-        commentService.createComment("proj-1", "issue-1", "doc-1", longContent, 1, null, null, author);
+        commentService.createComment("proj-1", "issue-1", "doc-1", longContent, 1, null, null, ProjectActor.of(author));
 
         ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(captor.capture());
@@ -885,7 +891,7 @@ class CommentServiceTest {
             return r;
         });
 
-        commentService.addReply("proj-1", "issue-1", "comment-1", shortContent, author);
+        commentService.addReply("proj-1", "issue-1", "comment-1", shortContent, ProjectActor.of(author));
 
         ArgumentCaptor<Signal> captor = ArgumentCaptor.forClass(Signal.class);
         verify(signalBus).publish(captor.capture());

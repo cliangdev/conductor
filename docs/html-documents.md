@@ -47,7 +47,7 @@ A bridge script is added to the document at render time (never stored). It runs 
 
 ## Anchors and `outdated`
 
-Comments use the W3C Web Annotation TextQuoteSelector model. An HTML comment must carry `anchor`; a markdown comment must carry `lineNumber`; the server returns 400 otherwise. Anchored comments return `lineNumber: 0`, so clients use `anchor != null` to tell them apart.
+The unified comments resource (`/api/v2/projects/{p}/comments`, see [comments.md](comments.md)) also accepts an anchor on markdown documents and whole-document comments on both; the rules below are those of the older Work Item route, which is kept. Comments use the W3C Web Annotation TextQuoteSelector model. An HTML comment must carry `anchor`; a markdown comment must carry `lineNumber`; the server returns 400 otherwise. Anchored comments return `lineNumber: 0`, so clients use `anchor != null` to tell them apart.
 
 ```
 anchor: { exact, prefix?, suffix?, sectionId?, sectionTitle? } | null

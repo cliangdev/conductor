@@ -32,14 +32,28 @@ public interface CommentRepository extends JpaRepository<Comment, String> {
      * joined, since {@code documents.content} would come with it; callers take {@code getDocument().getId()}
      * (a proxy id, no query) and look filenames up with {@link #findDocumentFilenames}.
      */
-    @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author WHERE c.workItem.id = :workItemId")
+    @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author LEFT JOIN FETCH c.resolvedBy WHERE c.workItem.id = :workItemId ORDER BY c.createdAt")
     List<Comment> findListByWorkItemId(@Param("workItemId") String workItemId);
 
-    @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author WHERE c.workItem.id = :workItemId AND c.resolvedAt IS NOT NULL")
+    @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author LEFT JOIN FETCH c.resolvedBy WHERE c.workItem.id = :workItemId AND c.resolvedAt IS NOT NULL ORDER BY c.createdAt")
     List<Comment> findListByWorkItemIdResolved(@Param("workItemId") String workItemId);
 
-    @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author WHERE c.workItem.id = :workItemId AND c.resolvedAt IS NULL")
+    @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author LEFT JOIN FETCH c.resolvedBy WHERE c.workItem.id = :workItemId AND c.resolvedAt IS NULL ORDER BY c.createdAt")
     List<Comment> findListByWorkItemIdUnresolved(@Param("workItemId") String workItemId);
+
+    /** One document's comments on a Work Item, oldest first, authors fetch-joined. */
+    @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author LEFT JOIN FETCH c.resolvedBy WHERE c.workItem.id = :workItemId AND c.document.id = :documentId ORDER BY c.createdAt")
+    List<Comment> findListByWorkItemIdAndDocumentId(@Param("workItemId") String workItemId, @Param("documentId") String documentId);
+
+    /** A project doc's comments, oldest first, authors fetch-joined. */
+    @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author LEFT JOIN FETCH c.resolvedBy WHERE c.projectDoc.id = :docId ORDER BY c.createdAt")
+    List<Comment> findListByProjectDocId(@Param("docId") String docId);
+
+    List<Comment> findAllByProjectDocIdAndResolvedAtIsNull(String projectDocId);
+
+    /** A comment with its authors fetch-joined, for mapping after the transaction closes. */
+    @Query("SELECT c FROM Comment c LEFT JOIN FETCH c.author LEFT JOIN FETCH c.resolvedBy WHERE c.id = :id")
+    java.util.Optional<Comment> findByIdWithAuthors(@Param("id") String id);
 
     /** (id, filename, contentHash) triples for documents, without loading their content. */
     @Query("SELECT d.id, d.filename, d.contentHash FROM Document d WHERE d.id IN :documentIds")
