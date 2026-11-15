@@ -1080,10 +1080,11 @@ export function WorkItemDetailView({
         documentId={selectedDoc.id}
         issueId={issueId}
         projectId={projectId}
-        comments={comments.filter((c) => c.documentId === selectedDoc.id)}
-        onCommentAdded={fetchComments}
+        onCommentsChanged={fetchComments}
         token={accessToken!}
         currentUserId={user?.id ?? ''}
+        currentUserName={user?.displayName || user?.name}
+        isAdmin={roles.includes('ADMIN')}
         reviewMode={reviewMode}
         pendingComments={pendingComments}
         contentHash={selectedDoc.contentHash}
