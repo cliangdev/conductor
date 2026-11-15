@@ -17,8 +17,8 @@ const accent = { color: "var(--lp-ink-accent)" };
 
 function Code({ lines, copy }: { lines: string[]; copy: string }) {
   return (
-    <div className="lp-ink lp-window relative mt-4 min-w-0 overflow-hidden rounded-lg">
-      <pre className="overflow-x-auto py-3.5 pl-4 pr-28 font-mono text-[12.5px] leading-[1.85]">
+    <div className="lp-ink lp-window mt-4 flex min-w-0 items-start overflow-hidden rounded-lg">
+      <pre className="min-w-0 flex-1 overflow-x-auto py-3.5 pl-4 pr-3 font-mono text-[12.5px] leading-[1.85]">
         {lines.map((l, i) => (
           <span key={l} style={l.startsWith(">") ? accent : undefined}>
             {l.startsWith(">") ? l : `$ ${l}`}
@@ -35,7 +35,7 @@ function Step({ n, title, children }: { n: number; title: string; children: Reac
   return (
     <li className="min-w-0 rounded-lg border border-border bg-surface p-5">
       <div className="flex items-center gap-3">
-        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[13px] font-semibold text-primary">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[13px] font-semibold text-primary">
           {n}
         </span>
         <h3 className="text-[16px] font-semibold tracking-[-0.01em] text-foreground">{title}</h3>

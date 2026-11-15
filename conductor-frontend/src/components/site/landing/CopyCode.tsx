@@ -31,7 +31,7 @@ export function CopyCode({ text }: { text: string }) {
       type="button"
       onClick={copy}
       aria-label="Copy command"
-      className="absolute right-2 top-2 inline-flex min-h-8 items-center gap-1.5 rounded-md border px-2 py-1 text-[11.5px] font-medium transition-colors hover:opacity-80"
+      className="m-2 inline-flex shrink-0 min-h-8 items-center gap-1.5 rounded-md border px-2 py-1 text-[11.5px] font-medium transition-colors hover:opacity-80"
       style={{
         borderColor: "var(--lp-ink-border)",
         color: "var(--lp-ink-muted)",

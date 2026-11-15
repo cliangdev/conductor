@@ -34,8 +34,8 @@ const NAV = [
   { href: '/#platform', label: 'Platform' },
   { href: '/#how-it-works', label: 'How it works' },
   { href: '/#trust', label: 'Trust' },
-  { href: '/#get-started', label: 'Get started' },
   { href: '/#source', label: 'Source' },
+  { href: '/#get-started', label: 'Get started' },
 ]
 
 /**

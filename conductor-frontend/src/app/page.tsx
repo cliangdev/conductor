@@ -30,9 +30,9 @@ export default function LandingPage() {
       <Platform />
       <Loop />
       <Tools />
-      <GetStarted />
       <Trust />
       <Source />
+      <GetStarted />
       <FinalCta />
     </SiteShell>
   );
