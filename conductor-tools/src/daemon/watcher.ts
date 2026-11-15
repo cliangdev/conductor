@@ -3,9 +3,10 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { fileURLToPath } from 'url'
-import { readConfig, Config } from '../lib/config.js'
+import { readConfig, Config, CONFIG_PATH } from '../lib/config.js'
 import { contentTypeFor } from '../lib/content-type.js'
 import { writeDaemonState, deleteDaemonState } from './state.js'
+import { writeWatchRegistry, deleteWatchRegistry, diffWatchPaths } from './watch-registry.js'
 import { startPoller } from './poller.js'
 import { RunQueue } from './run-queue.js'
 import type { WorkflowTriggerEvent } from './runner.js'
@@ -456,6 +457,46 @@ export async function replayQueue(getConfig: () => Config): Promise<void> {
   }
 }
 
+/** The two chokidar calls {@link reloadWatchPaths} needs — narrowed so tests can pass a fake. */
+export interface WatchTarget {
+  add(paths: string[]): unknown
+  unwatch(paths: string[]): unknown
+}
+
+/**
+ * Bring the watch set in line with the config on disk. `conductor init` in another repo adds that repo to
+ * the config's `projects` map while this daemon is running; without this the daemon kept watching only the
+ * folders it read at start-up, and files written in the new repo never synced until a restart. A config
+ * that can't be read (mid-write, or logged out) changes nothing. Mutates `current`.
+ */
+export function reloadWatchPaths(
+  watcher: WatchTarget,
+  current: Set<string>,
+  config: Config | null,
+): { added: string[]; removed: string[] } {
+  if (!config) return { added: [], removed: [] }
+  const next = getAllWatchPaths(config)
+  // An empty set means a half-written or reset config, not "stop syncing everything".
+  if (next.length === 0) return { added: [], removed: [] }
+  const { added, removed } = diffWatchPaths(current, next)
+  if (added.length > 0) {
+    seedKnownStatuses(added)
+    watcher.add(added)
+    for (const p of added) {
+      current.add(p)
+      console.log(`Watching: ${p}`)
+    }
+  }
+  if (removed.length > 0) {
+    watcher.unwatch(removed)
+    for (const p of removed) {
+      current.delete(p)
+      console.log(`Stopped watching: ${p}`)
+    }
+  }
+  return { added, removed }
+}
+
 export function startWatcher(getConfig: () => Config): void {
   const config = getConfig()
   const watchPaths = getAllWatchPaths(config)
@@ -470,6 +511,20 @@ export function startWatcher(getConfig: () => Config): void {
   seedKnownStatuses(watchPaths)
 
   const watcher = chokidar.watch(watchPaths, { ignoreInitial: true, persistent: true, depth: 2 })
+  const current = new Set(watchPaths)
+  writeWatchRegistry(process.pid, [...current])
+
+  // Pick up repos linked by `conductor init` after this daemon started.
+  const configWatcher = chokidar.watch(CONFIG_PATH, {
+    ignoreInitial: true,
+    persistent: true,
+    awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+  })
+  const onConfigChange = (): void => {
+    const { added, removed } = reloadWatchPaths(watcher, current, readConfig())
+    if (added.length > 0 || removed.length > 0) writeWatchRegistry(process.pid, [...current])
+  }
+  configWatcher.on('add', onConfigChange).on('change', onConfigChange)
 
   watcher
     .on('add', (filePath) => debounce(filePath, () => {
@@ -499,12 +554,14 @@ export function startWatcher(getConfig: () => Config): void {
     }))
 
   process.on('SIGTERM', () => {
-    watcher.close().then(() => {
+    Promise.all([watcher.close(), configWatcher.close()]).then(() => {
       console.log('Watcher closed.')
       deleteDaemonState()
+      deleteWatchRegistry()
       process.exit(0)
     }).catch(() => {
       deleteDaemonState()
+      deleteWatchRegistry()
       process.exit(0)
     })
   })
