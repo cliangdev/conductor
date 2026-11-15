@@ -345,6 +345,44 @@ class DocumentServiceTest {
     }
 
     @Test
+    void upsertByFilenameWithMatchingBaseContentHashWrites() {
+        testDocument.setContentHash(DocumentContent.sha256Hex("# Original Content"));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
+
+        boolean created = documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "# Edited", null,
+                DocumentContent.sha256Hex("# Original Content"));
+
+        assertThat(created).isFalse();
+        assertThat(testDocument.getContent()).isEqualTo("# Edited");
+    }
+
+    @Test
+    void upsertByFilenameWithStaleBaseContentHashIsRefusedAndWritesNothing() {
+        testDocument.setContentHash(DocumentContent.sha256Hex("# Original Content"));
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> documentService.upsertDocumentByFilename(
+                        "proj-1", "issue-1", "spec.md", "# Edited", null, DocumentContent.sha256Hex("something older")))
+                .isInstanceOf(com.conductor.exception.ConflictException.class)
+                .hasMessageContaining("read it again");
+
+        assertThat(testDocument.getContent()).isEqualTo("# Original Content");
+        verify(documentRepository, org.mockito.Mockito.never()).save(any(Document.class));
+    }
+
+    @Test
+    void upsertByFilenameWithBaseContentHashStillCreatesWhenTheDocumentIsNew() {
+        when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
+        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
+        when(documentRepository.save(any(Document.class))).thenAnswer(i -> i.getArgument(0));
+
+        assertThat(documentService.upsertDocumentByFilename("proj-1", "issue-1", "new.md", "# New", null, "abc")).isTrue();
+    }
+
+    @Test
     void upsertByFilenameUploadsToGcsOnCreate() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.findByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());

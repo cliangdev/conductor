@@ -926,6 +926,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: baseContentHash does not match the current document — it changed since it was read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
     delete:
       tags:
@@ -11148,6 +11154,11 @@ components:
         contentType:
           type: string
           default: text/markdown
+        baseContentHash:
+          type: string
+          description: |
+            Optimistic lock. The `contentHash` the caller last read. When supplied and the document already
+            exists with a different hash, the write is refused with 409.
 
     TextQuoteAnchor:
       type: object

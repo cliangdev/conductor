@@ -168,7 +168,8 @@ public class ProjectDocsController implements ProjectDocsApi {
     @Override
     public ResponseEntity<ProjectDocResponse> updateProjectDoc(String projectId, String docId, UpdateDocRequest updateDocRequest) {
         ProjectActor actor = requireDocEditor(projectId);
-        ProjectDoc doc = projectDocService.updateDoc(projectId, docId, updateDocRequest.getContent(), actor);
+        ProjectDoc doc = projectDocService.updateDoc(projectId, docId, updateDocRequest.getContent(), actor,
+                updateDocRequest.getBaseContentHash());
         return ResponseEntity.ok(toDocResponse(doc));
     }
 
@@ -365,6 +366,7 @@ public class ProjectDocsController implements ProjectDocsApi {
         response.setFolderId(doc.getFolder() != null ? doc.getFolder().getId() : null);
         response.setTitle(doc.getTitle());
         response.setContent(renderImages(doc.getContent(), doc.getProject().getId()));
+        response.setContentHash(ProjectDocService.contentHash(doc));
         response.setCreatedAt(doc.getCreatedAt());
         response.setUpdatedAt(doc.getUpdatedAt());
         response.setCreatedByName(displayName(doc.getCreatedBy(), doc.getCreatedByLabel()));

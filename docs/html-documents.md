@@ -59,7 +59,7 @@ outdated: boolean
 - Hidden matches are ignored; if only hidden matches exist, the comment is Unplaced. The bridge re-runs when the DOM changes, so text that scripts add after load can be anchored.
 - **Outdated.** Document responses expose `contentHash` (SHA-256 of the content). `POST /comments` takes an optional `documentHash`, the version the reviewer saw; review-mode drafts keep the hash they were written against, and old clients that omit it get the current hash. `outdated` is true when the comment's stamped hash differs from the document's current hash, and false when either is unknown (older comments).
 - Whether a quote still exists is decided by the client, because only the client can run the page. Quotes it cannot find are listed under **Unplaced** with their quoted text. If a document switches between markdown and HTML, its old line comments appear as Unplaced in the HTML viewer.
-- Agents read these through `list_work_item_comments`.
+- Agents read these through `list_comments` (and work through them with `/conductor:comments`).
 
 ## The HTML PRD contract (`prd.html`, schema v2)
 
