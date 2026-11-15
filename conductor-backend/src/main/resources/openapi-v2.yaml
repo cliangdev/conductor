@@ -9116,7 +9116,11 @@ paths:
         TikTok and Instagram Reels, `4x5` to Instagram feed, `1x1` to Facebook, `story` to story-format
         targets; sequences in index order, never sorted) through the same target media-selection path a
         person uses, so the approval gate and bundle hash treat it exactly like any other customisation.
-        A target with `custom_media = true` is reported in `targetsSkipped` and left untouched. Requires
+        A target with `custom_media = true` is reported in `targetsSkipped`; its own choice is kept, except that an
+        asset from an older render of this same Creative is swapped in place for the new render's frame with the same
+        placement and slide (dropped when there is none). A Post holds one render of a Creative: attaching a newer
+        render deletes the Post's assets from that Creative's older renders (the render frames and stored files stay
+        with the Creative); assets from other Creatives, uploads and Media links are untouched. Requires
         ADMIN or CREATOR, and the Work Item must be a Post in this project the caller can edit. A DRAFT
         Creative that passes its readiness checklist becomes READY as part of the attach (`creativeState`);
         one that does not stays DRAFT and `stateNote` says why. READY and ARCHIVED Creatives are left as they are.

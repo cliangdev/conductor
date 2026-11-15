@@ -388,10 +388,13 @@ public class TikTokPublishAction {
 
         ResolvedVideo video = resolveVideo(input);
         requireConsentStillHolds(accessToken, input, true, video.durationSeconds());
-        ChunkPlan plan = TikTokClient.planChunks(video.sizeBytes());
         String idempotencyKey = resolveIdempotencyKey(input);
 
-        UploadCheckpoint checkpoint = resumableCheckpoint(idempotencyKey, video, plan);
+        // A resumed upload keeps the plan its checkpoint was opened under; only a fresh one is planned.
+        UploadCheckpoint checkpoint = resumableCheckpoint(idempotencyKey, video);
+        ChunkPlan plan = checkpoint != null
+                ? new ChunkPlan(checkpoint.videoSize(), checkpoint.chunkSize(), checkpoint.totalChunkCount())
+                : TikTokClient.planChunks(video.sizeBytes());
         if (checkpoint == null) {
             UploadSession session;
             try {
@@ -887,17 +890,27 @@ public class TikTokPublishAction {
 
     /**
      * Finds the video to publish. The scheduler's payload carries handles, not media parameters, so this
-     * is where a {@code work_item_id} becomes a stored object; {@code asset_id} narrows it when a Post
-     * carries more than one video.
+     * is where a {@code work_item_id} becomes a stored object. Precedence: {@code asset_id}, then the
+     * destination's {@code asset_ids} selection (first uploaded video in its order), then, only for a
+     * target with no selection, the Post's earliest uploaded video.
      */
     private ResolvedVideo resolveVideo(Map<String, Object> input) {
         String assetId = text(input.get(INPUT_ASSET_ID));
         String workItemId = text(input.get(INPUT_WORK_ITEM_ID));
+        List<String> selectedIds = stringList(input.get(INPUT_ASSET_IDS));
 
         Asset asset;
         if (assetId != null) {
             asset = assetRepository.findById(assetId).orElseThrow(() ->
                     new PermanentPublishException("No Asset " + assetId + " to publish to TikTok"));
+        } else if (workItemId != null && !selectedIds.isEmpty()) {
+            // The destination's own selection wins: it is the media the approval gate validated, and the
+            // Post may also carry other videos (an older render of the same Creative, say).
+            Map<String, Asset> byId = new LinkedHashMap<>();
+            assetRepository.findAllByWorkItemId(workItemId).forEach(a -> byId.put(a.getId(), a));
+            asset = selectedIds.stream().map(byId::get).filter(TikTokPublishAction::isUploadedVideo)
+                    .findFirst().orElseThrow(() -> new PermanentPublishException("This TikTok destination's"
+                            + " selected media on Post " + workItemId + " holds no uploaded video to publish"));
         } else if (workItemId != null) {
             List<Asset> videos = assetRepository.findAllByWorkItemId(workItemId).stream()
                     .filter(TikTokPublishAction::isUploadedVideo)
@@ -1006,11 +1019,13 @@ public class TikTokPublishAction {
     }
 
     /**
-     * A previous attempt's state, but only when it describes <em>this</em> file cut <em>this</em> way. A
-     * checkpoint from another asset or another chunking is discarded rather than resumed into: resuming
-     * at chunk 12 of a different file would upload a corrupt video that TikTok would happily accept.
+     * A previous attempt's state, but only when it describes <em>this</em> file and a chunking TikTok's
+     * rule allows (count is the floor of size / chunk size). The caller resumes with the checkpoint's
+     * own plan, so a change to {@code planChunks} never strands an open upload. A checkpoint from
+     * another asset or with an inconsistent plan is discarded rather than resumed into: resuming at
+     * chunk 12 of a different file would upload a corrupt video that TikTok would happily accept.
      */
-    private UploadCheckpoint resumableCheckpoint(String idempotencyKey, ResolvedVideo video, ChunkPlan plan) {
+    private UploadCheckpoint resumableCheckpoint(String idempotencyKey, ResolvedVideo video) {
         if (idempotencyKey == null) {
             return null;
         }
@@ -1029,11 +1044,12 @@ public class TikTokPublishAction {
                 && checkpoint.publishId() != null && !checkpoint.publishId().isBlank()
                 && checkpoint.uploadUrl() != null && !checkpoint.uploadUrl().isBlank()
                 && video.assetId().equals(checkpoint.assetId())
-                && checkpoint.videoSize() == plan.videoSize()
-                && checkpoint.chunkSize() == plan.chunkSize()
-                && checkpoint.totalChunkCount() == plan.totalChunkCount()
+                && checkpoint.videoSize() == video.sizeBytes()
+                && checkpoint.chunkSize() > 0
+                && checkpoint.totalChunkCount() >= 1
+                && checkpoint.totalChunkCount() == Math.max(1, checkpoint.videoSize() / checkpoint.chunkSize())
                 && checkpoint.nextChunkIndex() >= 0
-                && checkpoint.nextChunkIndex() <= plan.totalChunkCount();
+                && checkpoint.nextChunkIndex() <= checkpoint.totalChunkCount();
         if (!usable) {
             log.warn("Discarding TikTok upload checkpoint for {}: it does not describe asset {} as planned",
                     idempotencyKey, video.assetId());

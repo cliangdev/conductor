@@ -318,7 +318,12 @@ Only targets with `custom_media = false` are touched; a target that already chos
 reported in `targetsSkipped` and never overwritten. Attach reconstructs the Post's *whole* target
 selection and pushes it through `PublishTargetService#replaceSelection` — the same set-replace a person's
 own edit in the UI goes through — so the approval gate reverts and the bundle hash changes exactly as if a
-human had picked that media by hand. Sequence frames (a carousel's beats) attach in the order they
+human had picked that media by hand. **A Post holds one render of a Creative:** attaching render R deletes the
+Post's Assets that link frames of the same Creative from any other render, so a re-attach after a re-render
+never leaves the stale artwork to be published. A skipped (`custom_media`) target keeps its own choice but has each such
+stale asset swapped in place for R's frame with the same placement, slide index and kind (dropped when R has none);
+the Asset rows are deleted, the frames and stored objects stay with the Creative. Other Creatives' assets, uploads
+and Media links are never touched. Sequence frames (a carousel's beats) attach in the order they
 rendered, keyed by `sequenceIndex`; they are never re-sorted, because order is content.
 
 **Attach promotes a ready DRAFT.** A Creative on a Post is in use, so a `DRAFT` that passes readiness
