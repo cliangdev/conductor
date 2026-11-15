@@ -75,3 +75,7 @@ Preview deploys share the production database, so the move is in steps:
 3. **Contract** (later migration): drop the triggers and the legacy tables `doc_comments` / `doc_comment_replies`, and remove the v1 project-doc comment paths, the old Work Item comment routes, and the `DocComment*` classes.
 
 `doc_comments` is legacy: do not write to it.
+
+## Agent tools (MCP)
+
+`list_comments`, `add_comment` and `respond_to_comment` cover both targets (`issueId` + `filename`, or `docId` for a project doc). `read_document` returns a Work Item document's text and `contentHash`; `read_project_doc` returns the same hash for a project doc. Both `write_document` and `write_project_doc` accept `baseContentHash`: when it differs from the current content hash the backend answers 409 ("Document changed since you read it") and writes nothing. For a project doc the hash is the SHA-256 of the stored content (`contentHash` on `ProjectDocResponse`). `/conductor:comments` is the command that loops over open threads using these tools.

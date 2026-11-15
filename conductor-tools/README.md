@@ -48,6 +48,7 @@ Then open Claude Code in your project and run `/conductor:prd` to create your fi
 | `/conductor:prd` | Guides you through writing a PRD with AI — discovery, research, structured output |
 | `/conductor:implement` | Takes an approved PRD and implements it — task breakdown, parallel subagents, PR creation |
 | `/conductor:fix` | Fixes bugs and review feedback on an open PR — structured intake, investigation, build validation, and push |
+| `/conductor:comments` | Works through the open comment threads on a document — edits it once, replies on every thread, resolves only on request |
 | `/conductor:workflow` | Designs and creates a Conductor workflow — YAML automation or lifecycle statechart — via guided discovery |
 
 These commands are installed automatically when you run `conductor init` (project-level) or during global install (user-level, to `~/.claude/`).
@@ -75,8 +76,9 @@ Once `conductor init` runs, Claude Code gets access to 40 tools via the Conducto
 
 | Area | Tools |
 |------|-------|
-| Work items | `create_work_item`, `update_work_item`, `get_work_item`, `list_work_items`, `set_work_item_status`, `get_available_transitions`, `transition_work_item`, `list_work_item_comments`, `record_asset` |
-| Documents | `write_document` (headless upsert), `scaffold_document` (local file, needs daemon), `delete_document` |
+| Work items | `create_work_item`, `update_work_item`, `get_work_item`, `list_work_items`, `set_work_item_status`, `get_available_transitions`, `transition_work_item`, `record_asset` |
+| Documents | `read_document` (content + `contentHash`), `write_document` (headless upsert; optional `baseContentHash` refuses a stale write), `scaffold_document` (local file, needs daemon), `delete_document` |
+| Comments | `list_comments`, `add_comment`, `respond_to_comment` — one set for Work Item documents and project docs |
 | Workflows | `list_workflows`, `create_workflow`, `get_workflow`, `update_workflow`, `publish_workflow`, `delete_workflow`, `dispatch_workflow`, `cancel_workflow_run`, `get_workflow_run`, `list_workflow_runs`, `list_workflow_secrets`, `get_workflow_step_schema`, `report_step_run` |
 | Integrations & discovery | `list_integration_tools`, `list_connector_catalog`, `list_agents`, `create_agent`, `update_agent`, `delete_agent`, `list_skills`, `register_skill` |
 | Knowledge | `submit_knowledge_source`, `read_knowledge_sources`, `search_knowledge`, `read_knowledge_pages`, `write_knowledge_pages`, `list_knowledge_domains`, `suggest_knowledge_domain` |

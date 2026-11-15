@@ -102,9 +102,18 @@ public class DocumentService {
         return toEnrichedDocumentView(document);
     }
 
-    @Transactional
     public boolean upsertDocumentByFilename(String projectId, String workItemId, String filename, String content,
                                             String requestContentType) {
+        return upsertDocumentByFilename(projectId, workItemId, filename, content, requestContentType, null);
+    }
+
+    /**
+     * Upsert by filename. When {@code baseContentHash} is supplied and the document already exists, the write is
+     * refused with a 409 unless it matches the document's current content hash (optimistic lock).
+     */
+    @Transactional
+    public boolean upsertDocumentByFilename(String projectId, String workItemId, String filename, String content,
+                                            String requestContentType, String baseContentHash) {
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         projectSecurityService.requireProjectEditor(projectId);
         String contentType = requestContentType != null ? requestContentType : "text/markdown";
@@ -118,6 +127,15 @@ public class DocumentService {
 
         return documentRepository.findByWorkItemIdAndFilename(workItemId, filename)
                 .map(existing -> {
+                    if (baseContentHash != null) {
+                        String current = existing.getContentHash() != null
+                                ? existing.getContentHash()
+                                : DocumentContent.sha256Hex(existing.getContent());
+                        if (!baseContentHash.equalsIgnoreCase(current)) {
+                            throw new com.conductor.exception.ConflictException(
+                                    "Document changed since you read it — read it again before writing.");
+                        }
+                    }
                     if (existing.getStoragePath() != null) {
                         uploadToGcs(existing.getStoragePath(), content.getBytes(StandardCharsets.UTF_8), contentType);
                     }

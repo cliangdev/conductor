@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { Config } from '../config.js'
 import { apiPost, apiPut, apiDelete } from '../api.js'
+import { conflictAsClearError } from './doc-conflict.js'
 import { deleteDocumentFile, resolveLocalPath, writeDocumentFile } from '../files.js'
 import { queueChange } from '../queue.js'
 import { contentTypeFor } from '../../lib/content-type.js'
@@ -18,19 +19,25 @@ interface DocumentResponse {
  * missing local path is expected there, not an error — the backend write is authoritative either way.
  */
 export async function writeDocument(
-  params: { issueId: string; filename: string; content: string; contentType?: string },
+  params: { issueId: string; filename: string; content: string; contentType?: string; baseContentHash?: string },
   config: Config
 ): Promise<Record<string, unknown>> {
   const body: Record<string, unknown> = {
     content: params.content,
     contentType: params.contentType ?? contentTypeFor(params.filename),
   }
+  if (params.baseContentHash) body['baseContentHash'] = params.baseContentHash
 
-  const result = await apiPut<Record<string, unknown>>(
-    `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/documents/${encodeURIComponent(params.filename)}`,
-    body,
-    config
-  )
+  let result: Record<string, unknown>
+  try {
+    result = await apiPut<Record<string, unknown>>(
+      `/api/v2/projects/${config.projectId}/work-items/${params.issueId}/documents/${encodeURIComponent(params.filename)}`,
+      body,
+      config
+    )
+  } catch (err) {
+    throw conflictAsClearError(err)
+  }
 
   // backend PUT is authoritative; local mirror is display-only — deliberately no queueChange
   try {

@@ -82,6 +82,46 @@ class ProjectDocServiceTest {
     }
 
     @Test
+    void updateDocWithMatchingBaseContentHashWrites() {
+        doc.setContent("old");
+
+        ProjectDoc updated = service.updateDoc("proj-1", "doc-1", "new", human, DocumentContent.sha256Hex("old"));
+
+        assertThat(updated.getContent()).isEqualTo("new");
+        verify(docVersionRepository).save(any());
+    }
+
+    @Test
+    void updateDocWithStaleBaseContentHashIsRefusedAndWritesNothing() {
+        doc.setContent("old");
+
+        assertThatThrownBy(() -> service.updateDoc("proj-1", "doc-1", "new", human, DocumentContent.sha256Hex("older")))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("read it again");
+
+        assertThat(doc.getContent()).isEqualTo("old");
+        verify(docVersionRepository, never()).save(any());
+        verify(projectDocRepository, never()).save(any());
+    }
+
+    @Test
+    void updateDocWithoutBaseContentHashKeepsTheOldBehaviour() {
+        doc.setContent("old");
+
+        assertThat(service.updateDoc("proj-1", "doc-1", "new", human).getContent()).isEqualTo("new");
+    }
+
+    @Test
+    void contentHashOfAnEmptyDocIsTheHashOfTheEmptyString() {
+        doc.setContent(null);
+
+        // the hash a client gets for an empty doc is accepted as the base for its first write
+        assertThat(service.updateDoc("proj-1", "doc-1", "x", human, ProjectDocService.contentHash(doc))
+                .getContent()).isEqualTo("x");
+        assertThat(ProjectDocService.contentHash(new ProjectDoc())).isEqualTo(DocumentContent.sha256Hex(""));
+    }
+
+    @Test
     void checksAnUncheckedItem() {
         assertThat(toggle("- [ ] alpha", 1, true)).isEqualTo("- [x] alpha");
     }

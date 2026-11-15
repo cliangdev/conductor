@@ -1016,6 +1016,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: baseContentHash does not match the current content — the doc changed since it was read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
     patch:
       tags:
         - project-docs
@@ -8673,6 +8679,9 @@ components:
         content:
           type: string
           nullable: true
+        contentHash:
+          type: string
+          description: SHA-256 (hex) of the stored content. Pass it back as `baseContentHash` on update.
 
     CreateDocRequest:
       type: object
@@ -8695,6 +8704,11 @@ components:
       properties:
         content:
           type: string
+        baseContentHash:
+          type: string
+          description: |
+            Optimistic lock. The `contentHash` the caller last read. When supplied and it differs from the
+            current content, the update is refused with 409.
 
     SetDocTaskStateRequest:
       type: object

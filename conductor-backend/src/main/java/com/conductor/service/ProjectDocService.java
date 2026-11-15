@@ -151,9 +151,23 @@ public class ProjectDocService {
         return doc;
     }
 
-    @Transactional
     public ProjectDoc updateDoc(String projectId, String docId, String content, ProjectActor actor) {
+        return updateDoc(projectId, docId, content, actor, null);
+    }
+
+    /** SHA-256 hex of the stored content — what clients pass back as {@code baseContentHash}. */
+    public static String contentHash(ProjectDoc doc) {
+        return com.conductor.service.DocumentContent.sha256Hex(doc.getContent() == null ? "" : doc.getContent());
+    }
+
+    @Transactional
+    public ProjectDoc updateDoc(String projectId, String docId, String content, ProjectActor actor,
+                                String baseContentHash) {
         ProjectDoc doc = getDoc(projectId, docId);
+        if (baseContentHash != null && !baseContentHash.equalsIgnoreCase(contentHash(doc))) {
+            throw new com.conductor.exception.ConflictException(
+                    "Document changed since you read it — read it again before writing.");
+        }
 
         // Signed image URLs never reach the database: a client that read this doc got freshly signed
         // URLs back, and writing those through verbatim would store links that expire in minutes.
