@@ -6,7 +6,9 @@
 -- tables are dropped by the contract migration.
 --
 -- `comments.created_at` / `resolved_at` / `updated_at` and `comment_replies.created_at` are TIMESTAMP
--- (no zone); the legacy tables are TIMESTAMPTZ, hence the casts. `line_number` and `quoted_text` are
+-- (no zone) holding UTC wall-clock (the app runs in UTC; Hibernate binds OffsetDateTime with the session
+-- zone, which is the JVM default); the legacy tables are TIMESTAMPTZ, hence AT TIME ZONE 'UTC', which
+-- does not depend on the session's TimeZone. `line_number` and `quoted_text` are
 -- NOT NULL there (V35), hence the coalesces: 0 / '' mean "no line" / "no quote".
 
 CREATE OR REPLACE FUNCTION mirror_doc_comment() RETURNS trigger AS $$
@@ -20,8 +22,8 @@ BEGIN
                           created_at, updated_at)
     VALUES (NEW.id, NULL, NULL, NEW.doc_id, NEW.author_id, NEW.author_label, NEW.content,
             COALESCE(NEW.line_number, 0), COALESCE(NEW.quoted_text, ''), NEW.line_stale,
-            NEW.resolved_at::timestamp, NEW.resolved_by, NEW.resolved_by_label,
-            NEW.created_at::timestamp, NEW.updated_at::timestamp)
+            (NEW.resolved_at AT TIME ZONE 'UTC'), NEW.resolved_by, NEW.resolved_by_label,
+            (NEW.created_at AT TIME ZONE 'UTC'), (NEW.updated_at AT TIME ZONE 'UTC'))
     ON CONFLICT (id) DO UPDATE SET
         project_doc_id    = EXCLUDED.project_doc_id,
         author_id         = EXCLUDED.author_id,
@@ -45,7 +47,7 @@ BEGIN
         RETURN OLD;
     END IF;
     INSERT INTO comment_replies (id, comment_id, author_id, author_label, content, created_at)
-    VALUES (NEW.id, NEW.comment_id, NEW.author_id, NEW.author_label, NEW.content, NEW.created_at::timestamp)
+    VALUES (NEW.id, NEW.comment_id, NEW.author_id, NEW.author_label, NEW.content, (NEW.created_at AT TIME ZONE 'UTC'))
     ON CONFLICT (id) DO UPDATE SET
         author_id    = EXCLUDED.author_id,
         author_label = EXCLUDED.author_label,
@@ -60,13 +62,13 @@ INSERT INTO comments (id, work_item_id, document_id, project_doc_id, author_id, 
                       created_at, updated_at)
 SELECT id, NULL, NULL, doc_id, author_id, author_label, content,
        COALESCE(line_number, 0), COALESCE(quoted_text, ''), line_stale,
-       resolved_at::timestamp, resolved_by, resolved_by_label,
-       created_at::timestamp, updated_at::timestamp
+       (resolved_at AT TIME ZONE 'UTC'), resolved_by, resolved_by_label,
+       (created_at AT TIME ZONE 'UTC'), (updated_at AT TIME ZONE 'UTC')
 FROM doc_comments
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO comment_replies (id, comment_id, author_id, author_label, content, created_at)
-SELECT id, comment_id, author_id, author_label, content, created_at::timestamp
+SELECT id, comment_id, author_id, author_label, content, (created_at AT TIME ZONE 'UTC')
 FROM doc_comment_replies
 ON CONFLICT (id) DO NOTHING;
 
