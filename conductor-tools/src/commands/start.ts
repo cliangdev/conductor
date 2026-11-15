@@ -6,6 +6,8 @@ import { fileURLToPath } from 'url'
 import { Command } from 'commander'
 import { readConfig } from '../lib/config.js'
 import { refreshInstalledPluginAssets } from '../lib/plugin-assets.js'
+import { readWatchRegistry } from '../daemon/watch-registry.js'
+import { readDaemonState } from '../daemon/state.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -76,6 +78,66 @@ export async function startDaemon(): Promise<boolean> {
 
   console.log(`Daemon started (PID ${pid})`)
   return true
+}
+
+export type EnsureWatchingResult =
+  /** No daemon was running; one was started and reads the current config. */
+  | 'started'
+  /** The running daemon already watches the folder (it reloads config.json on its own). */
+  | 'watching'
+  /** The running daemon didn't pick the folder up (it predates config reloading) and was restarted. */
+  | 'restarted'
+  /** Same as 'restarted' was needed, but a workflow run is in flight — restarting would kill it. */
+  | 'busy'
+  | 'failed'
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+function runningDaemonPid(): number | null {
+  if (!fs.existsSync(PID_FILE)) return null
+  const pid = parseInt(fs.readFileSync(PID_FILE, 'utf8').trim(), 10)
+  return Number.isFinite(pid) && isProcessAlive(pid) ? pid : null
+}
+
+/**
+ * Make sure the sync daemon watches `watchPath` after `conductor init` linked a repo. A daemon started by
+ * this version reloads config.json and lists its folders in daemon-watch.json; one started by an older
+ * version never does, so it is restarted — unless a workflow run is in flight, which a restart would kill.
+ */
+export async function ensureDaemonWatching(
+  watchPath: string,
+  opts: { waitMs?: number; pollMs?: number } = {},
+): Promise<EnsureWatchingResult> {
+  const waitMs = opts.waitMs ?? 3000
+  const pollMs = opts.pollMs ?? 250
+
+  const pid = runningDaemonPid()
+  if (pid === null) return (await startDaemon()) ? 'started' : 'failed'
+
+  for (let waited = 0; ; waited += pollMs) {
+    const registry = readWatchRegistry()
+    if (registry?.pid === pid && registry.paths.includes(watchPath)) return 'watching'
+    if (waited >= waitMs) break
+    await sleep(pollMs)
+  }
+
+  const inFlight = readDaemonState()?.activeRuns?.some((r) => r.status === 'running') ?? false
+  if (inFlight) return 'busy'
+
+  try {
+    process.kill(pid, 'SIGTERM')
+  } catch {
+    // Exited on its own in the meantime.
+  }
+  for (let waited = 0; waited < 5000 && isProcessAlive(pid); waited += pollMs) {
+    await sleep(pollMs)
+  }
+  try {
+    fs.unlinkSync(PID_FILE)
+  } catch {
+    // stop already removed it
+  }
+  return (await startDaemon()) ? 'restarted' : 'failed'
 }
 
 export function registerStart(program: Command): void {
