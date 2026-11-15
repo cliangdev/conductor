@@ -33,8 +33,8 @@ A row has `tagKey`, `key`, `posts`, `unsettledPosts`, `medianViewLift`, `medianR
 `withRetentionBaselinePosts`, `beatRetentionBaselinePosts`, `viewVerdict`, `retentionVerdict`,
 `verdict` (WORKS, DOESNT_WORK, NO_DIFFERENCE or NOT_ENOUGH_DATA) and `verdictMetric` (HOOK_LIFT,
 RETENTION_LIFT or VIEW_LIFT; rows also carry `medianHookLift`, `hookVerdict`). The server picks the
-metric (hook first, then retention, each only when most of a row's posts have that baseline; TikTok
-reports no hook rate); you never do. `get_creative` gives each variant
+metric (hook first, then retention, each only when most of a row's posts have that baseline; only Instagram Reels
+report a hook rate); you never do. `get_creative` gives each variant
 `settledPosts`, the lift fields, `withBaselinePosts`, `beatBaselinePosts` and both verdicts.
 `playbookEffect` is `{withLessons, withoutLessons}`, each `{posts, medianViewLift}`.
 

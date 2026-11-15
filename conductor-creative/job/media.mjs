@@ -284,7 +284,11 @@ function composeAudioGraph(plan, idx, measured) {
     dialog = 'bed';
   }
   if (idx.voice != null) {
-    lines.push(`[${idx.voice}:a]aresample=48000,${AUDIO_FMT},asetpts=PTS-STARTPTS[vo]`);
+    // The voice starts voiceOffsetSec into the video (the same shift generate_voice_line applies to the caption beats).
+    // The delayed [vo] is what feeds the dialog mix and the ducking sidechain below.
+    const voMs = Math.round(Math.max(0, Number(a.voiceOffsetSec) || 0) * 1000);
+    const delay = voMs > 0 ? `,adelay=${voMs}:all=1` : '';
+    lines.push(`[${idx.voice}:a]aresample=48000,${AUDIO_FMT},asetpts=PTS-STARTPTS${delay}[vo]`);
     if (dialog) {
       lines.push('[bed][vo]amix=inputs=2:duration=longest:normalize=0[dlg]');
       dialog = 'dlg';

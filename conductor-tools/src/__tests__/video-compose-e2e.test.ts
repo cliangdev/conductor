@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -66,7 +66,7 @@ const meanDiff = (a: Buffer, b: Buffer, rows?: [number, number]) => {
 
 /** Scene-change times (s) of a video, from ffmpeg's showinfo log. */
 const sceneCuts = (file: string): number[] =>
-  parseCutTimes(execFileSync('sh', ['-c', `ffmpeg -hide_banner -i "$1" -vf "select='gt(scene,0.1)',showinfo" -an -f null - 2>&1`, 'sh', file], { encoding: 'utf8' }))
+  parseCutTimes(spawnSync('ffmpeg', ['-hide_banner', '-i', file, '-vf', "select='gt(scene,0.1)',showinfo", '-an', '-f', 'null', '-'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }).stderr)
 
 let work: string
 const paths = { clip: '', imgs: [] as string[], music: '' }

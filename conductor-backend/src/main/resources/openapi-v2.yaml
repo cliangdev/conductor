@@ -11609,10 +11609,10 @@ components:
           format: double
           nullable: true
           description: >-
-            0 to 1, the share of viewers who stayed past the opening: Instagram 1 minus Reels skip rate (estimated,
-            first 3 seconds), Facebook Reel retention at 3 seconds, YouTube the first bucket of the audience
-            retention curve. Null when the platform does not report it (TikTok never does), never 0. Comparable
-            only within one platform and format.
+            0 to 1, the share of viewers who stayed past the opening. Instagram Reels only: 1 minus the Reels
+            skip rate (Meta's estimate of initial views skipped within 3 seconds). Null on every other platform
+            (TikTok, Facebook and YouTube report holdRate only), never 0. Comparable only within one platform
+            and format.
         holdRate:
           type: number
           format: double
@@ -14033,7 +14033,7 @@ components:
               nullable: true
               description: >-
                 Median of hookRate divided by the baseline's median hookRate (same platform and format), over posts
-                with both; null otherwise. TikTok reports no hook rate.
+                with both; null otherwise. Only Instagram Reels report a hook rate.
             medianHoldLift:
               type: number
               format: double
@@ -17195,6 +17195,16 @@ components:
           type: number
           format: double
           nullable: true
+        hookRate:
+          type: number
+          format: double
+          nullable: true
+          description: Mean hook rate (0 to 1) of this platform's destinations; Instagram Reels only, null elsewhere.
+        holdRate:
+          type: number
+          format: double
+          nullable: true
+          description: Mean hold rate (0 to 1) of this platform's destinations where reported; null otherwise.
 
     CreativePerformanceEntry:
       type: object
@@ -17274,12 +17284,12 @@ components:
           type: number
           format: double
           nullable: true
-          description: Mean hook rate (0 to 1) over the attributed destinations that report one; null when none does (TikTok never does).
+          description: Mean hook rate (0 to 1) over the attributed destinations that report one (Instagram Reels only); null when none does, or when more than one platform reported one (see byPlatform).
         holdRate:
           type: number
           format: double
           nullable: true
-          description: Mean hold rate (0 to 1, average watch time over duration) where reported; null otherwise.
+          description: Mean hold rate (0 to 1, average watch time over duration) where reported; null otherwise, or when more than one platform reported one (read the per-platform values in byPlatform; platforms are never blended).
         medianHookLift:
           type: number
           format: double
@@ -17735,7 +17745,7 @@ components:
       description: >-
         The metric requested at creation. The decision itself prefers avg_view_pct whenever every variant
         reports it, regardless of this value — unless hook_rate was requested and every variant reports a
-        hook rate (Instagram, Facebook, YouTube), in which case hook_rate decides. See CreativeExperimentService.
+        hook rate (Instagram Reels only) on a platform they all share, in which case hook_rate decides on that platform; variants that report hook rates but share no platform are INCONCLUSIVE (insufficient_data). See CreativeExperimentService.
 
     CreativeExperimentState:
       type: string

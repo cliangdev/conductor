@@ -20,29 +20,23 @@ class HookMetricsTest {
     }
 
     @Test
-    void instagramHookRateIsOneMinusTheSkipRateWhateverTheScale() {
-        assertThat(HookMetrics.of("instagram", json("{\"reels_skip_rate\":0.35}")).hookRate())
-                .isCloseTo(0.65, within(1e-9));
-        // A percentage (above 1) is read as such.
+    void instagramHookRateIsOneMinusTheSkipRatePercentage() {
+        // Meta documents reels_skip_rate as a percentage (0 to 100), so 0.8 is 0.8%, never 80%.
+        assertThat(HookMetrics.of("instagram", json("{\"reels_skip_rate\":0.8}")).hookRate())
+                .isCloseTo(0.992, within(1e-9));
         assertThat(HookMetrics.of("instagram", json("{\"reels_skip_rate\":35}")).hookRate())
                 .isCloseTo(0.65, within(1e-9));
         assertThat(HookMetrics.of("instagram", json("{\"reels_skip_rate\":0}")).hookRate()).isEqualTo(1.0);
-        assertThat(HookMetrics.of("instagram", json("{\"reels_skip_rate\":250}")).hookRate()).isEqualTo(0.0);
+        assertThat(HookMetrics.of("instagram", json("{\"reels_skip_rate\":100}")).hookRate()).isEqualTo(0.0);
+        assertThat(HookMetrics.of("instagram", json("{\"reels_skip_rate\":250}")).hookRate()).isNull();
+        assertThat(HookMetrics.of("instagram", json("{\"reels_skip_rate\":-1}")).hookRate()).isNull();
     }
 
     @Test
-    void facebookHookRateIsTheRetentionAtThreeSeconds() {
-        assertThat(HookMetrics.of("facebook", json("{\"video_retention_3s\":0.55}")).hookRate())
-                .isCloseTo(0.55, within(1e-9));
-        assertThat(HookMetrics.of("facebook", json("{\"video_retention_3s\":1.4}")).hookRate()).isEqualTo(1.0);
-    }
-
-    @Test
-    void youtubeHookRateIsTheFirstBucketCappedAtOne() {
-        assertThat(HookMetrics.of("youtube", json("{\"opening_hold\":0.82}")).hookRate())
-                .isCloseTo(0.82, within(1e-9));
-        // A rewatched opening pushes the ratio past 1.
-        assertThat(HookMetrics.of("youtube", json("{\"opening_hold\":1.3}")).hookRate()).isEqualTo(1.0);
+    void hookRateIsInstagramOnly() {
+        assertThat(HookMetrics.of("facebook", json("{\"video_retention_3s\":0.55}")).hookRate()).isNull();
+        assertThat(HookMetrics.of("youtube", json("{\"opening_hold\":0.82}")).hookRate()).isNull();
+        assertThat(HookMetrics.of("tiktok", json("{\"reels_skip_rate\":10}")).hookRate()).isNull();
     }
 
     @Test

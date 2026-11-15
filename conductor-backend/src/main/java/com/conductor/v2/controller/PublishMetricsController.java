@@ -113,7 +113,8 @@ public class PublishMetricsController implements PublishMetricsApi {
     private static CreativePerformanceEntry toCreativeEntry(CreativePerformanceService.VariantPerformance p) {
         return new CreativePerformanceEntry(p.creativeId(), p.label(), p.posts(), p.views(),
                 p.byPlatform().stream()
-                        .map(b -> new CreativePerformancePlatform(b.platform(), b.posts(), b.views()).engagementRate(b.engagementRate()))
+                        .map(b -> new CreativePerformancePlatform(b.platform(), b.posts(), b.views()).engagementRate(b.engagementRate())
+                                .hookRate(b.hookRate()).holdRate(b.holdRate()))
                         .toList())
                 .headline(p.headline())
                 .engagementRate(p.engagementRate())

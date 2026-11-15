@@ -51,10 +51,6 @@ class YouTubeDataClientTest {
                         + "{\"name\":\"averageViewPercentage\"}],"
                         + "\"rows\":[[\"vid-1\",500,120.0,45.5,62.3]]}",
                         MediaType.APPLICATION_JSON));
-        server.expect(requestTo(org.hamcrest.Matchers.containsString("dimensions=elapsedVideoTimeRatio")))
-                .andRespond(withSuccess("{\"columnHeaders\":[{\"name\":\"elapsedVideoTimeRatio\"},"
-                        + "{\"name\":\"audienceWatchRatio\"}],\"rows\":[[0.01,0.9],[0.02,0.8]]}",
-                        MediaType.APPLICATION_JSON));
 
         List<YouTubeDataClient.VideoAnalytics> result =
                 client.listVideoAnalytics("token", List.of("vid-1"), null);
@@ -64,7 +60,6 @@ class YouTubeDataClientTest {
             assertThat(a.estimatedMinutesWatched()).isEqualTo(120.0);
             assertThat(a.averageViewDurationSeconds()).isEqualTo(45.5);
             assertThat(a.averageViewPercentage()).isEqualTo(62.3);
-            assertThat(a.openingHold()).isEqualTo(0.9);
             assertThat(a.engagedViews()).isNull(); // the report carried no such column
             assertThat(a.forbidden()).isFalse();
         });

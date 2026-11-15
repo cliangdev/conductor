@@ -100,6 +100,17 @@ test('music under clip sound and voice ducks by default and mixes flat when duck
   assert.match(flat, /\[dialog\]\[mu\]amix=inputs=2:duration=first:normalize=0\[mix\]/);
 });
 
+test('voiceOffsetSec delays the voice before the mix and the ducking sidechain', () => {
+  const segments = [seg({ kind: 'clip', durationSec: 3.4, useAudio: true }), seg()];
+  const inputs = inputsFor(segments, { musicPath: '/tmp/m.wav', voicePath: '/tmp/v.wav' });
+  const g = graph(buildVideoComposeMeasureArgs(plan(segments, { totalSec: 6.4, audio: { voiceOffsetSec: 1.25 } }), inputs));
+  assert.match(g, /\[3:a\]aresample=48000,[^;]*asetpts=PTS-STARTPTS,adelay=1250:all=1\[vo\]/);
+  assert.match(g, /\[bed\]\[vo\]amix/);
+  assert.match(g, /\[dialog\]asplit=2\[dl\]\[sc\]/);
+  const none = graph(buildVideoComposeMeasureArgs(plan(segments, { totalSec: 6.4 }), inputs));
+  assert.ok(!none.includes('adelay'));
+});
+
 test('voice alone is padded to the length and normalised', () => {
   const segments = [seg(), seg()];
   const g = graph(buildVideoComposeMeasureArgs(plan(segments, { totalSec: 6 }), inputsFor(segments, { voicePath: '/tmp/v.wav' })));

@@ -103,8 +103,8 @@ public class MarketingInsightsSnapshotQuery {
      * The weekly hook read: one row per hookType over the settled posts of the trailing 90 days (the same
      * evidence set as insights' {@code byTag}, not this snapshot's seven-day window, because a week can never
      * hold a settled Facebook post), through the shared attribution. A row carries the usual counters, the
-     * median view lift and the server's {@code verdict}/{@code verdictMetric} ({@code LessonVerdictRules}); a
-     * hookType with no computable view lift is left out, as the digest ranks on it. Best lift first.
+     * median view and hook lift, the lift the verdict was read from ({@code basisLift}, which the rows are ranked on) and the server's {@code verdict}/{@code verdictMetric} ({@code LessonVerdictRules}); a
+     * hookType with no computable lift for its verdict's basis is left out; one with hook data but no view lift stays. Best lift first.
      */
     private List<Map<String, Object>> byHookType(String projectId, OffsetDateTime now) {
         Map<String, java.util.Set<CreativeTagAttribution.TagValue>> tagsByTarget = tagAttribution.tagsByTarget(projectId);
@@ -123,7 +123,13 @@ public class MarketingInsightsSnapshotQuery {
         List<Map<String, Object>> rows = new ArrayList<>();
         byHook.forEach((hook, observations) -> {
             PostBaselineService.LiftSummary lift = evidence.summarize(observations);
-            if (lift.medianViewLift() == null) {
+            LessonVerdictRules.Default verdict = LessonVerdictRules.defaultFor(lift);
+            // The row is ranked on the lift its verdict was read from, so a HOOK_LIFT row is neither dropped for
+            // lacking a view lift nor sorted by one.
+            Double basisLift = LessonVerdictRules.HOOK_LIFT.equals(verdict.metric()) ? lift.medianHookLift()
+                    : LessonVerdictRules.RETENTION_LIFT.equals(verdict.metric()) ? lift.medianRetentionLift()
+                    : lift.medianViewLift();
+            if (basisLift == null) {
                 return;
             }
             long views = 0;
@@ -132,7 +138,6 @@ public class MarketingInsightsSnapshotQuery {
                 views += orZero(o.views());
                 engagements += orZero(o.likes()) + orZero(o.comments()) + orZero(o.shares()) + orZero(o.saves());
             }
-            LessonVerdictRules.Default verdict = LessonVerdictRules.defaultFor(lift);
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("hookType", hook);
             row.put("posts", (long) observations.size());
@@ -140,11 +145,13 @@ public class MarketingInsightsSnapshotQuery {
             row.put("engagements", engagements);
             row.put("engagementRate", views > 0 ? (double) engagements / views : 0.0);
             row.put("medianViewLift", lift.medianViewLift());
+            row.put("medianHookLift", lift.medianHookLift());
+            row.put("basisLift", basisLift);
             row.put("verdict", verdict.verdict());
             row.put("verdictMetric", verdict.metric());
             rows.add(row);
         });
-        rows.sort(Comparator.comparingDouble((Map<String, Object> r) -> (double) r.get("medianViewLift")).reversed());
+        rows.sort(Comparator.comparingDouble((Map<String, Object> r) -> (double) r.get("basisLift")).reversed());
         return rows;
     }
 

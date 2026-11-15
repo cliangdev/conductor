@@ -30,6 +30,8 @@ export interface GenerateVoiceLineResult {
   timing: 'provider' | 'estimated'
   captionBeats: CaptionBeat[]
   voice: string
+  /** Echo of the request: pass it as compose_video spec.audio.voiceOffsetSec. */
+  offsetSec: number
   estimatedCostUsd: number
   spentTodayUsd: number
   dailyCapUsd: number
@@ -44,7 +46,7 @@ const DISCLOSURE =
   'This is a synthetic voice: in realistic content it falls under the platform AI-label rules in the skill\'s compliance checklist (references/compliance-checklist.md); apply them when you publish.'
 
 const NEXT_STEP =
-  'Pass audioPath as spec.audio.voicePath with duck: true, and paste captionBeats into spec.texts (add your own hook beats at other y values; beats on screen together must not share rows). The first word should land inside 0.5 s: if the spoken line starts later in the video, shift it with offsetSec and call again. Check the captions against the audio before approving: with timing "estimated" each word time is a guess to within a fraction of a second.'
+  'Pass audioPath as spec.audio.voicePath with duck: true, and paste captionBeats into spec.texts (add your own hook beats at other y values; beats on screen together must not share rows). The first word should land inside 0.5 s: if the spoken line starts later in the video, call again with offsetSec (it shifts the captions) and pass the same value as spec.audio.voiceOffsetSec (it delays the voice to match). Check the captions against the audio before approving: with timing "estimated" each word time is a guess to within a fraction of a second.'
 
 /** Seconds of a 16-bit PCM WAV from its header, for when ffprobe is missing. */
 export function wavSeconds(wav: Buffer): number | null {
@@ -105,6 +107,7 @@ export async function generateVoiceLine(params: VoiceParams, options: GenerateVo
     timing,
     captionBeats: beats,
     voice: gen.request.voice,
+    offsetSec: gen.request.offsetSec,
     estimatedCostUsd: gen.estimateUsd,
     spentTodayUsd: gen.spentTodayUsd,
     dailyCapUsd: gen.dailyCapUsd,

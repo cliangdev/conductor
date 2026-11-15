@@ -39,6 +39,7 @@ export interface RenderPlanInput {
   textPngs: string[]
   musicPath?: string
   voicePath?: string
+  voiceOffsetSec?: number
   duck?: boolean
   outPath: string
 }
@@ -58,7 +59,7 @@ export function composePlan(input: RenderPlanInput): { plan: Record<string, unkn
       })),
       texts: input.texts,
       totalSec: timeline.totalSec,
-      audio: { duck: input.duck !== false },
+      audio: { duck: input.duck !== false, ...(input.voicePath && input.voiceOffsetSec ? { voiceOffsetSec: input.voiceOffsetSec } : {}) },
     },
     inputs: {
       segmentPaths: timeline.segments.map((s) => s.path),

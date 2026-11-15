@@ -229,10 +229,10 @@ class PostBaselineServiceTest {
         List<PostPublishTarget> all = new ArrayList<>();
         List<PostPublishTargetMetric> latest = new ArrayList<>();
         // instagram REEL: 10 posts with a skip rate -> hook baseline (median hookRate of 0.6).
-        for (int i = 0; i < 10; i++) addHook(all, latest, "instagram", "REEL", "{\"reels_skip_rate\":0.4}");
-        // facebook REEL: 10 posts, only 2 report retention -> no hook baseline for the bucket or the platform.
+        for (int i = 0; i < 10; i++) addHook(all, latest, "instagram", "REEL", "{\"reels_skip_rate\":40}");
+        // facebook REEL: Facebook reports no hook rate -> no hook baseline for the bucket or the platform.
         for (int i = 0; i < 10; i++) {
-            addHook(all, latest, "facebook", "REEL", i < 2 ? "{\"video_retention_3s\":0.5}" : "{}");
+            addHook(all, latest, "facebook", "REEL", i < 2 ? "{\"post_video_avg_time_watched\":5000}" : "{}");
         }
         // tiktok: never reports a hook.
         for (int i = 0; i < 12; i++) addHook(all, latest, "tiktok", "REEL", "{\"reels_skip_rate\":0.1}");

@@ -66,7 +66,7 @@ public final class LessonVerdictRules {
 
     /**
      * The row's default verdict, for every tag key. Precedence: HOOK_LIFT first (the opening is what the tags
-     * describe, and Instagram, Facebook and YouTube all report it), then RETENTION_LIFT, then VIEW_LIFT. Hook
+     * describe, and Instagram Reels reports it), then RETENTION_LIFT, then VIEW_LIFT. Hook
      * when at least {@link #MIN_POSTS} posts have a hook baseline and they are at least
      * {@link #HOOK_COVERAGE_SHARE} of the posts with a view baseline; else retention when at least {@link #MIN_POSTS} posts have a
      * retention baseline and they are at least {@link #RETENTION_COVERAGE_SHARE} of the posts with a view

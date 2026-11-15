@@ -7,12 +7,10 @@ import com.fasterxml.jackson.databind.JsonNode;
  * normalised rates, so a short-form video's hook can be judged the same way on every platform.
  *
  * <ul>
- *   <li><b>hookRate</b> (0 to 1): the share of viewers who stayed past the opening. Instagram:
- *       {@code 1 - reels_skip_rate} (Meta's estimated share of initial views skipped within 3 seconds; a value
- *       above 1 is read as a percentage). Facebook: the Reel's retention at the 3 second mark
- *       ({@code video_retention_3s}). YouTube: the first bucket of the audience retention curve
- *       ({@code opening_hold}, {@code audienceWatchRatio} at the start of the video, capped at 1). TikTok
- *       reports none of these.</li>
+ *   <li><b>hookRate</b> (0 to 1): the share of viewers who stayed past the opening. Instagram Reels only:
+ *       {@code 1 - reels_skip_rate}, where Meta documents {@code reels_skip_rate} as a percentage (0 to 100) of
+ *       initial views skipped within 3 seconds. It is the one real 3 second measure any platform reports;
+ *       TikTok, Facebook and YouTube have no comparable number, so their hookRate is null.</li>
  *   <li><b>holdRate</b> (0 to 1): average watch time over video duration, capped at 1 (replays push an
  *       average past the video length). Instagram and Facebook: average watch time in milliseconds over
  *       {@code video_duration_s}; Instagram's Graph API does not expose duration, so its holdRate is null
@@ -20,9 +18,8 @@ import com.fasterxml.jackson.databind.JsonNode;
  *       over duration.</li>
  * </ul>
  *
- * The three hook sources are not the same measure (a 3 second skip, a 3 second retention point and the
- * first percent of a video). That is acceptable only because a lift is always taken against the baseline of
- * the same platform and format ({@link PostBaselineService}), never across platforms. A rate that is not
+ * A lift is always taken against the baseline of the same platform and format ({@link PostBaselineService}),
+ * never across platforms. A rate that is not
  * reported, or cannot be derived, is null, never 0.
  */
 public final class HookMetrics {
@@ -48,11 +45,9 @@ public final class HookMetrics {
                 if (skip == null || skip < 0) {
                     yield null;
                 }
-                double fraction = skip > 1 ? skip / 100.0 : skip;
-                yield clamp(1.0 - fraction);
+                // Meta documents reels_skip_rate as a percentage, so 0.8 means 0.8%, never 80%.
+                yield skip > 100 ? null : clamp(1.0 - skip / 100.0);
             }
-            case "facebook" -> fraction(number(extra, "video_retention_3s"));
-            case "youtube" -> fraction(number(extra, "opening_hold"));
             default -> null;
         };
     }
@@ -81,10 +76,6 @@ public final class HookMetrics {
             return null;
         }
         return clamp(watchMs / 1000.0 / duration);
-    }
-
-    private static Double fraction(Double value) {
-        return value == null || value < 0 ? null : clamp(value);
     }
 
     private static double clamp(double value) {

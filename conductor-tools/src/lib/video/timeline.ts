@@ -62,6 +62,8 @@ export interface VideoAudioSpec {
   track?: string
   /** A local audio file played over the music (and the clips' sound). */
   voicePath?: string
+  /** Seconds into the video where the voice starts (generate_voice_line's offsetSec; it shifts the caption beats the same way). Default 0. */
+  voiceOffsetSec?: number
   /** Duck the music under clip sound and voice (default true). */
   duck?: boolean
 }
@@ -153,7 +155,7 @@ export function validateVideoSpec(spec: unknown): string[] {
   const audio = spec['audio']
   if (audio !== undefined) {
     if (!isObj(audio)) {
-      errors.push('audio: must be an object { clipAudio?, track?, voicePath?, duck? }')
+      errors.push('audio: must be an object { clipAudio?, track?, voicePath?, voiceOffsetSec?, duck? }')
     } else {
       if (audio['clipAudio'] !== undefined && audio['clipAudio'] !== 'keep' && audio['clipAudio'] !== 'mute') {
         errors.push(`audio.clipAudio: must be "keep" or "mute", got ${JSON.stringify(audio['clipAudio'])}`)
@@ -161,6 +163,7 @@ export function validateVideoSpec(spec: unknown): string[] {
       for (const k of ['track', 'voicePath']) {
         if (audio[k] !== undefined && (!isStr(audio[k]) || (audio[k] as string).trim() === '')) errors.push(`audio.${k}: must be a local audio file path`)
       }
+      if (audio['voiceOffsetSec'] !== undefined && (typeof audio['voiceOffsetSec'] !== 'number' || !Number.isFinite(audio['voiceOffsetSec']) || audio['voiceOffsetSec'] < 0 || audio['voiceOffsetSec'] > 60)) errors.push('audio.voiceOffsetSec: must be a number from 0 to 60')
       if (audio['duck'] !== undefined && typeof audio['duck'] !== 'boolean') errors.push('audio.duck: must be true or false')
     }
   }

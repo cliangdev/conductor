@@ -1,5 +1,5 @@
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, resolve } from 'node:path'
+import { basename, isAbsolute, join, resolve } from 'node:path'
 import type { DraftCheck } from '../../lib/creative-render.js'
 import type { BrowserFactory } from '../../lib/creative-browser.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
@@ -97,7 +97,7 @@ function resolutionCheck(where: string, width: number, height: number): DraftChe
   }
 }
 
-async function visualProvenance(paths: string[]): Promise<{ sidecar: SidecarProvenance | null; missing: string[]; anyAi: boolean }> {
+async function visualProvenance(paths: string[], audioPaths: string[] = []): Promise<{ sidecar: SidecarProvenance | null; missing: string[]; anyAi: boolean }> {
   const known: SidecarProvenance[] = []
   const missing: string[] = []
   for (const p of unique(paths)) {
@@ -109,6 +109,16 @@ async function visualProvenance(paths: string[]): Promise<{ sidecar: SidecarProv
     }
     if (found) known.push(found)
     else missing.push(p)
+  }
+  // Voice and music files: a sidecar (generate_voice_line writes one) can only add to the record. A file with
+  // none (a licensed track) is not "missing": it was never generated here.
+  for (const p of unique(audioPaths)) {
+    try {
+      const found = await readProvenanceSidecar(p)
+      if (found) known.push({ ...found, source: `audio ${basename(p)}: ${found.source}` })
+    } catch {
+      /* no sidecar */
+    }
   }
   const anyAi = known.some((k) => k.aiGenerated)
   if (missing.length > 0) return { sidecar: null, missing, anyAi }
@@ -196,7 +206,7 @@ export async function composeVideoTool(params: ComposeVideoParams, options: Comp
   const specPath = join(outDir, 'spec.json')
   await writeFile(specPath, JSON.stringify({ ...spec, id, layout: SLIDESHOW_LAYOUT }, null, 2))
   const summary = timeline.segments.map((s) => ({ segment: s.index, kind: s.kind, fromSec: s.outStart, toSec: s.outEnd, transition: s.transitionIn }))
-  const prov = await visualProvenance(timeline.segments.map((s) => s.path))
+  const prov = await visualProvenance(timeline.segments.map((s) => s.path), [spec.audio?.voicePath, spec.audio?.track].filter((x): x is string => Boolean(x)))
   const provenance = { recorded: false, needed: prov.missing, aiGenerated: prov.anyAi }
 
   // What the spec alone decides: text on screen at 0 s, text that fits the frame, beats that do not collide.
@@ -234,6 +244,7 @@ export async function composeVideoTool(params: ComposeVideoParams, options: Comp
         textPngs: beats.beats.map((b) => b.png),
         ...(spec.audio?.track ? { musicPath: spec.audio.track } : {}),
         ...(spec.audio?.voicePath ? { voicePath: spec.audio.voicePath } : {}),
+        ...(spec.audio?.voicePath && spec.audio.voiceOffsetSec ? { voiceOffsetSec: spec.audio.voiceOffsetSec } : {}),
         duck: spec.audio?.duck !== false,
         outPath: videoPath,
       },

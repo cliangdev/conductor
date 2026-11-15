@@ -208,6 +208,32 @@ describe('composeVideoTool: a render', () => {
     expect(part.nextStep).toMatch(/no \.provenance\.json/)
   })
 
+  it('marks the Creative AI-generated when only the voice has an AI sidecar, and records the source', async () => {
+    const own = { source: 'Own footage', licence: 'Own work', aiGenerated: false }
+    for (const f of ['hook.mp4', 'a.png', 'b.png']) writeFileSync(join(tmp, `${f}.provenance.json`), JSON.stringify(own))
+    writeFileSync(join(tmp, 'voice.wav'), 'x')
+    writeFileSync(join(tmp, 'voice.wav.provenance.json'), JSON.stringify({ source: 'Synthesised with Google Cloud Text-to-Speech (en-US-Chirp3-HD-Aoede)', licence: 'Generated, house use', aiGenerated: true }))
+    const res = await composeVideoTool({ spec: { ...spec(), audio: { voicePath: 'voice.wav', voiceOffsetSec: 0.4 } } }, { projectRoot: tmp, deps: goodDeps(), pixel: noOcr })
+    if (!res.ok) throw new Error(res.error)
+    expect(res.provenance).toEqual({ recorded: true, needed: [], aiGenerated: true })
+    const sidecar = JSON.parse(readFileSync(`${res.videoPath}.provenance.json`, 'utf8'))
+    expect(sidecar).toMatchObject({ aiGenerated: true, source: expect.stringContaining('Text-to-Speech') })
+    // a licensed track with no sidecar is not "missing"
+    const plain = await composeVideoTool({ spec: { ...spec(), id: 'plain', audio: { track: 'music.wav' } } }, { projectRoot: tmp, deps: goodDeps(), pixel: noOcr })
+    if (!plain.ok) throw new Error(plain.error)
+    expect(plain.provenance).toEqual({ recorded: true, needed: [], aiGenerated: false })
+  })
+
+  it('passes voiceOffsetSec to the renderer and rejects a bad one', async () => {
+    writeFileSync(join(tmp, 'voice.wav'), 'x')
+    const deps = goodDeps()
+    const res = await composeVideoTool({ spec: { ...spec(), audio: { voicePath: 'voice.wav', voiceOffsetSec: 1.5 } } }, { projectRoot: tmp, deps, pixel: noOcr })
+    if (!res.ok) throw new Error(res.error)
+    expect(vi.mocked(deps.render!).mock.calls[0]![0]).toMatchObject({ voicePath: join(tmp, 'voice.wav'), voiceOffsetSec: 1.5 })
+    const bad = await composeVideoTool({ spec: { ...spec(), audio: { voicePath: 'voice.wav', voiceOffsetSec: -1 } } }, { projectRoot: tmp, deps: goodDeps(), pixel: noOcr })
+    expect(bad.ok).toBe(false)
+  })
+
   it('reports an encoder failure without a result', async () => {
     const res = await composeVideoTool({ spec: spec() }, { projectRoot: tmp, deps: goodDeps({ render: async () => { throw new Error('ffmpeg exited 1') } }), pixel: noOcr })
     expect(res).toMatchObject({ ok: false, error: expect.stringContaining('ffmpeg exited 1') })
@@ -219,6 +245,7 @@ describe('composePlan', () => {
     const { timeline } = resolveTimeline({ segments: [{ clip: '/c.mp4', startSec: 1, endSec: 4 }, { image: '/i.png', durationSec: 3, zoom: true, transition: 'fade' }] }, [{ durationSec: 5, hasAudio: true }, undefined])
     const { plan, inputs } = composePlan({ timeline: timeline!, texts: [{ fromSec: 0, toSec: 2 }], textPngs: ['/t.png'], voicePath: '/v.wav', outPath: '/o.mp4' })
     expect(plan).toMatchObject({ totalSec: 5.5, texts: [{ fromSec: 0, toSec: 2 }], audio: { duck: true } })
+    expect(composePlan({ timeline: timeline!, texts: [], textPngs: [], voicePath: '/v.wav', voiceOffsetSec: 0.8, outPath: '/o.mp4' }).plan['audio']).toEqual({ duck: true, voiceOffsetSec: 0.8 })
     expect((plan['segments'] as unknown[])[1]).toMatchObject({ kind: 'image', zoom: true, transitionIn: 'fade', useAudio: false })
     expect((plan['segments'] as unknown[])[0]).toMatchObject({ kind: 'clip', startSec: 1, durationSec: 3, useAudio: true })
     expect(inputs).toEqual({ segmentPaths: ['/c.mp4', '/i.png'], textPaths: ['/t.png'], voicePath: '/v.wav', outPath: '/o.mp4' })

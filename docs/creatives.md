@@ -1123,20 +1123,20 @@ reads **settled posts only** and compares each post with the account's own typic
   and `holdRate` over the baseline medians; 1.0 is typical for this account on that platform (and
   format). Any is null when the baseline or the post's own value is missing.
 
-**Hook and hold.** Instagram, Facebook and YouTube report how a short video opens; TikTok's API reports
-nothing of the kind, so a TikTok destination has no `hookRate` or `holdRate` (null, never 0). Each snapshot keeps the
+**Hook and hold.** `hookRate` is **Instagram Reels only**: Meta's skip rate is the one real 3 second measure any
+platform reports. TikTok, Facebook and YouTube report `holdRate` only (where available); their `hookRate` is null,
+never 0. Neither rate is comparable across platforms: a Creative's per-platform values are in `byPlatform`, and its
+top-level `hookRate`/`holdRate` is null when more than one platform reported one. Each snapshot keeps the
 raw numbers in `extra` and `HookMetrics` derives two rates from them, both 0 to 1:
 
 | Platform | Read (snapshot `extra`) | `hookRate`: share who stayed past the opening | `holdRate`: average watch time over duration, capped at 1 |
 |---|---|---|---|
-| Instagram Reels | `reels_skip_rate` (Meta labels it estimated), `ig_reels_avg_watch_time` and `ig_reels_video_view_total_time` (ms), from the media insights edge | 1 minus the skip rate (first 3 s) | null: the Graph API exposes no video duration |
-| Facebook Reels | `post_video_avg_time_watched` (ms) and the 3 s point of `post_video_retention_graph` (`video_retention_3s`), from `video_insights`; the Reel's `length` (`video_duration_s`) | retention at 3 s | average watch time over `length` (replays can push it past 1) |
-| YouTube | `engaged_views` and the first bucket of `audienceWatchRatio` over `elapsedVideoTimeRatio` (`opening_hold`), from the Analytics API; one extra report per video | that first bucket, capped at 1 | `avg_view_pct / 100` |
+| Instagram Reels | `reels_skip_rate` (Meta labels it estimated; a percentage, 0 to 100), `ig_reels_avg_watch_time` and `ig_reels_video_view_total_time` (ms), from the media insights edge, asked only for media whose `media_product_type` is `REELS` | 1 minus the skip rate (first 3 s) | null: the Graph API exposes no video duration |
+| Facebook Reels | `post_video_avg_time_watched` (ms) from `video_insights`; the Reel's `length` (`video_duration_s`, optional: a refused read leaves holdRate null without failing the pull) | null | average watch time over `length` (replays can push it past 1) |
+| YouTube | `engaged_views`, `avg_view_pct` and `avg_view_duration_s`, from the Analytics API | null | `avg_view_pct / 100` |
 | TikTok | nothing | null | null |
 
-The three hook numbers are different measures (a 3 s skip, a 3 s retention point, the opening percent of a video).
-That is acceptable because a lift is only ever taken against the baseline of the same platform and format, never
-across platforms. Every new field is optional: a metric Meta or Google refuses for one post is left absent without
+A lift is only ever taken against the baseline of the same platform and format, never across platforms. Every new field is optional: a metric Meta or Google refuses for one post is left absent without
 costing that post its counts. No new OAuth scope is needed (`instagram_manage_insights`, `read_insights`,
 `yt-analytics.readonly` already cover them).
 
@@ -1187,8 +1187,9 @@ following the playbook helped at all.
 The same service and settled-only rule give each variant in `GET .../marketing/creatives/{id}/performance`
 (and `get_creative`, and insights' `creatives`) `settledPosts`, `medianViewLift`, `medianRetentionLift` and
 `beatBaselineShare`, next to its existing fields. The weekly `conductor-marketing` snapshot carries a
-`byHookType` dimension (hookType only) over the same settled 90 days, ranked on `medianViewLift` and carrying
-`verdict`/`verdictMetric` per row (a hookType with no computable lift is left out), so the digest can say which
+`byHookType` dimension (hookType only) over the same settled 90 days, ranked on `basisLift` (the lift the row's verdict
+was read from: hook, retention or view) and carrying `medianViewLift`, `medianHookLift` and
+`verdict`/`verdictMetric` per row (a hookType with no computable lift for its verdict's basis is left out), so the digest can say which
 hooks are working.
 
 The thresholds are named constants, not configuration: the settle windows in `PostSettleWindows`, the verdict
@@ -1226,8 +1227,8 @@ variants and refuses a second `RUNNING` experiment on the same family with 409 (
 running_per_family`). `decide` — called on demand via `POST .../experiments/{id}/decide`, or by the
 `conductor-marketing` weekly feed pull for every `RUNNING` experiment in the project — settles once every
 variant has at least one published, attributed destination with a snapshot at or after `fireTime +
-windowHours` (default 72): the comparison metric is `hook_rate` when the experiment asked for it and every variant reports one
-(Instagram, Facebook, YouTube; never TikTok), else `avg_view_pct` when every variant reports it, else the
+windowHours` (default 72): the comparison metric is `hook_rate` when the experiment asked for it and the variants share a platform that reports one
+(Instagram Reels only; compared on the shared platform, and variants with hook rates but no shared platform settle `INCONCLUSIVE`), else `avg_view_pct` when every variant reports it, else the
 metric requested at creation (default `views`); an exact tie among the leaders settles `INCONCLUSIVE`
 immediately (the window has, by definition, already fully elapsed for everyone at that point). While any
 variant is still short of its own deadline, `decide` is a safe no-op that leaves the experiment `RUNNING`

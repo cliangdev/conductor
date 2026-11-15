@@ -34,7 +34,12 @@ public class CreativePerformanceService {
     private static final int VIEWS_72H_HOURS = 72;
 
     /** One platform's slice of one variant's numbers. */
-    public record PlatformBreakdown(String platform, int posts, long views, Double engagementRate) {}
+    public record PlatformBreakdown(String platform, int posts, long views, Double engagementRate,
+                                    Double hookRate, Double holdRate) {
+        public PlatformBreakdown(String platform, int posts, long views, Double engagementRate) {
+            this(platform, posts, views, engagementRate, null, null);
+        }
+    }
 
     /** One variant's roll-up — a row of {@code CreativeResponse}'s family, or of insights' top creatives. */
     public record VariantPerformance(String creativeId, String label, String headline, int posts, long views,
@@ -172,6 +177,8 @@ public class CreativePerformanceService {
         List<Double> avgViewPcts = new ArrayList<>();
         List<Double> hookRates = new ArrayList<>();
         List<Double> holdRates = new ArrayList<>();
+        Map<String, List<Double>> hookByPlatform = new LinkedHashMap<>();
+        Map<String, List<Double>> holdByPlatform = new LinkedHashMap<>();
         Map<String, long[]> byPlatform = new LinkedHashMap<>();
         long views72hSum = 0;
         boolean any72h = false;
@@ -195,9 +202,11 @@ public class CreativePerformanceService {
             HookMetrics.Rates rates = HookMetrics.of(target.getPlatform(), latest.getExtra());
             if (rates.hookRate() != null) {
                 hookRates.add(rates.hookRate());
+                hookByPlatform.computeIfAbsent(target.getPlatform(), k -> new ArrayList<>()).add(rates.hookRate());
             }
             if (rates.holdRate() != null) {
                 holdRates.add(rates.holdRate());
+                holdByPlatform.computeIfAbsent(target.getPlatform(), k -> new ArrayList<>()).add(rates.holdRate());
             }
             if (PostSettleWindows.isSettled(target.getPlatform(), target.getFireTime(), now)) {
                 settled.add(new PostBaselineService.Observation(target.getId(), target.getPlatform(), target.getFormat(),
@@ -227,12 +236,16 @@ public class CreativePerformanceService {
         Double avgViewPct = avgViewPcts.isEmpty() ? null
                 : avgViewPcts.stream().mapToDouble(Double::doubleValue).average().orElse(0);
         Long views72h = any72h ? views72hSum : null;
-        Double hookRate = mean(hookRates);
-        Double holdRate = mean(holdRates);
+        // Hook and hold rates are not comparable across platforms, so the single number is only given when one
+        // platform produced it; otherwise read the per-platform values in byPlatform.
+        Double hookRate = hookByPlatform.size() > 1 ? null : mean(hookRates);
+        Double holdRate = holdByPlatform.size() > 1 ? null : mean(holdRates);
 
         List<PlatformBreakdown> platformBreakdown = byPlatform.entrySet().stream()
                 .map(e -> new PlatformBreakdown(e.getKey(), (int) e.getValue()[0], e.getValue()[1],
-                        e.getValue()[1] > 0 ? (double) e.getValue()[2] / e.getValue()[1] : null))
+                        e.getValue()[1] > 0 ? (double) e.getValue()[2] / e.getValue()[1] : null,
+                        hookByPlatform.containsKey(e.getKey()) ? mean(hookByPlatform.get(e.getKey())) : null,
+                        holdByPlatform.containsKey(e.getKey()) ? mean(holdByPlatform.get(e.getKey())) : null))
                 .sorted(Comparator.comparingLong(PlatformBreakdown::views).reversed())
                 .toList();
 
