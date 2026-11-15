@@ -60,6 +60,10 @@ const config: Config = {
           active: 'hsl(var(--sidebar-item-active))',
           'active-text': 'hsl(var(--sidebar-item-active-text))',
         },
+        comment: {
+          highlight: 'hsl(var(--comment-highlight))',
+          'highlight-active': 'hsl(var(--comment-highlight-active))',
+        },
         status: {
           draft: 'hsl(var(--status-draft))',
           review: 'hsl(var(--status-review))',
