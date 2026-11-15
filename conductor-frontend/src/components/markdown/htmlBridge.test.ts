@@ -197,6 +197,27 @@ describe('bridgeSource', () => {
       ])
     })
 
+    it('leaves the PRD contents outline out of quote matching', async () => {
+      document.body.innerHTML = `
+        <nav data-prd-toc><a href="#goals">Goals</a><span>Ship the outline</span></nav>
+        <section id="goals"><h2>Goals</h2><p>Ship the outline today.</p></section>`
+      sendFromParent({ type: 'anchors', anchors: [{ id: 'g', exact: 'Ship the outline', prefix: '', suffix: ' today.' }] })
+      const m = await waitForPost('anchored')
+      const [r] = m.results as Array<{ id: string; found: boolean }>
+      expect(r.found).toBe(true)
+
+      // Selecting inside the outline offers no comment.
+      posted.length = 0
+      const t = document.querySelector('nav span')!.firstChild as Text
+      const range = document.createRange()
+      range.setStart(t, 0)
+      range.setEnd(t, 4)
+      window.getSelection()!.addRange(range)
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(posted.find((p) => p.type === 'selection')).toBeUndefined()
+    })
+
     it('puts a space between adjacent blocks and at <br>, but not between inline elements', async () => {
       document.body.innerHTML =
         '<h2>Goals</h2><p>Ship it</p><ul><li>one</li><li>two</li></ul><p>line<br>break and <b>bold</b>text</p>'

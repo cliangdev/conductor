@@ -120,12 +120,13 @@ Use AskUserQuestion:
 - Each section is `<section id="{name}" data-prd-section="{name}">` with an `<h2>`; names, in order: `problem`, `glossary`, `goals`, `non-goals`, `users`, `reference-patterns`, `features`, then optional `out-of-scope`, `open-questions`, `supporting-documents`
 - An empty Glossary or Reference Patterns contains exactly `<p><em>None.</em></p>`
 - Each feature is `<article id="P0-1" data-feature="P0-1">` with an `<h3>`, then a `<dl>` whose `<dt>`s are What, Not, Inputs, Outputs, Invariants, then `<ul data-acs>` of `<li data-ac="AC-P0-1.1">…</li>`
-- Self-contained: inline `<style>` and `<script>`, Google Fonts, and pinned CDN scripts only from cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com or code.jquery.com. No `fetch`/XHR/WebSocket (the viewer's CSP blocks them), no `window.claude`, no `window.open` (popups are blocked). Links are plain `<a href>`: `#hash` scrolls inside the page and `http(s)` links open in a new tab through the Conductor app. The page needs no script; add one only when it earns its place
+- Self-contained: inline `<style>` and `<script>`, Google Fonts, and pinned CDN scripts only from cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com or code.jquery.com. No `fetch`/XHR/WebSocket (the viewer's CSP blocks them), no `window.claude`, no `window.open` (popups are blocked). Links are plain `<a href>`: `#hash` scrolls inside the page and `http(s)` links open in a new tab through the Conductor app. The only script a PRD needs is the template's contents script; add another only when it earns its place
+- Contents: `<nav class="toc" data-prd-toc aria-label="Contents">` holds plain links to each section (the no-script fallback), and the template's `/* contents */` CSS and contents `<script>` turn it into an outline built from the section, feature and `data-ac` markers: a sticky rail when the page is 960px or wider, a one-line bar with a Contents popover below that (Conductor's review panel is narrower). Copy both blocks verbatim; never write the outline by hand
 - Escape `<`, `>` and `&` in text. Keep ids stable: reviewers' comments reference the nearest section id. Comment quotes are rendered text (tags dropped, whitespace collapsed), so write section text that reads naturally
 
 ### HTML PRD Template
 
-Keep this structure and token block; adapt the visual style to the product's design language from Phase 2a when the PRD is UI-heavy.
+Keep this structure and token block; adapt the visual style to the product's design language from Phase 2a when the PRD is UI-heavy. When restyling, keep the token names the contents CSS reads (`--bg`, `--fg`, `--muted`, `--line`, `--accent`, `--soft`, `--accent-soft`, `--warn`, `--warn-soft`, `--mono`) with light and dark values, and keep the `.shell` wrapper, the `nav[data-prd-toc]` and the contents script.
 
 ```html
 <!doctype html>
@@ -138,28 +139,76 @@ Keep this structure and token block; adapt the visual style to the product's des
 <meta name="conductor:issue-id" content="{issueId}">
 <title>{title}</title>
 <style>
-:root{--bg:#fff;--fg:#1a1d21;--muted:#5b6470;--line:#e3e6ea;--card:#f6f7f9;--accent:#2f5bea}
-@media (prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e8eaed;--muted:#9aa3ae;--line:#2a2e35;--card:#1c1f25;--accent:#7b9bff}}
+:root{--bg:#fff;--fg:#1a1d21;--muted:#5b6470;--line:#e3e6ea;--card:#f6f7f9;--accent:#2f5bea;--soft:#f0f2f5;--accent-soft:#e8eefe;--warn:#8a5a0b;--warn-soft:#f8eedb;--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e8eaed;--muted:#9aa3ae;--line:#2a2e35;--card:#1c1f25;--accent:#7b9bff;--soft:#1f232a;--accent-soft:#1f2a4a;--warn:#e0b060;--warn-soft:#3a2f1a}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif}
-nav{position:sticky;top:0;z-index:1;display:flex;gap:16px;overflow-x:auto;white-space:nowrap;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line);font-size:14px}
-nav a{color:var(--muted);text-decoration:none}nav a:hover{color:var(--accent)}
-main{max-width:760px;margin:0 auto;padding:0 16px 64px}
-h1{font-size:2rem;line-height:1.2;margin:32px 0 4px}
+main{min-width:0;width:100%;max-width:760px;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:2rem;line-height:1.2;margin:0 0 4px}
 h2{font-size:1.25rem;margin:0 0 12px}
 h3{font-size:1.05rem;margin:0 0 8px}
 .sub{color:var(--muted);margin:0 0 8px}
-section{padding:24px 0;border-top:1px solid var(--line);scroll-margin-top:56px}
+section{padding:24px 0;border-top:1px solid var(--line)}
 article{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin:12px 0}
 dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:0 0 12px}
 dt{color:var(--muted);font-weight:600}dd{margin:0}
 ul[data-acs]{margin:0;padding-left:20px}
 @media (max-width:560px){dl{grid-template-columns:1fr}dd{margin-bottom:6px}}
+/* contents: keep verbatim; it reads only the tokens above */
+.shell{display:grid;grid-template-columns:minmax(0,1fr)}
+.toc{position:sticky;top:0;z-index:2;font-size:14px}
+.toc a{text-decoration:none}
+.toc [hidden]{display:none!important}
+.toc:not(.js){display:flex;gap:16px;overflow-x:auto;white-space:nowrap;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line)}
+.toc:not(.js) a{color:var(--muted)}
+.toc-bar{position:relative;display:flex;align-items:center;gap:6px;height:44px;padding:0 8px;background:var(--bg);border-bottom:1px solid var(--line)}
+.toc-btn,.toc-step{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:30px;flex:none;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg);font-family:inherit;font-size:13px;font-weight:500;cursor:pointer}
+.toc-btn{padding:0 9px}.toc-step{width:30px;padding:0}
+.toc-btn[aria-expanded="true"]{border-color:var(--accent);color:var(--accent)}
+.toc-step:disabled{opacity:.4;cursor:default}
+.toc svg{width:15px;height:15px}
+.toc button:focus-visible,.toc a:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.toc-crumb{flex:1;min-width:0;padding-left:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px}
+.toc-crumb b{font-weight:600}.toc-crumb i{font-style:normal;color:var(--muted);padding:0 5px}
+.toc-fid,.toc-pos,.toc-ct,.toc-progress,.toc-grp{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.toc-fid{flex:none;white-space:nowrap;font-size:11.5px;color:var(--muted)}
+.toc-pos,.toc-ct,.toc-progress{font-size:11px;color:var(--muted);white-space:nowrap}
+.toc-pos{padding:0 4px}
+.toc-meter{position:absolute;left:0;bottom:-1px;height:2px;width:0;background:var(--accent)}
+.toc-outline{display:none;flex-direction:column;gap:12px}
+.toc-head{display:flex;align-items:center;gap:8px}
+.toc-track{flex:1;height:3px;border-radius:2px;background:var(--soft);overflow:hidden}
+.toc-fill{display:block;height:100%;width:0;background:var(--accent)}
+.toc-list{display:flex;flex-direction:column;border-left:1px solid var(--line)}
+.toc-kids{display:flex;flex-direction:column;padding:2px 0 8px}
+.toc-item,.toc-kid{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:baseline;gap:10px;margin-left:-1px;border-left:2px solid transparent;color:var(--muted)}
+.toc-item{padding:4px 8px 4px 12px;font-size:13.5px}
+.toc-kid{padding:3px 8px 3px 24px;font-size:13px;line-height:1.4}
+.toc-kid>span:first-child{display:flex;gap:7px;min-width:0}
+.toc-item:hover,.toc-kid:hover{color:var(--fg);background:var(--soft)}
+.toc-item.on{color:var(--fg);font-weight:600;border-left-color:var(--fg)}
+.toc-kid.on{color:var(--accent);border-left-color:var(--accent);background:var(--accent-soft)}
+.toc-kid.on .toc-fid{color:var(--accent)}
+.toc-grp{padding:8px 8px 2px 24px;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.toc-ct.warn{color:var(--warn);background:var(--warn-soft);border-radius:3px;padding:0 5px}
+section,article,section h3{scroll-margin-top:56px}
+@media (max-width:959.98px){
+.toc.js .toc-outline{position:absolute;top:calc(100% + 6px);left:8px;width:min(380px,calc(100vw - 16px));max-height:calc(100vh - 64px);overflow:auto;padding:12px 10px 10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 28px rgba(0,0,0,.18)}
+.toc.js.open .toc-outline{display:flex}}
+@media (min-width:960px){
+.shell{grid-template-columns:220px minmax(0,1fr);gap:40px;max-width:1140px;margin:0 auto;padding:0 24px}
+main{margin:0;padding:24px 0 64px}
+.toc{align-self:start;max-height:100vh;overflow:auto;padding:24px 2px 24px 0}
+.toc:not(.js){flex-direction:column;gap:2px;overflow-x:visible;white-space:normal;padding:24px 0;background:none;border-bottom:0}
+.toc-bar{display:none}
+.toc.js .toc-outline{display:flex}
+section,article,section h3{scroll-margin-top:16px}}
 </style>
 </head>
 <body>
-<nav>
-<a href="#problem">Problem</a><a href="#glossary">Glossary</a><a href="#goals">Goals</a><a href="#non-goals">Non-Goals</a><a href="#users">Users</a><a href="#reference-patterns">Reference Patterns</a><a href="#features">Features</a>
+<div class="shell">
+<nav class="toc" data-prd-toc aria-label="Contents">
+<a href="#problem">Problem</a><a href="#glossary">Glossary</a><a href="#goals">Goals</a><a href="#non-goals">Non-Goals</a><a href="#users">Users</a><a href="#reference-patterns">Reference Patterns</a><a href="#features">Features</a><a href="#out-of-scope">Out of Scope</a><a href="#open-questions">Open Questions</a><a href="#supporting-documents">Supporting Documents</a>
 </nav>
 <main>
 <h1>{title}</h1>
@@ -215,6 +264,136 @@ ul[data-acs]{margin:0;padding-left:20px}
 <section id="supporting-documents" data-prd-section="supporting-documents"><h2>Supporting Documents</h2>
 <p>Links are added here as supporting documents are created.</p></section>
 </main>
+</div>
+<script>
+/* contents: keep verbatim. Builds the outline from the PRD's own markers, so it never needs editing. */
+(function () {
+  var nav = document.querySelector('nav[data-prd-toc]');
+  var secs = [].slice.call(document.querySelectorAll('section[data-prd-section]'));
+  if (!nav || !secs.length) return;
+  var narrow = window.matchMedia('(max-width: 959.98px)');
+  var smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function freeId(base) { var id = base || 'part', n = 2; while (document.getElementById(id)) id = base + '-' + n++; return id; }
+  function slug(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
+  var list = secs.map(function (sec) {
+    var name = sec.getAttribute('data-prd-section'), h2 = sec.querySelector('h2');
+    if (!sec.id) sec.id = freeId(name);
+    var s = { el: sec, label: (h2 ? h2.textContent : name).trim(), kids: [], count: '', warn: false };
+    if (name === 'features') {
+      [].forEach.call(sec.querySelectorAll('h3.sub, article[data-feature]'), function (n) {
+        if (n.tagName === 'H3') {
+          if (!n.closest('article')) s.kids.push({ group: n.textContent.trim().replace(/^(P\d+):\s*/, '$1 · ') });
+          return;
+        }
+        var fid = n.getAttribute('data-feature'), h = n.querySelector('h3');
+        if (!n.id) n.id = freeId(fid);
+        s.kids.push({ el: n, fid: fid, title: (h ? h.textContent : '').trim().replace(/^P\d+-\d+:\s*/, ''), count: n.querySelectorAll('[data-ac]').length });
+      });
+      s.count = s.kids.filter(function (k) { return k.el; }).length + ' · ' + sec.querySelectorAll('[data-ac]').length + ' AC';
+    } else {
+      [].forEach.call(sec.querySelectorAll('h3'), function (h) {
+        if (h.closest('article')) return;
+        if (!h.id) h.id = freeId(sec.id + '-' + slug(h.textContent));
+        s.kids.push({ el: h, title: h.textContent.trim() });
+      });
+      if (name === 'open-questions') {
+        var open = sec.querySelectorAll('li').length;
+        if (open) { s.count = open + ' open'; s.warn = true; }
+      }
+    }
+    return s;
+  });
+
+  function icon(d) { return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="' + d + '"/></svg>'; }
+  var h = '<div class="toc-bar"><button type="button" class="toc-btn" aria-expanded="false">' +
+    icon('M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01') + 'Contents</button>' +
+    '<span class="toc-crumb" aria-live="polite"></span><span class="toc-pos"></span>' +
+    '<button type="button" class="toc-step" data-step="-1" aria-label="Previous section">' + icon('m15 18-6-6 6-6') + '</button>' +
+    '<button type="button" class="toc-step" data-step="1" aria-label="Next section">' + icon('m9 18 6-6-6-6') + '</button>' +
+    '<span class="toc-meter"></span></div>' +
+    '<div class="toc-outline"><div class="toc-head"><span class="toc-progress"></span><span class="toc-track"><span class="toc-fill"></span></span></div><div class="toc-list">';
+  list.forEach(function (s, i) {
+    h += '<a class="toc-item" href="#' + esc(s.el.id) + '" data-i="' + i + '"><span>' + esc(s.label) + '</span>' +
+      (s.count ? '<span class="toc-ct' + (s.warn ? ' warn' : '') + '">' + esc(s.count) + '</span>' : '') + '</a>';
+    if (!s.kids.length) return;
+    h += '<div class="toc-kids" data-i="' + i + '" hidden>';
+    s.kids.forEach(function (k, j) {
+      if (k.group) { h += '<div class="toc-grp">' + esc(k.group) + '</div>'; return; }
+      h += '<a class="toc-kid" href="#' + esc(k.el.id) + '" data-k="' + i + '.' + j + '"><span>' +
+        (k.fid ? '<span class="toc-fid">' + esc(k.fid) + '</span>' : '') + '<span>' + esc(k.title) + '</span></span>' +
+        (k.count !== undefined ? '<span class="toc-ct">' + k.count + '</span>' : '') + '</a>';
+    });
+    h += '</div>';
+  });
+  nav.innerHTML = h + '</div></div>';
+  nav.classList.add('js');
+
+  function q(sel) { return nav.querySelector(sel); }
+  var btn = q('.toc-btn'), crumb = q('.toc-crumb'), pos = q('.toc-pos'), meter = q('.toc-meter');
+  var fill = q('.toc-fill'), progress = q('.toc-progress'), outline = q('.toc-outline'), steps = nav.querySelectorAll('.toc-step');
+  var cur = -1, curKid = null;
+
+  function reveal() {
+    var box = narrow.matches ? outline : nav, el = q('.toc-kid.on') || q('.toc-item.on');
+    if (!el || box.scrollHeight <= box.clientHeight) return;
+    var t = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+    if (t < box.scrollTop + 48) box.scrollTop = Math.max(0, t - 48);
+    else if (t + el.offsetHeight > box.scrollTop + box.clientHeight - 16) box.scrollTop = t + el.offsetHeight - box.clientHeight + 16;
+  }
+  function setOpen(open) {
+    nav.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) reveal();
+  }
+  function go(el) { if (el) el.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'start' }); }
+
+  function mark() {
+    var line = (narrow.matches ? nav.offsetHeight : 0) + 24, si = 0, ki = null;
+    var y = window.scrollY || document.documentElement.scrollTop, max = document.documentElement.scrollHeight - window.innerHeight;
+    list.forEach(function (s, i) { if (s.el.getBoundingClientRect().top <= line) si = i; });
+    if (max > 0 && y >= max - 2) si = list.length - 1;
+    list[si].kids.forEach(function (k, j) { if (k.el && k.el.getBoundingClientRect().top <= line) ki = j; });
+    var pct = max > 0 ? Math.min(100, Math.max(0, y / max * 100)) : 100;
+    meter.style.width = fill.style.width = pct + '%';
+    if (si === cur && ki === curKid) return;
+    cur = si; curKid = ki;
+    var s = list[si], k = ki === null ? null : s.kids[ki];
+    [].forEach.call(nav.querySelectorAll('.toc-item'), function (a) { a.classList.toggle('on', +a.getAttribute('data-i') === si); });
+    [].forEach.call(nav.querySelectorAll('.toc-kids'), function (d) { d.hidden = +d.getAttribute('data-i') !== si; });
+    [].forEach.call(nav.querySelectorAll('.toc-kid'), function (a) { a.classList.toggle('on', a.getAttribute('data-k') === si + '.' + ki); });
+    crumb.innerHTML = '<b>' + esc(s.label) + '</b>' + (k ? '<i>›</i>' + (k.fid ? '<span class="toc-fid">' + esc(k.fid) + '</span> ' : '') + esc(k.title) : '');
+    pos.textContent = (si + 1) + ' / ' + list.length;
+    progress.textContent = 'Section ' + (si + 1) + ' of ' + list.length;
+    steps[0].disabled = si === 0;
+    steps[1].disabled = si === list.length - 1;
+    reveal();
+  }
+
+  nav.addEventListener('click', function (e) {
+    var a = e.target.closest('a[href^="#"]');
+    if (a) {
+      e.preventDefault();
+      go(document.getElementById(a.getAttribute('href').slice(1)));
+      setOpen(false);
+      return;
+    }
+    var b = e.target.closest('button');
+    if (b === btn) setOpen(!nav.classList.contains('open'));
+    else if (b) { var t = list[cur + Number(b.getAttribute('data-step'))]; if (t) go(t.el); }
+  });
+  document.addEventListener('click', function (e) { if (nav.classList.contains('open') && !nav.contains(e.target)) setOpen(false); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && nav.classList.contains('open')) { setOpen(false); btn.focus(); } });
+  var queued = false;
+  window.addEventListener('scroll', function () {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(function () { queued = false; mark(); });
+  }, { passive: true });
+  window.addEventListener('resize', function () { cur = -1; mark(); });
+  mark();
+})();
+</script>
 </body>
 </html>
 ```
@@ -303,6 +482,7 @@ Before showing the PRD to the user in Step 3d, run through the checklist for the
 - [ ] Every P0 feature's `<dl>` has `<dt>`s What, Not, Inputs, Outputs, Invariants, and a `<ul data-acs>` follows (P1 features may omit all but What)
 - [ ] Every criterion is `<li data-ac="AC-P0-1.1">` with an id matching `^AC-P[01]-\d+\.\d+$`
 - [ ] Every AC id is unique, and its feature part matches the enclosing article (`AC-P0-3.2` only inside `P0-3`)
+- [ ] `<nav class="toc" data-prd-toc>` sits with `<main>` inside `<div class="shell">`, and the template's `/* contents */` CSS and contents `<script>` are copied verbatim, with every token they read defined for light and dark
 - [ ] No `fetch`/XHR/`window.claude`/`window.open`; scripts, if any, are inline or pinned from cdnjs.cloudflare.com, cdn.jsdelivr.net, unpkg.com, cdn.tailwindcss.com or code.jquery.com
 
 **If markdown (`prd.md`):**
@@ -544,10 +724,12 @@ Write a valid standalone HTML file with inline CSS — no external dependencies.
      - If the result lists declared runtime capabilities (live data, shared state, Claude calls), warn the user: Conductor renders pages in a sandbox that blocks `fetch`/XHR and popups and has no `window.claude`, so those parts will not work there.
      - For the user's own artifact the result names a saved file that holds the full page: Read that file.
 2. **Detect whether it already meets the HTML PRD contract**: the `conductor:doc-type` = `prd` meta tag plus `data-prd-section` and `data-ac` markers (Grep the content).
-   - **Meets it**: keep the page verbatim. Skip to step 3 and only set `conductor:issue-id` (adding the meta tag if absent) once the Work Item exists. Run the HTML self-check from 3c and report any failures to the user rather than rewriting their page.
+   - **Meets it**: keep the page verbatim. Skip to step 3 and only set `conductor:issue-id` (adding the meta tag if absent) once the Work Item exists. Run the HTML self-check from 3c and report any failures to the user rather than rewriting their page. The one exception: if the page has no `nav[data-prd-toc]`, ask (AskUserQuestion) whether to add the contents outline, and on yes apply the contents upgrade below.
    - **Does not meet it**: use AskUserQuestion with these options:
-     - "Convert to Conductor PRD (keeps content and styling, adds the structure)" (Recommended) — restructure the page into the seven sections, feature articles and `data-ac` criteria; keep the author's wording, CSS and layout. Do not invent content: put real source material in each section, write "None" where the page has nothing, and draft any missing P0 fields (Not, Inputs, Outputs, Invariants, acceptance criteria) from the page's own content, flagging them for review. Run the 3c self-check, then 3d.
+     - "Convert to Conductor PRD (keeps content and styling, adds the structure)" (Recommended) — restructure the page into the seven sections, feature articles and `data-ac` criteria; keep the author's wording, CSS and layout, and apply the contents upgrade below in place of any section index the page had. Do not invent content: put real source material in each section, write "None" where the page has nothing, and draft any missing P0 fields (Not, Inputs, Outputs, Invariants, acceptance criteria) from the page's own content, flagging them for review. Run the 3c self-check, then 3d.
      - "Attach as-is as a supporting document"
      - "Cancel" — stop.
    - **Attach as-is**: ask (AskUserQuestion) which Work Item to attach to — an existing one (`list_work_items`) or a new one (resolve the Workflow and create it as in Phase 4 steps 1-2). Then `scaffold_document({issueId, filename})` with a descriptive `.html` filename that is not `prd.html`, Write the page verbatim to the returned `absolutePath`, and confirm. No status transition.
 3. **Save a PRD** (meets the contract, or converted) with the Phase 4 sequence: resolve the Workflow, `create_work_item` (title from `<title>` or the `<h1>`, description from the Problem section), `scaffold_document({issueId, filename: "prd.html"})`, Write, then the IN_REVIEW transition and confirmation. Offer supporting documents as in Phase 4.
+
+**Contents upgrade** (adding the outline to an existing `prd.html`, imported or older): replace the page's own section index (`<nav>` of section links, if any) with the template's `<nav class="toc" data-prd-toc aria-label="Contents">`; wrap that nav and `<main>` in `<div class="shell">` (if the page already has a two-column wrapper, drop its grid and sticky-nav rules); append the `/* contents */` CSS after the page's own rules and the contents `<script>` before `</body>`; then map the page's colors onto any of `--bg`, `--fg`, `--muted`, `--line`, `--accent`, `--soft`, `--accent-soft`, `--warn`, `--warn-soft`, `--mono` it lacks (e.g. `--line: var(--rule)`), in both its light and dark blocks. Below 960px the outline adds no side padding, so `main` keeps its own (the template's is `24px 16px 64px`). Leave section, feature and AC ids untouched: comments are anchored to them.

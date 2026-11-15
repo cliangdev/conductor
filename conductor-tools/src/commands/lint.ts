@@ -301,6 +301,14 @@ export function validatePrdHtml(content: string): PrdResult {
     }
   }
 
+  // Contents: the template's outline is built from a <nav data-prd-toc>; without it a long PRD has no
+  // navigation in Conductor's review panel. A warning, not an error: older PRDs predate it.
+  if (!root.querySelector('nav[data-prd-toc]')) {
+    warnings.push(
+      `${F}: no contents nav (<nav class="toc" data-prd-toc>); add the outline with the contents upgrade in /conductor:prd`
+    )
+  }
+
   // Self-containment: Conductor renders the page with connect-src 'none'.
   for (const script of root.querySelectorAll('script')) {
     const src = script.getAttribute('src')

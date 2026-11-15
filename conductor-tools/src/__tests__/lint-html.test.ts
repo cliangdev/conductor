@@ -72,6 +72,7 @@ function prd(
     meta?: string
     extraHead?: string
     drop?: string
+    toc?: boolean
   } = {}
 ): string {
   const meta =
@@ -81,7 +82,8 @@ function prd(
 <meta name="conductor:issue-id" content="abc-123">`
   const order = (opts.order ?? SECTION_ORDER).filter(n => n !== opts.drop)
   const sections = order.map(n => section(n, opts.bodies?.[n] ?? BODIES[n])).join('\n')
-  return `<!doctype html><html><head><meta charset="utf-8">${meta}<title>T</title><style>:root{--a:1}</style>${opts.extraHead ?? ''}</head><body>${sections}</body></html>`
+  const toc = opts.toc === false ? '' : '<nav class="toc" data-prd-toc aria-label="Contents"><a href="#problem">Problem</a></nav>'
+  return `<!doctype html><html><head><meta charset="utf-8">${meta}<title>T</title><style>:root{--a:1}</style>${opts.extraHead ?? ''}</head><body>${toc}<main>${sections}</main></body></html>`
 }
 
 async function lib() {
@@ -190,6 +192,18 @@ describe('validatePrdHtml', () => {
     const { validatePrdHtml } = await lib()
     const r = validatePrdHtml(prd({ meta: '<meta name="conductor:schema-version" content="2">' }))
     expect(r.errors[0]).toContain('conductor:doc-type')
+  })
+
+  it('accepts a PRD with its contents nav without warnings', async () => {
+    const { validatePrdHtml } = await lib()
+    expect(validatePrdHtml(prd()).warnings).toEqual([])
+  })
+
+  it('warns, without failing, when the PRD has no contents nav', async () => {
+    const { validatePrdHtml } = await lib()
+    const r = validatePrdHtml(prd({ toc: false }))
+    expect(r.errors).toEqual([])
+    expect(r.warnings).toEqual([expect.stringContaining('data-prd-toc')])
   })
 
   it('warns on network use, window.claude, window.open and non-allowlisted scripts', async () => {

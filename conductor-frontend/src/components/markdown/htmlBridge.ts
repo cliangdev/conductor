@@ -86,7 +86,8 @@ export function findQuote(
 
 /** Runs inside the frame. Receives the two quote helpers as arguments so it closes over nothing. */
 function bridgeMain(buildQuote: any, findQuote: any): void {
-  const SKIP = 'script,style,noscript,template'
+  // The PRD contents outline repeats heading text; keep it out of quote matching and selection.
+  const SKIP = 'script,style,noscript,template,[data-prd-toc]'
   const BLOCKS =
     'address,article,aside,blockquote,dd,div,dl,dt,figcaption,figure,footer,form,h1,h2,h3,h4,h5,h6,' +
     'header,hr,li,main,nav,ol,p,pre,section,table,tbody,td,th,thead,tr,ul'
