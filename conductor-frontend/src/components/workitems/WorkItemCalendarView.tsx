@@ -18,15 +18,15 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { statusHueClasses } from '@/components/ui/status-badge'
 import { pluralizeNoun, statusHue, statusMeta, workItemDetailPath } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
-import { WorkItemCalendarTray } from './WorkItemCalendarTray'
-import { ExternalLinkCell } from './ExternalLinkCell'
+import { WorkItemCalendarTray, hasUnscheduledItems } from './WorkItemCalendarTray'
+import { CalendarDestinationMarks, type CalendarDestinationFields } from './CalendarDestinationMarks'
 import type { WorkItemExternalLink } from './listTypes'
 
 /**
  * The slice of a Work Item the calendar needs. Structurally satisfied by the list surface's
  * `IssueWithReviewers`, so callers pass their existing rows straight through.
  */
-export interface CalendarWorkItem {
+export interface CalendarWorkItem extends CalendarDestinationFields {
   id: string
   title: string
   status: string
@@ -81,6 +81,17 @@ function resolveZone(timeZone?: string | null): string {
   } catch {
     return VIEWER_ZONE
   }
+}
+
+/** Just the clock time (`7:00 PM`) in the zone the item was scheduled in. */
+function formatTimeInZone(iso: string, timeZone?: string | null): string | null {
+  const instant = new Date(iso)
+  if (Number.isNaN(instant.getTime())) return null
+  return new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: resolveZone(timeZone),
+  }).format(instant)
 }
 
 function formatInZone(instant: Date, timeZone: string): string {
@@ -180,6 +191,9 @@ export function WorkItemCalendarView({
   const lowerPlural = plural.toLowerCase()
   const todayKey = localDayKey(new Date())
   const anchorMonth = anchor.getMonth()
+  // With nothing waiting on a date the rail shrinks to a one-line note under the grid, so the grid
+  // keeps the width a populated rail would take.
+  const railEmpty = !hasUnscheduledItems(issues, workflowView)
 
   function goToMonth(next: Date) {
     setAnchor(next)
@@ -191,7 +205,7 @@ export function WorkItemCalendarView({
   }
 
   return (
-    <div className="flex items-start gap-4">
+    <div className={railEmpty ? 'flex flex-col gap-2' : 'flex items-start gap-4'}>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-3">
           <h2 data-testid="calendar-month-label" className="text-sm font-semibold text-foreground">
@@ -287,11 +301,30 @@ export function WorkItemCalendarView({
                         const when = issue.scheduledFor
                           ? scheduleTooltip(issue.scheduledFor, issue.scheduleTimezone)
                           : null
+                        const time = issue.scheduledFor
+                          ? formatTimeInZone(issue.scheduledFor, issue.scheduleTimezone)
+                          : null
                         return (
-                          // The outward link sits beside the chip, not inside it. An <a> may not contain
-                          // another <a>: nested, it renders under React but the HTML parser hoists it out
-                          // of the server-rendered markup, and hydration then disagrees with the DOM.
-                          <div key={issue.id} className="flex min-w-0 items-center gap-1">
+                          // A card, not a chip: the outward links sit beside the main link, never inside
+                          // it. An <a> may not contain another <a>: nested, it renders under React but the
+                          // HTML parser hoists it out of the server-rendered markup, and hydration then
+                          // disagrees with the DOM. The main link stretches over the whole card with an
+                          // overlay; the marks sit above it (z-10) on the top line.
+                          <div
+                            key={issue.id}
+                            className="relative flex min-w-0 flex-col gap-1 rounded-md border border-border bg-surface-raised px-1.5 py-[5px] transition-colors hover:border-border-strong focus-within:ring-2 focus-within:ring-ring"
+                          >
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              <span
+                                data-testid={`calendar-dot-${issue.id}`}
+                                className={`h-1.5 w-1.5 shrink-0 rounded-full ${hue.dot}`}
+                              />
+                              {time && (
+                                <span className="text-[11px] tabular-nums leading-none text-foreground-subtle">{time}</span>
+                              )}
+                              <span className="ml-auto" />
+                              <CalendarDestinationMarks item={issue} />
+                            </div>
                             <Link prefetch={false}
                               data-testid={`calendar-chip-${issue.id}`}
                               href={workItemDetailPath(projectId, area, noun, issue.displayId ?? '')}
@@ -301,12 +334,10 @@ export function WorkItemCalendarView({
                               ]
                                 .filter(Boolean)
                                 .join(' · ')}
-                              className={`flex min-w-0 flex-1 items-center gap-1 rounded-full border px-1.5 py-0.5 text-xs transition-colors hover:border-border-strong ${hue.bg} ${hue.text} ${hue.border}`}
+                              className="line-clamp-2 break-words text-xs font-medium leading-snug text-foreground outline-none after:absolute after:inset-0 after:content-['']"
                             >
-                              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${hue.dot}`} />
-                              <span className="truncate">{issue.title}</span>
+                              {issue.title}
                             </Link>
-                            <ExternalLinkCell links={issue.externalLinks} />
                           </div>
                         )
                       })}

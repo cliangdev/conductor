@@ -125,6 +125,9 @@ describe('tray presentation', () => {
 
     expect(within(tray()).queryByTestId('tray-item-1')).not.toBeInTheDocument()
     expect(within(tray()).getByTestId('tray-empty')).toHaveTextContent(/stories/i)
+    // Slim: a one-line note, not the 240px rail.
+    expect(tray()).not.toHaveClass('w-60')
+    expect(within(tray()).queryByTestId('tray-count')).not.toBeInTheDocument()
   })
 
   it('links a tray row to the Work Item detail route', () => {

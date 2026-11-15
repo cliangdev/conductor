@@ -14,7 +14,6 @@
 import { useMemo } from 'react'
 import Link from 'next/link'
 import { CalendarCheck } from 'lucide-react'
-import { EmptyState } from '@/components/ui/empty-state'
 import { statusHueClasses } from '@/components/ui/status-badge'
 import { pluralizeNoun, statusHue, statusMeta, workItemDetailPath } from '@/lib/workflows'
 import type { WorkflowView } from '@/types/workItem'
@@ -43,6 +42,11 @@ function selectUnscheduled(
   )
 }
 
+/** True when the tray has something to list — the view uses it to decide how much room the rail gets. */
+export function hasUnscheduledItems(issues: CalendarWorkItem[], workflowView: WorkflowView | undefined): boolean {
+  return selectUnscheduled(issues, workflowView).length > 0
+}
+
 /**
  * The rail beside the month grid, listing every live Work Item the grid cannot place. Takes the same
  * unfiltered `issues` the grid takes and selects its own rows, so neither surface can drift from the
@@ -65,6 +69,18 @@ export function WorkItemCalendarTray({
 
   const plural = pluralizeNoun(noun)
 
+  if (unscheduled.length === 0) {
+    // Nothing waiting: a one-line note instead of a 240px rail, so the grid keeps the width.
+    return (
+      <aside data-testid="work-item-calendar-tray">
+        <p data-testid="tray-empty" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <CalendarCheck className="h-3.5 w-3.5" aria-hidden="true" />
+          No unscheduled {plural.toLowerCase()} — every {noun.toLowerCase()} has a date
+        </p>
+      </aside>
+    )
+  }
+
   return (
     <aside data-testid="work-item-calendar-tray" className="w-60 shrink-0">
       <div className="flex items-center gap-2 mb-3 h-7">
@@ -82,17 +98,7 @@ export function WorkItemCalendarTray({
       </div>
 
       <div className="rounded-lg border border-border bg-card">
-        {unscheduled.length === 0 ? (
-          <div data-testid="tray-empty">
-            <EmptyState
-              icon={CalendarCheck}
-              title={`Every ${noun.toLowerCase()} has a date`}
-              description={`${plural} without a scheduled date wait here.`}
-              className="px-3 py-8"
-            />
-          </div>
-        ) : (
-          <div className="max-h-[36rem] overflow-y-auto p-1 flex flex-col gap-0.5">
+        <div className="max-h-[36rem] overflow-y-auto p-1 flex flex-col gap-0.5">
             {unscheduled.map((issue) => {
               const meta = statusMeta(workflowView, issue.status)
               const hue = statusHueClasses(statusHue(issue.status, meta.category))
@@ -118,8 +124,7 @@ export function WorkItemCalendarTray({
                 </Link>
               )
             })}
-          </div>
-        )}
+        </div>
       </div>
     </aside>
   )
