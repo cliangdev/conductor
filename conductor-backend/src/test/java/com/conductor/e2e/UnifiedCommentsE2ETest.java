@@ -327,10 +327,11 @@ class UnifiedCommentsE2ETest extends AbstractE2ETest {
         // The unified resource sees what the v1 endpoints wrote.
         assertThat(list("?projectDocId=" + projectDocId, admin)).extracting(c -> c.get("kind")).containsExactly("LINE", "LINE");
 
-        // Saving the doc still flags unresolved line comments stale (T5 replaces this).
+        // Saving the doc re-anchors comments rather than flagging them all stale: the agent's comment has no line
+        // text to compare and line 1 still exists, and the resolved comment is left alone.
         exchange("/api/v1/projects/" + projectId + "/docs/" + projectDocId, HttpMethod.PUT, Map.of("content", "changed"), admin);
         List<Map<String, Object>> after = rest.exchange(url(v1), HttpMethod.GET, new HttpEntity<>(admin), List.class).getBody();
-        assertThat(after).filteredOn(c -> c.get("id").equals(whole.get("id"))).allSatisfy(c -> assertThat(c).containsEntry("lineStale", true));
+        assertThat(after).allSatisfy(c -> assertThat(c).containsEntry("lineStale", false));
 
         assertThat(delete(v1 + "/" + whole.get("id"), agent)).isEqualTo(HttpStatus.NO_CONTENT);
         assertThat(delete(v1 + "/" + line.get("id"), agent)).isEqualTo(HttpStatus.FORBIDDEN);

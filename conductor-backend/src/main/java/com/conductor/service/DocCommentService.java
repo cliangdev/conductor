@@ -3,7 +3,6 @@ package com.conductor.service;
 import com.conductor.service.view.CommentReplyView;
 import com.conductor.service.view.CommentWithRepliesView;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -53,11 +52,5 @@ public class DocCommentService {
     public CommentWithRepliesView resolveThread(String projectId, String docId, String commentId,
                                                 ProjectActor actor) {
         return commentService.resolveProjectDocThread(projectId, docId, commentId, actor);
-    }
-
-    /** A saved doc may have moved its lines: every unresolved comment is flagged stale. */
-    @Transactional
-    public void markCommentsStale(String docId) {
-        commentService.markProjectDocCommentsStale(docId);
     }
 }

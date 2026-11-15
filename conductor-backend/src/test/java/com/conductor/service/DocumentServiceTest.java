@@ -61,9 +61,10 @@ class DocumentServiceTest {
 
     @BeforeEach
     void setUp() {
-        documentService = new DocumentService(documentRepository, workItemRepository, gcpStorageService, commentRepository, projectSecurityService, 15);
+        documentService = new DocumentService(documentRepository, workItemRepository, gcpStorageService, commentRepository, projectSecurityService,
+                new com.conductor.service.anchoring.CommentAnchorService(commentRepository), 15);
 
-        org.mockito.Mockito.lenient().when(commentRepository.findAllByDocumentId(anyString())).thenReturn(List.of());
+        org.mockito.Mockito.lenient().when(commentRepository.findAllByDocumentIdAndResolvedAtIsNull(anyString())).thenReturn(List.of());
 
         User user = new User();
         user.setId("user-1");
@@ -193,7 +194,7 @@ class DocumentServiceTest {
         staleComment.setLineNumber(5);
         staleComment.setLineStale(false);
 
-        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(staleComment));
+        when(commentRepository.findAllByDocumentIdAndResolvedAtIsNull("doc-1")).thenReturn(List.of(staleComment));
 
         documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "one line only", null);
 
@@ -463,7 +464,7 @@ class DocumentServiceTest {
     }
 
     @Test
-    void upsertByFilenameIgnoresAnchoredCommentsWhenMarkingStale() {
+    void upsertByFilenameJudgesAnchoredCommentsByTheirQuoteNotALine() {
         // An HTML page can be far shorter than the old line numbers; anchored comments have no line at all.
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
@@ -475,35 +476,34 @@ class DocumentServiceTest {
         Comment line = new Comment();
         line.setLineNumber(5);
 
-        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(anchored, line));
+        when(commentRepository.findAllByDocumentIdAndResolvedAtIsNull("doc-1")).thenReturn(List.of(anchored, line));
 
         documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "one line only", null);
 
+        // The anchored comment is judged by its quote (gone, so orphaned), never by a line number.
         assertThat(anchored.isLineStale()).isFalse();
+        assertThat(anchored.getAnchorStatus()).isEqualTo("ORPHANED");
         assertThat(line.isLineStale()).isTrue();
-        ArgumentCaptor<List<Comment>> saved = ArgumentCaptor.forClass(List.class);
-        verify(commentRepository).saveAll(saved.capture());
-        assertThat(saved.getValue()).containsExactly(line);
     }
 
     @Test
     void upsertSwitchingMarkdownToHtmlLeavesExistingLineCommentsAlone() {
-        // markdown -> HTML: the comment keeps its lineNumber and gains no anchor; line 1 still exists so it is
-        // not marked stale either. (The HTML viewer lists it as unplaced.)
+        // markdown -> HTML: the comment keeps its lineNumber and gains no anchor; its line text ("# Original
+        // Content") is not in the new content, so it is flagged stale. (The HTML viewer lists it as unplaced.)
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
         Comment line = new Comment();
         line.setLineNumber(1);
         line.setQuotedText("# Original Content");
-        when(commentRepository.findAllByDocumentId("doc-1")).thenReturn(List.of(line));
+        when(commentRepository.findAllByDocumentIdAndResolvedAtIsNull("doc-1")).thenReturn(List.of(line));
 
         documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "<h1>Original</h1>\n<p>x</p>", "text/html");
 
         assertThat(testDocument.getContentType()).isEqualTo("text/html");
         assertThat(line.getLineNumber()).isEqualTo(1);
         assertThat(line.getAnchorExact()).isNull();
-        assertThat(line.isLineStale()).isFalse();
+        assertThat(line.isLineStale()).isTrue();
     }
 
     @Test

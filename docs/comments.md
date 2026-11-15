@@ -9,7 +9,7 @@ Table `comments` (with `comment_replies`). A comment has exactly one **target**:
 | Target | Columns | Notes |
 |---|---|---|
 | Work Item document | `work_item_id` + `document_id` | `documentHash` is stamped; `outdated` is computed at read |
-| Project doc | `project_doc_id` | `outdated` is always false for now |
+| Project doc | `project_doc_id` | `outdated` is always false for now; comments carry no `documentHash` until a save re-stamps them |
 
 A database CHECK enforces "exactly one target". Deleting the document or project doc deletes its comments.
 
@@ -27,7 +27,7 @@ Sending both `anchor` and `lineNumber` is a 400. An HTML document rejects `lineN
 
 ### State
 
-A thread is **open** or **resolved**. Resolving stores `resolved_at` and who resolved it (a user, or `resolved_by_label` for an agent). Anyone with access may resolve or reopen; reopening clears all three. `line_stale` is the old "line may have moved" flag: saving a project doc still marks every unresolved comment stale.
+A thread is **open** or **resolved**. Resolving stores `resolved_at` and who resolved it (a user, or `resolved_by_label` for an agent). Anyone with access may resolve or reopen; reopening clears all three. `line_stale` means a line comment's text could not be found again after a save; see [Re-anchoring on save](#re-anchoring-on-save).
 
 ### Authorship
 
@@ -38,6 +38,20 @@ Permissions:
 - Create, reply, resolve, reopen: any project member, and any machine credential for the project (project API key, run token).
 - Edit text (`content`): the author only. An agent may edit only comments an agent wrote. Sets `editedAt`.
 - Delete a comment or reply: its author, or a project editor/admin. A machine actor may delete only machine-written rows.
+
+## Re-anchoring on save
+
+Every save of a Work Item document (`DocumentService.upsertDocumentByFilename`) or a project doc (`ProjectDocService.updateDoc`, which version restore also goes through) re-finds the anchors of that target's **unresolved** comments (`CommentAnchorService.reanchor`). Resolved comments are history and are left alone. The checkbox toggle (`setTaskState`) skips it: no line moves.
+
+| Comment | Found again | Not found |
+|---|---|---|
+| Quote (`anchor.exact`) | `anchor.prefix`/`suffix` refreshed from the new text, `documentHash` set to the new hash, `anchorStatus = ANCHORED` | `anchorStatus = ORPHANED`; hash and anchor left as written, so `outdated` stays true. Clients show it under "Whole document" with its original quote |
+| Line | Same line still has the stored `quotedText` (trimmed): kept. Else the text is on exactly one other line: `lineNumber` moves there. Hash re-stamped, `lineStale` cleared | `lineStale = true` (text gone, edited, or on several lines) |
+| Whole document | Hash re-stamped | n/a |
+
+So `outdated` (hash mismatch) is now **false for any comment that carried over**; it stays true only for orphaned quotes and for comments resolved before the save. `anchorStatus` is null until the document is first saved after V206. A quote that returns in a later save is `ANCHORED` again.
+
+The server finds quotes the way the browser does. `TextProjection` flattens the document to its visible text (HTML parsed with jsoup, markdown rendered with commonmark first; whitespace collapsed, one space at block boundaries and `<br>`, script/style/noscript/template/`[hidden]` dropped) and `QuoteMatcher` is a port of `findQuote` in `htmlBridge.ts` (exact match, best prefix/suffix agreement, 32-character context). The two stay in step through `testdata/text-quote-cases.json`, run by `TextQuoteCasesTest` (JUnit) and `src/lib/textQuote.cases.test.ts` (vitest, real bridge and `MarkdownRenderer`). Known gap: the server cannot see CSS, so text hidden by a stylesheet (not the `hidden` attribute) is still projected.
 
 ## API
 
@@ -53,7 +67,7 @@ Permissions:
 | `PATCH /{commentId}/replies/{replyId} {content}` | Edit a reply (author only). |
 | `DELETE /{commentId}/replies/{replyId}` | Delete a reply. |
 
-A thread response has `id`, `kind`, `status`, the target ids, `documentName`, author fields, `content`, `lineNumber` (LINE only), `quotedText`, `anchor` (QUOTE only), `documentHash`, `lineStale`, `outdated`, `resolvedAt`, `resolvedByName`, `editedAt`, `createdAt`, `updatedAt` and `replies[]`.
+A thread response has `id`, `kind`, `status`, the target ids, `documentName`, author fields, `content`, `lineNumber` (LINE only), `quotedText`, `anchor` (QUOTE only), `documentHash`, `lineStale`, `anchorStatus` (`ANCHORED` | `ORPHANED` | null), `outdated`, `resolvedAt`, `resolvedByName`, `editedAt`, `createdAt`, `updatedAt` and `replies[]`.
 
 ### Older routes (shims)
 

@@ -465,16 +465,6 @@ public class CommentService {
         return viewOf(comment);
     }
 
-    /** Flags every unresolved line comment on a project doc stale (the doc was saved). */
-    @Transactional
-    public void markProjectDocCommentsStale(String docId) {
-        List<Comment> unresolved = commentRepository.findAllByProjectDocIdAndResolvedAtIsNull(docId);
-        for (Comment comment : unresolved) {
-            comment.setLineStale(true);
-        }
-        commentRepository.saveAll(unresolved);
-    }
-
     private Comment findProjectDocComment(String projectId, String docId, String commentId, ProjectActor actor) {
         Comment comment = findComment(projectId, commentId, actor);
         if (comment.getProjectDoc() == null || !comment.getProjectDoc().getId().equals(docId)) {
@@ -597,7 +587,8 @@ public class CommentService {
                 comment.getAuthorAgentId() != null ? agents.get(comment.getAuthorAgentId()) : null,
                 comment.getEditedAt(),
                 resolved ? resolverName(comment) : null,
-                comment.getUpdatedAt());
+                comment.getUpdatedAt(),
+                comment.getAnchorStatus());
     }
 
     private CommentReplyView toReplyView(CommentReply reply, Map<String, CommentAuthorAgentView> agents) {

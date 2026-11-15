@@ -11526,11 +11526,24 @@ components:
           nullable: true
         lineStale:
           type: boolean
+          description: |
+            Line comments only: the line's text could not be found again after the last save (it was
+            deleted, edited, or now appears on several lines).
+        anchorStatus:
+          type: string
+          enum: [ANCHORED, ORPHANED]
+          nullable: true
+          description: |
+            Set when the document is saved. ANCHORED: the comment's quote (or line) was found again in the
+            latest content. ORPHANED: a quote comment whose quote is no longer in the document; show it under
+            the whole document with its original `anchor.exact`. Null until the document is next saved.
         outdated:
           type: boolean
           description: |
             Work Item documents: the document's current `contentHash` differs from the one the comment was
-            stamped with (false when either is unknown). Always false on project docs for now.
+            stamped with (false when either is unknown). Saving re-stamps the hash of every unresolved comment
+            that carried over, so this is false for those; it stays true only for an ORPHANED quote and for
+            a stale line, and for resolved comments. Always false on project docs for now.
         resolvedAt:
           type: string
           format: date-time

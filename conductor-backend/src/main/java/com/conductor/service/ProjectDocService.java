@@ -10,6 +10,7 @@ import com.conductor.repository.DocVersionRepository;
 import com.conductor.repository.ProjectDocRepository;
 import com.conductor.repository.ProjectRepository;
 import jakarta.persistence.EntityNotFoundException;
+import com.conductor.service.anchoring.CommentAnchorService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -38,7 +39,7 @@ public class ProjectDocService {
 
     @Lazy
     @Autowired
-    private DocCommentService docCommentService;
+    private CommentAnchorService commentAnchorService;
 
     public ProjectDocService(
             ProjectDocRepository projectDocRepository,
@@ -189,7 +190,9 @@ public class ProjectDocService {
         version.setAuthorLabel(actor.label());
         docVersionRepository.save(version);
 
-        docCommentService.markCommentsStale(docId);
+        // Open comments follow their text to its new place, or are orphaned / flagged stale (CommentAnchorService).
+        commentAnchorService.reanchor(
+                new CommentTarget.ProjectDoc(docId), stored, DocumentContent.sha256Hex(stored), "text/markdown");
 
         return doc;
     }
@@ -199,7 +202,7 @@ public class ProjectDocService {
      * editor.
      *
      * <p>Deliberately does <em>not</em> do the two things {@link #updateDoc} does: no {@link DocVersion}
-     * is minted (otherwise every click would add a history entry) and comments are not marked stale.
+     * is minted (otherwise every click would add a history entry) and comments are not re-anchored.
      * Marking them stale would be wrong anyway — {@code [ ]} and {@code [x]} are the same width, so no
      * line moves and every existing line anchor still points where it did.
      *
