@@ -197,14 +197,23 @@ describe('bridgeSource', () => {
       ])
     })
 
-    it('leaves the PRD contents outline out of quote matching', async () => {
+    it('leaves data-conductor-skip chrome out of quote matching, selection and highlight clicks', async () => {
       document.body.innerHTML = `
-        <nav data-prd-toc><a href="#goals">Goals</a><span>Ship the outline</span></nav>
+        <nav data-conductor-skip><a href="#goals">Goals</a><span>Outline only</span><button>Contents</button></nav>
         <section id="goals"><h2>Goals</h2><p>Ship the outline today.</p></section>`
-      sendFromParent({ type: 'anchors', anchors: [{ id: 'g', exact: 'Ship the outline', prefix: '', suffix: ' today.' }] })
+      sendFromParent({
+        type: 'anchors',
+        anchors: [
+          { id: 'nav', exact: 'Outline only' },
+          { id: 'doc', exact: 'Ship the outline' },
+        ],
+      })
       const m = await waitForPost('anchored')
-      const [r] = m.results as Array<{ id: string; found: boolean }>
-      expect(r.found).toBe(true)
+      const results = m.results as Array<{ id: string; found: boolean }>
+      expect(results.map((r) => [r.id, r.found])).toEqual([
+        ['nav', false],
+        ['doc', true],
+      ])
 
       // Selecting inside the outline offers no comment.
       posted.length = 0
@@ -216,6 +225,13 @@ describe('bridgeSource', () => {
       document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
       await new Promise((resolve) => setTimeout(resolve, 20))
       expect(posted.find((p) => p.type === 'selection')).toBeUndefined()
+
+      // A button in the outline sits over the highlight (jsdom gives every range the same box): no open.
+      window.getSelection()!.removeAllRanges()
+      posted.length = 0
+      document.querySelector('nav button')!.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 5, clientY: 5 }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(posted.find((p) => p.type === 'open')).toBeUndefined()
     })
 
     it('puts a space between adjacent blocks and at <br>, but not between inline elements', async () => {

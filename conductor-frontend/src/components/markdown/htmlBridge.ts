@@ -86,8 +86,9 @@ export function findQuote(
 
 /** Runs inside the frame. Receives the two quote helpers as arguments so it closes over nothing. */
 function bridgeMain(buildQuote: any, findQuote: any): void {
-  // The PRD contents outline repeats heading text; keep it out of quote matching and selection.
-  const SKIP = 'script,style,noscript,template,[data-prd-toc]'
+  // `data-conductor-skip` marks page chrome (a PRD's contents outline, a sticky header) that repeats
+  // or summarizes the document: it is left out of quote matching, selection and highlight clicks.
+  const SKIP = 'script,style,noscript,template,[data-conductor-skip]'
   const BLOCKS =
     'address,article,aside,blockquote,dd,div,dl,dt,figcaption,figure,footer,form,h1,h2,h3,h4,h5,h6,' +
     'header,hr,li,main,nav,ol,p,pre,section,table,tbody,td,th,thead,tr,ul'
@@ -413,6 +414,8 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
       handleLink(e, a)
       return
     }
+    // A click on skipped chrome (a sticky bar can sit over a highlight) never opens a comment.
+    if (t && t.closest && t.closest(SKIP)) return
     const sel = w.getSelection()
     if (sel && !sel.isCollapsed) return
     const id = hitTest(e.clientX, e.clientY)
@@ -435,7 +438,13 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
 
   // Content that scripts render after load becomes anchorable once the DOM settles.
   let mutationTimer: any = null
-  new MutationObserver(function () {
+  new MutationObserver(function (records: MutationRecord[]) {
+    // Skipped chrome (a contents outline rewriting its breadcrumb on scroll) holds no anchorable text.
+    const relevant = records.some(function (r) {
+      const el = r.target.nodeType === 1 ? (r.target as Element) : r.target.parentElement
+      return !el || !el.closest(SKIP)
+    })
+    if (!relevant) return
     if (mutationTimer) clearTimeout(mutationTimer)
     mutationTimer = setTimeout(function () {
       if (anchors.length > 0) resolveAll(false)
