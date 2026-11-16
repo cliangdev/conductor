@@ -32,6 +32,8 @@ Defined as CSS variables in `globals.css`, mapped in `tailwind.config.ts`. Value
 | `accent` | `#0e8276` | `#3ab5a8` | Primary actions, active nav, focus rings |
 | `accent-hover` | `#0b6b61` | `#55c8bb` | Hover state |
 | `accent-soft` | `#e4f2f0` | `rgba(58,181,168,.13)` | Selected rows, active nav bg |
+| `comment-highlight` (`--comment-highlight`) | `hsl(45 90% 55% / .28)` | `hsl(40 68% 54% / .22)` | Words a comment thread is anchored to (`bg-comment-highlight`); HTML documents get it through the bridge's `theme` message |
+| `comment-highlight-active` (`--comment-highlight-active`) | `hsl(40 90% 50% / .5)` | `hsl(40 68% 54% / .45)` | The words of the focused thread |
 
 ### Status ramp
 

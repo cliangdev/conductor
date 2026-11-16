@@ -62,6 +62,8 @@ tags:
     description: Task breakdown stored on a Work Item
   - name: work-item-comments
     description: Comments and replies on a Work Item's documents
+  - name: comments
+    description: Comment threads on Work Item documents and project docs, by people and agents
   - name: work-item-reviews
     description: Review verdicts on a Work Item
   - name: work-item-assets
@@ -920,6 +922,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Work Item not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: baseContentHash does not match the current document — it changed since it was read
           content:
             application/json:
               schema:
@@ -2113,6 +2121,562 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments:
+    get:
+      tags:
+        - comments
+      summary: List comment threads on a document
+      description: |
+        Threads on one document, oldest first, each with its replies. The document is a Work Item document
+        (`workItemId` + `documentId`) or a project doc (`projectDocId`); give exactly one of the two. Passing
+        only `workItemId` lists every document of that Work Item. See docs/comments.md.
+      operationId: listComments
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: workItemId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: documentId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: projectDocId
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          description: Which threads to return. Default `all`.
+          schema:
+            type: string
+            enum: [open, resolved, all]
+            default: all
+      responses:
+        "200":
+          description: Threads with nested replies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CommentThreadResponse"
+        "400":
+          description: Neither or both targets given, or an unknown status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item, document or project doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    post:
+      tags:
+        - comments
+      summary: Comment on a document
+      description: |
+        Creates a thread. With neither `anchor` nor `lineNumber` it is a whole-document comment (kind
+        DOCUMENT); with `anchor` a text-quote comment (QUOTE, any document); with `lineNumber` a line comment
+        (LINE, not on HTML documents). `anchor` and `lineNumber` together are rejected. Callable by people and
+        by agents (run tokens, API keys).
+      operationId: createComment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommentThreadRequest"
+      responses:
+        "201":
+          description: Thread created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentThreadResponse"
+        "400":
+          description: Invalid target, anchor or line
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item, document or project doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The suggestion's quote is not exactly one contiguous place in the source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments/suggestion-check:
+    post:
+      tags:
+        - comments
+      summary: Can this selection be a suggested edit?
+      description: |
+        Tells a composer whether the "Suggest edit" toggle should be enabled for a selection: true only when the
+        selected text is one contiguous piece of the document's source in exactly one place (not repeated,
+        not split by formatting or an HTML element). Never writes. Same rules as creating a comment with a
+        `suggestion`. See docs/comments.md.
+      operationId: checkCommentSuggestion
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommentSuggestionCheckRequest"
+      responses:
+        "200":
+          description: Whether the selection can carry a suggestion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentSuggestionCheckResponse"
+        "400":
+          description: Invalid target or anchor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item, document or project doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments/{commentId}/suggestion-decision:
+    post:
+      tags:
+        - comments
+      summary: Accept or reject a suggested edit
+      description: |
+        People only (403 for agents and run tokens). ACCEPT re-finds the quote in the document as it is now and
+        replaces it, saving through the normal document save (a project doc gets a new version, other comments
+        are re-anchored), then resolves the thread; 409 if the text is no longer found in exactly one place.
+        REJECT leaves the document alone and resolves the thread. The comment must have a PENDING suggestion
+        (409 when already decided, 400 when it is not a suggestion). Returns the updated thread.
+      operationId: decideCommentSuggestion
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommentSuggestionDecisionRequest"
+      responses:
+        "200":
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentThreadResponse"
+        "400":
+          description: The comment is not a suggested edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not an Editor (accepting), or the caller is an agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Already decided, or the text changed since it was suggested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments/mentionables:
+    get:
+      tags:
+        - comments
+      summary: Who can be @mentioned in a comment
+      description: |
+        The project's members and its ACTIVE, addressable agents whose name contains `q` (blank = everyone),
+        people first, then agents, alphabetical, at most 20. Feeds the composer's `@` picker. Insert the pick
+        into the comment body as a mention token: `@[Name](user:<id>)` or `@[Name](agent:<id>)`. See
+        docs/comments.md.
+      operationId: listMentionables
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matching members and agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Mentionable"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments/{commentId}:
+    patch:
+      tags:
+        - comments
+      summary: Edit a comment, or resolve or reopen its thread
+      description: |
+        `content` edits the text and is for the comment's author only (an agent: only comments an agent wrote);
+        it stamps `editedAt`. `status` RESOLVED or OPEN is open to anyone with access; OPEN reopens the thread
+        and clears who resolved it. Send either or both.
+      operationId: updateComment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCommentRequest"
+      responses:
+        "200":
+          description: The updated thread
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentThreadResponse"
+        "400":
+          description: Nothing to update, or blank content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Editing someone else's comment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - comments
+      summary: Delete a comment thread (author or project admin; an agent only its own)
+      operationId: deleteComment
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Comment deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not the author or an admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments/{commentId}/replies:
+    post:
+      tags:
+        - comments
+      summary: Reply to a comment thread
+      operationId: createCommentReply
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddCommentReplyRequest"
+      responses:
+        "201":
+          description: Reply created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentThreadReplyResponse"
+        "400":
+          description: Blank content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments/{commentId}/replies/{replyId}:
+    patch:
+      tags:
+        - comments
+      summary: Edit a reply (its author only)
+      operationId: updateCommentReply
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: replyId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateCommentReplyRequest"
+      responses:
+        "200":
+          description: The updated reply
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentThreadReplyResponse"
+        "400":
+          description: Blank content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not the author
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment or reply not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      tags:
+        - comments
+      summary: Delete a reply (author or project admin; an agent only its own)
+      operationId: deleteCommentReply
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: replyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Reply deleted
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not the author or an admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment or reply not found
           content:
             application/json:
               schema:
@@ -10756,6 +11320,11 @@ components:
         contentType:
           type: string
           default: text/markdown
+        baseContentHash:
+          type: string
+          description: |
+            Optimistic lock. The `contentHash` the caller last read. When supplied and the document already
+            exists with a different hash, the write is refused with 409.
 
     TextQuoteAnchor:
       type: object
@@ -10937,6 +11506,389 @@ components:
         content:
           type: string
           nullable: true
+
+    CommentTargetRequest:
+      type: object
+      description: |
+        The document a comment is on: a Work Item document (`workItemId` and `documentId`) or a project doc
+        (`projectDocId`). Exactly one of the two forms.
+      properties:
+        workItemId:
+          type: string
+        documentId:
+          type: string
+        projectDocId:
+          type: string
+
+    CreateCommentThreadRequest:
+      type: object
+      required:
+        - target
+        - content
+      properties:
+        target:
+          $ref: "#/components/schemas/CommentTargetRequest"
+        content:
+          type: string
+        anchor:
+          $ref: "#/components/schemas/TextQuoteAnchor"
+        lineNumber:
+          type: integer
+          minimum: 1
+          description: A markdown source line. Rejected on HTML documents and together with `anchor`.
+        documentHash:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+          description: |
+            The `contentHash` of the document version the commenter was looking at (Work Item documents).
+            Omit it to stamp the document's current hash.
+        suggestion:
+          allOf:
+            - $ref: "#/components/schemas/CommentSuggestionRequest"
+          nullable: true
+          description: |
+            Makes this a suggested edit (status PENDING). Needs `anchor`; 400 without one. 422 when the quote
+            is not exactly one contiguous place in the source (see `suggestion-check`).
+
+    UpdateCommentRequest:
+      type: object
+      properties:
+        content:
+          type: string
+          description: New text. Author only.
+        status:
+          type: string
+          enum: [OPEN, RESOLVED]
+          description: RESOLVED resolves the thread; OPEN reopens it. Anyone with access.
+
+    UpdateCommentReplyRequest:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+
+    CommentSuggestionRequest:
+      type: object
+      required:
+        - text
+      description: Replacement text for the comment's quote. Only valid with `anchor` (kind QUOTE).
+      properties:
+        text:
+          type: string
+          description: The new text. May be empty (a deletion); must differ from the selected text.
+
+    CommentSuggestion:
+      type: object
+      required:
+        - text
+        - status
+      properties:
+        text:
+          type: string
+          description: The replacement text.
+        status:
+          type: string
+          enum: [PENDING, ACCEPTED, REJECTED]
+        decidedByName:
+          type: string
+          nullable: true
+        decidedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CommentSuggestionCheckRequest:
+      type: object
+      required:
+        - target
+        - anchor
+      properties:
+        target:
+          $ref: "#/components/schemas/CommentTargetRequest"
+        anchor:
+          $ref: "#/components/schemas/TextQuoteAnchor"
+
+    CommentSuggestionCheckResponse:
+      type: object
+      required:
+        - suggestable
+      properties:
+        suggestable:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+          description: Why not, in words for the reader; null when suggestable.
+
+    CommentSuggestionDecisionRequest:
+      type: object
+      required:
+        - decision
+      properties:
+        decision:
+          type: string
+          enum: [ACCEPT, REJECT]
+
+    CommentAuthorAvatar:
+      type: object
+      properties:
+        emoji:
+          type: string
+        color:
+          type: string
+
+    CommentAuthorAgent:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        avatar:
+          $ref: "#/components/schemas/CommentAuthorAvatar"
+
+    CommentMention:
+      type: object
+      description: |
+        Someone named in a comment or reply body by a validated mention token. `id` is a user id (USER) or an
+        agent id (AGENT).
+      required:
+        - kind
+        - id
+        - name
+      properties:
+        kind:
+          type: string
+          enum: [USER, AGENT]
+        id:
+          type: string
+        name:
+          type: string
+
+    CommentAgentRequest:
+      type: object
+      description: |
+        An `@agent` request on a thread and how it is going. Poll the thread while any is PENDING or RUNNING.
+        `error` is set when FAILED, in plain words, ready to show.
+      required:
+        - agentId
+        - agentName
+        - status
+        - createdAt
+      properties:
+        agentId:
+          type: string
+        agentName:
+          type: string
+        avatar:
+          $ref: "#/components/schemas/CommentAuthorAvatar"
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+        error:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    Mentionable:
+      type: object
+      required:
+        - kind
+        - id
+        - name
+      properties:
+        kind:
+          type: string
+          enum: [USER, AGENT]
+        id:
+          type: string
+        name:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+          description: A person's profile picture, when they have one.
+        avatar:
+          allOf:
+            - $ref: "#/components/schemas/CommentAuthorAvatar"
+          nullable: true
+          description: An agent's emoji and color.
+
+    CommentThreadReplyResponse:
+      type: object
+      required:
+        - id
+        - commentId
+        - authorKind
+        - content
+        - createdAt
+      properties:
+        id:
+          type: string
+        commentId:
+          type: string
+        authorId:
+          type: string
+          nullable: true
+          description: The author's user id; null when an agent wrote it.
+        authorKind:
+          type: string
+          enum: [USER, AGENT]
+        authorName:
+          type: string
+          nullable: true
+        authorAgent:
+          allOf:
+            - $ref: "#/components/schemas/CommentAuthorAgent"
+          nullable: true
+          description: The agent behind the reply, when known.
+        content:
+          type: string
+        mentions:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentMention"
+        editedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    CommentThreadResponse:
+      type: object
+      description: |
+        A comment thread: the first comment and its replies, on a Work Item document (`workItemId` +
+        `documentId`) or a project doc (`projectDocId`).
+      required:
+        - id
+        - kind
+        - status
+        - authorKind
+        - content
+        - lineStale
+        - outdated
+        - createdAt
+        - replies
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [QUOTE, LINE, DOCUMENT]
+          description: What it is anchored to (derived).
+        status:
+          type: string
+          enum: [OPEN, RESOLVED]
+        workItemId:
+          type: string
+          nullable: true
+        documentId:
+          type: string
+          nullable: true
+        projectDocId:
+          type: string
+          nullable: true
+        documentName:
+          type: string
+          nullable: true
+        authorId:
+          type: string
+          nullable: true
+          description: The author's user id; null when an agent wrote it.
+        authorKind:
+          type: string
+          enum: [USER, AGENT]
+        authorName:
+          type: string
+          nullable: true
+        authorAgent:
+          allOf:
+            - $ref: "#/components/schemas/CommentAuthorAgent"
+          nullable: true
+          description: The agent behind the comment, when known.
+        content:
+          type: string
+        lineNumber:
+          type: integer
+          nullable: true
+          description: Set for kind LINE only.
+        quotedText:
+          type: string
+          nullable: true
+        anchor:
+          allOf:
+            - $ref: "#/components/schemas/TextQuoteAnchor"
+          nullable: true
+          description: Text-quote anchor; set for kind QUOTE only.
+        documentHash:
+          type: string
+          nullable: true
+        lineStale:
+          type: boolean
+          description: |
+            Line comments only: the line's text could not be found again after the last save (it was
+            deleted, edited, or now appears on several lines).
+        anchorStatus:
+          type: string
+          enum: [ANCHORED, ORPHANED]
+          nullable: true
+          description: |
+            Set when the document is saved. ANCHORED: the comment's quote (or line) was found again in the
+            latest content. ORPHANED: a quote comment whose quote is no longer in the document; show it under
+            the whole document with its original `anchor.exact`. Null until the document is next saved.
+        outdated:
+          type: boolean
+          description: |
+            Work Item documents: the document's current `contentHash` differs from the one the comment was
+            stamped with (false when either is unknown). Saving re-stamps the hash of every unresolved comment
+            that carried over, so this is false for those; it stays true only for an ORPHANED quote and for
+            a stale line, and for resolved comments. Always false on project docs for now.
+        resolvedAt:
+          type: string
+          format: date-time
+          nullable: true
+        resolvedByName:
+          type: string
+          nullable: true
+        editedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+          nullable: true
+        suggestion:
+          allOf:
+            - $ref: "#/components/schemas/CommentSuggestion"
+          nullable: true
+          description: Set when the comment is a suggested edit; null otherwise.
+        mentions:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentMention"
+          description: People and agents named in `content` (the replies carry their own).
+        agentRequests:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentAgentRequest"
+          description: '`@agent` requests on this thread, oldest first, with their status.'
+        replies:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentThreadReplyResponse"
 
     SubmitReviewRequest:
       type: object

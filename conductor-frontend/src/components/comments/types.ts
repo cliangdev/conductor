@@ -1,9 +1,53 @@
+/** The agent behind a comment or reply, when the server knows which one. */
+export interface CommentAuthorAgent {
+  id: string
+  name: string
+  avatar?: { emoji?: string; color?: string } | null
+}
+
+export type CommentAuthorKind = 'USER' | 'AGENT'
+
+/** Someone named in a body by a validated mention token. `id` is a user id (USER) or an agent id (AGENT). */
+export interface CommentMention {
+  kind: 'USER' | 'AGENT'
+  id: string
+  name: string
+}
+
+export type AgentRequestStatus = 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED'
+
+/** An `@agent` request on a thread and how it is going, oldest first. */
+export interface CommentAgentRequest {
+  agentId: string
+  agentName: string
+  avatar?: { emoji?: string; color?: string } | null
+  status: AgentRequestStatus
+  /** In plain words, ready to show, when FAILED. */
+  error?: string | null
+  createdAt: string
+}
+
+export type SuggestionStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED'
+
+/** A suggested edit: the replacement for the comment's quote. */
+export interface CommentSuggestion {
+  text: string
+  status: SuggestionStatus
+  decidedByName?: string | null
+  decidedAt?: string | null
+}
+
 export interface CommentReply {
   id: string
   /** Null for a machine author (an agent or a run-scoped token) — see `authorName` for the byline. */
   authorId: string | null
   authorName: string
+  /** Absent on responses from the older Work Item comment routes. */
+  authorKind?: CommentAuthorKind
+  authorAgent?: CommentAuthorAgent | null
   content: string
+  mentions?: CommentMention[]
+  editedAt?: string | null
   createdAt: string
 }
 
@@ -25,13 +69,29 @@ export interface TextQuoteAnchor {
   sectionTitle?: string
 }
 
+/** What a thread is anchored to; derived by the server from the anchor columns. */
+export type CommentKind = 'QUOTE' | 'LINE' | 'DOCUMENT'
+
 export interface Comment {
   id: string
-  documentId: string
+  /** Null on a project-doc comment. */
+  documentId: string | null
+  /** Present on responses from `/comments`; absent on the older Work Item routes (derive from `anchor`/`lineNumber`). */
+  kind?: CommentKind
+  status?: 'OPEN' | 'RESOLVED'
   /** Null for a machine author (an agent or a run-scoped token) — see `authorName` for the byline. */
   authorId: string | null
   authorName: string
+  authorKind?: CommentAuthorKind
+  authorAgent?: CommentAuthorAgent | null
+  editedAt?: string | null
+  /** Who resolved it (a member's name, or an agent's label). */
+  resolvedByName?: string | null
   content: string
+  mentions?: CommentMention[]
+  agentRequests?: CommentAgentRequest[]
+  /** Set when the comment is a suggested edit. */
+  suggestion?: CommentSuggestion | null
   /** 0 on an anchored comment — tell anchored from line comments by `anchor`, never by this. */
   lineNumber?: number
   quotedText?: string | null

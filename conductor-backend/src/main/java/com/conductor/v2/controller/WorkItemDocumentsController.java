@@ -66,7 +66,8 @@ public class WorkItemDocumentsController implements WorkItemDocumentsApi {
             String projectId, String workItemId, String filename,
             UpsertDocumentByFilenameRequest upsertDocumentByFilenameRequest) {
         boolean created = documentService.upsertDocumentByFilename(projectId, workItemId, filename,
-                upsertDocumentByFilenameRequest.getContent(), upsertDocumentByFilenameRequest.getContentType());
+                upsertDocumentByFilenameRequest.getContent(), upsertDocumentByFilenameRequest.getContentType(),
+                upsertDocumentByFilenameRequest.getBaseContentHash());
         DocumentView document = documentService.getDocumentByFilename(projectId, workItemId, filename);
         return ResponseEntity.status(created ? 201 : 200).body(toV2(document));
     }

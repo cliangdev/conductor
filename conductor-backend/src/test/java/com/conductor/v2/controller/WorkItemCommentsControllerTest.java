@@ -106,7 +106,7 @@ class WorkItemCommentsControllerTest {
     void createWithAnchor_passesTheAnchorToTheServiceAndReturnsItWithOutdatedFalse() throws Exception {
         Comment comment = savedComment(true);
         when(commentService.createComment(eq("proj-1"), eq("wi-1"), eq("doc-1"), eq("Check this"),
-                isNull(), any(CommentAnchor.class), isNull(), any(User.class)))
+                isNull(), any(CommentAnchor.class), isNull(), any(com.conductor.service.ProjectActor.class)))
                 .thenReturn(new CommentResult(comment, false));
 
         mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
@@ -133,7 +133,7 @@ class WorkItemCommentsControllerTest {
     void createWithLineNumber_stillWorksAndReturnsNullAnchor() throws Exception {
         Comment comment = savedComment(false);
         when(commentService.createComment(eq("proj-1"), eq("wi-1"), eq("doc-1"), eq("Check this"),
-                eq(4), isNull(), isNull(), any(User.class))).thenReturn(new CommentResult(comment, false));
+                eq(4), isNull(), isNull(), any(com.conductor.service.ProjectActor.class))).thenReturn(new CommentResult(comment, false));
 
         mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"documentId\":\"doc-1\",\"content\":\"Check this\",\"lineNumber\":4}"))
@@ -218,7 +218,7 @@ class WorkItemCommentsControllerTest {
         String hash = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
         Comment comment = savedComment(true);
         when(commentService.createComment(eq("proj-1"), eq("wi-1"), eq("doc-1"), eq("Check this"),
-                isNull(), any(CommentAnchor.class), eq(hash), any(User.class)))
+                isNull(), any(CommentAnchor.class), eq(hash), any(com.conductor.service.ProjectActor.class)))
                 .thenReturn(new CommentResult(comment, true));
 
         mockMvc.perform(post(BASE).header("Authorization", AUTH).contentType(MediaType.APPLICATION_JSON)
@@ -246,7 +246,7 @@ class WorkItemCommentsControllerTest {
         CommentWithRepliesView line = new CommentWithRepliesView(
                 "c-2", "doc-2", "user-1", "Line", OffsetDateTime.parse("2026-10-29T10:00:00Z"), "User",
                 4, "line four", false, null, false, "spec.md", null, List.of());
-        when(commentService.listComments(eq("proj-1"), eq("wi-1"), any(), any(User.class)))
+        when(commentService.listComments(eq("proj-1"), eq("wi-1"), any(), any(com.conductor.service.ProjectActor.class)))
                 .thenReturn(List.of(anchored, line));
 
         mockMvc.perform(get(BASE).header("Authorization", AUTH))

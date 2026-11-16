@@ -42,7 +42,7 @@ class SignalBusWiringContextTest extends AbstractNoneWebIntegrationTest {
     private List<SignalSubscriber> subscribers;
 
     @Test
-    void allSixProductionSubscribersAreRegisteredInOrder() {
+    void allProductionSubscribersAreRegisteredInOrder() {
         List<SignalSubscriber> sorted = subscribers.stream()
                 .sorted(Comparator.comparingInt(SignalSubscriber::order))
                 .toList();
@@ -53,8 +53,10 @@ class SignalBusWiringContextTest extends AbstractNoneWebIntegrationTest {
                 LifecycleSignalSubscriber.class,
                 KnowledgeSignalSink.class,
                 PullRequestMergeSubscriber.class,
-                DispositionPolicySubscriber.class);
-        assertThat(sorted).extracting(SignalSubscriber::order).containsExactly(10, 20, 30, 40, 50, 60);
+                DispositionPolicySubscriber.class,
+                com.conductor.comment.CommentMentionEmailSubscriber.class,
+                com.conductor.comment.CommentAgentDispatchSubscriber.class);
+        assertThat(sorted).extracting(SignalSubscriber::order).containsExactly(10, 20, 30, 40, 50, 60, 70, 80);
     }
 
     @Test

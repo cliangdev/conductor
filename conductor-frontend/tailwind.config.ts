@@ -33,6 +33,8 @@ const config: Config = {
           hover: 'hsl(var(--primary-hover))',
         },
         'accent-soft': 'hsl(var(--accent-soft))',
+        'suggest-del': 'hsl(var(--suggest-del))',
+        'suggest-ins': 'hsl(var(--suggest-ins))',
         secondary: {
           DEFAULT: 'hsl(var(--secondary))',
           foreground: 'hsl(var(--secondary-foreground))',
@@ -59,6 +61,10 @@ const config: Config = {
           hover: 'hsl(var(--sidebar-item-hover))',
           active: 'hsl(var(--sidebar-item-active))',
           'active-text': 'hsl(var(--sidebar-item-active-text))',
+        },
+        comment: {
+          highlight: 'hsl(var(--comment-highlight))',
+          'highlight-active': 'hsl(var(--comment-highlight-active))',
         },
         status: {
           draft: 'hsl(var(--status-draft))',

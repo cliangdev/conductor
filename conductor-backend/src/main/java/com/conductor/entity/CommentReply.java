@@ -25,8 +25,17 @@ public class CommentReply {
     private Comment comment;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "author_id", nullable = false)
+    @JoinColumn(name = "author_id")
     private User author;
+
+    @Column(name = "author_label", columnDefinition = "TEXT")
+    private String authorLabel;
+
+    @Column(name = "author_agent_id", length = 36)
+    private String authorAgentId;
+
+    @Column(name = "edited_at")
+    private OffsetDateTime editedAt;
 
     @Column(name = "content", columnDefinition = "TEXT", nullable = false)
     private String content;
@@ -50,6 +59,15 @@ public class CommentReply {
 
     public User getAuthor() { return author; }
     public void setAuthor(User author) { this.author = author; }
+
+    public String getAuthorLabel() { return authorLabel; }
+    public void setAuthorLabel(String authorLabel) { this.authorLabel = authorLabel; }
+
+    public String getAuthorAgentId() { return authorAgentId; }
+    public void setAuthorAgentId(String authorAgentId) { this.authorAgentId = authorAgentId; }
+
+    public OffsetDateTime getEditedAt() { return editedAt; }
+    public void setEditedAt(OffsetDateTime editedAt) { this.editedAt = editedAt; }
 
     public String getContent() { return content; }
     public void setContent(String content) { this.content = content; }

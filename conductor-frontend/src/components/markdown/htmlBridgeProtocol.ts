@@ -22,11 +22,19 @@ export interface AnchorResult {
   top: number
 }
 
+export interface LayoutTop {
+  id: string
+  /** Top of the highlight in the frame's document, in px from the top of the page (not the viewport). */
+  top: number
+}
+
 export type BridgeMessage =
   | { type: 'ready' }
   | { type: 'selection'; anchor: TextQuoteAnchor; rect: SelectionRect }
   | { type: 'selection-cleared' }
   | { type: 'anchored'; results: AnchorResult[] }
+  | { type: 'layout'; scrollY: number; viewportH: number; tops: LayoutTop[] }
+  | { type: 'key'; key: 'j' | 'k' | 'Escape' }
   | { type: 'open'; id: string }
   | { type: 'openLink'; href: string }
 
@@ -86,6 +94,17 @@ export function parseBridgeMessage(data: unknown): BridgeMessage | null {
       }
       return { type: 'anchored', results }
     }
+    case 'key':
+      return data.key === 'j' || data.key === 'k' || data.key === 'Escape' ? { type: 'key', key: data.key } : null
+    case 'layout': {
+      if (!isNum(data.scrollY) || !isNum(data.viewportH) || !Array.isArray(data.tops)) return null
+      const tops: LayoutTop[] = []
+      for (const t of data.tops) {
+        if (!isRecord(t) || typeof t.id !== 'string' || !isNum(t.top)) return null
+        tops.push({ id: t.id, top: t.top })
+      }
+      return { type: 'layout', scrollY: data.scrollY, viewportH: data.viewportH, tops }
+    }
     case 'selection': {
       if (typeof data.exact !== 'string') return null
       const exact = data.exact.trim()
@@ -106,6 +125,24 @@ export function parseBridgeMessage(data: unknown): BridgeMessage | null {
     default:
       return null
   }
+}
+
+/** A message the app posts to the frame (the frame checks the colours again; see the bridge). */
+export type ThemeMessage = { type: 'theme'; highlight: string; active: string }
+
+const SAFE_COLOR = /^[#a-zA-Z0-9(),.%\s/-]{1,64}$/
+
+/** A CSS colour made only of plain colour syntax, so a token value can never smuggle other CSS into the frame. */
+export function safeCssColor(v: string): string | null {
+  const t = v.trim()
+  return SAFE_COLOR.test(t) ? t : null
+}
+
+/** The `theme` message carrying the highlight colours, or null when either is not plain colour syntax. */
+export function buildThemeMessage(highlight: string, active: string): ThemeMessage | null {
+  const h = safeCssColor(highlight)
+  const a = safeCssColor(active)
+  return h && a ? { type: 'theme', highlight: h, active: a } : null
 }
 
 /** Link protocols the app will open on the frame's behalf. */

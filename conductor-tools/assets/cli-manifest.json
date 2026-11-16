@@ -182,6 +182,10 @@
         "description": "Fix a bug found during PR review — root cause investigation, full build validation, push to the existing PR branch."
       },
       {
+        "name": "conductor:comments",
+        "description": "Work through the open comment threads on a document — a PRD, brief, wiki page or any Work Item or project doc — editing it once, replying on each thread, and resolving only on request."
+      },
+      {
         "name": "conductor:workflow",
         "description": "Design and create a Conductor workflow — YAML automation or statechart lifecycle — via guided discovery and MCP creation."
       },
@@ -380,7 +384,7 @@
     },
     {
       "name": "write_document",
-      "description": "Create or update a Work Item document by filename with full content (upsert). Works headlessly — supersedes scaffold_document+Write for new documents.",
+      "description": "Create or update a Work Item document by filename with full content (upsert). Works headlessly — supersedes scaffold_document+Write for new documents. Optional baseContentHash refuses the write if the document changed since read_document.",
       "category": "documents",
       "requiredParams": [
         "issueId",
@@ -399,11 +403,33 @@
       ]
     },
     {
-      "name": "list_work_item_comments",
-      "description": "List comments on a Work Item, optionally filtered by resolved status. HTML-document comments include a rendered-text anchor and an outdated flag.",
+      "name": "list_comments",
+      "description": "List comment threads on a Work Item document or project doc — open by default, each with its quote or line, author, body and replies.",
+      "category": "comments"
+    },
+    {
+      "name": "add_comment",
+      "description": "Start a comment thread on a document, anchored to a quoted passage or on the whole document.",
       "category": "comments",
       "requiredParams": [
-        "issueId"
+        "body"
+      ]
+    },
+    {
+      "name": "respond_to_comment",
+      "description": "Answer a comment thread — reply, resolve, reopen, or a reply plus one of those.",
+      "category": "comments",
+      "requiredParams": [
+        "commentId"
+      ]
+    },
+    {
+      "name": "read_document",
+      "description": "Read a Work Item document's full text and contentHash, for a safe revise-and-write with baseContentHash.",
+      "category": "documents",
+      "requiredParams": [
+        "issueId",
+        "filename"
       ]
     },
     {
@@ -651,12 +677,12 @@
     },
     {
       "name": "read_project_doc",
-      "description": "Read one project document by path or docId — full Markdown plus taskLines (every checkbox with its line number and state).",
+      "description": "Read one project document by path or docId — full Markdown, contentHash, plus taskLines (every checkbox with its line number and state).",
       "category": "project-docs"
     },
     {
       "name": "write_project_doc",
-      "description": "Create or replace a project document at a path, creating any missing folders.",
+      "description": "Create or replace a project document at a path, creating any missing folders. Optional baseContentHash refuses the write if the doc changed since read_project_doc.",
       "category": "project-docs",
       "requiredParams": [
         "path",
@@ -683,28 +709,6 @@
       "requiredParams": [
         "lineNumber",
         "checked"
-      ]
-    },
-    {
-      "name": "list_project_doc_comments",
-      "description": "Read the line-anchored comments humans left on a project document, unresolved by default.",
-      "category": "project-docs"
-    },
-    {
-      "name": "comment_on_project_doc",
-      "description": "Leave a comment anchored to one line of a project document.",
-      "category": "project-docs",
-      "requiredParams": [
-        "lineNumber",
-        "content"
-      ]
-    },
-    {
-      "name": "respond_to_project_doc_comment",
-      "description": "Answer a comment thread on a project document — reply, resolve, or both.",
-      "category": "project-docs",
-      "requiredParams": [
-        "commentId"
       ]
     },
     {

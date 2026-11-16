@@ -122,7 +122,8 @@ public class AgentExecutionService {
         }
         Agent agent = agentRepository.findById(request.agentId())
                 .orElseThrow(() -> new EntityNotFoundException("Agent not found: " + request.agentId()));
-        return runForAgent(agent, request, prior, systemPromptSuffix, deniedToolIds == null ? Set.of() : deniedToolIds);
+        return runForAgent(agent, request, prior, systemPromptSuffix, deniedToolIds == null ? Set.of() : deniedToolIds,
+                Set.of());
     }
 
     /**
@@ -135,11 +136,23 @@ public class AgentExecutionService {
      */
     public AgentRunResult run(String projectId, String agentRef, String task,
                               Map<String, Object> context, Map<String, Object> outputSchema) {
+        return run(projectId, agentRef, task, context, outputSchema, Set.of());
+    }
+
+    /**
+     * Same as {@link #run(String, String, String, Map, Map)}, plus {@code grantedToolIds}: namespaced tool ids this
+     * one run may use on top of the agent's own {@code toolIds}, which stay untouched (the workflow step's
+     * {@code with.grant_tools}). Granted tools resolve after the agent's own, so when a granted tool shares its
+     * model-facing name with one the agent already has, the granted one is what the model gets.
+     */
+    public AgentRunResult run(String projectId, String agentRef, String task,
+                              Map<String, Object> context, Map<String, Object> outputSchema,
+                              Set<String> grantedToolIds) {
         Agent agent = agentRepository.findByProjectIdAndSlug(projectId, agentRef)
                 .or(() -> agentRepository.findById(agentRef).filter(a -> projectId.equals(a.getProjectId())))
                 .orElseThrow(() -> new EntityNotFoundException("Agent not found: " + agentRef));
         return runForAgent(agent, new AgentRunRequest(agent.getId(), task, context, outputSchema), List.of(), null,
-                Set.of());
+                Set.of(), grantedToolIds == null ? Set.of() : grantedToolIds);
     }
 
     /**
@@ -159,7 +172,7 @@ public class AgentExecutionService {
 
     private AgentRunResult runForAgent(Agent agent, AgentRunRequest request,
                                        List<ChatMessage> priorMessages, String systemPromptSuffix,
-                                       Set<String> deniedToolIds) {
+                                       Set<String> deniedToolIds, Set<String> grantedToolIds) {
         String projectId = agent.getProjectId();
         AgentConfig cfg = parseConfig(agent.getConfigJson());
         String effectiveSystemPrompt = systemPromptSuffix == null || systemPromptSuffix.isBlank()
@@ -193,16 +206,25 @@ public class AgentExecutionService {
         // dropped from toolDefs entirely (the model never sees it exists), but its bare name is kept in
         // deniedToolNames so executeTool can still recognize a call to it and answer with a "disabled"
         // error instead of "unknown tool" if the model calls it anyway.
-        List<AgentTool> tools = toolRegistry.resolveAll(projectId, parseToolIds(agent.getToolIds()));
+        List<String> boundToolIds = new ArrayList<>(parseToolIds(agent.getToolIds()));
+        for (String granted : grantedToolIds) {
+            if (!boundToolIds.contains(granted)) {
+                boundToolIds.add(granted);
+            }
+        }
+        List<AgentTool> tools = toolRegistry.resolveAll(projectId, boundToolIds);
         Map<String, AgentTool> toolsByName = new LinkedHashMap<>();
         Set<String> deniedToolNames = new LinkedHashSet<>();
-        List<ToolDef> toolDefs = new ArrayList<>();
         for (AgentTool t : tools) {
             if (deniedToolIds.contains(t.id())) {
                 deniedToolNames.add(t.name());
                 continue;
             }
+            // One tool per model-facing name: a later one (a granted tool) replaces an earlier namesake.
             toolsByName.put(t.name(), t);
+        }
+        List<ToolDef> toolDefs = new ArrayList<>();
+        for (AgentTool t : toolsByName.values()) {
             toolDefs.add(new ToolDef(t.name(), t.description(), t.inputSchema()));
         }
 

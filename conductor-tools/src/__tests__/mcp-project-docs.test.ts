@@ -23,9 +23,6 @@ import {
   moveProjectDoc,
   deleteProjectDoc,
   setProjectDocTask,
-  listProjectDocComments,
-  commentOnProjectDoc,
-  respondToProjectDocComment,
   listProjectDocVersions,
   restoreProjectDocVersion,
   uploadProjectDocImage,
@@ -359,57 +356,6 @@ describe('project docs MCP tools', () => {
         'Folder "Nope" not found'
       )
       expect(mockDelete).not.toHaveBeenCalled()
-    })
-  })
-
-  describe('comments', () => {
-    it('hides resolved threads unless asked for them', async () => {
-      const comments = [
-        { id: 'c-1', content: 'open', resolvedAt: null },
-        { id: 'c-2', content: 'done', resolvedAt: '2026-01-01T00:00:00Z' },
-      ]
-      routeGet({ [`${BASE}/doc-1/comments`]: comments })
-
-      expect(await listProjectDocComments({ docId: 'doc-1' }, config)).toEqual([comments[0]])
-      expect(await listProjectDocComments({ docId: 'doc-1', includeResolved: true }, config)).toEqual(
-        comments
-      )
-    })
-
-    it('comment_on_project_doc omits quotedText when not supplied', async () => {
-      mockPost.mockResolvedValue({ id: 'c-3' })
-
-      await commentOnProjectDoc({ docId: 'doc-1', lineNumber: 3, content: 'needs work' }, config)
-
-      expect(mockPost).toHaveBeenCalledWith(
-        `${BASE}/doc-1/comments`,
-        { content: 'needs work', lineNumber: 3 },
-        config
-      )
-    })
-
-    it('respond_to_project_doc_comment replies and resolves in one call', async () => {
-      mockPost.mockResolvedValue({ id: 'r-1' })
-      mockPatch.mockResolvedValue({ id: 'c-1' })
-
-      const result = await respondToProjectDocComment(
-        { docId: 'doc-1', commentId: 'c-1', reply: 'fixed', resolve: true },
-        config
-      )
-
-      expect(mockPost).toHaveBeenCalledWith(
-        `${BASE}/doc-1/comments/c-1/replies`,
-        { content: 'fixed' },
-        config
-      )
-      expect(mockPatch).toHaveBeenCalledWith(`${BASE}/doc-1/comments/c-1/resolve`, {}, config)
-      expect(result).toEqual({ docId: 'doc-1', commentId: 'c-1', replied: true, resolved: true })
-    })
-
-    it('respond_to_project_doc_comment refuses a call that would do nothing', async () => {
-      await expect(
-        respondToProjectDocComment({ docId: 'doc-1', commentId: 'c-1' }, config)
-      ).rejects.toThrow('Provide reply, resolve: true, or both')
     })
   })
 

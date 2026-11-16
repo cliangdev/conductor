@@ -1,4 +1,4 @@
-package com.conductor.creative;
+package com.conductor.tx;
 
 import com.conductor.support.AbstractNoneWebIntegrationTest;
 import org.junit.jupiter.api.Test;
@@ -84,5 +84,86 @@ class AfterTransactionTest extends AbstractNoneWebIntegrationTest {
         });
 
         assertThat(log).containsExactly("outer still open", "follow-up");
+    }
+
+    // --- AfterCommit.run inside / outside execute -------------------------------------------------------------
+
+    @Test
+    void afterCommitWorkInsideExecuteRunsAfterTheTransactionHasEndedWithNothingBound() {
+        List<String> log = new ArrayList<>();
+
+        AfterTransaction.execute(transactionManager, () -> {
+            com.conductor.signal.AfterCommit.run(() -> log.add("tx active: "
+                    + TransactionSynchronizationManager.isActualTransactionActive()
+                    + ", synchronization: " + TransactionSynchronizationManager.isSynchronizationActive()));
+            log.add("body");
+            return null;
+        });
+
+        assertThat(log).containsExactly("body", "tx active: false, synchronization: false");
+    }
+
+    @Test
+    void afterCommitWorkOutsideExecuteKeepsItsOldBehaviour() {
+        List<String> log = new ArrayList<>();
+
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            com.conductor.signal.AfterCommit.run(() -> log.add("after commit"));
+            log.add("body");
+        });
+        com.conductor.signal.AfterCommit.run(() -> log.add("immediately, no transaction"));
+
+        assertThat(log).containsExactly("body", "after commit", "immediately, no transaction");
+    }
+
+    @Test
+    void anAfterCommitWorkThatThrowsDoesNotFailTheCaller() {
+        List<String> log = new ArrayList<>();
+
+        AfterTransaction.execute(transactionManager, () -> {
+            com.conductor.signal.AfterCommit.run(() -> {
+                throw new IllegalStateException("boom");
+            });
+            com.conductor.signal.AfterCommit.run(() -> log.add("next"));
+            return null;
+        });
+
+        assertThat(log).containsExactly("next");
+    }
+
+    @Test
+    void theThreadLocalIsClearedAfterABodyEndsNormallyOrByException() {
+        assertThat(AfterTransaction.current()).isNull();
+        AfterTransaction.execute(transactionManager, followUps -> {
+            assertThat(AfterTransaction.current()).isSameAs(followUps);
+            return null;
+        });
+        assertThat(AfterTransaction.current()).isNull();
+
+        assertThatThrownBy(() -> AfterTransaction.execute(transactionManager, followUps -> {
+            throw new IllegalStateException("rolled back");
+        })).isInstanceOf(IllegalStateException.class);
+        assertThat(AfterTransaction.current()).isNull();
+    }
+
+    @Test
+    void aNestedExecuteHandsItsFollowUpsToTheOuterOneAndRestoresTheOuterThreadLocal() {
+        List<String> log = new ArrayList<>();
+
+        AfterTransaction.execute(transactionManager, outerFollowUps -> {
+            AfterTransaction.execute(transactionManager, innerFollowUps -> {
+                assertThat(AfterTransaction.current()).isSameAs(innerFollowUps);
+                innerFollowUps.add(() -> log.add("inner, tx active: "
+                        + TransactionSynchronizationManager.isActualTransactionActive()));
+                return null;
+            });
+            assertThat(AfterTransaction.current()).as("outer restored").isSameAs(outerFollowUps);
+            outerFollowUps.add(() -> log.add("outer"));
+            log.add("body");
+            return null;
+        });
+
+        assertThat(log).containsExactly("body", "inner, tx active: false", "outer");
+        assertThat(AfterTransaction.current()).isNull();
     }
 }

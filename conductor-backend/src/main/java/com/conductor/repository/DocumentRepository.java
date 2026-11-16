@@ -1,7 +1,9 @@
 package com.conductor.repository;
 
 import com.conductor.entity.Document;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import java.time.OffsetDateTime;
@@ -41,4 +43,14 @@ public interface DocumentRepository extends JpaRepository<Document, String> {
     String findContentHashById(@Param("id") String id);
 
     Optional<Document> findByWorkItemIdAndFilename(String workItemId, String filename);
+
+    /**
+     * The same row, locked (SELECT ... FOR UPDATE) until the transaction ends. The upsert takes this before it
+     * compares {@code baseContentHash}, so two writers of one document run one after the other and the second
+     * sees the first's hash instead of both passing the check against the old one.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select d from Document d where d.workItem.id = :workItemId and d.filename = :filename")
+    Optional<Document> findForUpdateByWorkItemIdAndFilename(@Param("workItemId") String workItemId,
+                                                            @Param("filename") String filename);
 }

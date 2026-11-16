@@ -515,6 +515,29 @@ The Knowledge Center's librarian and domain-specialist agents (seeded by `Knowle
 
 **`runs-on` interaction.** The `api` runtime ignores `runs-on` entirely (it's an in-process call, not a container). The `claude-code` runtime uses the job's `runs-on` the same way a raw `claude-code` step does — except an agent step's job commonly has no container-capable `runs-on` at all (agent steps predate runtimes and were written assuming Conductor-hosted execution), so if the job's `runs-on` doesn't resolve to a container target, the runtime defaults to the builtin `cloud-run` target rather than requiring every agent-step job to add `runs-on: cloud-run` just to pick this runtime.
 
+**`grant_tools:` (per-run tool grants).** An agent's own `toolIds` are shared, saved state, so a workflow cannot widen them without changing the agent for everyone. `grant_tools` lets one step hand its run extra tools instead:
+
+```yaml
+- id: revise
+  uses: agent
+  with:
+    agent: ${{ event.agentId }}
+    grant_tools:
+      - comment:list_comments
+      - comment:read_document
+      - comment:write_document
+    task: ...
+```
+
+Each entry is a namespaced tool id (`source:name`, the ids the Agents tool picker shows). Rules:
+
+- **Validated before anything runs.** Every id must resolve in the tool registry for this project right now. An unknown id, or one whose source is switched off for the project (say a `knowledge:` tool in a workspace without the Knowledge Center), fails the step with `GRANT_TOOL_UNAVAILABLE: '<id>' is not a tool this project can use ...`. A malformed list fails the step with a plain message, and `WorkflowValidator` rejects a non-list or a non-namespaced entry at save time.
+- **Any workflow may use it, but only for tools the project could otherwise bind to an agent.** It is not limited to system workflows: writing or editing a workflow already needs the editor role, and an editor can bind the same tools to an agent in **Automation → Agents**, so the grant adds no reach. What it adds is scope: the tool exists for this run only and the agent's saved tool list is untouched. Entries are literal ids (not interpolated), so a payload field cannot choose a tool.
+- **`api` runtime:** granted tools are resolved after the agent's own and offered to the model for this run only (`AgentExecutionService.run(..., grantedToolIds)`, next to `deniedToolIds`). If a granted tool has the same model-facing name as one the agent already has (for example `read_project_doc` from `coordinator:` and from `comment:`), the granted one wins, so the model never sees two tools with one name.
+- **`claude-code` runtime:** each granted id is mapped like a bound one (`AgentToolRegistry.claudeCodeToolName`) and appended, de-duplicated, to `--allowedTools`; an id with no Claude Code equivalent fails the step with `AGENT_TOOL_NOT_AVAILABLE_ON_CLAUDE_CODE: <id>`. Granting any `mcp__conductor__*` tool turns on the run-scoped Conductor MCP token, as a bound one does.
+
+The `comment:` tool source (`CommentToolProvider`: `list_comments`, `respond_to_comment`, `read_document`, `write_document`, `read_project_doc`, `write_project_doc`) uses the same names and argument shapes as the Conductor MCP tools, so one task prompt works on both runtimes. Its write tools honour `baseContentHash` and refuse a stale write.
+
 **`credentials:`/`env:` (claude-code runtime only).** An `agent` step also accepts the `claude-code` step's [`credentials:`/`env:`](#claude-code--run-claude-code-headlessly) fields — same shape, same resolution — but only the `claude-code` runtime has a container to inject them into. On the `api` runtime, declaring either fails the step immediately with `CREDENTIALS_NOT_AVAILABLE_ON_API_RUNTIME: agent=<ref> declares credentials/env, but the 'api' runtime has no container to inject them into`.
 
 **Failure modes (`api` runtime).** Anything else escaping the in-process ReAct loop is classified into one of these `errorReason` codes rather than surfacing the raw exception message:
@@ -1457,17 +1480,19 @@ channel.
 
 Some automation workflows are provisioned automatically by a Conductor feature rather than authored by a
 project member — identified purely by a reserved workflow `name` (there's no schema-level "system" flag).
-Three ship today. The two `knowledge-*` ones are seeded the first time a project turns on the **Knowledge Center**
+Four ship today. The two `knowledge-*` ones are seeded the first time a project turns on the **Knowledge Center**
 (`knowledge_enabled` project setting — no dedicated frontend page yet, toggled via
 `PATCH /api/v1/projects/{projectId}/settings`) and re-provisioned idempotently on every subsequent enable;
-`conductor-creative-render` is seeded lazily the first time someone clicks **Render** on a Creative in the web app.
+`conductor-creative-render` is seeded lazily the first time someone clicks **Render** on a Creative in the web app,
+and `conductor-comment-agent` the first time a person @mentions an agent in a comment thread.
 System workflows don't count toward the per-project workflow limit, and the failure circuit breaker never
-auto-pauses `conductor-creative-render`:
+auto-pauses `conductor-creative-render` or `conductor-comment-agent`:
 
 | Workflow name | Trigger | Purpose |
 |---|---|---|
 | `knowledge-librarian` | `workflow_dispatch` (`manual: false` — fired only by `LibrarianDispatchService`, see [Manual dispatch](#manual-dispatch)) | Files a batch of newly-ingested knowledge sources into wiki pages. `concurrency: single`. Its scheduler (`KnowledgeIngestScheduler`, 30s tick) also checks `enabled` before claiming sources, so an [auto-paused](#auto-pause-on-repeated-failures) librarian leaves sources untouched (not stuck mid-claim) until re-enabled. |
 | `conductor-creative-render` | `workflow_dispatch` (`manual: false` — fired only by the Creative **Render** button, `POST .../creatives/{id}/render-runs`) | Renders one Creative on the workspace's self-hosted daemon, in the `conductor-render` image. See [Creatives: rendering from the web app](#creatives-rendering-from-the-web-app-on-a-self-hosted-daemon). Marker comment `# conductor-system-workflow: creative-render`; a user-authored workflow with the same name and no marker is never overwritten (the Render button reports it instead). |
+| `conductor-comment-agent` | `workflow_dispatch` (`manual: false` — fired only by `CommentAgentDispatchService`, after the transaction that saved the comment commits) | One `agent` step, run by the @mentioned agent with [`grant_tools`](#agent--run-an-ai-agent) for the comment and document tools: it reads the thread and the document, makes the change with one `baseContentHash` write, and replies in the thread. Marker comment `# conductor-system-workflow: comment-agent`; a user-authored workflow with the same name and no marker is never overwritten (the thread shows an error instead), and an outdated seeded copy is refreshed in place. Not `concurrency: single`: the ledger (`comment_agent_requests`) allows one run in flight per thread and agent. See [`docs/comments.md`](comments.md#agent-in-a-thread). |
 | `knowledge-bootstrap` | `workflow_dispatch` with a required `repo` input | Operator-triggered, once, to seed the wiki from an existing GitHub codebase. `concurrency: single` — enforced here since this is manual dispatch, so a second bootstrap can't be started while one is still running. |
 
 Both are ordinary workflows once created — visible and re-editable in the workflow list like any other —

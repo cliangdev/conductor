@@ -9,89 +9,19 @@
  * Quotes are matched against the page's text with whitespace collapsed and one space at every block
  * boundary, and only against text that is visible (it has a box and is not `visibility:hidden`).
  *
- * `bridgeSource` is built with `Function.prototype.toString`, so `bridgeMain`, `buildQuote` and
- * `findQuote` must stay self-contained: no imports, no closed-over variables, no helpers the build
+ * `bridgeSource` is built with `Function.prototype.toString`, so `bridgeMain` and the `lib/textQuote.ts`
+ * functions it is given (`buildQuote`, `findQuote`, `flattenText`, `rangeFor`) must stay self-contained: no imports, no closed-over variables, no helpers the build
  * could inject (spread, classes, async). `htmlBridge.test.ts` evaluates the result in jsdom.
  */
 
-export interface QuoteParts {
-  exact: string
-  prefix: string
-  suffix: string
-}
+import { buildQuote, findQuote, flattenText, rangeFor } from '@/lib/textQuote'
 
-/**
- * The quote for `text[start, end)`: the selected text with whitespace collapsed and trimmed, plus up to
- * 32 characters of context either side. `text` is the flattened, whitespace-collapsed page text, so the
- * quote can be found again with `findQuote`.
- */
-export function buildQuote(text: string, start: number, end: number): QuoteParts {
-  let s = Math.max(0, start)
-  let e = Math.min(text.length, end)
-  while (s < e && /\s/.test(text.charAt(s))) s++
-  while (e > s && /\s/.test(text.charAt(e - 1))) e--
-  // The API caps a quote at 2000 characters.
-  if (e - s > 2000) {
-    e = s + 2000
-    while (e > s && /\s/.test(text.charAt(e - 1))) e--
-  }
-  return {
-    exact: text.slice(s, e).replace(/\s+/g, ' '),
-    prefix: text.slice(Math.max(0, s - 32), s).replace(/\s+/g, ' '),
-    suffix: text.slice(e, e + 32).replace(/\s+/g, ' '),
-  }
-}
-
-/**
- * Where a quote sits in `text`. Among all exact matches, the one whose surrounding text agrees most with
- * the stored prefix and suffix wins; with no agreement anywhere, the first match. Null when the exact
- * text is not there at all, or when `accept` (given each match's start and end) rejects every match.
- */
-export function findQuote(
-  text: string,
-  quote: { exact: string; prefix?: string; suffix?: string },
-  accept?: (start: number, end: number) => boolean
-): { start: number; end: number } | null {
-  const exact = (quote.exact || '').replace(/\s+/g, ' ').trim()
-  if (!exact) return null
-  const prefix = (quote.prefix || '').replace(/\s+/g, ' ')
-  const suffix = (quote.suffix || '').replace(/\s+/g, ' ')
-  let best = -1
-  let bestScore = -1
-  let from = 0
-  for (;;) {
-    const i = text.indexOf(exact, from)
-    if (i < 0) break
-    from = i + 1
-    // A match the caller rejects (text that is not visible) is not a candidate at all.
-    if (accept && !accept(i, i + exact.length)) continue
-    let score = 0
-    const before = text.slice(Math.max(0, i - prefix.length), i)
-    for (let k = 1; k <= before.length && k <= prefix.length; k++) {
-      if (before.charAt(before.length - k) === prefix.charAt(prefix.length - k)) score++
-      else break
-    }
-    const after = text.slice(i + exact.length, i + exact.length + suffix.length)
-    for (let k = 0; k < after.length && k < suffix.length; k++) {
-      if (after.charAt(k) === suffix.charAt(k)) score++
-      else break
-    }
-    if (score > bestScore) {
-      best = i
-      bestScore = score
-    }
-  }
-  return best < 0 ? null : { start: best, end: best + exact.length }
-}
+// Other modules import these from here.
+export { buildQuote, findQuote }
+export type { QuoteParts } from '@/lib/textQuote'
 
 /** Runs inside the frame. Receives the two quote helpers as arguments so it closes over nothing. */
-function bridgeMain(buildQuote: any, findQuote: any): void {
-  // `data-conductor-skip` marks page chrome (a PRD's contents outline, a sticky header) that repeats
-  // or summarizes the document: it is left out of quote matching, selection and highlight clicks.
-  const SKIP = 'script,style,noscript,template,[data-conductor-skip]'
-  const BLOCKS =
-    'address,article,aside,blockquote,dd,div,dl,dt,figcaption,figure,footer,form,h1,h2,h3,h4,h5,h6,' +
-    'header,hr,li,main,nav,ol,p,pre,section,table,tbody,td,th,thead,tr,ul'
+function bridgeMain(buildQuote: any, findQuote: any, flattenText: any, rangeFor: any): void {
   const w: any = window
   let anchors: any[] = []
   let ranges: Record<string, Range> = {}
@@ -108,74 +38,52 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
     }
   }
 
-  // Highlight colours live in the frame's own document, so they cannot use the app's theme tokens.
+  // Highlight colours live in the frame's own document, so they cannot use the app's theme tokens: the
+  // app sends them in a `theme` message (these are the fallback until it does).
   const style = document.createElement('style')
-  style.textContent =
-    '::highlight(conductor-comment){background-color:rgba(255,214,10,.38);color:inherit}' +
-    '::highlight(conductor-comment-active){background-color:rgba(255,159,10,.6);color:inherit}'
+  function applyColors(base: string, active: string): void {
+    style.textContent =
+      '::highlight(conductor-comment){background-color:' + base + ';color:inherit}' +
+      '::highlight(conductor-comment-active){background-color:' + active + ';color:inherit}' +
+      '::highlight(conductor-comment-flash){background-color:' + active + ';color:inherit}'
+  }
+  applyColors('rgba(255,214,10,.38)', 'rgba(255,159,10,.6)')
   ;(document.head || document.documentElement).appendChild(style)
+  let activeId: string | null = null
+  let layoutQueued = false
 
-  /**
-   * The text under body as one string: whitespace runs collapsed to one space, and a space at every
-   * block boundary (and `br`) so "<h2>Goals</h2><p>Ship it</p>" reads "Goals Ship it". Those spaces
-   * belong to no node; the map back to nodes (`fn`/`fo`, one entry per character) holds -1 for them.
-   * Each text node's `chars` lists the flat index of each of its characters, -1 where collapsed away.
-   */
-  function flatten(): any {
-    const root = document.body || document.documentElement
-    const nodes: any[] = []
-    const fn: number[] = []
-    const fo: number[] = []
-    const parts: string[] = []
-    let len = 0
-    let lastSpace = true
-    let pendingBreak = false
-    let prevBlock: Element | null = null
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT)
-    let n: Node | null
-    while ((n = walker.nextNode())) {
-      if (n.nodeType === 1) {
-        if ((n as Element).tagName === 'BR') pendingBreak = true
-        continue
-      }
-      const p = n.parentElement
-      if (!p || p.closest(SKIP)) continue
-      const block = p.closest(BLOCKS) || root
-      if (prevBlock && block !== prevBlock) pendingBreak = true
-      prevBlock = block
-      if (pendingBreak && !lastSpace) {
-        parts.push(' ')
-        fn.push(-1)
-        fo.push(-1)
-        len++
-        lastSpace = true
-      }
-      pendingBreak = false
-      const s = n.nodeValue || ''
-      const chars: number[] = []
-      const info = { node: n, chars: chars, begin: len, end: 0 }
-      for (let i = 0; i < s.length; i++) {
-        let c = s.charAt(i)
-        if (/\s/.test(c)) {
-          if (lastSpace) {
-            chars.push(-1)
-            continue
-          }
-          c = ' '
-          lastSpace = true
-        } else {
-          lastSpace = false
-        }
-        chars.push(len)
-        fn.push(nodes.length)
-        fo.push(i)
-        parts.push(c)
-        len++
-      }
-      info.end = len
-      nodes.push(info)
+  /** One `layout` message per animation frame: where each highlight is, so the app can line its cards up. */
+  function postLayout(): void {
+    layoutQueued = false
+    const tops: any[] = []
+    const ids = Object.keys(ranges)
+    const sy = w.scrollY || 0
+    for (let i = 0; i < ids.length; i++) {
+      tops.push({ id: ids[i], top: Math.round(ranges[ids[i]].getBoundingClientRect().top + sy) })
     }
-    return { text: parts.join(''), nodes: nodes, fn: fn, fo: fo }
+    post({ type: 'layout', scrollY: Math.round(sy), viewportH: w.innerHeight || 0, tops: tops })
+  }
+
+  function scheduleLayout(): void {
+    if (layoutQueued) return
+    layoutQueued = true
+    w.requestAnimationFrame(postLayout)
+  }
+
+  function paintActive(): void {
+    const reg = w.CSS && w.CSS.highlights
+    if (!reg || typeof w.Highlight === 'undefined') return
+    if (activeId && ranges[activeId]) {
+      const h = new w.Highlight(ranges[activeId])
+      h.priority = 1
+      reg.set('conductor-comment-active', h)
+    } else {
+      reg.delete('conductor-comment-active')
+    }
+  }
+
+  function flatten(): any {
+    return flattenText(document.body || document.documentElement)
   }
 
   /** Whether the text of `r` is actually shown: it has a box, and is not `visibility:hidden`. */
@@ -191,13 +99,6 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
     if (!shown) return false
     const el = r.startContainer.nodeType === 1 ? (r.startContainer as Element) : r.startContainer.parentElement
     return !el || w.getComputedStyle(el).visibility !== 'hidden'
-  }
-
-  function rangeFor(flat: any, start: number, end: number): Range {
-    const r = document.createRange()
-    r.setStart(flat.nodes[flat.fn[start]].node, flat.fo[start])
-    r.setEnd(flat.nodes[flat.fn[end - 1]].node, flat.fo[end - 1] + 1)
-    return r
   }
 
   function paint(): void {
@@ -238,6 +139,8 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
     }
     ranges = found
     paint()
+    paintActive()
+    scheduleLayout()
     const serialized = JSON.stringify(results)
     if (force || serialized !== lastResults) {
       lastResults = serialized
@@ -344,20 +247,24 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
     const reg = w.CSS && w.CSS.highlights
     if (!reg || typeof w.Highlight === 'undefined' || !ranges[id]) return
     const h = new w.Highlight(ranges[id])
-    h.priority = 1
-    reg.set('conductor-comment-active', h)
+    h.priority = 2
+    reg.set('conductor-comment-flash', h)
     if (activeTimer) clearTimeout(activeTimer)
     activeTimer = setTimeout(function () {
-      reg.delete('conductor-comment-active')
+      reg.delete('conductor-comment-flash')
     }, 1400)
   }
 
   function scrollToComment(id: string): void {
     const r = ranges[id]
     if (!r) return
-    const node = r.startContainer
-    const target = node.nodeType === 1 ? (node as Element) : node.parentElement
-    if (target && target.scrollIntoView) target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    // Only move the page when the words are not comfortably on screen already.
+    const b = r.getBoundingClientRect()
+    if (b.top < 60 || b.bottom > (w.innerHeight || 0) - 60) {
+      const node = r.startContainer
+      const target = node.nodeType === 1 ? (node as Element) : node.parentElement
+      if (target && target.scrollIntoView) target.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }
     flash(id)
   }
 
@@ -388,16 +295,38 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
   document.addEventListener('mouseup', function () {
     setTimeout(reportSelection, 0)
   })
+  // Keys typed while the frame has focus never reach the app's own listeners, so the thread-navigation
+  // keys are relayed (the app ignores them when it is typing; here, when the page is).
+  document.addEventListener('keydown', function (e: KeyboardEvent) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return
+    const t: any = e.target
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return
+    if (e.key === 'j' || e.key === 'k' || e.key === 'Escape') post({ type: 'key', key: e.key })
+  })
   document.addEventListener('keyup', function () {
     setTimeout(reportSelection, 0)
   })
+  // A collapsed selection takes the button away at once. Any other change is reported once it has
+  // settled (~250ms): touch has no mouseup or keyup, the selection handles are dragged and the browser
+  // only fires `selectionchange`.
+  let selectionTimer: any = null
   document.addEventListener('selectionchange', function () {
+    if (selectionTimer) clearTimeout(selectionTimer)
+    selectionTimer = null
     const sel = w.getSelection()
-    if (!sel || sel.isCollapsed) clearSelection()
+    if (!sel || sel.isCollapsed) {
+      clearSelection()
+      return
+    }
+    selectionTimer = setTimeout(function () {
+      selectionTimer = null
+      reportSelection()
+    }, 250)
   })
 
   let scrollQueued = false
   w.addEventListener('scroll', function () {
+    scheduleLayout()
     if (!hasSelection || scrollQueued) return
     scrollQueued = true
     w.requestAnimationFrame(function () {
@@ -405,6 +334,7 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
       reportSelection()
     })
   })
+  w.addEventListener('resize', scheduleLayout)
 
   document.addEventListener('click', function (e: MouseEvent) {
     if (e.defaultPrevented) return
@@ -415,7 +345,7 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
       return
     }
     // A click on skipped chrome (a sticky bar can sit over a highlight) never opens a comment.
-    if (t && t.closest && t.closest(SKIP)) return
+    if (t && t.closest && t.closest('[data-conductor-skip]')) return
     const sel = w.getSelection()
     if (sel && !sel.isCollapsed) return
     const id = hitTest(e.clientX, e.clientY)
@@ -433,6 +363,15 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
       resolveAll(true)
     } else if (d.type === 'scrollTo' && typeof d.id === 'string') {
       scrollToComment(d.id)
+    } else if (d.type === 'active') {
+      activeId = typeof d.id === 'string' ? d.id : null
+      paintActive()
+    } else if (d.type === 'theme') {
+      // Only plain colour syntax goes into the stylesheet; the app validates too, this is the backstop.
+      const ok = /^[#a-zA-Z0-9(),.%\s\/-]{1,64}$/
+      if (typeof d.highlight === 'string' && typeof d.active === 'string' && ok.test(d.highlight) && ok.test(d.active)) {
+        applyColors(d.highlight, d.active)
+      }
     }
   })
 
@@ -442,7 +381,7 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
     // Skipped chrome (a contents outline rewriting its breadcrumb on scroll) holds no anchorable text.
     const relevant = records.some(function (r) {
       const el = r.target.nodeType === 1 ? (r.target as Element) : r.target.parentElement
-      return !el || !el.closest(SKIP)
+      return !el || !el.closest('script,style,noscript,template,[data-conductor-skip]')
     })
     if (!relevant) return
     if (mutationTimer) clearTimeout(mutationTimer)
@@ -462,4 +401,8 @@ function bridgeMain(buildQuote: any, findQuote: any): void {
 }
 
 export const bridgeSource: string =
-  '(' + bridgeMain.toString() + ')(' + buildQuote.toString() + ',' + findQuote.toString() + ');'
+  '(' +
+  bridgeMain.toString() +
+  ')(' +
+  [buildQuote, findQuote, flattenText, rangeFor].map((f) => f.toString()).join(',') +
+  ');'

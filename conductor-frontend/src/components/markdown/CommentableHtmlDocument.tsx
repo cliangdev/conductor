@@ -1,18 +1,26 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare, MessageSquarePlus, X } from 'lucide-react'
-import { apiPost } from '@/lib/api'
+import { MessageSquare, MessageSquarePlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { CommentThread } from '@/components/comments/CommentThread'
-import { NewCommentForm } from '@/components/comments/NewCommentForm'
-import { PendingCommentRow } from '@/components/comments/PendingCommentRow'
+import { CommentCard, PendingCommentCard } from '@/components/comments/CommentCard'
+import { CommentComposer, type SubmitOptions } from '@/components/comments/CommentComposer'
+import { CommentsFeaturesProvider } from '@/components/comments/CommentsFeatures'
+import { involvesUser } from '@/components/comments/commentBody'
+import { CommentSheet, type CommentSheetView } from '@/components/comments/CommentSheet'
+import { CountBubbles, type CountBubbleItem } from '@/components/comments/CountBubbles'
+import { MarginRail, type MarginRailItem } from '@/components/comments/MarginRail'
+import { RailHeader, type RailFilter } from '@/components/comments/RailHeader'
+import { WholeDocumentSection, legacyLineNote, unplacedNote } from '@/components/comments/WholeDocumentSection'
+import { useComments } from '@/components/comments/useComments'
+import { isCoarsePointer, useCommentLayoutMode } from '@/components/comments/useCommentLayoutMode'
+import { selectionButtonTop } from '@/components/comments/selectionPlacement'
 import type { Comment, PendingCommentDraft, TextQuoteAnchor } from '@/components/comments/types'
 import { prepareHtmlDocument } from './htmlDocument'
 import { bridgeSource } from './htmlBridge'
 import {
+  buildThemeMessage,
   openFrameLink,
   parseBridgeMessage,
   type AnchorResult,
@@ -29,14 +37,23 @@ interface Props {
   /** Hash of `content`, sent with a new comment so the server can tell which version it was written against. */
   contentHash?: string | null
   documentId: string
+  /** The Work Item the document belongs to. */
   issueId: string
   projectId: string
-  comments: Comment[]
-  onCommentAdded: () => void
   token: string
   currentUserId: string
-  /** Override the base path for comment API calls. Defaults to the Work Item comment path. */
-  commentApiBasePath?: string
+  currentUserName?: string
+  /** Admins may delete anyone's comment. */
+  isAdmin?: boolean
+  /** Called after a comment change has been saved, so counts elsewhere on the page can refresh. */
+  onCommentsChanged?: () => void
+  /** The document was changed under the reader (an `@agent` finished, a suggestion was accepted): reload its content and hash. */
+  onDocumentChanged?: () => void
+  /** Only editors can accept a suggested edit. Leave unset when unknown: Accept is shown and a refusal explained. */
+  canAcceptSuggestions?: boolean
+  /** A deep link (`?comment=`): focus this thread once the comments have loaded, then call `onFocusHandled`. */
+  focusCommentId?: string | null
+  onFocusHandled?: () => void
   /** Batch review mode: a new comment is held client-side via `onAddPendingComment` instead of posted. */
   reviewMode?: boolean
   /** All of the Work Item's pending drafts — filtered internally to this component's `documentId`. */
@@ -58,15 +75,26 @@ const BUTTON_WIDTH = 112
 const BUTTON_HEIGHT = 32
 const FORM_WIDTH = 336
 const FORM_HEIGHT = 240
-/** Below this width the frame plus a docked rail would squeeze the document, so the rail floats over it. */
-const DOCK_MIN_WIDTH = 1024
+/** A card starts a little above the first line of its words, so its header lines up with the text. */
+const ANCHOR_INSET = 8
 
-type RailItem =
-  | { kind: 'comment'; id: string; comment: Comment; top: number }
-  | { kind: 'draft'; id: string; draft: PendingCommentDraft; top: number }
+type Entry =
+  | { kind: 'comment'; id: string; comment: Comment; top: number; note?: React.ReactNode }
+  | { kind: 'draft'; id: string; draft: PendingCommentDraft; top: number; note?: React.ReactNode }
 
-const SECTION_LABEL =
-  'text-[11.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground'
+function draftId(localId: string): string {
+  return `draft:${localId}`
+}
+
+function kindOf(c: Comment): 'QUOTE' | 'LINE' | 'DOCUMENT' {
+  if (c.kind) return c.kind
+  if (c.anchor) return 'QUOTE'
+  return c.lineNumber ? 'LINE' : 'DOCUMENT'
+}
+
+function isResolved(c: Comment): boolean {
+  return c.status ? c.status === 'RESOLVED' : !!c.resolvedAt
+}
 
 /** Small stable hash, so the viewer can be remounted (clearing placements and selection) when the document changes. */
 function hashContent(s: string): string {
@@ -75,7 +103,20 @@ function hashContent(s: string): string {
   return `${s.length}:${h}`
 }
 
-/** An HTML document: sandboxed frame on the left, comment rail on the right (stacked below on narrow screens). */
+/** The highlight colours from the app's theme tokens, as the plain colour strings the frame can use. */
+function readTheme() {
+  const style = getComputedStyle(document.documentElement)
+  const base = style.getPropertyValue('--comment-highlight').trim()
+  const active = style.getPropertyValue('--comment-highlight-active').trim()
+  if (!base || !active) return null
+  return buildThemeMessage(`hsl(${base})`, `hsl(${active})`)
+}
+
+/**
+ * An HTML document: the sandboxed frame on the left and, from 1024px wide, a comment rail docked on the
+ * right whose cards line up with their highlights inside the frame. On a tablet the rail shrinks to count
+ * bubbles that open a side sheet; on a phone a tap on a highlight opens a bottom sheet.
+ */
 export function CommentableHtmlDocument(props: Props) {
   const { documentId, content } = props
   const frameKey = useMemo(() => `${documentId}:${hashContent(content)}`, [documentId, content])
@@ -90,38 +131,62 @@ function HtmlDocumentFrame({
   documentId,
   issueId,
   projectId,
-  comments,
-  onCommentAdded,
   token,
   currentUserId,
-  commentApiBasePath,
+  currentUserName,
+  isAdmin = false,
+  onCommentsChanged,
+  onDocumentChanged,
+  canAcceptSuggestions,
+  focusCommentId,
+  onFocusHandled,
   reviewMode = false,
   pendingComments = [],
   onAddPendingComment,
   onEditPendingComment,
   onRemovePendingComment,
 }: Props) {
-  const basePath =
-    commentApiBasePath ?? `/api/v2/projects/${projectId}/work-items/${issueId}/comments`
+  const featureTarget = useMemo(
+    () => ({ projectId, workItemId: issueId, documentId }),
+    [projectId, issueId, documentId]
+  )
+  const api = useComments(
+    featureTarget,
+    {
+      token,
+      currentUser: { id: currentUserId, name: currentUserName ?? 'You' },
+      onChanged: onCommentsChanged,
+      onDocumentChanged,
+    }
+  )
+  const comments = api.comments
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const frameBoxRef = useRef<HTMLDivElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
-  const railItemRefs = useRef(new Map<string, HTMLDivElement>())
+  const railColumnRef = useRef<HTMLDivElement>(null)
+  const railTopRef = useRef<HTMLDivElement>(null)
+  const alignedRef = useRef<HTMLDivElement>(null)
 
   const [readyCount, setReadyCount] = useState(0)
   const [placement, setPlacement] = useState<Record<string, AnchorResult>>({})
+  const [layout, setLayout] = useState<{ scrollY: number; tops: Record<string, number> }>({
+    scrollY: 0,
+    tops: {},
+  })
   const [selection, setSelection] = useState<FloatingSpot | null>(null)
   const [composing, setComposing] = useState<FloatingSpot | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [filter, setFilter] = useState<RailFilter>('open')
   const [editingPendingId, setEditingPendingId] = useState<string | null>(null)
+  // Distance from the top of the rail to the top of the aligned area, so cards line up with the frame.
+  const [railOffset, setRailOffset] = useState(0)
   // 0 until measured (and always in tests): treated as wide enough to dock.
   const [wrapperWidth, setWrapperWidth] = useState(0)
-  const docked = wrapperWidth === 0 || wrapperWidth >= DOCK_MIN_WIDTH
-  // null = follow the default (docked: open, floating: closed); a boolean once the reader toggles it.
-  const [railChoice, setRailChoice] = useState<boolean | null>(null)
-  // Bumped by a highlight click; focusing waits for the rail to render, since it may have been closed.
-  const [focusRequest, setFocusRequest] = useState<{ id: string; n: number } | null>(null)
+  const mode = useCommentLayoutMode(wrapperWidth)
+  const docked = mode === 'wide'
+  // Narrow screens show threads in a sheet: one thread (tap on a highlight or bubble) or the whole list.
+  const [sheetView, setSheetView] = useState<'thread' | 'list' | null>(null)
 
   useEffect(() => {
     const el = wrapperRef.current
@@ -131,6 +196,21 @@ function HtmlDocumentFrame({
     return () => ro.disconnect()
   }, [])
 
+  useEffect(() => {
+    const top = railTopRef.current
+    const column = railColumnRef.current
+    const aligned = alignedRef.current
+    // The tablet's bubble column has no header above it, so there is nothing to measure.
+    if (!top || !column || !aligned || typeof ResizeObserver === 'undefined') return
+    const measure = () =>
+      setRailOffset(Math.round(aligned.getBoundingClientRect().top - column.getBoundingClientRect().top))
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(top)
+    ro.observe(column)
+    return () => ro.disconnect()
+  }, [docked])
+
   const srcDoc = useMemo(() => prepareHtmlDocument(content, { bridge: bridgeSource }), [content])
 
   const docPending = useMemo(
@@ -138,11 +218,18 @@ function HtmlDocumentFrame({
     [pendingComments, documentId]
   )
 
+  const sendToFrame = useCallback((message: unknown) => {
+    iframeRef.current?.contentWindow?.postMessage(message, '*')
+  }, [])
+
   // ── Anchors sent to the frame ──────────────────────────────────────────────
+  // Open threads are highlighted. A thread that was just resolved keeps its highlight while it is the
+  // focused one, so it does not vanish from under the reader's cursor.
   const frameAnchors = useMemo<FrameAnchor[]>(() => {
     const out: FrameAnchor[] = []
     for (const c of comments) {
-      if (c.anchor && !c.resolvedAt) {
+      if (!c.anchor) continue
+      if (!isResolved(c) || c.id === activeId) {
         out.push({ id: c.id, exact: c.anchor.exact, prefix: c.anchor.prefix, suffix: c.anchor.suffix })
       }
     }
@@ -157,17 +244,172 @@ function HtmlDocumentFrame({
       }
     }
     return out
-  }, [comments, docPending])
+  }, [comments, docPending, activeId])
   const anchorsKey = JSON.stringify(frameAnchors)
-
-  const sendToFrame = useCallback((message: unknown) => {
-    iframeRef.current?.contentWindow?.postMessage(message, '*')
-  }, [])
 
   useEffect(() => {
     if (readyCount === 0) return
     sendToFrame({ type: 'anchors', anchors: JSON.parse(anchorsKey) })
   }, [readyCount, anchorsKey, sendToFrame])
+
+  useEffect(() => {
+    if (readyCount === 0) return
+    sendToFrame({ type: 'active', id: activeId })
+  }, [readyCount, activeId, sendToFrame])
+
+  // The frame cannot read the app's theme tokens, so it is told the highlight colours, again whenever
+  // the theme changes.
+  useEffect(() => {
+    if (readyCount === 0) return
+    const send = () => {
+      const msg = readTheme()
+      if (msg) sendToFrame(msg)
+    }
+    send()
+    const mo = new MutationObserver(send)
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
+    const mq = window.matchMedia?.('(prefers-color-scheme: dark)')
+    mq?.addEventListener?.('change', send)
+    return () => {
+      mo.disconnect()
+      mq?.removeEventListener?.('change', send)
+    }
+  }, [readyCount, sendToFrame])
+
+  // ── Rail contents ──────────────────────────────────────────────────────────
+  const mine = useCallback((c: Comment) => involvesUser(c, currentUserId), [currentUserId])
+
+  /** Whether a thread belongs in the current filter. The focused thread always stays, so acting on it never makes it vanish. */
+  const inFilter = useCallback(
+    (c: Comment) => {
+      if (c.id === activeId) return true
+      if (filter === 'resolved') return isResolved(c)
+      if (isResolved(c)) return false
+      return filter === 'open' || mine(c)
+    },
+    [filter, activeId, mine]
+  )
+
+  const { placed, whole, resolvedStack, unreported } = useMemo(() => {
+    const placed: Entry[] = []
+    const whole: Entry[] = []
+    const resolvedStack: Entry[] = []
+    const unreported: Entry[] = []
+    for (const c of comments) {
+      if (!inFilter(c)) continue
+      const kind = kindOf(c)
+      if (kind === 'DOCUMENT') {
+        whole.push({ kind: 'comment', id: c.id, comment: c, top: 0 })
+      } else if (kind === 'LINE' || !c.anchor) {
+        whole.push({ kind: 'comment', id: c.id, comment: c, top: 0, note: legacyLineNote(c.lineNumber) })
+      } else {
+        const spot = placement[c.id]
+        const layoutTop = layout.tops[c.id]
+        if (spot && !spot.found) {
+          whole.push({
+            kind: 'comment',
+            id: c.id,
+            comment: c,
+            top: 0,
+            note: unplacedNote(c.anchor.exact),
+          })
+        } else if (spot) {
+          placed.push({ kind: 'comment', id: c.id, comment: c, top: layoutTop ?? spot.top })
+        } else if (isResolved(c)) {
+          resolvedStack.push({ kind: 'comment', id: c.id, comment: c, top: 0 })
+        } else {
+          unreported.push({ kind: 'comment', id: c.id, comment: c, top: 0 })
+        }
+      }
+    }
+    if (filter !== 'resolved') {
+      for (const p of docPending) {
+        const id = draftId(p.localId)
+        const spot = placement[id]
+        if (spot && !spot.found) {
+          whole.push({
+            kind: 'draft',
+            id,
+            draft: p,
+            top: 0,
+            note: p.anchor ? unplacedNote(p.anchor.exact) : legacyLineNote(p.lineNumber),
+          })
+        } else if (spot) {
+          placed.push({ kind: 'draft', id, draft: p, top: layout.tops[id] ?? spot.top })
+        } else {
+          unreported.push({ kind: 'draft', id, draft: p, top: 0 })
+        }
+      }
+    }
+    // Array.sort is stable, so equal tops keep their creation order.
+    placed.sort((a, b) => a.top - b.top)
+    return { placed, whole, resolvedStack, unreported }
+  }, [comments, docPending, placement, layout.tops, inFilter, filter])
+
+  const total = comments.length + docPending.length
+
+  // Open, placed threads in reading order: what ‹ › and j / k step through.
+  const navIds = useMemo(
+    () =>
+      placed
+        .filter((e) => e.kind === 'draft' || !isResolved(e.comment))
+        .map((e) => e.id),
+    [placed]
+  )
+  const navIndex = activeId && navIds.includes(activeId) ? navIds.indexOf(activeId) + 1 : null
+
+  /** Focuses a thread. `scroll` also takes the document to its words and flashes them. */
+  const focusThread = useCallback(
+    (id: string, scroll: boolean) => {
+      setActiveId(id)
+      if (scroll && placement[id]?.found) sendToFrame({ type: 'scrollTo', id })
+    },
+    [placement, sendToFrame]
+  )
+
+  // A deep link: focus the thread once its highlight has been placed, then let the page clean the URL.
+  useEffect(() => {
+    if (!focusCommentId || api.loading) return
+    const c = comments.find((x) => x.id === focusCommentId)
+    if (!c) {
+      onFocusHandled?.()
+      return
+    }
+    if (activeId !== c.id) {
+      setActiveId(c.id)
+      if (isResolved(c)) setFilter('resolved')
+      return
+    }
+    const spot = placement[c.id]
+    if (c.anchor && !spot) return
+    if (spot?.found) sendToFrame({ type: 'scrollTo', id: c.id })
+    if (!docked) setSheetView('thread')
+    onFocusHandled?.()
+  }, [focusCommentId, api.loading, comments, activeId, placement, sendToFrame, docked, onFocusHandled])
+
+  const step = useCallback(
+    (delta: number) => {
+      if (navIds.length === 0) return
+      const i = activeId ? navIds.indexOf(activeId) : -1
+      const next = i < 0 ? (delta > 0 ? 0 : navIds.length - 1) : (i + delta + navIds.length) % navIds.length
+      focusThread(navIds[next], true)
+    },
+    [navIds, activeId, focusThread]
+  )
+  const next = useCallback(() => step(1), [step])
+  const prev = useCallback(() => step(-1), [step])
+
+  // Escape (outside a text field) drops the focus from the thread.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable)) return
+      setActiveId(null)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
 
   // ── Messages from the frame ────────────────────────────────────────────────
   // The button sits just above the selection, centred on it, so it never covers the text being selected;
@@ -176,11 +418,24 @@ function HtmlDocumentFrame({
     const box = frameBoxRef.current
     const width = box?.clientWidth ?? 0
     let left = (rect.left + rect.right) / 2 - BUTTON_WIDTH / 2
-    let top = rect.top - BUTTON_HEIGHT - 8
-    if (top < 8) top = rect.bottom + 8
+    // On touch the button goes below the selection, clear of the native menu that appears above it.
+    const top = selectionButtonTop({
+      rectTop: rect.top,
+      rectBottom: rect.bottom,
+      buttonHeight: BUTTON_HEIGHT,
+      coarse: isCoarsePointer(),
+      minTop: 8,
+    })
     if (width > 0) left = Math.min(left, width - BUTTON_WIDTH - 8)
     return { anchor, rect, left: Math.max(8, left), top: Math.max(8, top) }
   }, [])
+
+  const stepRef = useRef(step)
+  const modeRef = useRef(mode)
+  useEffect(() => {
+    stepRef.current = step
+    modeRef.current = mode
+  })
 
   useEffect(() => {
     function onMessage(event: MessageEvent) {
@@ -205,14 +460,24 @@ function HtmlDocumentFrame({
         case 'anchored':
           setPlacement(Object.fromEntries(msg.results.map((r) => [r.id, r])))
           break
+        case 'layout':
+          setLayout({
+            scrollY: msg.scrollY,
+            tops: Object.fromEntries(msg.tops.map((t) => [t.id, t.top])),
+          })
+          break
         case 'openLink':
           openFrameLink(msg.href)
           break
+        case 'key':
+          if (msg.key === 'Escape') setActiveId(null)
+          else stepRef.current(msg.key === 'j' ? 1 : -1)
+          break
         case 'open':
-          // The rail may be closed; open it and focus the thread once it has rendered.
+          // The thread's words are already on screen: focus its card, or open it in the sheet when there
+          // is no docked rail.
           setActiveId(msg.id)
-          setRailChoice(true)
-          setFocusRequest((r) => ({ id: msg.id, n: (r?.n ?? 0) + 1 }))
+          if (modeRef.current !== 'wide') setSheetView('thread')
           break
       }
     }
@@ -220,54 +485,15 @@ function HtmlDocumentFrame({
     return () => window.removeEventListener('message', onMessage)
   }, [floatingSpot])
 
-  // ── Rail contents ──────────────────────────────────────────────────────────
-  const { placed, unplaced, resolved } = useMemo(() => {
-    const placed: RailItem[] = []
-    const unplaced: RailItem[] = []
-    const resolved: Comment[] = []
-    for (const c of comments) {
-      if (c.resolvedAt) {
-        resolved.push(c)
-        continue
-      }
-      if (!c.anchor) {
-        // A line comment left before the document became HTML: nothing to find.
-        unplaced.push({ kind: 'comment', id: c.id, comment: c, top: 0 })
-        continue
-      }
-      const spot = placement[c.id]
-      if (spot && !spot.found) unplaced.push({ kind: 'comment', id: c.id, comment: c, top: 0 })
-      // Not reported yet: listed after the placed ones until the frame answers.
-      else placed.push({ kind: 'comment', id: c.id, comment: c, top: spot ? spot.top : Infinity })
-    }
-    for (const p of docPending) {
-      const id = draftId(p.localId)
-      const spot = placement[id]
-      if (spot && !spot.found) unplaced.push({ kind: 'draft', id, draft: p, top: 0 })
-      else placed.push({ kind: 'draft', id, draft: p, top: spot ? spot.top : Infinity })
-    }
-    // Array.sort is stable, so equal tops keep their creation order.
-    placed.sort((a, b) => (a.top === b.top ? 0 : a.top < b.top ? -1 : 1))
-    return { placed, unplaced, resolved }
-  }, [comments, docPending, placement])
-
-  const total = placed.length + unplaced.length + resolved.length
-  const railOpen = total > 0 && (railChoice ?? docked)
-
-  useEffect(() => {
-    if (!focusRequest || !railOpen) return
-    const el = railItemRefs.current.get(focusRequest.id)
-    el?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
-    el?.focus({ preventScroll: true })
-  }, [focusRequest, railOpen])
-
-  function focusThread(item: RailItem) {
-    setActiveId(item.id)
-    if (placement[item.id]?.found) sendToFrame({ type: 'scrollTo', id: item.id })
-  }
-
+  // ── Composing ──────────────────────────────────────────────────────────────
   function openCompose() {
     if (!selection) return
+    // In a sheet the form takes the sheet's width: no popover to position.
+    if (!docked) {
+      setComposing({ ...selection, left: 0, top: 0 })
+      setSelection(null)
+      return
+    }
     // The form opens below the selection (above it near the bottom edge), left-aligned with it, so the
     // quoted text stays readable while typing.
     const box = frameBoxRef.current
@@ -282,104 +508,178 @@ function HtmlDocumentFrame({
     setSelection(null)
   }
 
-  async function handleSubmit(text: string) {
+  async function handleSubmit(text: string, options?: SubmitOptions) {
     if (!composing) return
     if (reviewMode) {
       onAddPendingComment?.(composing.anchor, text, contentHash ?? undefined)
-    } else {
-      await apiPost(
-        basePath,
-        {
-          documentId,
-          content: text,
-          anchor: composing.anchor,
-          ...(contentHash ? { documentHash: contentHash } : {}),
-        },
-        token
-      )
-      onCommentAdded()
+      setComposing(null)
+      return
     }
+    const anchor = composing.anchor
     setComposing(null)
+    const created = await api.create({
+      content: text,
+      anchor,
+      ...(contentHash ? { documentHash: contentHash } : {}),
+      ...(options?.suggestion ? { suggestion: options.suggestion } : {}),
+    })
+    // Focus the new thread so its card is where the reader looks next.
+    if (created) {
+      setActiveId(created.id)
+      // With no docked rail, the new thread is shown in the sheet.
+      if (!docked) setSheetView('thread')
+    }
   }
 
-  function renderItem(item: RailItem) {
+  // ── Cards ──────────────────────────────────────────────────────────────────
+  function renderEntry(e: Entry) {
+    if (e.kind === 'draft') {
+      return (
+        <PendingCommentCard
+          key={e.id}
+          draft={e.draft}
+          active={activeId === e.id}
+          note={e.note}
+          editing={editingPendingId === e.draft.localId}
+          onActivate={(id) => focusThread(id, true)}
+          onStartEdit={() => setEditingPendingId(e.draft.localId)}
+          onCancelEdit={() => setEditingPendingId(null)}
+          onSave={(text) => {
+            onEditPendingComment?.(e.draft.localId, text)
+            setEditingPendingId(null)
+          }}
+          onRemove={() => onRemovePendingComment?.(e.draft.localId)}
+        />
+      )
+    }
     return (
-      <div
-        key={item.id}
-        id={`html-comment-${item.id}`}
-        data-comment-id={item.id}
-        ref={(el) => {
-          if (el) railItemRefs.current.set(item.id, el)
-          else railItemRefs.current.delete(item.id)
+      <CommentCard
+        key={e.id}
+        comment={e.comment}
+        active={activeId === e.id}
+        note={e.note}
+        currentUserId={currentUserId}
+        isAdmin={isAdmin}
+        onActivate={(id) => focusThread(id, true)}
+        onReply={api.reply}
+        onEdit={api.edit}
+        onEditReply={api.editReply}
+        onResolve={api.resolve}
+        onReopen={api.reopen}
+        onDelete={async (id) => {
+          if (activeId === id) setActiveId(null)
+          await api.remove(id)
         }}
-        tabIndex={-1}
-        onClick={(e) => {
-          if ((e.target as HTMLElement).closest('button,textarea,input,a')) return
-          focusThread(item)
-        }}
-        className={cn(
-          'rounded-lg outline-none transition-shadow',
-          activeId === item.id && 'ring-2 ring-primary'
-        )}
-      >
-        {item.kind === 'comment' ? (
-          <>
-            {item.comment.outdated && (
-              <Badge variant="status-progress" className="mb-1">
-                Outdated
-              </Badge>
-            )}
-            <CommentThread
-              comment={item.comment}
-              projectId={projectId}
-              issueId={issueId}
-              currentUserId={currentUserId}
-              token={token}
-              onUpdated={onCommentAdded}
-              commentApiBasePath={commentApiBasePath}
-            />
-          </>
-        ) : (
-          <div className="w-72">
-            {item.draft.anchor && (
-              <blockquote className="border-l-4 border-muted pl-3 mb-1">
-                <p className="text-xs text-muted-foreground italic leading-relaxed line-clamp-3">
-                  {item.draft.anchor.exact}
-                </p>
-              </blockquote>
-            )}
-            <PendingCommentRow
-              draft={item.draft}
-              editing={editingPendingId === item.draft.localId}
-              onStartEdit={() => setEditingPendingId(item.draft.localId)}
-              onCancelEdit={() => setEditingPendingId(null)}
-              onSave={(text) => {
-                onEditPendingComment?.(item.draft.localId, text)
-                setEditingPendingId(null)
-              }}
-              onRemove={() => onRemovePendingComment?.(item.draft.localId)}
-            />
-          </div>
-        )}
-      </div>
+        onDeleteReply={api.removeReply}
+      />
     )
   }
 
+  const railNodes: MarginRailItem[] = placed.map((e) => ({
+    id: e.id,
+    top: e.top - ANCHOR_INSET,
+    node: renderEntry(e),
+  }))
+
+  const bubbleItems: CountBubbleItem[] = placed.map((e) => ({
+    id: e.id,
+    top: e.top,
+    count: e.kind === 'draft' ? 1 : 1 + e.comment.replies.length,
+  }))
+
+  const wholeSection = (
+    <div className="max-h-64 overflow-y-auto">
+      <WholeDocumentSection
+        onCreate={
+          reviewMode
+            ? undefined
+            : async (text) => {
+                const created = await api.create({
+                  content: text,
+                  ...(contentHash ? { documentHash: contentHash } : {}),
+                })
+                if (created) setActiveId(created.id)
+              }
+        }
+      >
+        {whole.map(renderEntry)}
+      </WholeDocumentSection>
+    </div>
+  )
+
+  const railFilters = (
+    <RailHeader
+      filter={filter}
+      onFilterChange={setFilter}
+      index={navIndex}
+      total={navIds.length}
+      onPrev={prev}
+      onNext={next}
+    />
+  )
+
+  const railBody = (
+    <>
+      <div ref={railTopRef} className="shrink-0 space-y-3 pb-3">
+        <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+          Comments · {total}
+        </h2>
+        {railFilters}
+        {wholeSection}
+      </div>
+
+      <div ref={alignedRef} className="relative min-h-0 flex-1">
+        <MarginRail items={railNodes} activeId={activeId} offset={layout.scrollY + railOffset} />
+        {/* Until the frame has said it is ready there is nothing to line up with, so threads are just listed. */}
+        {readyCount === 0 && unreported.length > 0 && (
+          <div className="absolute inset-0 space-y-2 overflow-y-auto bg-background">
+            {unreported.map(renderEntry)}
+          </div>
+        )}
+        {/* Resolved threads have no highlight to line up with, so they are listed. */}
+        {filter === 'resolved' && resolvedStack.length > 0 && (
+          <div className="absolute inset-0 space-y-2 overflow-y-auto bg-background">
+            {resolvedStack.map(renderEntry)}
+          </div>
+        )}
+      </div>
+    </>
+  )
+
+  // ── The sheet (tablet and phone) ───────────────────────────────────────────
+  const allEntries = [...placed, ...whole, ...unreported, ...resolvedStack]
+  const focusedEntry = activeId ? allEntries.find((e) => e.id === activeId) : undefined
+  const sheetOpenView: CommentSheetView | null = docked
+    ? null
+    : composing
+      ? { kind: 'compose', quote: composing.anchor.exact }
+      : sheetView === 'thread' && activeId
+        ? { kind: 'thread' }
+        : sheetView === 'list'
+          ? { kind: 'list' }
+          : null
+
+  function closeSheet() {
+    setComposing(null)
+    setSheetView(null)
+    setActiveId(null)
+  }
+
   return (
+    <CommentsFeaturesProvider
+      target={featureTarget}
+      token={token}
+      canAcceptSuggestions={canAcceptSuggestions}
+      decideSuggestion={api.decideSuggestion}
+    >
     <div ref={wrapperRef} className="space-y-2">
-      <div className="flex items-center justify-between gap-3 min-h-8">
+      <div className="flex min-h-8 items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">Select text in the document to comment on it.</p>
         <div className="flex items-center gap-1">
-          {total > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-expanded={railOpen}
-              aria-controls="html-comment-rail"
-              onClick={() => setRailChoice(!railOpen)}
-            >
-              <MessageSquare className="h-4 w-4 mr-1.5" />
-              {railOpen ? 'Hide comments' : 'Comments'} · {total}
+          {!docked && (
+            <Button variant="ghost" size="sm" onClick={() => setSheetView('list')}>
+              <MessageSquare className="mr-1.5 h-4 w-4" />
+              Comments · {total}
             </Button>
           )}
           {toolbarAction}
@@ -388,17 +688,17 @@ function HtmlDocumentFrame({
 
       <div
         className={cn(
-          'relative flex gap-4 min-h-[28rem]',
+          'relative flex min-h-[28rem] gap-4',
           fullView ? 'h-[calc(100vh-9rem)]' : 'h-[70vh] lg:h-[calc(100vh-17rem)]'
         )}
       >
-        {composing && (
+        {composing && docked && (
           <div className="fixed inset-0 z-40" onClick={() => setComposing(null)} aria-hidden="true" />
         )}
 
         <div
           ref={frameBoxRef}
-          className="relative flex-1 min-w-0 rounded-lg border border-border overflow-hidden"
+          className="relative min-w-0 flex-1 overflow-hidden rounded-lg border border-border"
         >
           <iframe
             ref={iframeRef}
@@ -415,86 +715,81 @@ function HtmlDocumentFrame({
               style={{ left: selection.left, top: selection.top }}
               onClick={openCompose}
             >
-              <MessageSquarePlus className="h-4 w-4 mr-1.5" />
+              <MessageSquarePlus className="mr-1.5 h-4 w-4" />
               Comment
             </Button>
           )}
 
-          {composing && (
+          {composing && docked && (
             <div
               data-testid="comment-popover"
-              className="absolute z-50 w-[21rem] max-w-[calc(100%-1rem)] bg-card border border-border rounded-lg shadow-xl p-4"
-              style={{
-                left: composing.left,
-                top: composing.top,
-              }}
+              className="absolute z-50 w-[21rem] max-w-[calc(100%-1rem)] rounded-lg border border-border bg-card p-4 shadow-xl"
+              style={{ left: composing.left, top: composing.top }}
             >
-              <blockquote className="border-l-4 border-muted pl-3 mb-3">
-                <p className="text-xs text-muted-foreground italic leading-relaxed line-clamp-4">
+              <blockquote className="mb-3 border-l-4 border-muted pl-3">
+                <p className="line-clamp-4 text-xs italic leading-relaxed text-muted-foreground">
                   {composing.anchor.exact}
                 </p>
               </blockquote>
-              <NewCommentForm
+              <CommentComposer
+                autoFocus
                 onSubmit={handleSubmit}
                 onCancel={() => setComposing(null)}
-                size="compact"
+                suggestFor={reviewMode ? undefined : composing.anchor}
               />
             </div>
           )}
         </div>
 
-        {railOpen && (
+        {mode === 'wide' && (
           <aside
             id="html-comment-rail"
+            ref={railColumnRef}
             aria-label="Comments"
-            className={cn(
-              'w-80 max-w-[calc(100%-2rem)] shrink-0 overflow-y-auto space-y-3',
-              docked
-                ? 'pr-1'
-                : 'absolute right-0 inset-y-0 z-20 bg-card border border-border rounded-lg shadow-xl p-3'
-            )}
+            className="flex w-80 max-w-[calc(100%-2rem)] shrink-0 flex-col pr-1"
           >
-            <div className="flex items-center justify-between">
-              <h2 className={SECTION_LABEL}>Comments · {total}</h2>
-              {!docked && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  aria-label="Close comments"
-                  onClick={() => setRailChoice(false)}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
+            {railBody}
+          </aside>
+        )}
+
+        {mode === 'tablet' && (
+          <aside id="html-comment-bubbles" aria-label="Comments" className="flex w-8 shrink-0 flex-col">
+            <div className="relative min-h-0 flex-1">
+              <CountBubbles
+                items={bubbleItems}
+                activeId={activeId}
+                offset={layout.scrollY}
+                onSelect={(id) => {
+                  setActiveId(id)
+                  setSheetView('thread')
+                }}
+              />
             </div>
-            {placed.map(renderItem)}
-
-            {unplaced.length > 0 && (
-              <section aria-label="Unplaced comments" className="space-y-3 pt-2">
-                <h3 className={SECTION_LABEL}>Unplaced</h3>
-                <p className="text-xs text-muted-foreground">
-                  These comments can&rsquo;t be placed in the current version of the document.
-                </p>
-                {unplaced.map(renderItem)}
-              </section>
-            )}
-
-            {resolved.length > 0 && (
-              <section aria-label="Resolved comments" className="space-y-3 pt-2">
-                <h3 className={SECTION_LABEL}>Resolved</h3>
-                {resolved.map((c) =>
-                  renderItem({ kind: 'comment', id: c.id, comment: c, top: 0 })
-                )}
-              </section>
-            )}
           </aside>
         )}
       </div>
-    </div>
-  )
-}
 
-function draftId(localId: string): string {
-  return `draft:${localId}`
+      {!docked && (
+        <CommentSheet
+          mode={mode === 'phone' ? 'phone' : 'tablet'}
+          view={sheetOpenView}
+          total={total}
+          onClose={closeSheet}
+          onShowAll={() => setSheetView('list')}
+          thread={focusedEntry ? renderEntry(focusedEntry) : undefined}
+          nav={{ index: navIndex, total: navIds.length, onPrev: prev, onNext: next }}
+          listHeader={
+            <>
+              {railFilters}
+              {wholeSection}
+            </>
+          }
+          list={[...placed, ...unreported, ...resolvedStack].map(renderEntry)}
+          onSubmitCompose={handleSubmit}
+          suggestFor={composing && !reviewMode ? composing.anchor : undefined}
+        />
+      )}
+    </div>
+    </CommentsFeaturesProvider>
+  )
 }

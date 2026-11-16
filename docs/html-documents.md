@@ -47,7 +47,7 @@ A bridge script is added to the document at render time (never stored). It runs 
 
 ## Anchors and `outdated`
 
-Comments use the W3C Web Annotation TextQuoteSelector model. An HTML comment must carry `anchor`; a markdown comment must carry `lineNumber`; the server returns 400 otherwise. Anchored comments return `lineNumber: 0`, so clients use `anchor != null` to tell them apart.
+The unified comments resource (`/api/v2/projects/{p}/comments`, see [comments.md](comments.md)) also accepts an anchor on markdown documents and whole-document comments on both; the rules below are those of the older Work Item route, which is kept. Comments use the W3C Web Annotation TextQuoteSelector model. An HTML comment must carry `anchor`; a markdown comment must carry `lineNumber`; the server returns 400 otherwise. Anchored comments return `lineNumber: 0`, so clients use `anchor != null` to tell them apart.
 
 ```
 anchor: { exact, prefix?, suffix?, sectionId?, sectionTitle? } | null
@@ -60,7 +60,7 @@ outdated: boolean
 - Hidden matches are ignored; if only hidden matches exist, the comment is Unplaced. The bridge re-runs when the DOM changes, so text that scripts add after load can be anchored.
 - **Outdated.** Document responses expose `contentHash` (SHA-256 of the content). `POST /comments` takes an optional `documentHash`, the version the reviewer saw; review-mode drafts keep the hash they were written against, and old clients that omit it get the current hash. `outdated` is true when the comment's stamped hash differs from the document's current hash, and false when either is unknown (older comments).
 - Whether a quote still exists is decided by the client, because only the client can run the page. Quotes it cannot find are listed under **Unplaced** with their quoted text. If a document switches between markdown and HTML, its old line comments appear as Unplaced in the HTML viewer.
-- Agents read these through `list_work_item_comments`.
+- Agents read these through `list_comments` (and work through them with `/conductor:comments`).
 
 ## The HTML PRD contract (`prd.html`, schema v2)
 

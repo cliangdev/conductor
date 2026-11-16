@@ -8,8 +8,11 @@ import com.conductor.exception.StorageUploadException;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.WorkItemRepository;
+import com.conductor.service.anchoring.CommentAnchorService;
 import com.conductor.service.view.DocumentView;
+import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,19 +36,30 @@ public class DocumentService {
     private final StorageService gcpStorageService;
     private final CommentRepository commentRepository;
     private final ProjectSecurityService projectSecurityService;
+    private final CommentAnchorService commentAnchorService;
     private final int signedUrlExpiryMinutes;
+
+    /**
+     * Re-reads a row after locking it. The locking query returns the instance this transaction already holds
+     * without reloading it, so a caller that read the document earlier in the same transaction (accepting a
+     * suggestion does) would compare against the text it read before the lock. Null only in plain unit tests.
+     */
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public DocumentService(DocumentRepository documentRepository,
                            WorkItemRepository workItemRepository,
                            StorageService gcpStorageService,
                            CommentRepository commentRepository,
                            ProjectSecurityService projectSecurityService,
+                           CommentAnchorService commentAnchorService,
                            @Value("${gcp.signed-url.expiry-minutes:15}") int signedUrlExpiryMinutes) {
         this.documentRepository = documentRepository;
         this.workItemRepository = workItemRepository;
         this.gcpStorageService = gcpStorageService;
         this.commentRepository = commentRepository;
         this.projectSecurityService = projectSecurityService;
+        this.commentAnchorService = commentAnchorService;
         this.signedUrlExpiryMinutes = signedUrlExpiryMinutes;
     }
 
@@ -105,6 +119,16 @@ public class DocumentService {
     @Transactional
     public boolean upsertDocumentByFilename(String projectId, String workItemId, String filename, String content,
                                             String requestContentType) {
+        return upsertDocumentByFilename(projectId, workItemId, filename, content, requestContentType, null);
+    }
+
+    /**
+     * Upsert by filename. When {@code baseContentHash} is supplied and the document already exists, the write is
+     * refused with a 409 unless it matches the document's current content hash (optimistic lock).
+     */
+    @Transactional
+    public boolean upsertDocumentByFilename(String projectId, String workItemId, String filename, String content,
+                                            String requestContentType, String baseContentHash) {
         WorkItem workItem = findWorkItemInProject(projectId, workItemId);
         projectSecurityService.requireProjectEditor(projectId);
         String contentType = requestContentType != null ? requestContentType : "text/markdown";
@@ -116,18 +140,34 @@ public class DocumentService {
             }
         }
 
-        return documentRepository.findByWorkItemIdAndFilename(workItemId, filename)
+        // Locked, so a concurrent write to the same document waits and the hash below is the current one.
+        return documentRepository.findForUpdateByWorkItemIdAndFilename(workItemId, filename)
                 .map(existing -> {
+                    if (entityManager != null) {
+                        entityManager.refresh(existing);
+                    }
+                    if (baseContentHash != null) {
+                        String current = existing.getContentHash() != null
+                                ? existing.getContentHash()
+                                : DocumentContent.sha256Hex(existing.getContent());
+                        if (!baseContentHash.equalsIgnoreCase(current)) {
+                            throw new com.conductor.exception.ConflictException(
+                                    "Document changed since you read it — read it again before writing.");
+                        }
+                    }
                     if (existing.getStoragePath() != null) {
                         uploadToGcs(existing.getStoragePath(), content.getBytes(StandardCharsets.UTF_8), contentType);
                     }
                     existing.setContent(content);
                     existing.setContentHash(DocumentContent.sha256Hex(content));
                     existing.setContentType(contentType);
-                    if (content != null) {
-                        markStaleComments(existing.getId(), content);
-                    }
                     documentRepository.save(existing);
+                    // After the save: each open comment moves with its text, or is orphaned (CommentAnchorService).
+                    if (content != null) {
+                        commentAnchorService.reanchor(
+                                new CommentTarget.WorkItemDocument(workItemId, existing.getId()),
+                                content, existing.getContentHash(), contentType);
+                    }
                     return false;
                 })
                 .orElseGet(() -> {
@@ -180,19 +220,6 @@ public class DocumentService {
         documentRepository.delete(document);
         if (storagePath != null) {
             gcpStorageService.delete(storagePath);
-        }
-    }
-
-    private void markStaleComments(String documentId, String newContent) {
-        int lineCount = newContent.split("\n", -1).length;
-        List<com.conductor.entity.Comment> comments = commentRepository.findAllByDocumentId(documentId);
-        List<com.conductor.entity.Comment> toUpdate = comments.stream()
-                // Anchored (text-selection) comments have no line; the client decides whether their quote survives.
-                .filter(c -> c.getAnchorExact() == null && !c.isLineStale() && c.getLineNumber() > lineCount)
-                .peek(c -> c.setLineStale(true))
-                .toList();
-        if (!toUpdate.isEmpty()) {
-            commentRepository.saveAll(toUpdate);
         }
     }
 
