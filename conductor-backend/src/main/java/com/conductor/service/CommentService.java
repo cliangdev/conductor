@@ -10,7 +10,9 @@ import com.conductor.entity.ProjectDoc;
 import com.conductor.entity.WorkItem;
 import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
+import com.conductor.exception.ConflictException;
 import com.conductor.exception.ForbiddenException;
+import com.conductor.exception.UnprocessableEntityException;
 import com.conductor.repository.CommentReplyRepository;
 import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocumentRepository;
@@ -21,7 +23,9 @@ import com.conductor.repository.ProjectRepository;
 import com.conductor.service.view.CommentAnchor;
 import com.conductor.service.view.CommentAuthorAgentView;
 import com.conductor.service.view.CommentKind;
+import com.conductor.service.anchoring.SourceQuoteLocator;
 import com.conductor.service.view.CommentReplyView;
+import com.conductor.service.view.CommentSuggestionView;
 import com.conductor.service.view.CommentWithRepliesView;
 import com.conductor.signal.Signal;
 import com.conductor.signal.SignalBus;
@@ -69,6 +73,8 @@ public class CommentService {
     private final ProjectRepository projectRepository;
     private final ProjectDocRepository projectDocRepository;
     private final AgentRepository agentRepository;
+    private final DocumentService documentService;
+    private final ProjectDocService projectDocService;
 
     public CommentService(
             CommentRepository commentRepository,
@@ -81,7 +87,9 @@ public class CommentService {
             SignalBus signalBus,
             ProjectRepository projectRepository,
             ProjectDocRepository projectDocRepository,
-            AgentRepository agentRepository) {
+            AgentRepository agentRepository,
+            DocumentService documentService,
+            ProjectDocService projectDocService) {
         this.commentRepository = commentRepository;
         this.commentReplyRepository = commentReplyRepository;
         this.workItemRepository = workItemRepository;
@@ -93,6 +101,8 @@ public class CommentService {
         this.projectRepository = projectRepository;
         this.projectDocRepository = projectDocRepository;
         this.agentRepository = agentRepository;
+        this.documentService = documentService;
+        this.projectDocService = projectDocService;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -108,7 +118,7 @@ public class CommentService {
                                        Integer lineNumber, CommentAnchor anchor, String documentHash,
                                        ProjectActor actor) {
         return create(projectId, new CommentTarget.WorkItemDocument(workItemId, documentId), content, lineNumber,
-                anchor, documentHash, actor, true);
+                anchor, documentHash, actor, true, null);
     }
 
     /**
@@ -119,12 +129,22 @@ public class CommentService {
     public CommentWithRepliesView createThread(String projectId, CommentTarget target, String content,
                                                Integer lineNumber, CommentAnchor anchor, String documentHash,
                                                ProjectActor actor) {
-        CommentResult created = create(projectId, target, content, lineNumber, anchor, documentHash, actor, false);
+        return createThread(projectId, target, content, lineNumber, anchor, documentHash, null, actor);
+    }
+
+    /** As above; {@code suggestedText} (QUOTE comments only) makes it a suggested edit with status PENDING. */
+    @Transactional
+    public CommentWithRepliesView createThread(String projectId, CommentTarget target, String content,
+                                               Integer lineNumber, CommentAnchor anchor, String documentHash,
+                                               String suggestedText, ProjectActor actor) {
+        CommentResult created = create(projectId, target, content, lineNumber, anchor, documentHash, actor, false,
+                suggestedText);
         return viewOf(created.comment());
     }
 
     private CommentResult create(String projectId, CommentTarget target, String content, Integer lineNumber,
-                                 CommentAnchor anchor, String documentHash, ProjectActor actor, boolean legacyRules) {
+                                 CommentAnchor anchor, String documentHash, ProjectActor actor, boolean legacyRules,
+                                 String suggestedText) {
         verifyMembership(projectId, actor);
         requireContent(content);
 
@@ -138,6 +158,7 @@ public class CommentService {
         boolean html = false;
         String currentHash = null;
         String sourceText;
+        boolean htmlSource = false;
 
         switch (target) {
             case CommentTarget.WorkItemDocument t -> {
@@ -149,6 +170,7 @@ public class CommentService {
                 document = documentRepository.findByIdAndWorkItemId(documentId, t.workItemId())
                         .orElseThrow(() -> new EntityNotFoundException("Document not found in Work Item"));
                 html = DocumentContent.isHtml(document);
+                htmlSource = html;
                 currentHash = document.getContentHash();
                 sourceText = document.getContent();
                 comment.setWorkItem(workItem);
@@ -192,6 +214,20 @@ public class CommentService {
             if (lineNumber != null && lineNumber < 1) {
                 throw new BusinessException("lineNumber must be 1 or greater");
             }
+        }
+
+        if (suggestedText != null) {
+            if (anchor == null) {
+                throw new BusinessException("A suggested edit needs a text selection (anchor)");
+            }
+            SourceQuoteLocator.Result located = SourceQuoteLocator.locate(
+                    sourceText, htmlSource, anchor.exact(), anchor.prefix(), anchor.suffix());
+            if (!located.found()) {
+                throw new UnprocessableEntityException(located.reason());
+            }
+            requireDifferentText(anchor.exact(), suggestedText);
+            comment.setSuggestedText(suggestedText);
+            comment.setSuggestionStatus("PENDING");
         }
 
         applyAuthor(comment, actor);
@@ -308,6 +344,110 @@ public class CommentService {
                 .filter(c -> filter == StatusFilter.ALL
                         || (filter == StatusFilter.OPEN) == (c.getResolvedAt() == null))
                 .toList());
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // Suggested edits
+    // ---------------------------------------------------------------------------------------------
+
+    /** Whether a selection can carry a suggested edit, and if not, why (reader-facing). */
+    public record SuggestionCheck(boolean suggestable, String reason) {}
+
+    /** Can this selection be a suggested edit? Same rules as creating one; never writes. */
+    @Transactional(readOnly = true)
+    public SuggestionCheck checkSuggestable(String projectId, CommentTarget target, CommentAnchor anchor,
+                                            ProjectActor actor) {
+        verifyReadAccess(projectId, actor);
+        if (anchor == null || anchor.exact() == null || anchor.exact().isBlank()) {
+            throw new BusinessException("anchor.exact is required");
+        }
+        SourceRef source = sourceOf(projectId, target);
+        SourceQuoteLocator.Result r = SourceQuoteLocator.locate(
+                source.text(), source.html(), anchor.exact(), anchor.prefix(), anchor.suffix());
+        return new SuggestionCheck(r.found(), r.reason());
+    }
+
+    /**
+     * Accepts or rejects a pending suggestion. People only: a machine actor may propose an edit but never decide
+     * one. Accepting re-finds the quote in the document as it is now (409 when it is no longer in exactly one
+     * place), saves the replacement through the document's normal save path (so other comments are re-anchored
+     * and a project doc gets a version), then resolves the thread. All in one transaction.
+     */
+    @Transactional
+    public CommentWithRepliesView decideSuggestion(String projectId, String commentId, boolean accept,
+                                                   ProjectActor actor) {
+        if (actor.user() == null) {
+            throw new ForbiddenException("Only people can accept or reject a suggested edit");
+        }
+        Comment comment = findComment(projectId, commentId, actor);
+        if (comment.getSuggestionStatus() == null) {
+            throw new BusinessException("This comment is not a suggested edit");
+        }
+        if (!"PENDING".equals(comment.getSuggestionStatus())) {
+            throw new ConflictException("This suggestion was already "
+                    + comment.getSuggestionStatus().toLowerCase(java.util.Locale.ROOT));
+        }
+        // Resolved first: the save below re-anchors only unresolved comments, and this one's quote is about to go.
+        if (comment.getResolvedAt() == null) {
+            applyResolved(comment, true, actor);
+        }
+        comment.setSuggestionStatus(accept ? "ACCEPTED" : "REJECTED");
+        comment.setSuggestionDecidedBy(actor.user());
+        comment.setSuggestionDecidedByLabel(null);
+        comment.setSuggestionDecidedAt(OffsetDateTime.now());
+        commentRepository.save(comment);
+        if (accept) {
+            applySuggestion(projectId, comment, actor);
+        }
+        return viewOf(comment);
+    }
+
+    private void applySuggestion(String projectId, Comment comment, ProjectActor actor) {
+        CommentTarget target = comment.getDocument() != null
+                ? new CommentTarget.WorkItemDocument(comment.getWorkItem().getId(), comment.getDocument().getId())
+                : new CommentTarget.ProjectDoc(comment.getProjectDoc().getId());
+        SourceRef source = sourceOf(projectId, target);
+        SourceQuoteLocator.Result r = SourceQuoteLocator.locate(source.text(), source.html(),
+                comment.getAnchorExact(), comment.getAnchorPrefix(), comment.getAnchorSuffix());
+        if (!r.found()) {
+            throw new ConflictException("The text changed since this was suggested");
+        }
+        String updated = SourceQuoteLocator.apply(source.text(), r, comment.getSuggestedText(), source.html());
+        if (comment.getDocument() != null) {
+            Document doc = comment.getDocument();
+            documentService.upsertDocumentByFilename(projectId, comment.getWorkItem().getId(), doc.getFilename(),
+                    updated, doc.getContentType(), source.hash());
+        } else {
+            projectDocService.updateDoc(projectId, comment.getProjectDoc().getId(), updated, actor, source.hash());
+        }
+    }
+
+    private record SourceRef(String text, boolean html, String hash) {}
+
+    /** The current source of a target, whether it is HTML, and its content hash. */
+    private SourceRef sourceOf(String projectId, CommentTarget target) {
+        return switch (target) {
+            case CommentTarget.WorkItemDocument t -> {
+                findWorkItemInProject(projectId, t.workItemId());
+                if (t.documentId() == null) {
+                    throw new BusinessException("documentId is required");
+                }
+                Document d = documentRepository.findByIdAndWorkItemId(t.documentId(), t.workItemId())
+                        .orElseThrow(() -> new EntityNotFoundException("Document not found in Work Item"));
+                yield new SourceRef(d.getContent(), DocumentContent.isHtml(d),
+                        d.getContentHash() != null ? d.getContentHash() : DocumentContent.sha256Hex(d.getContent()));
+            }
+            case CommentTarget.ProjectDoc t -> {
+                ProjectDoc d = findProjectDocInProject(projectId, t.docId());
+                yield new SourceRef(d.getContent(), false, ProjectDocService.contentHash(d));
+            }
+        };
+    }
+
+    private static void requireDifferentText(String exact, String suggested) {
+        if (suggested.equals(exact)) {
+            throw new BusinessException("The suggested text is the same as the selected text");
+        }
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -588,7 +728,20 @@ public class CommentService {
                 comment.getEditedAt(),
                 resolved ? resolverName(comment) : null,
                 comment.getUpdatedAt(),
-                comment.getAnchorStatus());
+                comment.getAnchorStatus(),
+                suggestionOf(comment));
+    }
+
+    private static CommentSuggestionView suggestionOf(Comment comment) {
+        if (comment.getSuggestionStatus() == null) {
+            return null;
+        }
+        User by = comment.getSuggestionDecidedBy();
+        return new CommentSuggestionView(
+                comment.getSuggestedText(),
+                comment.getSuggestionStatus(),
+                by != null ? displayName(by) : comment.getSuggestionDecidedByLabel(),
+                comment.getSuggestionDecidedAt());
     }
 
     private CommentReplyView toReplyView(CommentReply reply, Map<String, CommentAuthorAgentView> agents) {

@@ -38,6 +38,7 @@ interface Thread {
   quotedText?: string | null
   anchor?: { exact: string } | null
   anchorStatus?: string | null
+  suggestion?: { text: string; status: string } | null
   outdated?: boolean
   lineStale?: boolean
   replies?: ThreadReply[]
@@ -109,6 +110,7 @@ function compactThread(t: Thread): Record<string, unknown> {
     }
   }
   if (t.anchorStatus) out['anchorStatus'] = t.anchorStatus
+  if (t.suggestion) out['suggestion'] = { text: t.suggestion.text, status: t.suggestion.status }
   if (t.lineStale || t.outdated) out['stale'] = true
   const replies = (t.replies ?? []).map((r) => ({
     author: r.authorName ? `${r.authorName}${r.authorKind === 'AGENT' ? ' (agent)' : ''}` : undefined,
@@ -142,7 +144,7 @@ export async function listComments(
 }
 
 export async function addComment(
-  params: CommentTarget & { body: string; quote?: string },
+  params: CommentTarget & { body: string; quote?: string; suggestion?: string },
   config: Config
 ): Promise<Record<string, unknown>> {
   requireTarget(params)
@@ -151,6 +153,10 @@ export async function addComment(
   }
   if (params.quote !== undefined && params.quote.length > MAX_QUOTE_CHARS) {
     throw new Error(`quote is too long (max ${MAX_QUOTE_CHARS} characters) — quote a shorter passage`)
+  }
+
+  if (params.suggestion !== undefined && !params.quote) {
+    throw new Error('suggestion needs quote — the exact text it would replace')
   }
 
   let target: Record<string, string>
@@ -165,6 +171,9 @@ export async function addComment(
   const body: Record<string, unknown> = { target, content: params.body }
   if (params.quote) {
     body['anchor'] = { exact: params.quote }
+  }
+  if (params.suggestion !== undefined) {
+    body['suggestion'] = { text: params.suggestion }
   }
 
   const created = await apiPost<Thread>(commentsBase(config), body, config)
