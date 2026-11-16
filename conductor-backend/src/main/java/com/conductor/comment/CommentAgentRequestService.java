@@ -22,10 +22,10 @@ public class CommentAgentRequestService {
     /** A request with no run and no error that is older than this was lost between insert and dispatch. */
     static final Duration DISPATCH_GRACE = Duration.ofMinutes(10);
 
-    static final String RUN_FAILED_MESSAGE =
+    public static final String RUN_FAILED_MESSAGE =
             "The agent could not finish this request. Open the run under Workflows → conductor-comment-agent for details.";
     static final String RUN_CANCELLED_MESSAGE = "The run was cancelled before the agent finished.";
-    static final String NEVER_STARTED_MESSAGE = "The request was never started. Mention the agent again to retry.";
+    public static final String NEVER_STARTED_MESSAGE = "The request was never started. Mention the agent again to retry.";
 
     public enum Status { PENDING, RUNNING, SUCCEEDED, FAILED }
 

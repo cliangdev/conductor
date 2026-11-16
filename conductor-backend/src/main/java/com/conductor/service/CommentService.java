@@ -379,7 +379,7 @@ public class CommentService {
             agentRequestService.linkReply(comment.getId(), actor.agentId(), reply.getId());
         }
 
-        return toReplyView(reply, Map.of());
+        return toReplyView(reply, agentsFor(null, List.of(reply)));
     }
 
     /** Edits a reply's text. Only its author may; a machine actor may edit only machine-written replies. */

@@ -377,7 +377,9 @@ public class DiscordProvider implements NotificationProvider {
             );
             return "{\"embeds\":[{" + embedBase + fields + "}]}";
         }
-        return "{\"embeds\":[{" + embedBase + "}]}";
+        String card = "{\"embeds\":[{" + embedBase + "}]}";
+        // A mention card names people, so it says outright that it pings nobody.
+        return event.getEventType() == EventType.COMMENT_MENTIONED ? withNoMentions(card) : card;
     }
 
     @Override
