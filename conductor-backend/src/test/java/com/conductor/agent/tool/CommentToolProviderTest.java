@@ -39,6 +39,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -233,6 +234,26 @@ class CommentToolProviderTest {
     }
 
     @Test
+    void writingAnExistingDocumentKeepsItsStoredContentTypeAndANewOneIsTypedFromItsFilename() {
+        // An extensionless Markdown document must not turn into text/plain.
+        when(documentService.getDocumentByFilename(PROJECT, "wi-1", "README")).thenReturn(view("d-1", "README", "old", "h"));
+        call("write_document", Map.of("issueId", "wi-1", "filename", "README", "content", "new"));
+        verify(documentService).upsertDocumentByFilename(PROJECT, "wi-1", "README", "new", "text/markdown", null);
+
+        // No such document yet: typed from the filename, as before.
+        when(documentService.getDocumentByFilename(PROJECT, "wi-1", "notes"))
+                .thenThrow(new jakarta.persistence.EntityNotFoundException("Document not found"))
+                .thenReturn(view("d-2", "notes", "x", "h"));
+        call("write_document", Map.of("issueId", "wi-1", "filename", "notes", "content", "x"));
+        verify(documentService).upsertDocumentByFilename(PROJECT, "wi-1", "notes", "x", "text/plain", null);
+
+        // An explicit contentType wins over both.
+        when(documentService.getDocumentByFilename(PROJECT, "wi-1", "page")).thenReturn(view("d-3", "page", "x", "h"));
+        call("write_document", Map.of("issueId", "wi-1", "filename", "page", "content", "<p/>", "contentType", "text/html"));
+        verify(documentService).upsertDocumentByFilename(PROJECT, "wi-1", "page", "<p/>", "text/html", null);
+    }
+
+    @Test
     void aStaleBaseHashIsRefusedWithTheRedoInstructionAndNothingIsClaimedWritten() {
         when(documentService.upsertDocumentByFilename(any(), any(), any(), any(), any(), eq("old")))
                 .thenThrow(new ConflictException("Document changed since you read it — read it again before writing."));
@@ -242,7 +263,8 @@ class CommentToolProviderTest {
 
         assertThat(result.ok()).isFalse();
         assertThat(result.payload()).isEqualTo(CommentToolProvider.CONFLICT_MESSAGE).contains("read it again");
-        verify(documentService, never()).getDocumentByFilename(any(), any(), any());
+        // Only the content-type lookup before the write: no read-back of a document that was not written.
+        verify(documentService, times(1)).getDocumentByFilename(any(), any(), any());
     }
 
     @Test

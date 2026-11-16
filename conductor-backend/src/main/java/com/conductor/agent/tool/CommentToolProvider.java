@@ -423,12 +423,24 @@ public class CommentToolProvider implements AgentToolProvider {
             if (issueId == null || filename == null || content == null) {
                 return ToolResult.error("issueId, filename and content are required");
             }
-            String contentType = str(args.get("contentType")) != null ? str(args.get("contentType"))
-                    : contentTypeFor(filename);
+            String contentType = str(args.get("contentType"));
+            if (contentType == null) {
+                // An existing document keeps the type it is stored under (an extensionless Markdown doc must not
+                // turn into text/plain); only a new one is typed from its filename.
+                String existing = null;
+                try {
+                    DocumentView current = documentService.getDocumentByFilename(context.projectId(), issueId, filename);
+                    existing = current != null ? current.contentType() : null;
+                } catch (jakarta.persistence.EntityNotFoundException notThere) {
+                    // a create
+                }
+                contentType = existing != null ? existing : contentTypeFor(filename);
+            }
+            String writeContentType = contentType;
             String baseHash = str(args.get("baseContentHash"));
             boolean created = asProjectMachine(context.projectId(), context.agentRunId(),
                     () -> documentService.upsertDocumentByFilename(context.projectId(), issueId, filename, content,
-                            contentType, baseHash == null || baseHash.isBlank() ? null : baseHash));
+                            writeContentType, baseHash == null || baseHash.isBlank() ? null : baseHash));
             DocumentView written = documentService.getDocumentByFilename(context.projectId(), issueId, filename);
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("documentId", written.id());
