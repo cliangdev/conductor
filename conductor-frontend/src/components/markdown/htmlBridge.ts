@@ -306,9 +306,22 @@ function bridgeMain(buildQuote: any, findQuote: any, flattenText: any, rangeFor:
   document.addEventListener('keyup', function () {
     setTimeout(reportSelection, 0)
   })
+  // A collapsed selection takes the button away at once. Any other change is reported once it has
+  // settled (~250ms): touch has no mouseup or keyup, the selection handles are dragged and the browser
+  // only fires `selectionchange`.
+  let selectionTimer: any = null
   document.addEventListener('selectionchange', function () {
+    if (selectionTimer) clearTimeout(selectionTimer)
+    selectionTimer = null
     const sel = w.getSelection()
-    if (!sel || sel.isCollapsed) clearSelection()
+    if (!sel || sel.isCollapsed) {
+      clearSelection()
+      return
+    }
+    selectionTimer = setTimeout(function () {
+      selectionTimer = null
+      reportSelection()
+    }, 250)
   })
 
   let scrollQueued = false

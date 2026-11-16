@@ -559,41 +559,176 @@ describe('CommentableHtmlDocument', () => {
       expect(button.style.top).toBe(`${RECT.bottom + 8}px`)
     })
 
-    describe('in a narrow space', () => {
-      const original = globalThis.ResizeObserver
-      beforeEach(() => {
+    describe('on a narrower screen', () => {
+      const originalRO = globalThis.ResizeObserver
+      const w = window as unknown as { matchMedia?: unknown }
+      /** Pretends the browser matches the queries that contain any of `active`. */
+      function media(...active: string[]) {
+        w.matchMedia = (q: string) => ({
+          matches: active.some((a) => q.includes(a)),
+          media: q,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        })
+      }
+      function narrowWrapper(width: number) {
         globalThis.ResizeObserver = class {
           constructor(private cb: ResizeObserverCallback) {}
           observe() {
-            this.cb([{ contentRect: { width: 720 } } as ResizeObserverEntry], this as unknown as ResizeObserver)
+            this.cb([{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver)
           }
           unobserve() {}
           disconnect() {}
         } as unknown as typeof ResizeObserver
-      })
+      }
       afterEach(() => {
-        globalThis.ResizeObserver = original
+        globalThis.ResizeObserver = originalRO
+        delete w.matchMedia
       })
 
-      it('keeps the rail closed so it does not squeeze the document, and floats it when opened', async () => {
-        apiGet.mockResolvedValue([comment({ id: 'c1', anchor: { exact: 'a' } })])
-        render(<CommentableHtmlDocument {...baseProps} />)
-        const toggle = await screen.findByRole('button', { name: /^Comments · 1$/ })
-        expect(screen.queryByRole('complementary', { name: 'Comments' })).not.toBeInTheDocument()
-        fireEvent.click(toggle)
-        const rail = screen.getByRole('complementary', { name: 'Comments' })
-        expect(rail.className).toContain('absolute')
-        fireEvent.click(screen.getByRole('button', { name: 'Close comments' }))
-        expect(screen.queryByRole('complementary', { name: 'Comments' })).not.toBeInTheDocument()
+      async function placed(ids: string[], mode: 'tablet' | 'phone') {
+        if (mode === 'tablet') media('max-width: 1023px')
+        else media('max-width: 767px')
+        const list = ids.map((id) => comment({ id, anchor: { exact: id } }))
+        apiGet.mockResolvedValue(list)
+        const utils = render(<CommentableHtmlDocument {...baseProps} />)
+        await waitFor(() => expect(apiGet).toHaveBeenCalled())
+        await act(async () => {})
+        const win = frameWindow(utils.container)
+        fromFrame(win, bridge({ type: 'ready' }))
+        fromFrame(win, bridge({ type: 'anchored', results: ids.map((id, n) => ({ id, found: true, top: 100 + n * 200 })) }))
+        fromFrame(
+          win,
+          bridge({
+            type: 'layout',
+            scrollY: 0,
+            viewportH: 800,
+            tops: ids.map((id, n) => ({ id, top: 100 + n * 200 })),
+          })
+        )
+        return { ...utils, win }
+      }
+
+      describe('tablet', () => {
+        it('replaces the rail with count bubbles lined up with the highlights', async () => {
+          await placed(['a', 'b'], 'tablet')
+          expect(document.querySelector('[data-comment-id]')).toBeNull()
+          expect(screen.queryByRole('complementary', { name: 'Comments' })?.id).toBe('html-comment-bubbles')
+          const a = document.querySelector('[data-bubble-id="a"]') as HTMLElement
+          const b = document.querySelector('[data-bubble-id="b"]') as HTMLElement
+          expect(a.style.transform).toBe('translate3d(0, 100px, 0)')
+          expect(b.style.transform).toBe('translate3d(0, 300px, 0)')
+        })
+
+        it('opens the thread in a side sheet from a bubble, and "All comments" switches it to the list', async () => {
+          await placed(['a', 'b'], 'tablet')
+          fireEvent.click(document.querySelector('[data-bubble-id="b"]')!)
+          const sheet = await screen.findByRole('dialog')
+          expect(within(sheet).getByText('comment b')).toBeInTheDocument()
+          expect(within(sheet).queryByText('comment a')).not.toBeInTheDocument()
+
+          fireEvent.click(within(sheet).getByRole('button', { name: 'All comments' }))
+          expect(within(screen.getByRole('dialog')).getByText('comment a')).toBeInTheDocument()
+          expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Resolved' })).toBeInTheDocument()
+        })
+
+        it('opens the thread from a click on its highlight', async () => {
+          const { win } = await placed(['a'], 'tablet')
+          fromFrame(win, bridge({ type: 'open', id: 'a' }))
+          expect(within(await screen.findByRole('dialog')).getByText('comment a')).toBeInTheDocument()
+        })
+
+        it('treats a wrapper too narrow for the rail as a tablet even on a wide screen', async () => {
+          narrowWrapper(720)
+          apiGet.mockResolvedValue([comment({ id: 'c1', anchor: { exact: 'a' } })])
+          render(<CommentableHtmlDocument {...baseProps} />)
+          await screen.findByRole('button', { name: /^Comments · 1$/ })
+          expect(document.getElementById('html-comment-rail')).toBeNull()
+          expect(document.getElementById('html-comment-bubbles')).not.toBeNull()
+        })
       })
 
-      it('opens the rail and focuses the thread when its highlight is clicked', async () => {
-        apiGet.mockResolvedValue([comment({ id: 'c1', anchor: { exact: 'a' } })])
-        const { container } = render(<CommentableHtmlDocument {...baseProps} />)
-        await screen.findByRole('button', { name: /^Comments · 1$/ })
-        fromFrame(frameWindow(container), bridge({ type: 'open', id: 'c1' }))
-        expect(screen.getByRole('complementary', { name: 'Comments' })).toBeInTheDocument()
-        expect(document.querySelector('[data-comment-id="c1"]')).toHaveAttribute('data-active', 'true')
+      describe('phone', () => {
+        it('shows highlights only: no rail and no bubbles', async () => {
+          await placed(['a'], 'phone')
+          expect(document.getElementById('html-comment-rail')).toBeNull()
+          expect(document.getElementById('html-comment-bubbles')).toBeNull()
+          expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+        })
+
+        it('opens the tapped thread in a bottom sheet, which Escape closes', async () => {
+          const { win } = await placed(['a', 'b'], 'phone')
+          fromFrame(win, bridge({ type: 'open', id: 'b' }))
+          const sheet = await screen.findByRole('dialog')
+          expect(sheet).toHaveAttribute('data-sheet', 'comments')
+          expect(sheet.className).toContain('bottom-0')
+          expect(within(sheet).getByText('comment b')).toBeInTheDocument()
+
+          fireEvent.keyDown(document, { key: 'Escape' })
+          await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+        })
+
+        it('has a close button', async () => {
+          const { win } = await placed(['a'], 'phone')
+          fromFrame(win, bridge({ type: 'open', id: 'a' }))
+          fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
+          await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+        })
+
+        it('lists every comment from "Comments · N", with Whole document at the top', async () => {
+          apiGet.mockResolvedValue([
+            comment({ id: 'a', anchor: { exact: 'a' } }),
+            comment({ id: 'w', kind: 'DOCUMENT', content: 'about it all' }),
+          ])
+          media('max-width: 767px')
+          render(<CommentableHtmlDocument {...baseProps} />)
+          fireEvent.click(await screen.findByRole('button', { name: /^Comments · 2$/ }))
+          const sheet = await screen.findByRole('dialog')
+          const whole = within(sheet).getByRole('region', { name: 'Whole document' })
+          expect(within(whole).getByText('about it all')).toBeInTheDocument()
+          const list = within(sheet).getByTestId('sheet-list')
+          expect(sheet.compareDocumentPosition(whole) & Node.DOCUMENT_POSITION_CONTAINED_BY).toBeTruthy()
+          expect(whole.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+        })
+
+        it('keeps j and k working inside the sheet, moving between threads', async () => {
+          const { win } = await placed(['a', 'b'], 'phone')
+          fromFrame(win, bridge({ type: 'open', id: 'a' }))
+          const sheet = await screen.findByRole('dialog')
+          expect(within(sheet).getByText('comment a')).toBeInTheDocument()
+          fireEvent.keyDown(document, { key: 'j' })
+          expect(within(screen.getByRole('dialog')).getByText('comment b')).toBeInTheDocument()
+          expect(within(screen.getByRole('dialog')).queryByText('comment a')).not.toBeInTheDocument()
+          fireEvent.keyDown(document, { key: 'k' })
+          expect(within(screen.getByRole('dialog')).getByText('comment a')).toBeInTheDocument()
+        })
+
+        it('composes in the bottom sheet, with the quote shown, instead of a floating card', async () => {
+          const { container } = await placed([], 'phone')
+          fromFrame(frameWindow(container), bridge(selection))
+          fireEvent.click(await screen.findByRole('button', { name: 'Comment' }))
+          expect(screen.queryByTestId('comment-popover')).not.toBeInTheDocument()
+          const sheet = await screen.findByRole('dialog')
+          expect(within(sheet).getByText('20 of 26')).toBeInTheDocument()
+          const box = within(sheet).getByRole('textbox', { name: 'Comment text' })
+          fireEvent.change(box, { target: { value: 'from my phone' } })
+          fireEvent.keyDown(box, { key: 'Enter', metaKey: true })
+          await waitFor(() => expect(apiPost).toHaveBeenCalled())
+          expect(apiPost.mock.calls[0][1]).toMatchObject({ content: 'from my phone', anchor: { exact: '20 of 26' } })
+        })
+
+        it('puts the Comment button below a touch selection, clear of the native menu above it', async () => {
+          media('max-width: 767px', 'pointer: coarse')
+          const { container } = render(<CommentableHtmlDocument {...baseProps} />)
+          await act(async () => {})
+          fromFrame(
+            frameWindow(container),
+            bridge({ ...selection, rect: { top: 200, left: 100, right: 300, bottom: 220, width: 200, height: 20 } })
+          )
+          const button = await screen.findByRole('button', { name: 'Comment' })
+          // Below the selection: its bottom (220) + 8 gap + 22 for the selection handles.
+          expect(button.style.top).toBe('250px')
+        })
       })
     })
   })

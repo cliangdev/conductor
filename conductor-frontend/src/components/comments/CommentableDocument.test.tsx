@@ -333,3 +333,207 @@ describe('CommentableDocument', () => {
     })
   })
 })
+
+describe('CommentableDocument on narrower screens', () => {
+  const w = window as unknown as { matchMedia?: unknown }
+  /** Pretends the browser matches the queries that contain any of `active`. */
+  function media(...active: string[]) {
+    w.matchMedia = (q: string) => ({
+      matches: active.some((a) => q.includes(a)),
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })
+  }
+  const TABLET = 'max-width: 1023px'
+  const PHONE = 'max-width: 767px'
+
+  /** A tap on the words of the second paragraph. */
+  function tapSecondParagraph() {
+    const p = screen.getByTestId('markdown').querySelectorAll('p')[1]
+    const node = p.firstChild as Text
+    ;(document as unknown as { caretRangeFromPoint: unknown }).caretRangeFromPoint = () => {
+      const r = document.createRange()
+      r.setStart(node, 4)
+      r.collapse(true)
+      return r
+    }
+    fireEvent.click(p)
+  }
+
+  const two = () => [
+    comment({ id: 'c1', anchor: { exact: 'Ship the thing' }, content: 'first thread', replies: [] }),
+    comment({
+      id: 'c2',
+      anchor: { exact: 'Second paragraph' },
+      content: 'second thread',
+      replies: [
+        {
+          id: 'r1',
+          authorId: 'u2',
+          authorName: 'Bo',
+          content: 'a reply',
+          createdAt: '2026-10-01T01:00:00Z',
+        },
+      ],
+    }),
+  ]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    apiPost.mockResolvedValue({ ...comment({ id: 'new', anchor: { exact: 'the thing' } }) })
+  })
+  afterEach(() => {
+    delete w.matchMedia
+    window.getSelection()?.removeAllRanges()
+    delete (document as unknown as { caretRangeFromPoint?: unknown }).caretRangeFromPoint
+  })
+
+  it('docks the rail at desktop width: cards, no bubbles, no sheet', async () => {
+    media() // nothing matches
+    await renderDoc(two())
+    expect(cardFor('c1')).toBeInTheDocument()
+    expect(document.querySelector('[data-bubble-id]')).toBeNull()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  describe('tablet', () => {
+    it('swaps the rail for count bubbles (replies included) in a narrow margin', async () => {
+      media(TABLET)
+      await renderDoc(two())
+      expect(cardFor('c1')).toBeNull()
+      expect(screen.getByRole('button', { name: '1 comment on this text' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: '2 comments on this text' })).toBeInTheDocument()
+      const aside = document.getElementById('document-comment-rail')!
+      expect(aside.className).toContain('w-8')
+    })
+
+    it('opens the thread in a right-hand sheet from its bubble, and "All comments" shows the filtered list', async () => {
+      media(TABLET)
+      await renderDoc(two())
+      fireEvent.click(screen.getByRole('button', { name: '2 comments on this text' }))
+      const sheet = await screen.findByRole('dialog')
+      expect(sheet.className).toContain('right-0')
+      expect(within(sheet).getByText('second thread')).toBeInTheDocument()
+      expect(within(sheet).getByText('a reply')).toBeInTheDocument()
+      expect(within(sheet).queryByText('first thread')).not.toBeInTheDocument()
+
+      fireEvent.click(within(sheet).getByRole('button', { name: 'All comments' }))
+      const list = screen.getByRole('dialog')
+      expect(within(list).getByText('first thread')).toBeInTheDocument()
+      expect(within(list).getByText('second thread')).toBeInTheDocument()
+      expect(within(list).getByRole('button', { name: 'Mine' })).toBeInTheDocument()
+    })
+
+    it('opens the thread when its highlight is tapped', async () => {
+      media(TABLET)
+      await renderDoc(two())
+      tapSecondParagraph()
+      expect(within(await screen.findByRole('dialog')).getByText('second thread')).toBeInTheDocument()
+    })
+  })
+
+  describe('phone', () => {
+    it('shows highlights only until something is tapped', async () => {
+      media(PHONE)
+      await renderDoc(two())
+      expect(document.getElementById('document-comment-rail')).toBeNull()
+      expect(document.querySelector('[data-bubble-id]')).toBeNull()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('opens the tapped thread in a bottom sheet; Escape closes it and returns to the page', async () => {
+      media(PHONE)
+      await renderDoc(two())
+      tapSecondParagraph()
+      const sheet = await screen.findByRole('dialog')
+      expect(sheet.className).toContain('bottom-0')
+      expect(within(sheet).getByText('second thread')).toBeInTheDocument()
+      fireEvent.keyDown(document, { key: 'Escape' })
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    })
+
+    it('lists everything from "Comments · N", Whole document first', async () => {
+      media(PHONE)
+      await renderDoc([...two(), comment({ id: 'w', kind: 'DOCUMENT', content: 'about it all' })])
+      fireEvent.click(screen.getByRole('button', { name: /^Comments · 3$/ }))
+      const sheet = await screen.findByRole('dialog')
+      const whole = within(sheet).getByRole('region', { name: 'Whole document' })
+      expect(within(whole).getByText('about it all')).toBeInTheDocument()
+      const list = within(sheet).getByTestId('sheet-list')
+      expect(whole.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      expect(within(list).getByText('first thread')).toBeInTheDocument()
+    })
+
+    it('keeps j and k working in the open sheet', async () => {
+      media(PHONE)
+      await renderDoc(two())
+      tapSecondParagraph()
+      await screen.findByRole('dialog')
+      fireEvent.keyDown(document, { key: 'k' })
+      expect(within(screen.getByRole('dialog')).getByText('first thread')).toBeInTheDocument()
+      fireEvent.keyDown(document, { key: 'j' })
+      expect(within(screen.getByRole('dialog')).getByText('second thread')).toBeInTheDocument()
+    })
+
+    it('composes in the bottom sheet, with the quote, rather than in a floating card', async () => {
+      media(PHONE)
+      await renderDoc([], { contentHash: 'h1' })
+      selectInParagraph('the thing')
+      fireEvent.click(await screen.findByRole('button', { name: 'Comment on selection' }))
+      expect(screen.queryByTestId('comment-popover')).not.toBeInTheDocument()
+      const sheet = await screen.findByRole('dialog')
+      expect(sheet.className).toContain('bottom-0')
+      expect(within(sheet).getByText('the thing')).toBeInTheDocument()
+      const box = within(sheet).getByRole('textbox')
+      fireEvent.change(box, { target: { value: 'typed on a phone' } })
+      fireEvent.keyDown(box, { key: 'Enter', metaKey: true })
+      await waitFor(() => expect(apiPost).toHaveBeenCalled())
+      expect(apiPost.mock.calls[0][1]).toMatchObject({
+        content: 'typed on a phone',
+        anchor: { exact: 'the thing' },
+        documentHash: 'h1',
+      })
+    })
+
+    it('puts the Comment button below a touch selection, clear of the native menu above it', async () => {
+      media(PHONE, 'pointer: coarse')
+      await renderDoc()
+      const p = screen.getByTestId('markdown').querySelectorAll('p')[0]
+      const node = p.firstChild as Text
+      window.getSelection()!.setBaseAndExtent(node, 0, node, 4)
+      const rect = { top: 100, bottom: 120, left: 10, right: 90, width: 80, height: 20 }
+      Range.prototype.getBoundingClientRect = () => rect as DOMRect
+      fireEvent.mouseUp(p)
+      const button = await screen.findByRole('button', { name: 'Comment on selection' })
+      // jsdom's wrapper sits at the origin: below the selection's bottom (120) + 8 gap + 22 for the handles.
+      expect(button.style.top).toBe('150px')
+    })
+  })
+
+  describe('touch selection', () => {
+    it('shows the Comment button from selectionchange alone, once the selection has settled', async () => {
+      await renderDoc()
+      expect(screen.queryByRole('button', { name: 'Comment on selection' })).not.toBeInTheDocument()
+      const p = screen.getByTestId('markdown').querySelectorAll('p')[0]
+      const node = p.firstChild as Text
+      window.getSelection()!.setBaseAndExtent(node, 0, node, 4)
+      // No mouseup or keyup: a touch drag only produces selectionchange.
+      document.dispatchEvent(new Event('selectionchange'))
+      document.dispatchEvent(new Event('selectionchange'))
+      expect(screen.queryByRole('button', { name: 'Comment on selection' })).not.toBeInTheDocument()
+      expect(await screen.findByRole('button', { name: 'Comment on selection' })).toBeInTheDocument()
+    })
+
+    it('drops the button as soon as the selection collapses', async () => {
+      await renderDoc()
+      selectInParagraph('the thing')
+      await screen.findByRole('button', { name: 'Comment on selection' })
+      window.getSelection()!.removeAllRanges()
+      act(() => {
+        document.dispatchEvent(new Event('selectionchange'))
+      })
+      expect(screen.queryByRole('button', { name: 'Comment on selection' })).not.toBeInTheDocument()
+    })
+  })
+})

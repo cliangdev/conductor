@@ -1,15 +1,19 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare, MessageSquarePlus, X } from 'lucide-react'
+import { MessageSquare, MessageSquarePlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { CommentCard, PendingCommentCard } from '@/components/comments/CommentCard'
 import { CommentComposer } from '@/components/comments/CommentComposer'
+import { CommentSheet, type CommentSheetView } from '@/components/comments/CommentSheet'
+import { CountBubbles, type CountBubbleItem } from '@/components/comments/CountBubbles'
 import { MarginRail, type MarginRailItem } from '@/components/comments/MarginRail'
 import { RailHeader, type RailFilter } from '@/components/comments/RailHeader'
 import { WholeDocumentSection, legacyLineNote, unplacedNote } from '@/components/comments/WholeDocumentSection'
 import { useComments } from '@/components/comments/useComments'
+import { isCoarsePointer, useCommentLayoutMode } from '@/components/comments/useCommentLayoutMode'
+import { selectionButtonTop } from '@/components/comments/selectionPlacement'
 import type { Comment, PendingCommentDraft, TextQuoteAnchor } from '@/components/comments/types'
 import { prepareHtmlDocument } from './htmlDocument'
 import { bridgeSource } from './htmlBridge'
@@ -62,8 +66,6 @@ const BUTTON_WIDTH = 112
 const BUTTON_HEIGHT = 32
 const FORM_WIDTH = 336
 const FORM_HEIGHT = 240
-/** Below this width the frame plus a docked rail would squeeze the document, so the rail floats over it. */
-const DOCK_MIN_WIDTH = 1024
 /** A card starts a little above the first line of its words, so its header lines up with the text. */
 const ANCHOR_INSET = 8
 
@@ -103,8 +105,8 @@ function readTheme() {
 
 /**
  * An HTML document: the sandboxed frame on the left and, from 1024px wide, a comment rail docked on the
- * right whose cards line up with their highlights inside the frame. Narrower, the rail floats over the
- * frame on request.
+ * right whose cards line up with their highlights inside the frame. On a tablet the rail shrinks to count
+ * bubbles that open a side sheet; on a phone a tap on a highlight opens a bottom sheet.
  */
 export function CommentableHtmlDocument(props: Props) {
   const { documentId, content } = props
@@ -147,7 +149,6 @@ function HtmlDocumentFrame({
   const railColumnRef = useRef<HTMLDivElement>(null)
   const railTopRef = useRef<HTMLDivElement>(null)
   const alignedRef = useRef<HTMLDivElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
 
   const [readyCount, setReadyCount] = useState(0)
   const [placement, setPlacement] = useState<Record<string, AnchorResult>>({})
@@ -164,10 +165,10 @@ function HtmlDocumentFrame({
   const [railOffset, setRailOffset] = useState(0)
   // 0 until measured (and always in tests): treated as wide enough to dock.
   const [wrapperWidth, setWrapperWidth] = useState(0)
-  const docked = wrapperWidth === 0 || wrapperWidth >= DOCK_MIN_WIDTH
-  // null = follow the default (docked: open, floating: closed); a boolean once the reader toggles it.
-  const [railChoice, setRailChoice] = useState<boolean | null>(null)
-  const railOpen = railChoice ?? docked
+  const mode = useCommentLayoutMode(wrapperWidth)
+  const docked = mode === 'wide'
+  // Narrow screens show threads in a sheet: one thread (tap on a highlight or bubble) or the whole list.
+  const [sheetView, setSheetView] = useState<'thread' | 'list' | null>(null)
 
   useEffect(() => {
     const el = wrapperRef.current
@@ -181,6 +182,7 @@ function HtmlDocumentFrame({
     const top = railTopRef.current
     const column = railColumnRef.current
     const aligned = alignedRef.current
+    // The tablet's bubble column has no header above it, so there is nothing to measure.
     if (!top || !column || !aligned || typeof ResizeObserver === 'undefined') return
     const measure = () =>
       setRailOffset(Math.round(aligned.getBoundingClientRect().top - column.getBoundingClientRect().top))
@@ -189,7 +191,7 @@ function HtmlDocumentFrame({
     ro.observe(top)
     ro.observe(column)
     return () => ro.disconnect()
-  }, [railOpen, docked])
+  }, [docked])
 
   const srcDoc = useMemo(() => prepareHtmlDocument(content, { bridge: bridgeSource }), [content])
 
@@ -355,7 +357,6 @@ function HtmlDocumentFrame({
       if (navIds.length === 0) return
       const i = activeId ? navIds.indexOf(activeId) : -1
       const next = i < 0 ? (delta > 0 ? 0 : navIds.length - 1) : (i + delta + navIds.length) % navIds.length
-      setRailChoice((c) => c ?? true)
       focusThread(navIds[next], true)
     },
     [navIds, activeId, focusThread]
@@ -382,15 +383,23 @@ function HtmlDocumentFrame({
     const box = frameBoxRef.current
     const width = box?.clientWidth ?? 0
     let left = (rect.left + rect.right) / 2 - BUTTON_WIDTH / 2
-    let top = rect.top - BUTTON_HEIGHT - 8
-    if (top < 8) top = rect.bottom + 8
+    // On touch the button goes below the selection, clear of the native menu that appears above it.
+    const top = selectionButtonTop({
+      rectTop: rect.top,
+      rectBottom: rect.bottom,
+      buttonHeight: BUTTON_HEIGHT,
+      coarse: isCoarsePointer(),
+      minTop: 8,
+    })
     if (width > 0) left = Math.min(left, width - BUTTON_WIDTH - 8)
     return { anchor, rect, left: Math.max(8, left), top: Math.max(8, top) }
   }, [])
 
   const stepRef = useRef(step)
+  const modeRef = useRef(mode)
   useEffect(() => {
     stepRef.current = step
+    modeRef.current = mode
   })
 
   useEffect(() => {
@@ -430,9 +439,10 @@ function HtmlDocumentFrame({
           else stepRef.current(msg.key === 'j' ? 1 : -1)
           break
         case 'open':
-          // The thread's words are already on screen: focus its card, opening the rail if it was closed.
+          // The thread's words are already on screen: focus its card, or open it in the sheet when there
+          // is no docked rail.
           setActiveId(msg.id)
-          setRailChoice(true)
+          if (modeRef.current !== 'wide') setSheetView('thread')
           break
       }
     }
@@ -440,18 +450,15 @@ function HtmlDocumentFrame({
     return () => window.removeEventListener('message', onMessage)
   }, [floatingSpot])
 
-  // The floating rail is a plain list, so a focused card is scrolled into view in it.
-  useEffect(() => {
-    if (docked || !activeId) return
-    const cards = listRef.current?.querySelectorAll<HTMLElement>('[data-comment-id]') ?? []
-    Array.from(cards)
-      .find((el) => el.dataset.commentId === activeId)
-      ?.scrollIntoView?.({ block: 'nearest' })
-  }, [docked, activeId])
-
   // ── Composing ──────────────────────────────────────────────────────────────
   function openCompose() {
     if (!selection) return
+    // In a sheet the form takes the sheet's width: no popover to position.
+    if (!docked) {
+      setComposing({ ...selection, left: 0, top: 0 })
+      setSelection(null)
+      return
+    }
     // The form opens below the selection (above it near the bottom edge), left-aligned with it, so the
     // quoted text stays readable while typing.
     const box = frameBoxRef.current
@@ -481,7 +488,11 @@ function HtmlDocumentFrame({
       ...(contentHash ? { documentHash: contentHash } : {}),
     })
     // Focus the new thread so its card is where the reader looks next.
-    if (created) setActiveId(created.id)
+    if (created) {
+      setActiveId(created.id)
+      // With no docked rail, the new thread is shown in the sheet.
+      if (!docked) setSheetView('thread')
+    }
   }
 
   // ── Cards ──────────────────────────────────────────────────────────────────
@@ -534,77 +545,89 @@ function HtmlDocumentFrame({
     node: renderEntry(e),
   }))
 
+  const bubbleItems: CountBubbleItem[] = placed.map((e) => ({
+    id: e.id,
+    top: e.top,
+    count: e.kind === 'draft' ? 1 : 1 + e.comment.replies.length,
+  }))
+
+  const wholeSection = (
+    <div className="max-h-64 overflow-y-auto">
+      <WholeDocumentSection
+        onCreate={
+          reviewMode
+            ? undefined
+            : async (text) => {
+                const created = await api.create({
+                  content: text,
+                  ...(contentHash ? { documentHash: contentHash } : {}),
+                })
+                if (created) setActiveId(created.id)
+              }
+        }
+      >
+        {whole.map(renderEntry)}
+      </WholeDocumentSection>
+    </div>
+  )
+
+  const railFilters = (
+    <RailHeader
+      filter={filter}
+      onFilterChange={setFilter}
+      index={navIndex}
+      total={navIds.length}
+      onPrev={prev}
+      onNext={next}
+    />
+  )
+
   const railBody = (
     <>
       <div ref={railTopRef} className="shrink-0 space-y-3 pb-3">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-            Comments · {total}
-          </h2>
-          {!docked && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              aria-label="Close comments"
-              onClick={() => setRailChoice(false)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-        <RailHeader
-          filter={filter}
-          onFilterChange={setFilter}
-          index={navIndex}
-          total={navIds.length}
-          onPrev={prev}
-          onNext={next}
-        />
-        <div className="max-h-64 overflow-y-auto">
-          <WholeDocumentSection
-            onCreate={
-              reviewMode
-                ? undefined
-                : async (text) => {
-                    const created = await api.create({
-                      content: text,
-                      ...(contentHash ? { documentHash: contentHash } : {}),
-                    })
-                    if (created) setActiveId(created.id)
-                  }
-            }
-          >
-            {whole.map(renderEntry)}
-          </WholeDocumentSection>
-        </div>
+        <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+          Comments · {total}
+        </h2>
+        {railFilters}
+        {wholeSection}
       </div>
 
       <div ref={alignedRef} className="relative min-h-0 flex-1">
-        {docked ? (
-          <>
-            <MarginRail items={railNodes} activeId={activeId} offset={layout.scrollY + railOffset} />
-            {/* Until the frame has said it is ready there is nothing to line up with, so threads are just listed. */}
-            {readyCount === 0 && unreported.length > 0 && (
-              <div className="absolute inset-0 space-y-2 overflow-y-auto bg-background">
-                {unreported.map(renderEntry)}
-              </div>
-            )}
-            {/* Resolved threads have no highlight to line up with, so they are listed. */}
-            {filter === 'resolved' && resolvedStack.length > 0 && (
-              <div className="absolute inset-0 space-y-2 overflow-y-auto bg-background">
-                {resolvedStack.map(renderEntry)}
-              </div>
-            )}
-          </>
-        ) : (
-          <div ref={listRef} className="h-full space-y-2 overflow-y-auto">
-            {[...placed, ...unreported, ...resolvedStack].map(renderEntry)}
+        <MarginRail items={railNodes} activeId={activeId} offset={layout.scrollY + railOffset} />
+        {/* Until the frame has said it is ready there is nothing to line up with, so threads are just listed. */}
+        {readyCount === 0 && unreported.length > 0 && (
+          <div className="absolute inset-0 space-y-2 overflow-y-auto bg-background">
+            {unreported.map(renderEntry)}
+          </div>
+        )}
+        {/* Resolved threads have no highlight to line up with, so they are listed. */}
+        {filter === 'resolved' && resolvedStack.length > 0 && (
+          <div className="absolute inset-0 space-y-2 overflow-y-auto bg-background">
+            {resolvedStack.map(renderEntry)}
           </div>
         )}
       </div>
     </>
   )
+
+  // ── The sheet (tablet and phone) ───────────────────────────────────────────
+  const allEntries = [...placed, ...whole, ...unreported, ...resolvedStack]
+  const focusedEntry = activeId ? allEntries.find((e) => e.id === activeId) : undefined
+  const sheetOpenView: CommentSheetView | null = docked
+    ? null
+    : composing
+      ? { kind: 'compose', quote: composing.anchor.exact }
+      : sheetView === 'thread' && activeId
+        ? { kind: 'thread' }
+        : sheetView === 'list'
+          ? { kind: 'list' }
+          : null
+
+  function closeSheet() {
+    setComposing(null)
+    setSheetView(null)
+    setActiveId(null)
+  }
 
   return (
     <div ref={wrapperRef} className="space-y-2">
@@ -612,15 +635,9 @@ function HtmlDocumentFrame({
         <p className="text-xs text-muted-foreground">Select text in the document to comment on it.</p>
         <div className="flex items-center gap-1">
           {!docked && (
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-expanded={railOpen}
-              aria-controls="html-comment-rail"
-              onClick={() => setRailChoice(!railOpen)}
-            >
+            <Button variant="ghost" size="sm" onClick={() => setSheetView('list')}>
               <MessageSquare className="mr-1.5 h-4 w-4" />
-              {railOpen ? 'Hide comments' : 'Comments'} · {total}
+              Comments · {total}
             </Button>
           )}
           {toolbarAction}
@@ -633,7 +650,7 @@ function HtmlDocumentFrame({
           fullView ? 'h-[calc(100vh-9rem)]' : 'h-[70vh] lg:h-[calc(100vh-17rem)]'
         )}
       >
-        {composing && (
+        {composing && docked && (
           <div className="fixed inset-0 z-40" onClick={() => setComposing(null)} aria-hidden="true" />
         )}
 
@@ -661,7 +678,7 @@ function HtmlDocumentFrame({
             </Button>
           )}
 
-          {composing && (
+          {composing && docked && (
             <div
               data-testid="comment-popover"
               className="absolute z-50 w-[21rem] max-w-[calc(100%-1rem)] rounded-lg border border-border bg-card p-4 shadow-xl"
@@ -677,22 +694,53 @@ function HtmlDocumentFrame({
           )}
         </div>
 
-        {railOpen && (
+        {mode === 'wide' && (
           <aside
             id="html-comment-rail"
             ref={railColumnRef}
             aria-label="Comments"
-            className={cn(
-              'flex w-80 max-w-[calc(100%-2rem)] shrink-0 flex-col',
-              docked
-                ? 'pr-1'
-                : 'absolute inset-y-0 right-0 z-20 rounded-lg border border-border bg-card p-3 shadow-xl'
-            )}
+            className="flex w-80 max-w-[calc(100%-2rem)] shrink-0 flex-col pr-1"
           >
             {railBody}
           </aside>
         )}
+
+        {mode === 'tablet' && (
+          <aside id="html-comment-bubbles" aria-label="Comments" className="flex w-8 shrink-0 flex-col">
+            <div className="relative min-h-0 flex-1">
+              <CountBubbles
+                items={bubbleItems}
+                activeId={activeId}
+                offset={layout.scrollY}
+                onSelect={(id) => {
+                  setActiveId(id)
+                  setSheetView('thread')
+                }}
+              />
+            </div>
+          </aside>
+        )}
       </div>
+
+      {!docked && (
+        <CommentSheet
+          mode={mode === 'phone' ? 'phone' : 'tablet'}
+          view={sheetOpenView}
+          total={total}
+          onClose={closeSheet}
+          onShowAll={() => setSheetView('list')}
+          thread={focusedEntry ? renderEntry(focusedEntry) : undefined}
+          nav={{ index: navIndex, total: navIds.length, onPrev: prev, onNext: next }}
+          listHeader={
+            <>
+              {railFilters}
+              {wholeSection}
+            </>
+          }
+          list={[...placed, ...unreported, ...resolvedStack].map(renderEntry)}
+          onSubmitCompose={handleSubmit}
+        />
+      )}
     </div>
   )
 }

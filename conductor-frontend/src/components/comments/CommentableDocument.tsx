@@ -1,16 +1,20 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare, MessageSquarePlus, X } from 'lucide-react'
+import { MessageSquare, MessageSquarePlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { CommentCard, PendingCommentCard } from './CommentCard'
 import { CommentComposer } from './CommentComposer'
+import { CommentSheet, type CommentSheetView } from './CommentSheet'
+import { CountBubbles, type CountBubbleItem } from './CountBubbles'
 import { MarginRail, type MarginRailItem } from './MarginRail'
 import { RailHeader, type RailFilter } from './RailHeader'
 import { WholeDocumentSection, legacyLineNote, unplacedNote } from './WholeDocumentSection'
 import { useComments, type CommentTarget } from './useComments'
+import { isCoarsePointer, useCommentLayoutMode } from './useCommentLayoutMode'
+import { selectionButtonTop } from './selectionPlacement'
 import { anchorFromRange, useDocumentAnchors, type AnchorInput } from './useDocumentAnchors'
 import type { Comment, PendingCommentDraft, TextQuoteAnchor } from './types'
 
@@ -59,8 +63,8 @@ interface Spot {
 const BUTTON_WIDTH = 112
 const BUTTON_HEIGHT = 32
 const FORM_WIDTH = 336
-/** Below this width a docked rail would squeeze the text, so the rail floats over it. */
-const DOCK_MIN_WIDTH = 1024
+/** A touch selection is settled this long after its last change before the Comment button appears. */
+const SELECTION_DEBOUNCE_MS = 250
 /** A card starts a little above the first line of its words, so its header lines up with the text. */
 const ANCHOR_INSET = 8
 
@@ -87,13 +91,11 @@ function isResolved(c: Comment): boolean {
  * re-renders only the rail, never the markdown beside it.
  */
 function AlignedRail({
-  items,
-  activeId,
+  render,
   contentRef,
   children,
 }: {
-  items: MarginRailItem[]
-  activeId: string | null
+  render: (offset: number) => React.ReactNode
   contentRef: React.RefObject<HTMLElement | null>
   children?: React.ReactNode
 }) {
@@ -131,7 +133,7 @@ function AlignedRail({
 
   return (
     <div ref={alignedRef} className="relative min-h-0 flex-1">
-      <MarginRail items={items} activeId={activeId} offset={offset} />
+      {render(offset)}
       {children}
     </div>
   )
@@ -140,8 +142,8 @@ function AlignedRail({
 /**
  * A markdown document with comments on selected text. The commented words stay highlighted in the page
  * and each thread is a card in a rail on the right, lined up with its highlight (docked from 1024px
- * wide; narrower, the rail floats over the page on request). Older line comments highlight the block
- * that shows their line.
+ * wide). On a tablet the rail shrinks to count bubbles that open a side sheet; on a phone a tap on a
+ * highlight opens a bottom sheet. Older line comments highlight the block that shows their line.
  */
 export function CommentableDocument({
   content,
@@ -170,7 +172,6 @@ export function CommentableDocument({
 
   const wrapperRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
-  const listRef = useRef<HTMLDivElement>(null)
 
   const [selection, setSelection] = useState<Spot | null>(null)
   const [composing, setComposing] = useState<Spot | null>(null)
@@ -179,10 +180,10 @@ export function CommentableDocument({
   const [editingPendingId, setEditingPendingId] = useState<string | null>(null)
   // 0 until measured (and always in tests): treated as wide enough to dock.
   const [wrapperWidth, setWrapperWidth] = useState(0)
-  const docked = wrapperWidth === 0 || wrapperWidth >= DOCK_MIN_WIDTH
-  // null = follow the default (docked: open, floating: closed); a boolean once the reader toggles it.
-  const [railChoice, setRailChoice] = useState<boolean | null>(null)
-  const railOpen = railChoice ?? docked
+  const mode = useCommentLayoutMode(wrapperWidth)
+  const docked = mode === 'wide'
+  // Narrow screens show threads in a sheet: one thread (tap on a highlight or bubble) or the whole list.
+  const [sheetView, setSheetView] = useState<'thread' | 'list' | null>(null)
 
   useEffect(() => {
     const el = wrapperRef.current
@@ -312,17 +313,16 @@ export function CommentableDocument({
   useEffect(() => {
     focusThreadRef.current = (id, scroll) => {
       focusThread(id, scroll)
-      // A click on the words opens the rail when it was closed.
-      if (!scroll) setRailChoice(true)
+      // A tap on the words (or a bubble) opens that thread in the sheet when there is no docked rail.
+      if (!scroll && mode !== 'wide') setSheetView('thread')
     }
-  }, [focusThread])
+  }, [focusThread, mode])
 
   const step = useCallback(
     (delta: number) => {
       if (navIds.length === 0) return
       const i = activeId ? navIds.indexOf(activeId) : -1
       const next = i < 0 ? (delta > 0 ? 0 : navIds.length - 1) : (i + delta + navIds.length) % navIds.length
-      setRailChoice((c) => c ?? true)
       focusThread(navIds[next], true)
     },
     [navIds, activeId, focusThread]
@@ -341,15 +341,6 @@ export function CommentableDocument({
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [])
-
-  // The floating rail is a plain list, so a focused card is scrolled into view in it.
-  useEffect(() => {
-    if (docked || !activeId) return
-    const cards = listRef.current?.querySelectorAll<HTMLElement>('[data-comment-id]') ?? []
-    Array.from(cards)
-      .find((el) => el.dataset.commentId === activeId)
-      ?.scrollIntoView?.({ block: 'nearest' })
-  }, [docked, activeId])
 
   // ── Selecting text ─────────────────────────────────────────────────────────
   const evaluateSelection = useCallback(() => {
@@ -372,9 +363,14 @@ export function CommentableDocument({
         ? range.getBoundingClientRect()
         : { left: 0, right: 0, top: 0, bottom: 0 }
     const centre = (r.left + r.right) / 2 - box.left - BUTTON_WIDTH / 2
-    // The button sits just above the selection so it never covers the words being selected.
-    let top = r.top - box.top - BUTTON_HEIGHT - 8
-    if (top < 0) top = r.bottom - box.top + 8
+    // The button sits just above the selection so it never covers the words being selected; on touch it
+    // sits below, clear of the native selection menu that appears above.
+    const top = selectionButtonTop({
+      rectTop: r.top - box.top,
+      rectBottom: r.bottom - box.top,
+      buttonHeight: BUTTON_HEIGHT,
+      coarse: isCoarsePointer(),
+    })
     const maxLeft = Math.max(0, box.width - BUTTON_WIDTH - 8)
     setSelection({
       anchor,
@@ -385,18 +381,36 @@ export function CommentableDocument({
     })
   }, [])
 
-  // A selection that collapses (a click elsewhere, Escape) takes the button away.
+  // A selection that collapses (a click elsewhere, Escape) takes the button away at once. One that
+  // changes is evaluated once it has settled: touch has no mouseup or keyup to wait for, the selection
+  // handles are dragged and the browser only reports `selectionchange`.
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null
     function onChange() {
+      if (timer) clearTimeout(timer)
+      timer = null
       const sel = window.getSelection?.()
-      if (!sel || sel.isCollapsed) setSelection(null)
+      if (!sel || sel.isCollapsed) {
+        setSelection(null)
+        return
+      }
+      timer = setTimeout(evaluateSelection, SELECTION_DEBOUNCE_MS)
     }
     document.addEventListener('selectionchange', onChange)
-    return () => document.removeEventListener('selectionchange', onChange)
-  }, [])
+    return () => {
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('selectionchange', onChange)
+    }
+  }, [evaluateSelection])
 
   function openCompose() {
     if (!selection) return
+    // In a sheet the form takes the sheet's width: no popover to position.
+    if (mode !== 'wide') {
+      setComposing({ ...selection, left: 0, top: 0 })
+      setSelection(null)
+      return
+    }
     const box = wrapperRef.current?.getBoundingClientRect()
     const maxLeft = box ? Math.max(0, box.width - FORM_WIDTH - 8) : selection.selLeft
     setComposing({
@@ -427,7 +441,11 @@ export function CommentableDocument({
       ...(contentHash ? { documentHash: contentHash } : {}),
     })
     // Focus the new thread so its card is where the reader looks next.
-    if (created) setActiveId(created.id)
+    if (created) {
+      setActiveId(created.id)
+      // With no docked rail, the new thread is shown in the sheet.
+      if (mode !== 'wide') setSheetView('thread')
+    }
   }
 
   // ── Cards ──────────────────────────────────────────────────────────────────
@@ -480,6 +498,12 @@ export function CommentableDocument({
     node: renderEntry(e),
   }))
 
+  const bubbleItems: CountBubbleItem[] = placed.map((e) => ({
+    id: e.id,
+    top: e.top,
+    count: e.kind === 'draft' ? 1 : 1 + e.comment.replies.length,
+  }))
+
   // The markdown is re-created only when its own inputs change, never for a rail or selection update.
   const markdown = useMemo(
     () => (
@@ -494,87 +518,93 @@ export function CommentableDocument({
     [content, onDocumentNavigate, onToggleTask, tasksReadOnly]
   )
 
+  const wholeSection = (
+    <div className="max-h-64 overflow-y-auto">
+      <WholeDocumentSection
+        onCreate={
+          reviewMode
+            ? undefined
+            : async (text) => {
+                const created = await api.create({
+                  content: text,
+                  ...(contentHash ? { documentHash: contentHash } : {}),
+                })
+                if (created) setActiveId(created.id)
+              }
+        }
+      >
+        {whole.map(renderEntry)}
+      </WholeDocumentSection>
+    </div>
+  )
+
+  const railFilters = (
+    <RailHeader
+      filter={filter}
+      onFilterChange={setFilter}
+      index={navIndex}
+      total={navIds.length}
+      onPrev={prev}
+      onNext={next}
+    />
+  )
+
+  // The docked rail: title, filters, Whole document, then the cards lined up with their highlights.
   const railBody = (
     <>
       <div className="shrink-0 space-y-3 pb-3">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-            Comments · {total}
-          </h2>
-          {!docked && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              aria-label="Close comments"
-              onClick={() => setRailChoice(false)}
-            >
-              <X className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-        <RailHeader
-          filter={filter}
-          onFilterChange={setFilter}
-          index={navIndex}
-          total={navIds.length}
-          onPrev={prev}
-          onNext={next}
-        />
-        <div className="max-h-64 overflow-y-auto">
-          <WholeDocumentSection
-            onCreate={
-              reviewMode
-                ? undefined
-                : async (text) => {
-                    const created = await api.create({
-                      content: text,
-                      ...(contentHash ? { documentHash: contentHash } : {}),
-                    })
-                    if (created) setActiveId(created.id)
-                  }
-            }
-          >
-            {whole.map(renderEntry)}
-          </WholeDocumentSection>
-        </div>
+        <h2 className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+          Comments · {total}
+        </h2>
+        {railFilters}
+        {wholeSection}
       </div>
 
-      {docked ? (
-        <AlignedRail items={railNodes} activeId={activeId} contentRef={contentRef}>
-          {/* Until the highlights have been found there is nothing to line up with, so threads are just listed. */}
-          {unreported.length > 0 && (
-            <div className="absolute inset-0 space-y-2 overflow-y-auto bg-background">{unreported.map(renderEntry)}</div>
-          )}
-          {/* Resolved threads have no highlight to line up with, so they are listed. */}
-          {filter === 'resolved' && resolvedStack.length > 0 && (
-            <div className="absolute inset-0 space-y-2 overflow-y-auto bg-background">
-              {resolvedStack.map(renderEntry)}
-            </div>
-          )}
-        </AlignedRail>
-      ) : (
-        <div ref={listRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto">
-          {[...placed, ...unreported, ...resolvedStack].map(renderEntry)}
-        </div>
-      )}
+      <AlignedRail
+        contentRef={contentRef}
+        render={(offset) => <MarginRail items={railNodes} activeId={activeId} offset={offset} />}
+      >
+        {/* Until the highlights have been found there is nothing to line up with, so threads are just listed. */}
+        {unreported.length > 0 && (
+          <div className="absolute inset-0 space-y-2 overflow-y-auto bg-background">{unreported.map(renderEntry)}</div>
+        )}
+        {/* Resolved threads have no highlight to line up with, so they are listed. */}
+        {filter === 'resolved' && resolvedStack.length > 0 && (
+          <div className="absolute inset-0 space-y-2 overflow-y-auto bg-background">
+            {resolvedStack.map(renderEntry)}
+          </div>
+        )}
+      </AlignedRail>
     </>
   )
+
+  // ── The sheet (tablet and phone) ───────────────────────────────────────────
+  const allEntries = [...placed, ...whole, ...unreported, ...resolvedStack]
+  const focusedEntry = activeId ? allEntries.find((e) => e.id === activeId) : undefined
+  const sheetOpenView: CommentSheetView | null = docked
+    ? null
+    : composing
+      ? { kind: 'compose', quote: composing.anchor.exact }
+      : sheetView === 'thread' && activeId
+        ? { kind: 'thread' }
+        : sheetView === 'list'
+          ? { kind: 'list' }
+          : null
+
+  function closeSheet() {
+    if (composing) closeCompose()
+    setSheetView(null)
+    setActiveId(null)
+  }
 
   return (
     <div ref={wrapperRef} className="relative space-y-2">
       <div className="flex min-h-8 items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">Select text in the document to comment on it.</p>
         {!docked && (
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-expanded={railOpen}
-            aria-controls="document-comment-rail"
-            onClick={() => setRailChoice(!railOpen)}
-          >
+          <Button variant="ghost" size="sm" onClick={() => setSheetView('list')}>
             <MessageSquare className="mr-1.5 h-4 w-4" />
-            {railOpen ? 'Hide comments' : 'Comments'} · {total}
+            Comments · {total}
           </Button>
         )}
       </div>
@@ -589,23 +619,35 @@ export function CommentableDocument({
           {markdown}
         </div>
 
-        {railOpen && (
+        {mode !== 'phone' && (
           <aside
             id="document-comment-rail"
             aria-label="Comments"
             className={cn(
-              'flex w-80 shrink-0 flex-col',
-              docked
-                ? 'sticky top-2 h-[calc(100vh-7rem)] self-start pr-1'
-                : 'fixed inset-y-4 right-4 z-30 max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card p-3 shadow-xl'
+              'sticky top-2 flex shrink-0 flex-col self-start',
+              docked ? 'h-[calc(100vh-7rem)] w-80 pr-1' : 'h-[calc(100vh-7rem)] w-8'
             )}
           >
-            {railBody}
+            {docked ? (
+              railBody
+            ) : (
+              <AlignedRail
+                contentRef={contentRef}
+                render={(offset) => (
+                  <CountBubbles
+                    items={bubbleItems}
+                    activeId={activeId}
+                    offset={offset}
+                    onSelect={(id) => focusThreadRef.current(id, false)}
+                  />
+                )}
+              />
+            )}
           </aside>
         )}
       </div>
 
-      {composing && <div className="fixed inset-0 z-40" onClick={closeCompose} aria-hidden="true" />}
+      {composing && docked && <div className="fixed inset-0 z-40" onClick={closeCompose} aria-hidden="true" />}
 
       {selection && !composing && (
         <Button
@@ -622,7 +664,7 @@ export function CommentableDocument({
         </Button>
       )}
 
-      {composing && (
+      {composing && docked && (
         <div
           data-testid="comment-popover"
           className="absolute z-50 w-[21rem] max-w-[calc(100%-1rem)] rounded-lg border border-border bg-card p-4 shadow-xl"
@@ -635,6 +677,26 @@ export function CommentableDocument({
           </blockquote>
           <CommentComposer autoFocus onSubmit={handleSubmit} onCancel={closeCompose} />
         </div>
+      )}
+
+      {!docked && (
+        <CommentSheet
+          mode={mode === 'phone' ? 'phone' : 'tablet'}
+          view={sheetOpenView}
+          total={total}
+          onClose={closeSheet}
+          onShowAll={() => setSheetView('list')}
+          thread={focusedEntry ? renderEntry(focusedEntry) : undefined}
+          nav={{ index: navIndex, total: navIds.length, onPrev: prev, onNext: next }}
+          listHeader={
+            <>
+              {railFilters}
+              {wholeSection}
+            </>
+          }
+          list={[...placed, ...unreported, ...resolvedStack].map(renderEntry)}
+          onSubmitCompose={handleSubmit}
+        />
       )}
     </div>
   )

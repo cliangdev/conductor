@@ -30,10 +30,10 @@ function isTyping(target: EventTarget | null): boolean {
   return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable
 }
 
-/** Open / Resolved / Mine chips, "‹ 2 of 7 ›" navigation between open threads, and the `j` / `k` keys. */
-export function RailHeader({ filter, onFilterChange, index, total, onPrev, onNext, keyboard = true }: Props) {
+/** `j` / `k` on the document step to the next / previous thread (ignored while typing). */
+export function useThreadKeys(onNext: () => void, onPrev: () => void, enabled = true) {
   useEffect(() => {
-    if (!keyboard) return
+    if (!enabled) return
     function onKey(e: KeyboardEvent) {
       if (e.metaKey || e.ctrlKey || e.altKey || e.defaultPrevented) return
       if (isTyping(e.target)) return
@@ -47,7 +47,12 @@ export function RailHeader({ filter, onFilterChange, index, total, onPrev, onNex
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [keyboard, onNext, onPrev])
+  }, [enabled, onNext, onPrev])
+}
+
+/** Open / Resolved / Mine chips, "‹ 2 of 7 ›" navigation between open threads, and the `j` / `k` keys. */
+export function RailHeader({ filter, onFilterChange, index, total, onPrev, onNext, keyboard = true }: Props) {
+  useThreadKeys(onNext, onPrev, keyboard)
 
   return (
     <div role="toolbar" aria-label="Comment filters" className="flex flex-wrap items-center gap-1.5">
