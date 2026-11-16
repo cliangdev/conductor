@@ -5,10 +5,10 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { markPageReady } from '@/lib/perf'
-import { getDoc, getDocComments, setDocTaskState } from '@/lib/docs-api'
-import type { DocComment, ProjectDoc } from '@/lib/docs-api'
+import { getDoc, setDocTaskState } from '@/lib/docs-api'
+import type { ProjectDoc } from '@/lib/docs-api'
 import { apiErrorMessage } from '@/lib/api'
-import { useCan } from '@/contexts/PermissionsContext'
+import { useCan, usePermissions } from '@/contexts/PermissionsContext'
 import { DocViewer } from '@/components/docs/DocViewer'
 import { DocHistoryPanel } from '@/components/docs/DocHistoryPanel'
 import { Button, buttonVariants } from '@/components/ui/button'
@@ -26,21 +26,16 @@ export default function DocDetailPage() {
   const [doc, setDoc] = useState<ProjectDoc | null>(null)
   // Read-only until the role resolves: it only decides whether checkboxes are interactive.
   const canEditDoc = useCan('doc.edit')
+  const { roles } = usePermissions()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
 
   useEffect(() => { if (!loading && doc) markPageReady('project-doc') }, [loading, doc])
 
-  // Started together with the doc, not after it renders: the viewer adopts this request.
-  const [commentsRequest, setCommentsRequest] = useState<Promise<DocComment[]> | null>(null)
-
   useEffect(() => {
     if (!accessToken) return
 
-    const comments = getDocComments(projectId, docId, accessToken)
-    comments.catch(() => {}) // the viewer reports a failure; this only keeps it from going unhandled
-    setCommentsRequest(comments)
     getDoc(projectId, docId, accessToken)
       .then(setDoc)
       .catch((err) => setError(apiErrorMessage(err, 'Failed to load doc')))
@@ -133,10 +128,11 @@ export default function DocDetailPage() {
               <DocViewer
                 key={doc.id}
                 doc={doc}
-                initialComments={commentsRequest ?? undefined}
                 projectId={projectId}
                 token={accessToken!}
                 currentUserId={user?.id ?? ''}
+                currentUserName={user?.displayName || user?.name}
+                isAdmin={roles.includes('ADMIN')}
                 onToggleTask={handleToggleTask}
                 tasksReadOnly={!canEditDoc}
               />

@@ -22,6 +22,8 @@ export interface ProjectDocSummary {
 
 export interface ProjectDoc extends ProjectDocSummary {
   content: string | null
+  /** SHA-256 of the stored content; sent with a comment so the server can tell which version it was written on. */
+  contentHash?: string
 }
 
 export interface DocVersion {
@@ -33,32 +35,6 @@ export interface DocVersion {
   authorName: string
   createdAt: string
   content?: string
-}
-
-export interface DocCommentReply {
-  id: string
-  commentId: string
-  /** Null when an agent authored this — authorName still carries a byline. */
-  authorId: string | null
-  authorName: string
-  content: string
-  createdAt: string
-}
-
-export interface DocComment {
-  id: string
-  docId: string
-  /** Null when an agent authored this — authorName still carries a byline. */
-  authorId: string | null
-  authorName: string
-  content: string
-  lineNumber: number | null
-  quotedText: string | null
-  lineStale: boolean
-  resolvedAt: string | null
-  createdAt: string
-  updatedAt: string
-  replies: DocCommentReply[]
 }
 
 export function getFolders(projectId: string, token: string): Promise<DocFolder[]> {
@@ -166,65 +142,6 @@ export function restoreVersion(
 ): Promise<ProjectDoc> {
   return apiPost<ProjectDoc>(
     `/api/v1/projects/${projectId}/docs/${docId}/versions/${versionId}/restore`,
-    {},
-    token,
-  )
-}
-
-export function getDocComments(
-  projectId: string,
-  docId: string,
-  token: string,
-): Promise<DocComment[]> {
-  return apiGet<DocComment[]>(`/api/v1/projects/${projectId}/docs/${docId}/comments`, token)
-}
-
-export function createDocComment(
-  projectId: string,
-  docId: string,
-  content: string,
-  lineNumber: number,
-  quotedText: string | null,
-  token: string,
-): Promise<DocComment> {
-  return apiPost<DocComment>(
-    `/api/v1/projects/${projectId}/docs/${docId}/comments`,
-    { content, lineNumber, quotedText },
-    token,
-  )
-}
-
-export function deleteDocComment(
-  projectId: string,
-  docId: string,
-  commentId: string,
-  token: string,
-): Promise<void> {
-  return apiDelete(`/api/v1/projects/${projectId}/docs/${docId}/comments/${commentId}`, token)
-}
-
-export function addDocCommentReply(
-  projectId: string,
-  docId: string,
-  commentId: string,
-  content: string,
-  token: string,
-): Promise<DocCommentReply> {
-  return apiPost<DocCommentReply>(
-    `/api/v1/projects/${projectId}/docs/${docId}/comments/${commentId}/replies`,
-    { content },
-    token,
-  )
-}
-
-export function resolveDocComment(
-  projectId: string,
-  docId: string,
-  commentId: string,
-  token: string,
-): Promise<DocComment> {
-  return apiPost<DocComment>(
-    `/api/v1/projects/${projectId}/docs/${docId}/comments/${commentId}/resolve`,
     {},
     token,
   )

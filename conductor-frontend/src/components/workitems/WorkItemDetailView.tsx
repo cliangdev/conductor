@@ -140,10 +140,10 @@ function persistReviewDraft(draftKey: string, active: boolean, pending: PendingC
   }
 }
 
-/** Drops drafts whose document was removed, or whose line number has fallen past the document's
- * current length (edited out from under the draft) — checked both at hydration and just before
- * submit so a stale draft can never silently post against a line that no longer means what it did
- * when the comment was drafted. */
+/** Drops drafts whose document was removed, or (an older line draft) whose line number has fallen
+ * past the document's current length (edited out from under the draft) — checked both at hydration
+ * and just before submit so a stale draft can never silently post against a line that no longer
+ * means what it did when the comment was drafted. A quote draft carries its own text and is kept. */
 function dropStaleDrafts(
   pending: PendingCommentDraft[],
   docs: DetailDocument[]
@@ -152,8 +152,8 @@ function dropStaleDrafts(
   const valid = pending.filter((p) => {
     const doc = docsById.get(p.documentId)
     if (!doc) return false
-    // An anchored (HTML) draft carries its own quote and has no line to go stale; the viewer lists it as
-    // unplaced if the text is gone.
+    // An anchored draft (HTML or markdown) carries its own quote and has no line to go stale; the viewer
+    // lists it under Whole document if the text is gone.
     if (p.anchor) return true
     if (typeof doc.content !== 'string') return true // not loaded — can't check line count, keep it
     const line = p.lineNumber
@@ -830,9 +830,9 @@ export function WorkItemDetailView({
       const results = await Promise.allSettled(
         toSubmit.map((p) =>
           apiPost(
-            `/api/v2/projects/${projectId}/work-items/${issueId}/comments`,
+            `/api/v2/projects/${projectId}/comments`,
             {
-              documentId: p.documentId,
+              target: { workItemId: issueId, documentId: p.documentId },
               content: p.content,
               ...(p.anchor ? { anchor: p.anchor } : { lineNumber: p.lineNumber }),
               // The version it was written against, even if the document has changed since.
@@ -1039,13 +1039,12 @@ export function WorkItemDetailView({
       <div className="min-w-0 flex-1">
       <CommentableDocument
         content={selectedDoc.content}
-        documentId={selectedDoc.id}
-        issueId={issueId}
-        projectId={projectId}
-        comments={comments.filter((c) => c.documentId === selectedDoc.id)}
-        onCommentAdded={fetchComments}
+        target={{ projectId, workItemId: issueId, documentId: selectedDoc.id }}
+        onCommentsChanged={fetchComments}
         token={accessToken!}
         currentUserId={user?.id ?? ''}
+        currentUserName={user?.displayName || user?.name}
+        isAdmin={roles.includes('ADMIN')}
         onDocumentNavigate={(filename) => {
           const target = documents.find((d) => d.filename === filename)
           if (target) selectDocument(target)
@@ -1053,8 +1052,8 @@ export function WorkItemDetailView({
         reviewMode={reviewMode}
         pendingComments={pendingComments}
         contentHash={selectedDoc.contentHash}
-        onAddPendingComment={(lineNumber, text, documentHash) =>
-          addPendingComment(selectedDoc.id, { lineNumber }, text, documentHash)}
+        onAddPendingComment={(anchor, text, documentHash) =>
+          addPendingComment(selectedDoc.id, { anchor }, text, documentHash)}
         onEditPendingComment={editPendingComment}
         onRemovePendingComment={removePendingComment}
       />
