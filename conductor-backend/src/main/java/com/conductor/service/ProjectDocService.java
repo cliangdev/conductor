@@ -1,5 +1,7 @@
 package com.conductor.service;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import com.conductor.entity.DocFolder;
 import com.conductor.entity.DocVersion;
 import com.conductor.entity.Project;
@@ -36,6 +38,14 @@ public class ProjectDocService {
     private final DocVersionRepository docVersionRepository;
     private final DocFolderService docFolderService;
     private final ProjectRepository projectRepository;
+
+    /**
+     * Re-reads a row after locking it. The locking query returns the instance this transaction already holds
+     * without reloading it, so a caller that read the document earlier in the same transaction (accepting a
+     * suggestion does) would compare against the text it read before the lock. Null only in plain unit tests.
+     */
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Lazy
     @Autowired
@@ -168,6 +178,9 @@ public class ProjectDocService {
         // Lock the row first so concurrent updates run one after the other and the hash check sees the current text.
         projectDocRepository.lockById(docId);
         ProjectDoc doc = getDoc(projectId, docId);
+        if (entityManager != null) {
+            entityManager.refresh(doc);
+        }
         if (baseContentHash != null && !baseContentHash.equalsIgnoreCase(contentHash(doc))) {
             throw new com.conductor.exception.ConflictException(
                     "Document changed since you read it — read it again before writing.");

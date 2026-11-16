@@ -10,7 +10,9 @@ import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.WorkItemRepository;
 import com.conductor.service.anchoring.CommentAnchorService;
 import com.conductor.service.view.DocumentView;
+import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.PersistenceContext;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,6 +38,14 @@ public class DocumentService {
     private final ProjectSecurityService projectSecurityService;
     private final CommentAnchorService commentAnchorService;
     private final int signedUrlExpiryMinutes;
+
+    /**
+     * Re-reads a row after locking it. The locking query returns the instance this transaction already holds
+     * without reloading it, so a caller that read the document earlier in the same transaction (accepting a
+     * suggestion does) would compare against the text it read before the lock. Null only in plain unit tests.
+     */
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public DocumentService(DocumentRepository documentRepository,
                            WorkItemRepository workItemRepository,
@@ -133,6 +143,9 @@ public class DocumentService {
         // Locked, so a concurrent write to the same document waits and the hash below is the current one.
         return documentRepository.findForUpdateByWorkItemIdAndFilename(workItemId, filename)
                 .map(existing -> {
+                    if (entityManager != null) {
+                        entityManager.refresh(existing);
+                    }
                     if (baseContentHash != null) {
                         String current = existing.getContentHash() != null
                                 ? existing.getContentHash()

@@ -111,6 +111,62 @@ class DocumentWriteLockE2ETest extends AbstractE2ETest {
         }
     }
 
+    /**
+     * The locking query hands back the instance the transaction already holds without reloading it. A caller that
+     * read the document earlier in the same transaction (accepting a suggested edit does) must still be compared
+     * against the text as it is once the lock is held, not the text it read before someone else's commit.
+     */
+    @Test
+    void aWriterThatReadTheDocumentEarlierInItsTransactionStillSeesTheNewerCommit() throws Exception {
+        String base = DocumentContent.sha256Hex("v1");
+        org.springframework.security.core.context.SecurityContext machine =
+                new org.springframework.security.core.context.SecurityContextImpl();
+        machine.setAuthentication(new com.conductor.security.WorkflowRunAuthenticationToken(projectId, "run-1"));
+        ExecutorService other = Executors.newSingleThreadExecutor();
+        org.springframework.security.core.context.SecurityContextHolder.setContext(machine);
+        try {
+            Throwable wi = catchInTransaction(() -> {
+                documentRepository.findById(documentId).orElseThrow(); // now held by this transaction
+                commitElsewhere(other, "UPDATE documents SET content = 'theirs', content_hash = ? WHERE id = ?",
+                        DocumentContent.sha256Hex("theirs"), documentId);
+                documentService.upsertDocumentByFilename(projectId, workItemId, "spec.md", "mine", "text/markdown", base);
+            });
+            assertThat(wi).isInstanceOf(com.conductor.exception.ConflictException.class);
+            assertThat(jdbc.queryForObject("SELECT content FROM documents WHERE id = ?", String.class, documentId))
+                    .isEqualTo("theirs");
+
+            Throwable pd = catchInTransaction(() -> {
+                projectDocRepository.findById(projectDocId).orElseThrow();
+                commitElsewhere(other, "UPDATE project_docs SET content = 'theirs' WHERE id = ?", projectDocId);
+                projectDocService.updateDoc(projectId, projectDocId, "mine",
+                        com.conductor.service.ProjectActor.agent("test"), base);
+            });
+            assertThat(pd).isInstanceOf(com.conductor.exception.ConflictException.class);
+            assertThat(jdbc.queryForObject("SELECT content FROM project_docs WHERE id = ?", String.class, projectDocId))
+                    .isEqualTo("theirs");
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+            other.shutdownNow();
+        }
+    }
+
+    private Throwable catchInTransaction(Runnable body) {
+        try {
+            new TransactionTemplate(transactionManager).executeWithoutResult(s -> body.run());
+            return null;
+        } catch (Throwable t) {
+            return t;
+        }
+    }
+
+    private void commitElsewhere(ExecutorService other, String sql, Object... args) {
+        try {
+            other.submit(() -> jdbc.update(sql, args)).get(10, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     // ---------------------------------------------------------------------------------------------------
 
     private void assertSecondLockerWaits(Runnable lockQuery) throws Exception {
