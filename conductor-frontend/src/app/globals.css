@@ -2,6 +2,17 @@
 @import 'highlight.js/styles/github.css';
 @config '../../tailwind.config.ts';
 
+/* Commented words in a rendered document (CSS Custom Highlight API; see useDocumentAnchors). */
+::highlight(conductor-comment) {
+  background-color: hsl(var(--comment-highlight));
+  color: inherit;
+}
+::highlight(conductor-comment-active),
+::highlight(conductor-comment-flash) {
+  background-color: hsl(var(--comment-highlight-active));
+  color: inherit;
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;

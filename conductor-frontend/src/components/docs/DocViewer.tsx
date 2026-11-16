@@ -1,99 +1,48 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useMemo } from 'react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
-import { getDocComments } from '@/lib/docs-api'
-import { apiErrorMessage } from '@/lib/api'
-import { toastError } from '@/components/ui/toast'
-import type { ProjectDoc, DocComment, DocCommentReply } from '@/lib/docs-api'
-import type { Comment, CommentReply } from '@/components/comments/types'
+import type { ProjectDoc } from '@/lib/docs-api'
 
 export interface DocViewerProps {
   doc: ProjectDoc
   projectId: string
   token: string
   currentUserId: string
+  currentUserName?: string
+  /** Admins may delete anyone's comment. */
+  isAdmin?: boolean
   /** Checkbox toggling. The owning page holds the handler, since it owns `doc`. */
   onToggleTask?: (lineNumber: number, checked: boolean) => void
   tasksReadOnly?: boolean
-  /**
-   * The doc's comments request, already in flight (the owning page starts it alongside the doc fetch
-   * so the comments don't wait for the content to render). Used for the first load only.
-   */
-  initialComments?: Promise<DocComment[]>
 }
 
-function mapReply(reply: DocCommentReply): CommentReply {
-  return {
-    id: reply.id,
-    authorId: reply.authorId,
-    authorName: reply.authorName,
-    content: reply.content,
-    createdAt: reply.createdAt,
-  }
-}
-
-function mapComment(docComment: DocComment, docId: string): Comment {
-  return {
-    id: docComment.id,
-    documentId: docId,
-    authorId: docComment.authorId,
-    authorName: docComment.authorName,
-    content: docComment.content,
-    lineNumber: docComment.lineNumber ?? undefined,
-    quotedText: docComment.quotedText,
-    lineStale: docComment.lineStale,
-    resolvedAt: docComment.resolvedAt,
-    createdAt: docComment.createdAt,
-    replies: docComment.replies.map(mapReply),
-  }
-}
-
+/**
+ * A project doc with margin-rail comments on the unified comments resource: selection comments,
+ * whole-document comments, edit, reopen and the filters. Line numbers on older comments count from the
+ * raw source (frontmatter included), which is how `MarkdownRenderer` stamps its blocks, so they land on
+ * the right one.
+ */
 export function DocViewer({
   doc,
   projectId,
   token,
   currentUserId,
+  currentUserName,
+  isAdmin,
   onToggleTask,
   tasksReadOnly,
-  initialComments,
 }: DocViewerProps) {
-  const [comments, setComments] = useState<Comment[]>([])
-
-  const fetchComments = useCallback(async (request?: Promise<DocComment[]>) => {
-    try {
-      const raw = await (request ?? getDocComments(projectId, doc.id, token))
-      setComments(raw.map((c) => mapComment(c, doc.id)))
-    } catch (err) {
-      // Still non-fatal — an unreachable comments API shouldn't stop you reading the doc. But it is no
-      // longer *silent*: swallowing this hid a server-side 500 that made comments invisible on every
-      // doc, with nothing on screen to suggest anything was missing.
-      console.error('Failed to load doc comments', err)
-      toastError(apiErrorMessage(err, 'Comments could not be loaded'))
-    }
-  }, [projectId, doc.id, token])
-
-  // The first load adopts the request the page already started; later reloads (a comment added) re-ask.
-  const initialRef = useRef(initialComments)
-  useEffect(() => {
-    const request = initialRef.current
-    initialRef.current = undefined
-    void fetchComments(request)
-  }, [fetchComments])
-
-  const commentApiBasePath = `/api/v1/projects/${projectId}/docs/${doc.id}/comments`
-
+  const target = useMemo(() => ({ projectId, projectDocId: doc.id }), [projectId, doc.id])
   return (
     <CommentableDocument
       content={doc.content ?? ''}
-      documentId={doc.id}
-      issueId={doc.id}
-      projectId={projectId}
-      comments={comments}
-      onCommentAdded={() => fetchComments()}
+      contentHash={doc.contentHash}
+      target={target}
       token={token}
       currentUserId={currentUserId}
-      commentApiBasePath={commentApiBasePath}
+      currentUserName={currentUserName}
+      isAdmin={isAdmin}
       onToggleTask={onToggleTask}
       tasksReadOnly={tasksReadOnly}
     />
