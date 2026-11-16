@@ -9,16 +9,28 @@ import com.conductor.entity.User;
  *
  * <p>Exactly one of the two is always set, which is what lets a provenance column be recorded as
  * "a user or a label" (the {@code chk_*_attribution} constraints in {@code V109}) and still always
- * render a byline. Resolved by {@link ProjectSecurityService#requireProjectAccess}.
+ * render a byline. A machine actor may also carry {@code agentId}: the named agent behind it. Resolved by {@link ProjectSecurityService#requireProjectAccess}.
  */
-public record ProjectActor(User user, String label) {
+public record ProjectActor(User user, String label, String agentId) {
+
+    public ProjectActor(User user, String label) {
+        this(user, label, null);
+    }
 
     public static ProjectActor of(User user) {
-        return new ProjectActor(user, null);
+        return new ProjectActor(user, null, null);
     }
 
     public static ProjectActor agent(String label) {
-        return new ProjectActor(null, label);
+        return new ProjectActor(null, label, null);
+    }
+
+    /**
+     * A named agent of the project (a comment-agent run): {@code label} is its display name and {@code agentId}
+     * is recorded as {@code author_agent_id}, so what it writes carries its avatar.
+     */
+    public static ProjectActor agent(String label, String agentId) {
+        return new ProjectActor(null, label, agentId);
     }
 
     public boolean isMachine() {

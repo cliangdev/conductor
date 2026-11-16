@@ -43,6 +43,31 @@ public enum EventType {
     COMMENT_REPLY("Reply added to a comment"),
 
     /**
+     * A comment or reply on a project doc (not a Work Item document).
+     *
+     * <p>Required metadata keys: {@code docId}, {@code docTitle}, {@code commentAuthor}
+     * <p>Optional metadata keys: {@code excerpt}, {@code link}
+     */
+    DOC_COMMENT_ADDED("Comment added to a doc"),
+
+    /**
+     * A reply to a comment on a project doc.
+     *
+     * <p>Required metadata keys: {@code docId}, {@code docTitle}, {@code commentAuthor}
+     * <p>Optional metadata keys: {@code excerpt}, {@code link}
+     */
+    DOC_COMMENT_REPLY("Reply added to a comment on a doc"),
+
+    /**
+     * Someone (or an agent) was @mentioned in a comment or reply. Fires only for mentions that are new in
+     * that write. Rendered with a deep link to the thread; nothing is pinged in the chat tool itself.
+     *
+     * <p>Required metadata keys: {@code commentAuthor}, {@code mentionedNames}, {@code documentTitle}
+     * <p>Optional metadata keys: {@code excerpt}, {@code link}
+     */
+    COMMENT_MENTIONED("Someone was mentioned in a comment"),
+
+    /**
      * A new member has joined the project.
      *
      * <p>Required metadata keys: {@code memberName}

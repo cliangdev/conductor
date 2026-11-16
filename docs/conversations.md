@@ -84,6 +84,11 @@ in the project:
 An agent that is `ACTIVE` but not addressable stays reachable from workflow steps — it just isn't a
 conversation target.
 
+The same flag decides who can be **@mentioned in a document comment thread**: only `ACTIVE`, addressable agents
+appear in the comment composer's picker (`GET /api/v2/projects/{p}/comments/mentionables`) and only they survive
+server-side validation of a `@[Name](agent:<id>)` token. A mention starts a `conductor-comment-agent` run rather than
+a conversation — see [`docs/comments.md`](comments.md#agent-in-a-thread).
+
 ## The conversation bounded context
 
 ```

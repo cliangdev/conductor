@@ -1,18 +1,24 @@
 package com.conductor.v2.controller;
 
+import com.conductor.comment.CommentAgentAttribution;
+import com.conductor.comment.Mention;
+import com.conductor.comment.MentionableService;
 import com.conductor.exception.BusinessException;
 import com.conductor.generated.v2.api.CommentsApi;
 import com.conductor.generated.v2.model.AddCommentReplyRequest;
+import com.conductor.generated.v2.model.CommentAgentRequest;
 import com.conductor.generated.v2.model.CommentAuthorAgent;
 import com.conductor.generated.v2.model.CommentAuthorAvatar;
 import com.conductor.generated.v2.model.CommentSuggestion;
 import com.conductor.generated.v2.model.CommentSuggestionCheckRequest;
 import com.conductor.generated.v2.model.CommentSuggestionCheckResponse;
 import com.conductor.generated.v2.model.CommentSuggestionDecisionRequest;
+import com.conductor.generated.v2.model.CommentMention;
 import com.conductor.generated.v2.model.CommentTargetRequest;
 import com.conductor.generated.v2.model.CommentThreadReplyResponse;
 import com.conductor.generated.v2.model.CommentThreadResponse;
 import com.conductor.generated.v2.model.CreateCommentThreadRequest;
+import com.conductor.generated.v2.model.Mentionable;
 import com.conductor.generated.v2.model.TextQuoteAnchor;
 import com.conductor.generated.v2.model.UpdateCommentReplyRequest;
 import com.conductor.generated.v2.model.UpdateCommentRequest;
@@ -20,6 +26,7 @@ import com.conductor.service.CommentService;
 import com.conductor.service.CommentTarget;
 import com.conductor.service.ProjectActor;
 import com.conductor.service.ProjectSecurityService;
+import com.conductor.service.view.CommentAgentRequestView;
 import com.conductor.service.view.CommentAnchor;
 import com.conductor.service.view.CommentAuthorAgentView;
 import com.conductor.service.view.CommentReplyView;
@@ -41,17 +48,38 @@ public class CommentsController implements CommentsApi {
 
     private final CommentService commentService;
     private final ProjectSecurityService projectSecurityService;
+    private final CommentAgentAttribution agentAttribution;
+    private final MentionableService mentionableService;
 
-    public CommentsController(CommentService commentService, ProjectSecurityService projectSecurityService) {
+    public CommentsController(CommentService commentService, ProjectSecurityService projectSecurityService,
+                              CommentAgentAttribution agentAttribution, MentionableService mentionableService) {
         this.commentService = commentService;
         this.projectSecurityService = projectSecurityService;
+        this.agentAttribution = agentAttribution;
+        this.mentionableService = mentionableService;
+    }
+
+    /** The caller as an actor; a comment-agent run token is named as the agent it runs for. */
+    private ProjectActor actor(String projectId) {
+        return agentAttribution.attribute(projectSecurityService.requireProjectAccess(projectId));
+    }
+
+    @Override
+    public ResponseEntity<List<Mentionable>> listMentionables(String projectId, String q) {
+        projectSecurityService.requireProjectAccess(projectId);
+        return ResponseEntity.ok(mentionableService.search(projectId, q).stream()
+                .map(m -> new Mentionable(Mentionable.KindEnum.fromValue(m.kind().name()), m.id(), m.name())
+                        .avatarUrl(m.avatarUrl())
+                        .avatar(m.avatarEmoji() == null ? null
+                                : new CommentAuthorAvatar().emoji(m.avatarEmoji()).color(m.avatarColor())))
+                .toList());
     }
 
     @Override
     public ResponseEntity<List<CommentThreadResponse>> listComments(String projectId, String workItemId,
                                                                     String documentId, String projectDocId,
                                                                     String status) {
-        ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
+        ProjectActor actor = actor(projectId);
         CommentTarget target;
         if (projectDocId != null) {
             if (workItemId != null || documentId != null) {
@@ -70,7 +98,7 @@ public class CommentsController implements CommentsApi {
 
     @Override
     public ResponseEntity<CommentThreadResponse> createComment(String projectId, CreateCommentThreadRequest request) {
-        ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
+        ProjectActor actor = actor(projectId);
         CommentWithRepliesView created = commentService.createThread(projectId, toTarget(request.getTarget()),
                 request.getContent(), request.getLineNumber(), toDomain(request.getAnchor()),
                 request.getDocumentHash(),
@@ -99,7 +127,7 @@ public class CommentsController implements CommentsApi {
     @Override
     public ResponseEntity<CommentThreadResponse> updateComment(String projectId, String commentId,
                                                                UpdateCommentRequest request) {
-        ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
+        ProjectActor actor = actor(projectId);
         Boolean resolved = request.getStatus() == null ? null
                 : request.getStatus() == UpdateCommentRequest.StatusEnum.RESOLVED;
         return ResponseEntity.ok(toResponse(
@@ -108,7 +136,7 @@ public class CommentsController implements CommentsApi {
 
     @Override
     public ResponseEntity<Void> deleteComment(String projectId, String commentId) {
-        ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
+        ProjectActor actor = actor(projectId);
         commentService.deleteComment(projectId, commentId, actor);
         return ResponseEntity.noContent().build();
     }
@@ -116,7 +144,7 @@ public class CommentsController implements CommentsApi {
     @Override
     public ResponseEntity<CommentThreadReplyResponse> createCommentReply(String projectId, String commentId,
                                                                          AddCommentReplyRequest request) {
-        ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
+        ProjectActor actor = actor(projectId);
         return ResponseEntity.status(201).body(
                 toResponse(commentService.addReply(projectId, commentId, request.getContent(), actor)));
     }
@@ -125,14 +153,14 @@ public class CommentsController implements CommentsApi {
     public ResponseEntity<CommentThreadReplyResponse> updateCommentReply(String projectId, String commentId,
                                                                          String replyId,
                                                                          UpdateCommentReplyRequest request) {
-        ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
+        ProjectActor actor = actor(projectId);
         return ResponseEntity.ok(toResponse(
                 commentService.updateReply(projectId, commentId, replyId, request.getContent(), actor)));
     }
 
     @Override
     public ResponseEntity<Void> deleteCommentReply(String projectId, String commentId, String replyId) {
-        ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
+        ProjectActor actor = actor(projectId);
         commentService.deleteReply(projectId, commentId, replyId, actor);
         return ResponseEntity.noContent().build();
     }
@@ -186,6 +214,21 @@ public class CommentsController implements CommentsApi {
                         .avatar(new CommentAuthorAvatar().emoji(a.avatarEmoji()).color(a.avatarColor()));
     }
 
+    private static List<CommentMention> toV2Mentions(List<Mention> mentions) {
+        return mentions == null ? List.of()
+                : mentions.stream()
+                        .map(m -> new CommentMention(CommentMention.KindEnum.fromValue(m.kind().name()), m.id(),
+                                m.name()))
+                        .toList();
+    }
+
+    private static CommentAgentRequest toV2(CommentAgentRequestView v) {
+        return new CommentAgentRequest(v.agentId(), v.agentName(),
+                CommentAgentRequest.StatusEnum.fromValue(v.status()), v.createdAt())
+                .avatar(new CommentAuthorAvatar().emoji(v.avatarEmoji()).color(v.avatarColor()))
+                .error(v.error());
+    }
+
     private static CommentThreadResponse toResponse(CommentWithRepliesView v) {
         boolean line = v.kind() == com.conductor.service.view.CommentKind.LINE;
         return new CommentThreadResponse(
@@ -219,7 +262,10 @@ public class CommentsController implements CommentsApi {
                                 CommentSuggestion.StatusEnum.fromValue(v.suggestion().status()))
                                 .decidedByName(v.suggestion().decidedByName())
                                 .decidedAt(v.suggestion().decidedAt()))
-                .updatedAt(v.updatedAt());
+                .updatedAt(v.updatedAt())
+                .mentions(toV2Mentions(v.mentions()))
+                .agentRequests(v.agentRequests() == null ? List.of()
+                        : v.agentRequests().stream().map(CommentsController::toV2).toList());
     }
 
     private static CommentThreadReplyResponse toResponse(CommentReplyView v) {
@@ -232,6 +278,7 @@ public class CommentsController implements CommentsApi {
                 .authorId(v.authorId())
                 .authorName(v.authorName())
                 .authorAgent(toV2Agent(v.authorAgent()))
+                .mentions(toV2Mentions(v.mentions()))
                 .editedAt(v.editedAt());
     }
 }

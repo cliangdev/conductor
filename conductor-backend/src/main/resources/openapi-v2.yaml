@@ -2377,6 +2377,52 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /projects/{projectId}/comments/mentionables:
+    get:
+      tags:
+        - comments
+      summary: Who can be @mentioned in a comment
+      description: |
+        The project's members and its ACTIVE, addressable agents whose name contains `q` (blank = everyone),
+        people first, then agents, alphabetical, at most 20. Feeds the composer's `@` picker. Insert the pick
+        into the comment body as a mention token: `@[Name](user:<id>)` or `@[Name](agent:<id>)`. See
+        docs/comments.md.
+      operationId: listMentionables
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matching members and agents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Mentionable"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /projects/{projectId}/comments/{commentId}:
     patch:
       tags:
@@ -11606,6 +11652,75 @@ components:
         avatar:
           $ref: "#/components/schemas/CommentAuthorAvatar"
 
+    CommentMention:
+      type: object
+      description: |
+        Someone named in a comment or reply body by a validated mention token. `id` is a user id (USER) or an
+        agent id (AGENT).
+      required:
+        - kind
+        - id
+        - name
+      properties:
+        kind:
+          type: string
+          enum: [USER, AGENT]
+        id:
+          type: string
+        name:
+          type: string
+
+    CommentAgentRequest:
+      type: object
+      description: |
+        An `@agent` request on a thread and how it is going. Poll the thread while any is PENDING or RUNNING.
+        `error` is set when FAILED, in plain words, ready to show.
+      required:
+        - agentId
+        - agentName
+        - status
+        - createdAt
+      properties:
+        agentId:
+          type: string
+        agentName:
+          type: string
+        avatar:
+          $ref: "#/components/schemas/CommentAuthorAvatar"
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCEEDED, FAILED]
+        error:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    Mentionable:
+      type: object
+      required:
+        - kind
+        - id
+        - name
+      properties:
+        kind:
+          type: string
+          enum: [USER, AGENT]
+        id:
+          type: string
+        name:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+          description: A person's profile picture, when they have one.
+        avatar:
+          allOf:
+            - $ref: "#/components/schemas/CommentAuthorAvatar"
+          nullable: true
+          description: An agent's emoji and color.
+
     CommentThreadReplyResponse:
       type: object
       required:
@@ -11636,6 +11751,10 @@ components:
           description: The agent behind the reply, when known.
         content:
           type: string
+        mentions:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentMention"
         editedAt:
           type: string
           format: date-time
@@ -11756,6 +11875,16 @@ components:
             - $ref: "#/components/schemas/CommentSuggestion"
           nullable: true
           description: Set when the comment is a suggested edit; null otherwise.
+        mentions:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentMention"
+          description: People and agents named in `content` (the replies carry their own).
+        agentRequests:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommentAgentRequest"
+          description: '`@agent` requests on this thread, oldest first, with their status.'
         replies:
           type: array
           items:

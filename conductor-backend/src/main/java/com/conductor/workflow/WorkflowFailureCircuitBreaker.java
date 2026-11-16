@@ -91,6 +91,12 @@ public class WorkflowFailureCircuitBreaker {
         if (CreativeWorkflowProvisioner.RENDER_WORKFLOW_NAME.equals(workflow.getName())) {
             return;
         }
+        // Likewise the comment-agent workflow: each run is one person's @mention on one thread, a failure is
+        // that agent's setup (no provider, a stale credential), and a paused workflow would silently ignore
+        // every later mention in the project. The failure is already shown under the thread.
+        if (com.conductor.comment.CommentAgentWorkflowProvisioner.WORKFLOW_NAME.equals(workflow.getName())) {
+            return;
+        }
 
         if (isIsolatedLibrarianAgentFailure(run)) {
             log.info("Not counting run {} toward the circuit breaker: the librarian failed on the one source "

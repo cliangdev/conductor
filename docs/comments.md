@@ -31,7 +31,7 @@ A thread is **open** or **resolved**. Resolving stores `resolved_at` and who res
 
 ### Authorship
 
-A comment or reply is written by a **user** (`author_id`) or an **agent** (`author_label`, e.g. `Agent (run a1b2c3d4)`; `author_agent_id` is reserved for attributing a named agent). A CHECK guarantees one of the two. Responses carry `authorKind` (`USER` | `AGENT`), `authorName` and, when `author_agent_id` is set, `authorAgent {id, name, avatar}`.
+A comment or reply is written by a **user** (`author_id`) or an **agent** (`author_label`, e.g. `Agent (run a1b2c3d4)`; `author_agent_id` names the agent when it is known: a comment-agent run, or an in-process tool call; see [Attribution](#attribution-of-agent-writes)). A CHECK guarantees one of the two. Responses carry `authorKind` (`USER` | `AGENT`), `authorName` and, when `author_agent_id` is set, `authorAgent {id, name, avatar}`.
 
 Permissions:
 
@@ -64,10 +64,11 @@ The server finds quotes the way the browser does. `TextProjection` flattens the 
 | `PATCH /{commentId} {content?, status?: OPEN\|RESOLVED}` | Edit, resolve or reopen. |
 | `DELETE /{commentId}` | Delete the thread. |
 | `POST /{commentId}/replies {content}` | Reply. |
+| `GET /mentionables?q=` | Members and addressable agents for the `@` picker (see [Mentions](#mentions)). |
 | `PATCH /{commentId}/replies/{replyId} {content}` | Edit a reply (author only). |
 | `DELETE /{commentId}/replies/{replyId}` | Delete a reply. |
 
-A thread response has `id`, `kind`, `status`, the target ids, `documentName`, author fields, `content`, `lineNumber` (LINE only), `quotedText`, `anchor` (QUOTE only), `documentHash`, `lineStale`, `anchorStatus` (`ANCHORED` | `ORPHANED` | null), `outdated`, `resolvedAt`, `resolvedByName`, `editedAt`, `createdAt`, `updatedAt` and `replies[]`.
+A thread response has `id`, `kind`, `status`, the target ids, `documentName`, author fields, `content`, `mentions[]`, `lineNumber` (LINE only), `quotedText`, `anchor` (QUOTE only), `documentHash`, `lineStale`, `anchorStatus` (`ANCHORED` | `ORPHANED` | null), `outdated`, `resolvedAt`, `resolvedByName`, `editedAt`, `createdAt`, `updatedAt`, `agentRequests[]` and `replies[]` (each reply has `mentions[]` too).
 
 ### Older routes (shims)
 
@@ -100,7 +101,102 @@ All refusals read "This text appears more than once or spans formatting — comm
 
 ## Notifications
 
-Work Item comments publish `conductor.work_item.comment_added` / `comment_replied` as before, naming an agent author by its label. Project-doc comments publish nothing yet; mentions and their notifications come with the @mention work.
+| Signal | When | Chat event (`EventType`, channel group Issues) |
+|---|---|---|
+| `conductor.work_item.comment_added` / `comment_replied` | a comment or reply on a Work Item document | `COMMENT_ADDED` / `COMMENT_REPLY` |
+| `conductor.project_doc.comment_added` / `comment_replied` | a comment or reply on a project doc. Payload: `docId, docTitle, commentAuthor, excerpt, link` | `DOC_COMMENT_ADDED` / `DOC_COMMENT_REPLY` |
+| `conductor.comment.mentioned` | a comment, reply or edit adds a [mention](#mentions); only the mentions that are new in that write | `COMMENT_MENTIONED` |
+
+A workspace opts into each chat event per channel, as for every event type (new types are off until switched on; the settings page lists them from `ChannelGroup`). Excerpts show mention tokens as plain `@Name`. Agent authors are named by their label, or by the agent's name when it was asked (see [Attribution](#attribution-of-agent-writes)).
+
+`conductor.comment.mentioned` payload: `projectId`, `commentId`, `replyId?`, `workItemId?` + `documentId?` or `projectDocId?`, `documentTitle` (Work Item title / filename, or the doc title), `authorId?` (null for a machine), `authorName`, `authorKind` (`USER` | `AGENT`), `excerpt`, `link` (the deep link below), `mentionedNames` (`@Bob, @Editor Bot`), `userIds[]`, `agentIds[]`. The Discord card reads "<author> mentioned <names> on <document>" with the link; it carries an explicit empty `allowed_mentions`, and nothing in it pings anyone.
+
+**Email.** Each newly mentioned member (never the author, never an agent) gets a short email through Resend (`EmailService.sendMentionEmail`; skipped, with a log line, when `RESEND_API_KEY` is not set), sent after the writing transaction commits, so a comment that rolls back emails nobody and a failed email never reaches the commenter. Text is escaped; the subject is "<author> mentioned you on <document>".
+
+**Deep links** (in the email and the chat card):
+
+- Work Item document: `${FRONTEND_URL}/app/projects/{p}/{area}/{nouns}/{displayId}?doc=<documentId>&comment=<commentId>` (falls back to `/app/projects/{p}/issues/{workItemId}?...` when the Work Item's workflow area cannot be resolved).
+- Project doc: `${FRONTEND_URL}/app/projects/{p}/docs/{docId}?comment=<commentId>`.
+
+The frontend must read `?doc=` (select that document's tab) and `?comment=` (focus and scroll to that thread) on both pages.
+
+## Mentions
+
+A mention is a token in the body of a comment or reply (no mentions table):
+
+| Token | Names |
+|---|---|
+| `@[Display Name](user:<userId>)` | a project member |
+| `@[Display Name](agent:<agentId>)` | an `ACTIVE`, [addressable](conversations.md#addressable-agents) agent of the project |
+
+The stable agent identifier is the **agent id** (the UUID in `agents.id`; it survives a rename). An agent's **slug** is also accepted on input and rewritten to the id, so hand-written tokens work.
+
+`MentionParser` re-checks every token on **every** write that carries text (create, reply, edit of a comment or reply, and the v1 project-doc shim) and stores the validated body, so what is stored is what was checked:
+
+- the id is rewritten with the canonical id and **name** (a forged display name never survives);
+- a token that does not check out is flattened to plain `@Name`: a user who is not a member of this project (including an id from another project or a made-up one), an agent that is not `ACTIVE`, not addressable, not in this project, or unknown;
+- **machine-written text cannot mention agents** (run tokens, project API keys): agent tokens are flattened. An agent may still mention people. This is the first of two loop guards (see below);
+- the same mention twice is one mention. Text without `@[` costs no lookups.
+
+Reads need no lookup: responses derive `mentions` from the stored tokens. (Rows written by an older release through the shared database are not validated; they can show a stale or forged name in `mentions` but never notify or dispatch anyone.)
+
+Responses (comment threads and replies) carry:
+
+```json
+"mentions": [ { "kind": "USER" | "AGENT", "id": "<userId|agentId>", "name": "Bob" } ]
+```
+
+**On edit**, only mentions that were not in the previous body are published; unchanged mentions notify nobody again.
+
+### Picker: `GET /api/v2/projects/{projectId}/comments/mentionables?q=`
+
+Members first, then agents (alphabetical, at most 20), `q` a case-insensitive substring of the name (and an agent's slug); blank returns everyone. Only `ACTIVE`, addressable agents appear. It is the picker's endpoint (no existing members or agents endpoint filters by addressable, or carries both in one shape). Insert the pick as `@[<name>](<kind lower-case>:<id>)`.
+
+```json
+[
+  { "kind": "USER",  "id": "<userId>",  "name": "Bob", "avatarUrl": "https://…" | null, "avatar": null },
+  { "kind": "AGENT", "id": "<agentId>", "name": "Editor Bot", "avatarUrl": null, "avatar": { "emoji": "🤖", "color": "#4f46e5" } }
+]
+```
+
+## @agent in a thread
+
+A person mentioning an agent asks it to act on the thread: revise the document as the thread asks, answer a question, or ask a clarifying question, and reply in the thread. The agent never resolves the thread.
+
+1. **Publish.** The write publishes `conductor.comment.mentioned` with `agentIds[]`.
+2. **Guards.** `CommentAgentDispatchSubscriber` dispatches only when `authorKind` is `USER`: text an agent wrote never starts a run (second loop guard, after the parser stripping agent mentions from machine text). It defers to after the transaction commits (`AfterCommit`), so a rolled-back comment starts nothing and the run can see the committed comment.
+3. **Request ledger.** `CommentAgentRequestService.begin` inserts a `comment_agent_requests` row (V207) in its own transaction, under a lock on the comment row. One request per (thread, agent) may be in flight: while an earlier one is undispatched (younger than 10 minutes) or its run is not terminal, a new mention starts nothing. A partial unique index closes the same window in the database (`WHERE workflow_run_id IS NULL AND error IS NULL`); the part an index cannot see (the run's status lives in another table) is the locked check.
+4. **Checks, in plain words.** Refusals are stored on the row as `error` and shown under the thread: "<Agent> isn't active, so it can't respond. Activate it under Automation → Agents."; "Set up an AI provider in Settings → AI Providers so <Agent> can run." (no usable runtime: `AgentRuntimeResolver`); a workspace's own workflow already named `conductor-comment-agent`; a trigger failure.
+5. **Run.** `CommentAgentWorkflowProvisioner.ensure` seeds (or refreshes) the `conductor-comment-agent` [system workflow](workflows.md#system-managed-workflows) from `resources/comments/comment-agent.yaml`, and `WorkflowTriggerService.fireTrigger` starts it with the thread as its event payload: `commentId`, `requestId`, `agentId`, `requesterName`, the target (`workItemId` + `documentFilename`, or `projectDocId`), `documentTitle`, and `threadText` (the quote and every message, mentions as `@Name`, capped at 20,000 characters). The run id is recorded on the request.
+6. **The agent's task** (domain-agnostic: PRDs, briefs, wiki pages): read the thread, read the document with `read_document` / `read_project_doc` and note its `contentHash`, make the change with **one** write passing `baseContentHash` (on a 409: read again, redo, write once more), then `respond_to_comment` starting "Changed: …" (or the answer, or the clarifying question). Never resolve, never mention agents, touch nothing else.
+7. **Tools.** The step uses `with.grant_tools` ([workflows.md](workflows.md#agent--run-an-ai-agent)) to give the run the six `comment:` tools. On the `claude-code` runtime these are the Conductor MCP tools of the same name, so the runner image needs a CLI that ships `list_comments`, `respond_to_comment`, `read_document` and the `baseContentHash` writes (CLI 0.60.0 or later); on the `api` runtime `CommentToolProvider` implements them in-process.
+
+### Attribution of agent writes
+
+A comment or reply written with a **run token** whose workflow run has a `comment_agent_requests` row is recorded as that agent: `author_agent_id` = the agent, `author_label` = its name, so responses show `authorKind: AGENT`, `authorName: "Editor Bot"` and `authorAgent {id, name, avatar}`. (`CommentAgentAttribution`, applied by `CommentsController`; `ProjectActor` gained an optional `agentId`.) The agent's first reply also fills the request's `reply_id`. Any other run token or project API key stays the anonymous `Agent (run a1b2c3d4)`. The `api` runtime tools write as the agent directly.
+
+### `agentRequests` on a thread
+
+Each thread response carries the requests on it, oldest first (two queries however many threads):
+
+```json
+"agentRequests": [
+  {
+    "agentId": "<agentId>",
+    "agentName": "Editor Bot",
+    "avatar": { "emoji": "🤖", "color": "#4f46e5" },
+    "status": "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED",
+    "error": "plain words, set when FAILED" | null,
+    "createdAt": "2026-11-15T10:00:00Z"
+  }
+]
+```
+
+`status` is derived, never stored: no run yet → `PENDING` (`FAILED` once the row is older than 10 minutes with no run); run `PENDING` / `PENDING_LOCAL_PICKUP` → `PENDING`; `RUNNING` / `CANCELLING` → `RUNNING`; `SUCCESS` → `SUCCEEDED`; `FAILED`, `CANCELLED`, `LOCAL_PICKUP_TIMEOUT` → `FAILED` (with an `error`). A dispatch refusal is `FAILED` immediately. The create/reply response is built before the commit, so it carries no request yet: a client polls the thread list (every 5 s, up to 20 minutes) while any request is `PENDING` or `RUNNING`, and shows "Working on it…" or the `error`.
+
+### Anchor context for quote-only comments
+
+`add_comment` (MCP) sends `anchor: {exact}` only. On `POST /comments` a QUOTE anchor with `exact` but neither `prefix` nor `suffix` gets them from the document: the current text is projected with `TextProjection`, `exact` is found with `QuoteMatcher` (the first occurrence when it appears more than once) and the 32-character `prefix`/`suffix` are filled the way the browser's `buildQuote` does. `sectionId`/`sectionTitle` are only kept if sent; they are not derived. If the text is not in the document the answer is `400 That text isn't in the document`. An anchor that already carries context is stored as sent, and the original Work Item route (`/work-items/{wi}/comments`) does not guess (old clients keep their behaviour).
 
 ## Expand / contract
 

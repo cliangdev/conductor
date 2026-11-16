@@ -13,7 +13,10 @@ public enum ChannelGroup {
             EventType.REVIEWER_ASSIGNED,
             EventType.REVIEW_SUBMITTED,
             EventType.COMMENT_ADDED,
-            EventType.COMMENT_REPLY
+            EventType.COMMENT_REPLY,
+            EventType.DOC_COMMENT_ADDED,
+            EventType.DOC_COMMENT_REPLY,
+            EventType.COMMENT_MENTIONED
     )),
 
     /**

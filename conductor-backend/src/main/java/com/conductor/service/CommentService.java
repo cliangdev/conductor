@@ -3,6 +3,10 @@ package com.conductor.service;
 import com.conductor.agent.Agent;
 import com.conductor.agent.AgentAvatarDefaults;
 import com.conductor.agent.AgentRepository;
+import com.conductor.comment.CommentAgentRequestService;
+import com.conductor.comment.CommentSignals;
+import com.conductor.comment.Mention;
+import com.conductor.comment.MentionParser;
 import com.conductor.entity.Comment;
 import com.conductor.entity.CommentReply;
 import com.conductor.entity.Document;
@@ -21,6 +25,9 @@ import com.conductor.repository.WorkItemRepository;
 import com.conductor.repository.ProjectMemberRepository;
 import com.conductor.repository.ProjectRepository;
 import com.conductor.service.view.CommentAnchor;
+import com.conductor.service.anchoring.QuoteMatcher;
+import com.conductor.service.anchoring.TextProjection;
+import com.conductor.service.view.CommentAgentRequestView;
 import com.conductor.service.view.CommentAuthorAgentView;
 import com.conductor.service.view.CommentKind;
 import com.conductor.service.anchoring.SourceQuoteLocator;
@@ -75,6 +82,9 @@ public class CommentService {
     private final AgentRepository agentRepository;
     private final DocumentService documentService;
     private final ProjectDocService projectDocService;
+    private final MentionParser mentionParser;
+    private final CommentSignals commentSignals;
+    private final CommentAgentRequestService agentRequestService;
 
     public CommentService(
             CommentRepository commentRepository,
@@ -89,7 +99,10 @@ public class CommentService {
             ProjectDocRepository projectDocRepository,
             AgentRepository agentRepository,
             DocumentService documentService,
-            ProjectDocService projectDocService) {
+            ProjectDocService projectDocService,
+            MentionParser mentionParser,
+            CommentSignals commentSignals,
+            CommentAgentRequestService agentRequestService) {
         this.commentRepository = commentRepository;
         this.commentReplyRepository = commentReplyRepository;
         this.workItemRepository = workItemRepository;
@@ -103,6 +116,9 @@ public class CommentService {
         this.agentRepository = agentRepository;
         this.documentService = documentService;
         this.projectDocService = projectDocService;
+        this.mentionParser = mentionParser;
+        this.commentSignals = commentSignals;
+        this.agentRequestService = agentRequestService;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -147,6 +163,8 @@ public class CommentService {
                                  String suggestedText) {
         verifyMembership(projectId, actor);
         requireContent(content);
+        MentionParser.Parsed parsed = parseMentions(projectId, content, actor);
+        content = parsed.content();
 
         if (documentHash != null && !DOCUMENT_HASH.matcher(documentHash).matches()) {
             throw new BusinessException("documentHash must be 64 lowercase hex characters");
@@ -159,6 +177,7 @@ public class CommentService {
         String currentHash = null;
         String sourceText;
         boolean htmlSource = false;
+        String contentType = "text/markdown";
 
         switch (target) {
             case CommentTarget.WorkItemDocument t -> {
@@ -171,6 +190,7 @@ public class CommentService {
                         .orElseThrow(() -> new EntityNotFoundException("Document not found in Work Item"));
                 html = DocumentContent.isHtml(document);
                 htmlSource = html;
+                contentType = document.getContentType();
                 currentHash = document.getContentHash();
                 sourceText = document.getContent();
                 comment.setWorkItem(workItem);
@@ -216,6 +236,10 @@ public class CommentService {
             }
         }
 
+        if (!legacyRules && anchor != null && anchor.prefix() == null && anchor.suffix() == null) {
+            anchor = withContext(anchor, sourceText, contentType);
+        }
+
         if (suggestedText != null) {
             if (anchor == null) {
                 throw new BusinessException("A suggested edit needs a text selection (anchor)");
@@ -253,7 +277,10 @@ public class CommentService {
 
         if (workItem != null) {
             publishWorkItemSignal(SignalTypes.CONDUCTOR_WORK_ITEM_COMMENT_ADDED, workItem, content, actor);
+        } else {
+            commentSignals.projectDocComment(SignalTypes.CONDUCTOR_PROJECT_DOC_COMMENT_ADDED, comment, content, actor);
         }
+        commentSignals.mentioned(comment, null, parsed.mentions(), content, actor);
 
         // The document is already loaded here, so no extra query is needed to compare against its current hash.
         return new CommentResult(comment, document != null && comment.isOutdatedAgainst(currentHash));
@@ -269,6 +296,7 @@ public class CommentService {
         verifyMembership(projectId, actor);
         requireContent(content);
         ProjectDoc doc = findProjectDocInProject(projectId, docId);
+        content = parseMentions(projectId, content, actor).content();
 
         Comment comment = new Comment();
         comment.setProjectDoc(doc);
@@ -471,6 +499,8 @@ public class CommentService {
 
     private CommentReplyView addReplyTo(Comment comment, String content, ProjectActor actor) {
         requireContent(content);
+        MentionParser.Parsed parsed = parseMentions(projectIdOf(comment), content, actor);
+        content = parsed.content();
         CommentReply reply = new CommentReply();
         reply.setComment(comment);
         applyAuthor(reply, actor);
@@ -481,9 +511,15 @@ public class CommentService {
         WorkItem workItem = comment.getWorkItem();
         if (workItem != null) {
             publishWorkItemSignal(SignalTypes.CONDUCTOR_WORK_ITEM_COMMENT_REPLIED, workItem, content, actor);
+        } else {
+            commentSignals.projectDocComment(SignalTypes.CONDUCTOR_PROJECT_DOC_COMMENT_REPLIED, comment, content, actor);
+        }
+        commentSignals.mentioned(comment, reply.getId(), parsed.mentions(), content, actor);
+        if (actor.agentId() != null) {
+            agentRequestService.linkReply(comment.getId(), actor.agentId(), reply.getId());
         }
 
-        return toReplyView(reply, Map.of());
+        return toReplyView(reply, agentsFor(null, List.of(reply)));
     }
 
     /** Edits a reply's text. Only its author may; a machine actor may edit only machine-written replies. */
@@ -496,9 +532,12 @@ public class CommentService {
         if (!isAuthor(actor, reply.getAuthor())) {
             throw new ForbiddenException("Only the author can edit this reply");
         }
-        reply.setContent(content);
+        MentionParser.Parsed parsed = parseMentions(projectId, content, actor);
+        List<Mention> added = MentionParser.added(reply.getContent(), parsed.content());
+        reply.setContent(parsed.content());
         reply.setEditedAt(OffsetDateTime.now());
         commentReplyRepository.save(reply);
+        commentSignals.mentioned(comment, reply.getId(), added, parsed.content(), actor);
         return toReplyView(reply, agentsFor(null, List.of(reply)));
     }
 
@@ -532,8 +571,11 @@ public class CommentService {
             if (!isAuthor(actor, comment.getAuthor())) {
                 throw new ForbiddenException("Only the author can edit this comment");
             }
-            comment.setContent(content);
+            MentionParser.Parsed parsed = parseMentions(projectId, content, actor);
+            List<Mention> added = MentionParser.added(comment.getContent(), parsed.content());
+            comment.setContent(parsed.content());
             comment.setEditedAt(OffsetDateTime.now());
+            commentSignals.mentioned(comment, null, added, parsed.content(), actor);
         }
         if (resolved != null) {
             applyResolved(comment, resolved, actor);
@@ -665,7 +707,22 @@ public class CommentService {
 
         List<CommentReply> allReplies = commentReplyRepository.findAllByCommentIdIn(
                 comments.stream().map(Comment::getId).toList());
-        Map<String, CommentAuthorAgentView> agents = agentsFor(comments, allReplies);
+        List<CommentAgentRequestService.RequestState> requestStates =
+                agentRequestService.statesFor(comments.stream().map(Comment::getId).toList());
+        Map<String, CommentAuthorAgentView> agents = agentsFor(comments, allReplies, requestStates);
+        Map<String, List<CommentAgentRequestView>> requestsByComment = new HashMap<>();
+        for (CommentAgentRequestService.RequestState state : requestStates) {
+            CommentAuthorAgentView agent = agents.get(state.agentId());
+            requestsByComment.computeIfAbsent(state.commentId(), id -> new ArrayList<>())
+                    .add(new CommentAgentRequestView(
+                            state.agentId(),
+                            agent != null ? agent.name() : "Agent",
+                            agent != null ? agent.avatarEmoji() : null,
+                            agent != null ? agent.avatarColor() : null,
+                            state.status().name(),
+                            state.error(),
+                            state.createdAt()));
+        }
         Map<String, List<CommentReplyView>> repliesByComment = new HashMap<>();
         for (CommentReply reply : allReplies) {
             repliesByComment.computeIfAbsent(reply.getComment().getId(), id -> new ArrayList<>())
@@ -688,13 +745,14 @@ public class CommentService {
 
         return comments.stream()
                 .map(comment -> toView(comment, repliesByComment.getOrDefault(comment.getId(), List.of()), agents,
-                        filenames, contentHashes))
+                        filenames, contentHashes, requestsByComment.getOrDefault(comment.getId(), List.of())))
                 .toList();
     }
 
     private CommentWithRepliesView toView(Comment comment, List<CommentReplyView> replies,
                                           Map<String, CommentAuthorAgentView> agents,
-                                          Map<String, String> filenames, Map<String, String> contentHashes) {
+                                          Map<String, String> filenames, Map<String, String> contentHashes,
+                                          List<CommentAgentRequestView> agentRequests) {
         Document document = comment.getDocument();
         String documentId = document != null ? document.getId() : null;
         ProjectDoc projectDoc = comment.getProjectDoc();
@@ -729,6 +787,8 @@ public class CommentService {
                 resolved ? resolverName(comment) : null,
                 comment.getUpdatedAt(),
                 comment.getAnchorStatus(),
+                MentionParser.extract(comment.getContent()),
+                agentRequests,
                 suggestionOf(comment));
     }
 
@@ -755,7 +815,8 @@ public class CommentService {
                 authorName(author, reply.getAuthorLabel()),
                 authorKind(author, reply.getAuthorAgentId()),
                 reply.getAuthorAgentId() != null ? agents.get(reply.getAuthorAgentId()) : null,
-                reply.getEditedAt());
+                reply.getEditedAt(),
+                MentionParser.extract(reply.getContent()));
     }
 
     private static String authorName(User author, String label) {
@@ -779,7 +840,13 @@ public class CommentService {
 
     /** The agents behind any agent-authored comments or replies, by id, in one query (none when there are none). */
     private Map<String, CommentAuthorAgentView> agentsFor(Collection<Comment> comments, Collection<CommentReply> replies) {
+        return agentsFor(comments, replies, List.of());
+    }
+
+    private Map<String, CommentAuthorAgentView> agentsFor(Collection<Comment> comments, Collection<CommentReply> replies,
+                                                          Collection<CommentAgentRequestService.RequestState> requests) {
         java.util.Set<String> ids = new java.util.HashSet<>();
+        requests.stream().map(CommentAgentRequestService.RequestState::agentId).forEach(ids::add);
         if (comments != null) {
             comments.stream().map(Comment::getAuthorAgentId).filter(java.util.Objects::nonNull).forEach(ids::add);
         }
@@ -817,6 +884,7 @@ public class CommentService {
     }
 
     static String buildExcerpt(String content) {
+        content = MentionParser.toPlainText(content);
         if (content == null) {
             return "";
         }
@@ -850,11 +918,44 @@ public class CommentService {
     private static void applyAuthor(Comment comment, ProjectActor actor) {
         comment.setAuthor(actor.user());
         comment.setAuthorLabel(actor.user() == null ? actor.label() : null);
+        comment.setAuthorAgentId(actor.user() == null ? actor.agentId() : null);
     }
 
     private static void applyAuthor(CommentReply reply, ProjectActor actor) {
         reply.setAuthor(actor.user());
         reply.setAuthorLabel(actor.user() == null ? actor.label() : null);
+        reply.setAuthorAgentId(actor.user() == null ? actor.agentId() : null);
+    }
+
+    /**
+     * Validates the mention tokens in a body. An agent (any machine actor) may mention people but never another
+     * agent: text a machine wrote can never start a run.
+     */
+    private MentionParser.Parsed parseMentions(String projectId, String content, ProjectActor actor) {
+        MentionParser.Parsed parsed = mentionParser.parse(projectId, content, !actor.isMachine());
+        return parsed != null ? parsed : new MentionParser.Parsed(content, List.of());
+    }
+
+    private static String projectIdOf(Comment comment) {
+        return comment.getWorkItem() != null
+                ? comment.getWorkItem().getProject().getId()
+                : comment.getProjectDoc().getProject().getId();
+    }
+
+    /**
+     * Fills in the prefix/suffix of an anchor that carries only the quoted text (an agent's {@code add_comment}),
+     * the way the browser would, by finding the text in the document's current visible text. The first occurrence
+     * wins when it appears more than once. A 400 when the text is not in the document at all.
+     */
+    private static CommentAnchor withContext(CommentAnchor anchor, String sourceText, String contentType) {
+        String text = TextProjection.project(sourceText == null ? "" : sourceText, contentType);
+        QuoteMatcher.Match match = QuoteMatcher.find(text, anchor.exact(), null, null);
+        if (match == null) {
+            throw new BusinessException("That text isn't in the document");
+        }
+        QuoteMatcher.Context ctx = QuoteMatcher.contextOf(text, match);
+        return new CommentAnchor(anchor.exact(), ctx.prefix(), ctx.suffix(), anchor.sectionId(),
+                anchor.sectionTitle());
     }
 
     private static void applyResolved(Comment comment, boolean resolved, ProjectActor actor) {

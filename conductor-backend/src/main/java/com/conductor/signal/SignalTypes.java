@@ -22,6 +22,16 @@ public final class SignalTypes {
     public static final String CONDUCTOR_WORK_ITEM_REVIEW_SUBMITTED = "conductor.work_item.review_submitted";
     public static final String CONDUCTOR_WORK_ITEM_COMMENT_ADDED = "conductor.work_item.comment_added";
     public static final String CONDUCTOR_WORK_ITEM_COMMENT_REPLIED = "conductor.work_item.comment_replied";
+    /** A comment or reply on a project doc (Work Item documents use the {@code work_item} pair above). */
+    public static final String CONDUCTOR_PROJECT_DOC_COMMENT_ADDED = "conductor.project_doc.comment_added";
+    public static final String CONDUCTOR_PROJECT_DOC_COMMENT_REPLIED = "conductor.project_doc.comment_replied";
+    /**
+     * A comment or reply named someone with a mention token (see {@code MentionParser}); published only for
+     * mentions that are new in that write. Payload: {@code projectId, commentId, replyId?, workItemId?,
+     * documentId?, projectDocId?, documentTitle, authorId?, authorName, authorKind, excerpt, link,
+     * mentionedNames, userIds[], agentIds[]}.
+     */
+    public static final String CONDUCTOR_COMMENT_MENTIONED = "conductor.comment.mentioned";
     public static final String CONDUCTOR_WORK_ITEM_ASSET_ADDED = "conductor.work_item.asset_added";
     /** An approved Work Item could not advance automatically — its publish gate refused the next edge. */
     public static final String CONDUCTOR_WORK_ITEM_AUTO_TRANSITION_BLOCKED =

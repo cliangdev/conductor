@@ -55,6 +55,18 @@ public class ClaudeCodeAgentStepRuntime implements AgentStepRuntime {
             }
             toolNames.add(mapped.get());
         }
+        // Tools granted to this run by with.grant_tools, on top of the agent's own (deduplicated).
+        if (call.grantTools() != null) {
+            for (String toolId : call.grantTools()) {
+                Optional<String> mapped = toolRegistry.claudeCodeToolName(toolId);
+                if (mapped.isEmpty()) {
+                    return StepResult.failed("", "AGENT_TOOL_NOT_AVAILABLE_ON_CLAUDE_CODE: " + toolId);
+                }
+                if (!toolNames.contains(mapped.get())) {
+                    toolNames.add(mapped.get());
+                }
+            }
+        }
         String allowedTools = toolNames.isEmpty() ? null : String.join(",", toolNames);
         boolean conductorMcp = toolNames.stream().anyMatch(n -> n.startsWith("mcp__conductor__"));
 

@@ -80,6 +80,15 @@ class CommentServiceTest {
     @Mock
     private com.conductor.agent.AgentRepository agentRepository;
 
+    @Mock
+    private com.conductor.comment.MentionParser mentionParser;
+
+    @Mock
+    private com.conductor.comment.CommentSignals commentSignals;
+
+    @Mock
+    private com.conductor.comment.CommentAgentRequestService agentRequestService;
+
     @InjectMocks
     private CommentService commentService;
 
@@ -92,6 +101,9 @@ class CommentServiceTest {
 
     @BeforeEach
     void setUp() {
+        // Mentions pass through untouched unless a test says otherwise.
+        lenient().when(mentionParser.parse(any(), any(), org.mockito.ArgumentMatchers.anyBoolean()))
+                .thenAnswer(inv -> new com.conductor.comment.MentionParser.Parsed(inv.getArgument(1), List.of()));
         author = new User();
         author.setId("user-1");
         author.setEmail("author@example.com");
