@@ -106,6 +106,7 @@ public class DocumentService {
         return toEnrichedDocumentView(document);
     }
 
+    @Transactional
     public boolean upsertDocumentByFilename(String projectId, String workItemId, String filename, String content,
                                             String requestContentType) {
         return upsertDocumentByFilename(projectId, workItemId, filename, content, requestContentType, null);
@@ -129,7 +130,8 @@ public class DocumentService {
             }
         }
 
-        return documentRepository.findByWorkItemIdAndFilename(workItemId, filename)
+        // Locked, so a concurrent write to the same document waits and the hash below is the current one.
+        return documentRepository.findForUpdateByWorkItemIdAndFilename(workItemId, filename)
                 .map(existing -> {
                     if (baseContentHash != null) {
                         String current = existing.getContentHash() != null

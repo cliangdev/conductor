@@ -152,6 +152,7 @@ public class ProjectDocService {
         return doc;
     }
 
+    @Transactional
     public ProjectDoc updateDoc(String projectId, String docId, String content, ProjectActor actor) {
         return updateDoc(projectId, docId, content, actor, null);
     }
@@ -164,6 +165,8 @@ public class ProjectDocService {
     @Transactional
     public ProjectDoc updateDoc(String projectId, String docId, String content, ProjectActor actor,
                                 String baseContentHash) {
+        // Lock the row first so concurrent updates run one after the other and the hash check sees the current text.
+        projectDocRepository.lockById(docId);
         ProjectDoc doc = getDoc(projectId, docId);
         if (baseContentHash != null && !baseContentHash.equalsIgnoreCase(contentHash(doc))) {
             throw new com.conductor.exception.ConflictException(

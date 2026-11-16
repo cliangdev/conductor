@@ -187,7 +187,7 @@ class DocumentServiceTest {
     @Test
     void upsertByFilenameMarksCommentsStaleOnUpdate() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         Comment staleComment = new Comment();
@@ -318,7 +318,7 @@ class DocumentServiceTest {
     @Test
     void upsertByFilenameCreatesNewDocumentWhenNotFound() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
         when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> {
             Document d = invocation.getArgument(0);
             if (d.getCreatedAt() == null) d.setCreatedAt(OffsetDateTime.now());
@@ -335,7 +335,7 @@ class DocumentServiceTest {
     @Test
     void upsertByFilenameUpdatesExistingDocumentWhenFound() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         boolean created = documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "# Updated Content", null);
@@ -349,7 +349,7 @@ class DocumentServiceTest {
     void upsertByFilenameWithMatchingBaseContentHashWrites() {
         testDocument.setContentHash(DocumentContent.sha256Hex("# Original Content"));
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         boolean created = documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "# Edited", null,
@@ -363,7 +363,7 @@ class DocumentServiceTest {
     void upsertByFilenameWithStaleBaseContentHashIsRefusedAndWritesNothing() {
         testDocument.setContentHash(DocumentContent.sha256Hex("# Original Content"));
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
 
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> documentService.upsertDocumentByFilename(
                         "proj-1", "issue-1", "spec.md", "# Edited", null, DocumentContent.sha256Hex("something older")))
@@ -377,7 +377,7 @@ class DocumentServiceTest {
     @Test
     void upsertByFilenameWithBaseContentHashStillCreatesWhenTheDocumentIsNew() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
         when(documentRepository.save(any(Document.class))).thenAnswer(i -> i.getArgument(0));
 
         assertThat(documentService.upsertDocumentByFilename("proj-1", "issue-1", "new.md", "# New", null, "abc")).isTrue();
@@ -386,7 +386,7 @@ class DocumentServiceTest {
     @Test
     void upsertByFilenameUploadsToGcsOnCreate() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
         when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> {
             Document d = invocation.getArgument(0);
             if (d.getCreatedAt() == null) d.setCreatedAt(OffsetDateTime.now());
@@ -430,7 +430,7 @@ class DocumentServiceTest {
     @Test
     void upsertByFilenameComputesContentHashOnCreate() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "new.md")).thenReturn(Optional.empty());
         when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         documentService.upsertDocumentByFilename("proj-1", "issue-1", "new.md", "hello", null);
@@ -444,7 +444,7 @@ class DocumentServiceTest {
     void upsertByFilenameRecomputesContentHashOnUpdate() {
         testDocument.setContentHash("stale");
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         documentService.upsertDocumentByFilename("proj-1", "issue-1", "spec.md", "hello", null);
@@ -455,7 +455,7 @@ class DocumentServiceTest {
     @Test
     void upsertByFilenameUploadsHtmlWithItsContentType() {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "prd.html")).thenReturn(Optional.empty());
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "prd.html")).thenReturn(Optional.empty());
         when(documentRepository.save(any(Document.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
         documentService.upsertDocumentByFilename("proj-1", "issue-1", "prd.html", "<p>hi</p>", "text/html");
@@ -467,7 +467,7 @@ class DocumentServiceTest {
     void upsertByFilenameJudgesAnchoredCommentsByTheirQuoteNotALine() {
         // An HTML page can be far shorter than the old line numbers; anchored comments have no line at all.
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
 
         Comment anchored = new Comment();
@@ -491,7 +491,7 @@ class DocumentServiceTest {
         // markdown -> HTML: the comment keeps its lineNumber and gains no anchor; its line text ("# Original
         // Content") is not in the new content, so it is flagged stale. (The HTML viewer lists it as unplaced.)
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
-        when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
+        when(documentRepository.findForUpdateByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
         when(documentRepository.save(any(Document.class))).thenReturn(testDocument);
         Comment line = new Comment();
         line.setLineNumber(1);

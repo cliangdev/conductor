@@ -1,7 +1,9 @@
 package com.conductor.repository;
 
 import com.conductor.entity.ProjectDoc;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
@@ -72,6 +74,15 @@ public interface ProjectDocRepository extends JpaRepository<ProjectDoc, String> 
     boolean existsByProjectIdAndFolderIsNullAndTitleAndIdNot(String projectId, String title, String id);
 
     boolean existsByProjectIdAndFolderIdAndTitleAndIdNot(String projectId, String folderId, String title, String id);
+
+    /**
+     * Locks the doc's row (SELECT ... FOR UPDATE) until the transaction ends, so concurrent updates, with or
+     * without a base hash, run one after the other. No fetch joins: Postgres cannot lock the nullable side of an
+     * outer join. The caller reads the doc normally afterwards and ignores this result.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT d FROM ProjectDoc d WHERE d.id = :docId")
+    Optional<ProjectDoc> lockById(@Param("docId") String docId);
 
     @Query("SELECT d FROM ProjectDoc d LEFT JOIN FETCH d.createdBy LEFT JOIN FETCH d.updatedBy WHERE d.id = :docId")
     Optional<ProjectDoc> findByIdWithUsers(@Param("docId") String docId);
