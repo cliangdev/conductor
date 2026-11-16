@@ -82,6 +82,24 @@ public class Comment {
     @Column(name = "anchor_status", columnDefinition = "TEXT")
     private String anchorStatus;
 
+    /** Suggested edit: replacement text for the quote. Null on an ordinary comment. */
+    @Column(name = "suggested_text", columnDefinition = "TEXT")
+    private String suggestedText;
+
+    /** PENDING / ACCEPTED / REJECTED; null exactly when {@code suggestedText} is null. */
+    @Column(name = "suggestion_status", columnDefinition = "TEXT")
+    private String suggestionStatus;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "suggestion_decided_by")
+    private User suggestionDecidedBy;
+
+    @Column(name = "suggestion_decided_by_label", columnDefinition = "TEXT")
+    private String suggestionDecidedByLabel;
+
+    @Column(name = "suggestion_decided_at")
+    private OffsetDateTime suggestionDecidedAt;
+
     @Column(name = "resolved_at")
     private OffsetDateTime resolvedAt;
 
@@ -176,6 +194,21 @@ public class Comment {
     public boolean isOutdatedAgainst(String currentDocumentHash) {
         return documentHash != null && currentDocumentHash != null && !documentHash.equals(currentDocumentHash);
     }
+
+    public String getSuggestedText() { return suggestedText; }
+    public void setSuggestedText(String suggestedText) { this.suggestedText = suggestedText; }
+
+    public String getSuggestionStatus() { return suggestionStatus; }
+    public void setSuggestionStatus(String suggestionStatus) { this.suggestionStatus = suggestionStatus; }
+
+    public User getSuggestionDecidedBy() { return suggestionDecidedBy; }
+    public void setSuggestionDecidedBy(User suggestionDecidedBy) { this.suggestionDecidedBy = suggestionDecidedBy; }
+
+    public String getSuggestionDecidedByLabel() { return suggestionDecidedByLabel; }
+    public void setSuggestionDecidedByLabel(String l) { this.suggestionDecidedByLabel = l; }
+
+    public OffsetDateTime getSuggestionDecidedAt() { return suggestionDecidedAt; }
+    public void setSuggestionDecidedAt(OffsetDateTime t) { this.suggestionDecidedAt = t; }
 
     public String getAnchorStatus() { return anchorStatus; }
     public void setAnchorStatus(String anchorStatus) { this.anchorStatus = anchorStatus; }

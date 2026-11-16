@@ -2256,6 +2256,126 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: The suggestion's quote is not exactly one contiguous place in the source
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments/suggestion-check:
+    post:
+      tags:
+        - comments
+      summary: Can this selection be a suggested edit?
+      description: |
+        Tells a composer whether the "Suggest edit" toggle should be enabled for a selection: true only when the
+        selected text is one contiguous piece of the document's source in exactly one place (not repeated,
+        not split by formatting or an HTML element). Never writes. Same rules as creating a comment with a
+        `suggestion`. See docs/comments.md.
+      operationId: checkCommentSuggestion
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommentSuggestionCheckRequest"
+      responses:
+        "200":
+          description: Whether the selection can carry a suggestion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentSuggestionCheckResponse"
+        "400":
+          description: Invalid target or anchor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not a member of the project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Work Item, document or project doc not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /projects/{projectId}/comments/{commentId}/suggestion-decision:
+    post:
+      tags:
+        - comments
+      summary: Accept or reject a suggested edit
+      description: |
+        People only (403 for agents and run tokens). ACCEPT re-finds the quote in the document as it is now and
+        replaces it, saving through the normal document save (a project doc gets a new version, other comments
+        are re-anchored), then resolves the thread; 409 if the text is no longer found in exactly one place.
+        REJECT leaves the document alone and resolves the thread. The comment must have a PENDING suggestion
+        (409 when already decided, 400 when it is not a suggestion). Returns the updated thread.
+      operationId: decideCommentSuggestion
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: projectId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: commentId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommentSuggestionDecisionRequest"
+      responses:
+        "200":
+          description: Decision recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentThreadResponse"
+        "400":
+          description: The comment is not a suggested edit
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Not an Editor (accepting), or the caller is an agent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Comment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Already decided, or the text changed since it was suggested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /projects/{projectId}/comments/{commentId}:
     patch:
@@ -11376,6 +11496,13 @@ components:
           description: |
             The `contentHash` of the document version the commenter was looking at (Work Item documents).
             Omit it to stamp the document's current hash.
+        suggestion:
+          allOf:
+            - $ref: "#/components/schemas/CommentSuggestionRequest"
+          nullable: true
+          description: |
+            Makes this a suggested edit (status PENDING). Needs `anchor`; 400 without one. 422 when the quote
+            is not exactly one contiguous place in the source (see `suggestion-check`).
 
     UpdateCommentRequest:
       type: object
@@ -11395,6 +11522,68 @@ components:
       properties:
         content:
           type: string
+
+    CommentSuggestionRequest:
+      type: object
+      required:
+        - text
+      description: Replacement text for the comment's quote. Only valid with `anchor` (kind QUOTE).
+      properties:
+        text:
+          type: string
+          description: The new text. May be empty (a deletion); must differ from the selected text.
+
+    CommentSuggestion:
+      type: object
+      required:
+        - text
+        - status
+      properties:
+        text:
+          type: string
+          description: The replacement text.
+        status:
+          type: string
+          enum: [PENDING, ACCEPTED, REJECTED]
+        decidedByName:
+          type: string
+          nullable: true
+        decidedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CommentSuggestionCheckRequest:
+      type: object
+      required:
+        - target
+        - anchor
+      properties:
+        target:
+          $ref: "#/components/schemas/CommentTargetRequest"
+        anchor:
+          $ref: "#/components/schemas/TextQuoteAnchor"
+
+    CommentSuggestionCheckResponse:
+      type: object
+      required:
+        - suggestable
+      properties:
+        suggestable:
+          type: boolean
+        reason:
+          type: string
+          nullable: true
+          description: Why not, in words for the reader; null when suggestable.
+
+    CommentSuggestionDecisionRequest:
+      type: object
+      required:
+        - decision
+      properties:
+        decision:
+          type: string
+          enum: [ACCEPT, REJECT]
 
     CommentAuthorAvatar:
       type: object
@@ -11562,6 +11751,11 @@ components:
           type: string
           format: date-time
           nullable: true
+        suggestion:
+          allOf:
+            - $ref: "#/components/schemas/CommentSuggestion"
+          nullable: true
+          description: Set when the comment is a suggested edit; null otherwise.
         replies:
           type: array
           items:

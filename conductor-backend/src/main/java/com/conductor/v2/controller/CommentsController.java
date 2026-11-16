@@ -5,6 +5,10 @@ import com.conductor.generated.v2.api.CommentsApi;
 import com.conductor.generated.v2.model.AddCommentReplyRequest;
 import com.conductor.generated.v2.model.CommentAuthorAgent;
 import com.conductor.generated.v2.model.CommentAuthorAvatar;
+import com.conductor.generated.v2.model.CommentSuggestion;
+import com.conductor.generated.v2.model.CommentSuggestionCheckRequest;
+import com.conductor.generated.v2.model.CommentSuggestionCheckResponse;
+import com.conductor.generated.v2.model.CommentSuggestionDecisionRequest;
 import com.conductor.generated.v2.model.CommentTargetRequest;
 import com.conductor.generated.v2.model.CommentThreadReplyResponse;
 import com.conductor.generated.v2.model.CommentThreadResponse;
@@ -69,8 +73,27 @@ public class CommentsController implements CommentsApi {
         ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
         CommentWithRepliesView created = commentService.createThread(projectId, toTarget(request.getTarget()),
                 request.getContent(), request.getLineNumber(), toDomain(request.getAnchor()),
-                request.getDocumentHash(), actor);
+                request.getDocumentHash(),
+                request.getSuggestion() == null ? null : request.getSuggestion().getText(), actor);
         return ResponseEntity.status(201).body(toResponse(created));
+    }
+
+    @Override
+    public ResponseEntity<CommentSuggestionCheckResponse> checkCommentSuggestion(
+            String projectId, CommentSuggestionCheckRequest request) {
+        ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
+        CommentService.SuggestionCheck check = commentService.checkSuggestable(
+                projectId, toTarget(request.getTarget()), toDomain(request.getAnchor()), actor);
+        return ResponseEntity.ok(new CommentSuggestionCheckResponse(check.suggestable()).reason(check.reason()));
+    }
+
+    @Override
+    public ResponseEntity<CommentThreadResponse> decideCommentSuggestion(
+            String projectId, String commentId, CommentSuggestionDecisionRequest request) {
+        ProjectActor actor = projectSecurityService.requireProjectAccess(projectId);
+        return ResponseEntity.ok(toResponse(commentService.decideSuggestion(
+                projectId, commentId, request.getDecision() == CommentSuggestionDecisionRequest.DecisionEnum.ACCEPT,
+                actor)));
     }
 
     @Override
@@ -191,6 +214,11 @@ public class CommentsController implements CommentsApi {
                 .resolvedAt(v.resolvedAt())
                 .resolvedByName(v.resolvedByName())
                 .editedAt(v.editedAt())
+                .suggestion(v.suggestion() == null ? null
+                        : new CommentSuggestion(v.suggestion().text(),
+                                CommentSuggestion.StatusEnum.fromValue(v.suggestion().status()))
+                                .decidedByName(v.suggestion().decidedByName())
+                                .decidedAt(v.suggestion().decidedAt()))
                 .updatedAt(v.updatedAt());
     }
 

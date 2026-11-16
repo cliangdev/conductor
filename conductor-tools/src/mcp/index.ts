@@ -542,7 +542,7 @@ export const TOOLS = [
   },
   {
     name: 'add_comment',
-    description: 'Start a comment thread on a document: a Work Item document (issueId + filename) or a project doc (docId). Pass quote — exact text from the document — to anchor it there; without quote the comment is on the whole document. Verify with list_comments.',
+    description: 'Start a comment thread on a document: a Work Item document (issueId + filename) or a project doc (docId). Pass quote — exact text from the document — to anchor it there; without quote the comment is on the whole document. Add suggestion (replacement text, needs quote) to propose an edit a person accepts or rejects; refused if the quote is repeated or spans formatting. Verify with list_comments.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -551,6 +551,7 @@ export const TOOLS = [
         docId: { type: 'string', description: 'Project doc ID — use instead of issueId' },
         body: { type: 'string', description: 'Comment text' },
         quote: { type: 'string', description: 'Exact text from the document to anchor to (max 2000 chars). Omit for a whole-document comment' },
+        suggestion: { type: 'string', description: 'Replacement text for quote, as a suggested edit (requires quote)' },
       },
       required: ['body'],
     },
@@ -2912,6 +2913,7 @@ export async function runMcpServer(): Promise<void> {
               docId: params['docId'] as string | undefined,
               body: params['body'] as string,
               quote: params['quote'] as string | undefined,
+              suggestion: params['suggestion'] as string | undefined,
             },
             config
           )

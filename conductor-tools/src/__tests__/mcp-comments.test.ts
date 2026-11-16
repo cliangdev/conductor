@@ -164,6 +164,38 @@ describe('add_comment', () => {
     expect(result).toMatchObject({ id: 'c1', kind: 'QUOTE', quote: 'Goals' })
   })
 
+  it('sends a suggested edit with its quote and shows it compactly', async () => {
+    mockGet.mockResolvedValue([{ id: 'd9', filename: 'prd.md' }])
+    mockPost.mockResolvedValue({
+      id: 'c3', kind: 'QUOTE', status: 'OPEN', content: 'typo', anchor: { exact: 'teh' },
+      suggestion: { text: 'the', status: 'PENDING', decidedAt: null },
+    })
+
+    const result = await addComment(
+      { issueId: 'w1', filename: 'prd.md', body: 'typo', quote: 'teh', suggestion: 'the' }, config)
+
+    expect(mockPost).toHaveBeenCalledWith(
+      COMMENTS,
+      { target: { workItemId: 'w1', documentId: 'd9' }, content: 'typo', anchor: { exact: 'teh' }, suggestion: { text: 'the' } },
+      config
+    )
+    expect(result).toMatchObject({ id: 'c3', suggestion: { text: 'the', status: 'PENDING' } })
+    expect((result['suggestion'] as object)).not.toHaveProperty('decidedAt')
+  })
+
+  it('refuses a suggestion without a quote before calling the API', async () => {
+    await expect(addComment({ docId: 'd', body: 'x', suggestion: 'y' }, config)).rejects.toThrow('needs quote')
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+
+  it('lists suggestions with their status', async () => {
+    mockGet.mockResolvedValue([
+      { id: 'c4', kind: 'QUOTE', status: 'RESOLVED', content: 'fix', anchor: { exact: 'a' }, suggestion: { text: 'b', status: 'ACCEPTED' }, replies: [] },
+    ])
+    const result = await listComments({ docId: 'pd', status: 'all' }, config)
+    expect((result['threads'] as Array<Record<string, unknown>>)[0]).toMatchObject({ suggestion: { text: 'b', status: 'ACCEPTED' } })
+  })
+
   it('makes a whole-document comment on a project doc when no quote is given', async () => {
     mockPost.mockResolvedValue({ id: 'c2', kind: 'DOCUMENT', status: 'OPEN', content: 'overall' })
 

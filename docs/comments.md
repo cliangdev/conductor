@@ -76,6 +76,28 @@ Still served, with their original response shapes, until the contract step below
 - `/api/v2/projects/{p}/work-items/{wi}/comments` (create, list, reply, resolve, delete). Original anchor rules: HTML needs `anchor`, markdown needs `lineNumber`. Principals are no longer cast to `User`, so run tokens work.
 - `/api/v1/projects/{p}/docs/{doc}/comments` (list, create, reply, resolve, delete), via `DocCommentService`, now a facade over `CommentService`.
 
+## Suggested edits
+
+A QUOTE comment can carry replacement text for its quote (`suggested_text`, `V208`). A person accepts or rejects it; accepting edits the document.
+
+| Request | Purpose |
+|---|---|
+| `POST /comments {…, anchor, suggestion: {text}}` | Create a suggestion (status `PENDING`). Needs `anchor` (400 otherwise); `text` may be empty (a deletion) but must differ from the selection. 422 when the quote is not suggestable. |
+| `POST /comments/suggestion-check {target, anchor}` | `{suggestable, reason?}`, so the composer can enable the toggle. Never writes. |
+| `POST /comments/{id}/suggestion-decision {decision: ACCEPT\|REJECT}` | Decide. Returns the updated thread. |
+
+Responses carry `suggestion {text, status, decidedByName?, decidedAt?}` (`status` `PENDING` \| `ACCEPTED` \| `REJECTED`), null on an ordinary comment.
+
+**Suggestable** means `SourceQuoteLocator` maps the selection (written against the *rendered* text) to exactly one contiguous span of the *source*. Strict by design:
+
+- Markdown: the quote must be plain source text (whitespace may differ, e.g. a wrapped line). Emphasis, links, code spans or entities inside the quote, or a span across a blank line, are refused. A quote wholly inside one emphasis run is fine.
+- HTML: the quote must sit inside one text node (jsoup); a span crossing an element boundary is refused. Entities are matched decoded and kept as written outside the edit; the replacement is HTML-escaped.
+- Repeats: the occurrence the reader chose is the one `QuoteMatcher` picks in the rendered text; it maps to the same-numbered source occurrence only when source and rendered text have the same number of occurrences, otherwise it is refused.
+
+All refusals read "This text appears more than once or spans formatting — comment instead".
+
+**Deciding** is for people only (403 for an agent, run token or project key; agents may create suggestions). `ACCEPT` needs the Editor role, re-locates the quote in the current source (409 "The text changed since this was suggested" if it is not found in exactly one place), and saves through `DocumentService.upsertDocumentByFilename` (Work Item document) or `ProjectDocService.updateDoc` (project doc, which adds a version) with the content hash it read as `baseContentHash`, so [re-anchoring](#re-anchoring-on-save) runs for the other comments. Then it sets `ACCEPTED`, `decided_by/at` and resolves the thread. `REJECT` sets `REJECTED` and resolves; the document is untouched. Both are one transaction. The suggestion's own thread is resolved before the save, so it is never marked orphaned. A decided suggestion answers 409; a comment that is not a suggestion answers 400.
+
 ## Notifications
 
 Work Item comments publish `conductor.work_item.comment_added` / `comment_replied` as before, naming an agent author by its label. Project-doc comments publish nothing yet; mentions and their notifications come with the @mention work.
@@ -92,4 +114,4 @@ Preview deploys share the production database, so the move is in steps:
 
 ## Agent tools (MCP)
 
-`list_comments`, `add_comment` and `respond_to_comment` cover both targets (`issueId` + `filename`, or `docId` for a project doc). `read_document` returns a Work Item document's text and `contentHash`; `read_project_doc` returns the same hash for a project doc. Both `write_document` and `write_project_doc` accept `baseContentHash`: when it differs from the current content hash the backend answers 409 ("Document changed since you read it") and writes nothing. For a project doc the hash is the SHA-256 of the stored content (`contentHash` on `ProjectDocResponse`). `/conductor:comments` is the command that loops over open threads using these tools.
+`list_comments`, `add_comment` (optional `suggestion` = replacement text for `quote`) and `respond_to_comment` cover both targets (`issueId` + `filename`, or `docId` for a project doc). `read_document` returns a Work Item document's text and `contentHash`; `read_project_doc` returns the same hash for a project doc. Both `write_document` and `write_project_doc` accept `baseContentHash`: when it differs from the current content hash the backend answers 409 ("Document changed since you read it") and writes nothing. For a project doc the hash is the SHA-256 of the stored content (`contentHash` on `ProjectDocResponse`). `/conductor:comments` is the command that loops over open threads using these tools.
