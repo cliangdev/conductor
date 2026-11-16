@@ -53,7 +53,8 @@ export interface CommentsApi {
   comments: Comment[]
   loading: boolean
   /** Reloads the list from the server. */
-  refresh: () => Promise<void>
+  /** Re-reads the threads. Background reads (polling, window focus) pass `silent` so an outage doesn't toast every few seconds. */
+  refresh: (opts?: { silent?: boolean }) => Promise<void>
   create: (input: NewComment) => Promise<Comment | null>
   reply: (commentId: string, content: string) => Promise<void>
   edit: (commentId: string, content: string) => Promise<void>
@@ -110,7 +111,7 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
     setCommentsState(value)
   }, [])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
     try {
       const data = await apiGet<Comment[]>(`${basePath(projectId)}?${query}&status=all`, token)
       let finished = false
@@ -134,7 +135,7 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
       setComments(data)
       if (finished) onDocumentChanged.current?.()
     } catch (err) {
-      toastError(apiErrorMessage(err, 'Failed to load comments'))
+      if (!opts?.silent) toastError(apiErrorMessage(err, 'Failed to load comments'))
     } finally {
       setLoading(false)
     }
@@ -157,7 +158,7 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
         clearInterval(id)
         return
       }
-      void refresh()
+      void refresh({ silent: true })
     }, AGENT_POLL_MS)
     return () => clearInterval(id)
   }, [anyInFlight, refresh])
@@ -165,7 +166,7 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
   // Coming back to the tab: pick up whatever changed meanwhile.
   useEffect(() => {
     function onFocus() {
-      void refresh()
+      void refresh({ silent: true })
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)
@@ -182,7 +183,7 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
       if (!hasAgentMention(content)) return
       expectSince.current = Date.now()
       if (agentTimer.current) clearTimeout(agentTimer.current)
-      agentTimer.current = setTimeout(() => void refresh(), AGENT_FIRST_REFETCH_MS)
+      agentTimer.current = setTimeout(() => void refresh({ silent: true }), AGENT_FIRST_REFETCH_MS)
     },
     [refresh]
   )
