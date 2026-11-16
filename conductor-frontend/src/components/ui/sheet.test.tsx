@@ -47,6 +47,42 @@ describe('Sheet', () => {
     expect(onOpenChange.mock.calls[0][0]).toBe(false)
   })
 
+  it('slides up from the bottom, clear of the safe-area insets, with a close button', () => {
+    const onOpenChange = vi.fn()
+    render(
+      <Sheet open onOpenChange={onOpenChange} title="Comments" side="bottom" showClose>
+        <div>body</div>
+      </Sheet>
+    )
+    const popup = screen.getByRole('dialog')
+    expect(popup.className).toContain('bottom-0')
+    expect(popup.className).toContain('safe-area-inset-bottom')
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(onOpenChange.mock.calls[0][0]).toBe(false)
+  })
+
+  it('has no close button unless asked for', () => {
+    render(
+      <Sheet open onOpenChange={vi.fn()} title="Step details">
+        <div>body</div>
+      </Sheet>
+    )
+    expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument()
+  })
+
+  it('locks the page scroll while open and traps focus inside', async () => {
+    render(
+      <>
+        <button>outside</button>
+        <Sheet open onOpenChange={vi.fn()} title="Comments" showClose>
+          <button>inside</button>
+        </Sheet>
+      </>
+    )
+    await vi.waitFor(() => expect(screen.getByRole('dialog').contains(document.activeElement)).toBe(true))
+    expect([document.documentElement.style.overflowY, document.body.style.overflowY]).toContain('hidden')
+  })
+
   it('calls onOpenChange(false) on Escape', () => {
     const onOpenChange = vi.fn()
     render(

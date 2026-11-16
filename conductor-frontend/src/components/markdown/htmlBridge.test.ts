@@ -88,6 +88,21 @@ describe('bridgeSource', () => {
       expect(m.rect).toBeTruthy()
     })
 
+    it('reports a touch selection from selectionchange alone, once it has settled', async () => {
+      const t = document.querySelector('h1')!.firstChild as Text
+      const range = document.createRange()
+      range.setStart(t, 0)
+      range.setEnd(t, 3)
+      window.getSelection()!.addRange(range)
+      // No mouseup or keyup: only the selection events a touch drag produces.
+      document.dispatchEvent(new Event('selectionchange'))
+      document.dispatchEvent(new Event('selectionchange'))
+      expect(posted.find((p) => p.type === 'selection')).toBeUndefined()
+      const m = await waitForPost('selection')
+      expect(m.exact).toBe('Rep')
+      expect(posted.filter((p) => p.type === 'selection')).toHaveLength(1)
+    })
+
     it('reports when the selection is cleared', async () => {
       const t = document.querySelector('h1')!.firstChild as Text
       const range = document.createRange()
