@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
@@ -30,6 +30,9 @@ export default function DocDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  // Toggles are numbered as they are sent, so a slow reply to an earlier one never overwrites the hash
+  // that a later reply already set.
+  const toggleSeq = useRef({ sent: 0, applied: 0 })
 
   useEffect(() => { if (!loading && doc) markPageReady('project-doc') }, [loading, doc])
 
@@ -56,11 +59,18 @@ export default function DocDetailPage() {
       }
 
       setDoc(flip(checked))
+      const seq = ++toggleSeq.current.sent
 
       try {
-        await setDocTaskState(projectId, docId, lineNumber, checked, accessToken)
-        // Deliberately not adopting the response body: two quick toggles on different lines race, and
-        // the first reply predates the second flip, so applying it would undo a box just ticked.
+        const saved = await setDocTaskState(projectId, docId, lineNumber, checked, accessToken)
+        // Deliberately not adopting the response's content: two quick toggles on different lines race,
+        // and the first reply predates the second flip, so applying it would undo a box just ticked.
+        // Its `contentHash` is adopted, though (newest reply wins): the text changed, so a comment
+        // written now must carry the new hash or it would be reported as written on an older version.
+        if (saved?.contentHash && seq > toggleSeq.current.applied) {
+          toggleSeq.current.applied = seq
+          setDoc((current) => (current ? { ...current, contentHash: saved.contentHash } : current))
+        }
       } catch (err) {
         // Revert by flipping this one line back rather than restoring a whole-content snapshot — the
         // inverse only touches the failed line, leaving any toggle that landed meanwhile intact.
