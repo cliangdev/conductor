@@ -186,6 +186,37 @@ class CommentSuggestionsE2ETest extends AbstractE2ETest {
     }
 
     @Test
+    void aReviewerCanSuggestButOnlyAnEditorCanAcceptOnEitherTarget() {
+        String reviewerEmail = "reviewer-" + UUID.randomUUID().toString().substring(0, 8) + "@suggest.test";
+        HttpHeaders reviewer = login(reviewerEmail);
+        var invite = post("/api/v1/projects/" + projectId + "/invites",
+                Map.of("email", reviewerEmail, "role", "REVIEWER"), admin, HttpStatus.CREATED);
+        post("/api/v1/invites/" + invite.get("token") + "/accept", Map.of(), reviewer, HttpStatus.OK);
+
+        // Creating (and checking) a suggestion is open to any member.
+        post(base() + "/suggestion-check", Map.of("target", pd(), "anchor", anchor("Budget is 10k.", "", "")),
+                reviewer, HttpStatus.OK);
+        Map<String, Object> onDoc = suggest(pd(), anchor("Budget is 10k.", "Ship in March. ", " Repeat"), "Budget is 12k.",
+                reviewer, HttpStatus.CREATED);
+        Map<String, Object> onItem = suggest(wi(), anchor("Ship in March.", "Plan ", " Budget"), "Ship in April.",
+                reviewer, HttpStatus.CREATED);
+        Integer versions = jdbc.queryForObject("SELECT count(*) FROM doc_versions WHERE doc_id = ?", Integer.class, projectDocId);
+
+        Map<String, Object> deniedDoc = decide(onDoc.get("id"), "ACCEPT", reviewer, HttpStatus.FORBIDDEN);
+        Map<String, Object> deniedItem = decide(onItem.get("id"), "ACCEPT", reviewer, HttpStatus.FORBIDDEN);
+        assertThat(deniedDoc.get("detail")).isEqualTo(deniedItem.get("detail"));
+        assertThat(pdContent()).isEqualTo(MD);
+        assertThat(wiContent()).isEqualTo(MD);
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM doc_versions WHERE doc_id = ?", Integer.class, projectDocId))
+                .isEqualTo(versions);
+        // The refusal left the suggestion pending, and an editor still can accept it.
+        assertThat(jdbc.queryForObject("SELECT suggestion_status FROM comments WHERE id = ?", String.class, onDoc.get("id")))
+                .isEqualTo("PENDING");
+        decide(onDoc.get("id"), "ACCEPT", admin, HttpStatus.OK);
+        assertThat(pdContent()).isEqualTo(MD.replace("Budget is 10k.", "Budget is 12k."));
+    }
+
+    @Test
     void acceptingAfterTheTextChangedIs409AndLeavesEverythingAlone() {
         Map<String, Object> sug = suggest(wi(), anchor("Ship in March.", "Plan ", " Budget"), "Ship in April.", admin,
                 HttpStatus.CREATED);

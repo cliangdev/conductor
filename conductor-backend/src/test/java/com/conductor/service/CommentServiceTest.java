@@ -48,6 +48,9 @@ import static org.mockito.Mockito.when;
 class CommentServiceTest {
 
     @Mock
+    private org.springframework.transaction.PlatformTransactionManager transactionManager;
+
+    @Mock
     private CommentRepository commentRepository;
 
     @Mock

@@ -37,7 +37,7 @@ Permissions:
 
 - Create, reply, resolve, reopen: any project member, and any machine credential for the project (project API key, run token).
 - Edit text (`content`): the author only. An agent may edit only comments an agent wrote. Sets `editedAt`.
-- Delete a comment or reply: its author, or a project editor/admin. A machine actor may delete only machine-written rows.
+- Delete a comment or reply: its author, or a project editor/admin. A machine actor may edit or delete only rows it wrote itself: the same agent (`author_agent_id`), or the same non-empty label for an agent-less machine. A person's rows and another agent's rows are never its own.
 
 ## Re-anchoring on save
 
@@ -164,7 +164,7 @@ Members first, then agents (alphabetical, at most 20), `q` a case-insensitive su
 A person mentioning an agent asks it to act on the thread: revise the document as the thread asks, answer a question, or ask a clarifying question, and reply in the thread. The agent never resolves the thread.
 
 1. **Publish.** The write publishes `conductor.comment.mentioned` with `agentIds[]`.
-2. **Guards.** `CommentAgentDispatchSubscriber` dispatches only when `authorKind` is `USER`: text an agent wrote never starts a run (second loop guard, after the parser stripping agent mentions from machine text). It defers to after the transaction commits (`AfterCommit`), so a rolled-back comment starts nothing and the run can see the committed comment.
+2. **Guards.** `CommentAgentDispatchSubscriber` dispatches only when `authorKind` is `USER`: text an agent wrote never starts a run (second loop guard, after the parser stripping agent mentions from machine text). It defers to after the transaction commits (`AfterCommit`), so a rolled-back comment starts nothing and the run can see the committed comment. The comment mutations run inside `AfterTransaction.execute`, so the dispatch (and the mention emails) start only once the writing transaction has released its connection, and every write the dispatch makes (`ensure`, `fireTrigger`, the request rows) runs in a `REQUIRES_NEW` transaction of its own.
 3. **Request ledger.** `CommentAgentRequestService.begin` inserts a `comment_agent_requests` row (V207) in its own transaction, under a lock on the comment row. One request per (thread, agent) may be in flight: while an earlier one is undispatched (younger than 10 minutes) or its run is not terminal, a new mention starts nothing. A partial unique index closes the same window in the database (`WHERE workflow_run_id IS NULL AND error IS NULL`); the part an index cannot see (the run's status lives in another table) is the locked check.
 4. **Checks, in plain words.** Refusals are stored on the row as `error` and shown under the thread: "<Agent> isn't active, so it can't respond. Activate it under Automation → Agents."; "Set up an AI provider in Settings → AI Providers so <Agent> can run." (no usable runtime: `AgentRuntimeResolver`); a workspace's own workflow already named `conductor-comment-agent`; a trigger failure.
 5. **Run.** `CommentAgentWorkflowProvisioner.ensure` seeds (or refreshes) the `conductor-comment-agent` [system workflow](workflows.md#system-managed-workflows) from `resources/comments/comment-agent.yaml`, and `WorkflowTriggerService.fireTrigger` starts it with the thread as its event payload: `commentId`, `requestId`, `agentId`, `requesterName`, the target (`workItemId` + `documentFilename`, or `projectDocId`), `documentTitle`, and `threadText` (the quote and every message, mentions as `@Name`, capped at 20,000 characters). The run id is recorded on the request.
@@ -210,7 +210,7 @@ Each thread response carries the requests on it, oldest first (two queries howev
 Preview deploys share the production database, so the move is in steps:
 
 1. **Expand** (`V204`): `comments` / `comment_replies` become nullable where needed and gain the project-doc and agent columns; the old release keeps working (it always fills the columns that became nullable and never sees project-doc rows).
-2. **Copy** (`V205`): every `doc_comments` / `doc_comment_replies` row is copied under the same id, and triggers mirror later writes to the legacy tables into the unified ones, one direction only. Code in this release writes `comments` only, so nothing is written twice. Limitation: the previous release does not read what this release writes for project docs.
+2. **Copy** (`V205`): every `doc_comments` / `doc_comment_replies` row is copied under the same id, and triggers mirror later writes to the legacy tables into the unified ones, one direction only: an INSERT creates the unified row if it is absent, an UPDATE changes only the columns it changed on an existing row (it never inserts), a DELETE deletes. A late write by the previous release therefore cannot reopen a thread resolved here or bring back a row deleted here. Code in this release writes `comments` only, so nothing is written twice. Limitation: the previous release does not read what this release writes for project docs.
 3. **Contract** (later migration): drop the triggers and the legacy tables `doc_comments` / `doc_comment_replies`, and remove the v1 project-doc comment paths, the old Work Item comment routes, and the `DocComment*` classes.
 
 `doc_comments` is legacy: do not write to it.

@@ -40,6 +40,8 @@ import com.conductor.signal.SignalOrigin;
 import com.conductor.signal.SignalTypes;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.stereotype.Service;
+import com.conductor.tx.AfterTransaction;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -85,6 +87,7 @@ public class CommentService {
     private final MentionParser mentionParser;
     private final CommentSignals commentSignals;
     private final CommentAgentRequestService agentRequestService;
+    private final PlatformTransactionManager transactionManager;
 
     public CommentService(
             CommentRepository commentRepository,
@@ -102,7 +105,8 @@ public class CommentService {
             ProjectDocService projectDocService,
             MentionParser mentionParser,
             CommentSignals commentSignals,
-            CommentAgentRequestService agentRequestService) {
+            CommentAgentRequestService agentRequestService,
+            PlatformTransactionManager transactionManager) {
         this.commentRepository = commentRepository;
         this.commentReplyRepository = commentReplyRepository;
         this.workItemRepository = workItemRepository;
@@ -119,6 +123,7 @@ public class CommentService {
         this.mentionParser = mentionParser;
         this.commentSignals = commentSignals;
         this.agentRequestService = agentRequestService;
+        this.transactionManager = transactionManager;
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -129,19 +134,18 @@ public class CommentService {
      * Work Item document comment under the original rules (HTML documents need an anchor and reject a line,
      * everything else needs a line and rejects an anchor); what the original v2 Work Item routes call.
      */
-    @Transactional
     public CommentResult createComment(String projectId, String workItemId, String documentId, String content,
                                        Integer lineNumber, CommentAnchor anchor, String documentHash,
                                        ProjectActor actor) {
-        return create(projectId, new CommentTarget.WorkItemDocument(workItemId, documentId), content, lineNumber,
-                anchor, documentHash, actor, true, null);
+        return AfterTransaction.execute(transactionManager, () ->
+                create(projectId, new CommentTarget.WorkItemDocument(workItemId, documentId), content, lineNumber,
+                        anchor, documentHash, actor, true, null));
     }
 
     /**
      * A comment on any target. Neither {@code anchor} nor {@code lineNumber} makes a whole-document comment; an
      * {@code anchor} a text-quote comment (any document); a {@code lineNumber} a line comment (not on HTML).
      */
-    @Transactional
     public CommentWithRepliesView createThread(String projectId, CommentTarget target, String content,
                                                Integer lineNumber, CommentAnchor anchor, String documentHash,
                                                ProjectActor actor) {
@@ -149,13 +153,14 @@ public class CommentService {
     }
 
     /** As above; {@code suggestedText} (QUOTE comments only) makes it a suggested edit with status PENDING. */
-    @Transactional
     public CommentWithRepliesView createThread(String projectId, CommentTarget target, String content,
                                                Integer lineNumber, CommentAnchor anchor, String documentHash,
                                                String suggestedText, ProjectActor actor) {
-        CommentResult created = create(projectId, target, content, lineNumber, anchor, documentHash, actor, false,
-                suggestedText);
-        return viewOf(created.comment());
+        return AfterTransaction.execute(transactionManager, () -> {
+            CommentResult created = create(projectId, target, content, lineNumber, anchor, documentHash, actor,
+                    false, suggestedText);
+            return viewOf(created.comment());
+        });
     }
 
     private CommentResult create(String projectId, CommentTarget target, String content, Integer lineNumber,
@@ -275,37 +280,45 @@ public class CommentService {
 
         commentRepository.save(comment);
 
+        announceCreated(comment, workItem, content, parsed, actor);
+
+        // The document is already loaded here, so no extra query is needed to compare against its current hash.
+        return new CommentResult(comment, document != null && comment.isOutdatedAgainst(currentHash));
+    }
+
+    /** The signals every new thread emits: comment added (Work Item or project doc) and, if any, mentions. */
+    private void announceCreated(Comment comment, WorkItem workItem, String content, MentionParser.Parsed parsed,
+                                 ProjectActor actor) {
         if (workItem != null) {
             publishWorkItemSignal(SignalTypes.CONDUCTOR_WORK_ITEM_COMMENT_ADDED, workItem, content, actor);
         } else {
             commentSignals.projectDocComment(SignalTypes.CONDUCTOR_PROJECT_DOC_COMMENT_ADDED, comment, content, actor);
         }
         commentSignals.mentioned(comment, null, parsed.mentions(), content, actor);
-
-        // The document is already loaded here, so no extra query is needed to compare against its current hash.
-        return new CommentResult(comment, document != null && comment.isOutdatedAgainst(currentHash));
     }
 
     /**
      * The v1 project-doc comment, as the legacy endpoint takes it: the client supplies the quoted text and the
      * line is not checked against the doc. Whole-doc when {@code lineNumber} is null.
      */
-    @Transactional
     public CommentWithRepliesView createProjectDocComment(String projectId, String docId, ProjectActor actor,
                                                           String content, Integer lineNumber, String quotedText) {
-        verifyMembership(projectId, actor);
-        requireContent(content);
-        ProjectDoc doc = findProjectDocInProject(projectId, docId);
-        content = parseMentions(projectId, content, actor).content();
+        return AfterTransaction.execute(transactionManager, () -> {
+            verifyMembership(projectId, actor);
+            requireContent(content);
+            ProjectDoc doc = findProjectDocInProject(projectId, docId);
+            MentionParser.Parsed parsed = parseMentions(projectId, content, actor);
 
-        Comment comment = new Comment();
-        comment.setProjectDoc(doc);
-        applyAuthor(comment, actor);
-        comment.setContent(content);
-        comment.setLineNumber(lineNumber == null ? 0 : lineNumber);
-        comment.setQuotedText(quotedText == null ? "" : quotedText);
-        commentRepository.save(comment);
-        return viewOf(comment);
+            Comment comment = new Comment();
+            comment.setProjectDoc(doc);
+            applyAuthor(comment, actor);
+            comment.setContent(parsed.content());
+            comment.setLineNumber(lineNumber == null ? 0 : lineNumber);
+            comment.setQuotedText(quotedText == null ? "" : quotedText);
+            commentRepository.save(comment);
+            announceCreated(comment, null, parsed.content(), parsed, actor);
+            return viewOf(comment);
+        });
     }
 
     String extractLineFromDocument(Document document, int lineNumber) {
@@ -408,6 +421,10 @@ public class CommentService {
             throw new ForbiddenException("Only people can accept or reject a suggested edit");
         }
         Comment comment = findComment(projectId, commentId, actor);
+        if (accept && !projectSecurityService.isEditor(projectId, actor.userId())) {
+            // Accepting edits the document, so it takes the permission editing it does (same message as the save).
+            throw new ForbiddenException("Requires the Editor role (or Admin)");
+        }
         if (comment.getSuggestionStatus() == null) {
             throw new BusinessException("This comment is not a suggested edit");
         }
@@ -483,18 +500,19 @@ public class CommentService {
     // ---------------------------------------------------------------------------------------------
 
     /** Adds a reply to a Work Item comment, checking the comment is on that Work Item. */
-    @Transactional
     public CommentReplyView addReply(String projectId, String workItemId, String commentId, String content,
                                      ProjectActor actor) {
-        verifyMembership(projectId, actor);
-        findWorkItemInProject(projectId, workItemId);
-        return addReplyTo(findCommentInWorkItem(workItemId, commentId), content, actor);
+        return AfterTransaction.execute(transactionManager, () -> {
+            verifyMembership(projectId, actor);
+            findWorkItemInProject(projectId, workItemId);
+            return addReplyTo(findCommentInWorkItem(workItemId, commentId), content, actor);
+        });
     }
 
     /** Adds a reply to any comment of the project. */
-    @Transactional
     public CommentReplyView addReply(String projectId, String commentId, String content, ProjectActor actor) {
-        return addReplyTo(findComment(projectId, commentId, actor), content, actor);
+        return AfterTransaction.execute(transactionManager, () ->
+                addReplyTo(findComment(projectId, commentId, actor), content, actor));
     }
 
     private CommentReplyView addReplyTo(Comment comment, String content, ProjectActor actor) {
@@ -523,22 +541,23 @@ public class CommentService {
     }
 
     /** Edits a reply's text. Only its author may; a machine actor may edit only machine-written replies. */
-    @Transactional
     public CommentReplyView updateReply(String projectId, String commentId, String replyId, String content,
                                         ProjectActor actor) {
-        Comment comment = findComment(projectId, commentId, actor);
-        CommentReply reply = findReply(comment, replyId);
-        requireContent(content);
-        if (!isAuthor(actor, reply.getAuthor())) {
-            throw new ForbiddenException("Only the author can edit this reply");
-        }
-        MentionParser.Parsed parsed = parseMentions(projectId, content, actor);
-        List<Mention> added = MentionParser.added(reply.getContent(), parsed.content());
-        reply.setContent(parsed.content());
-        reply.setEditedAt(OffsetDateTime.now());
-        commentReplyRepository.save(reply);
-        commentSignals.mentioned(comment, reply.getId(), added, parsed.content(), actor);
-        return toReplyView(reply, agentsFor(null, List.of(reply)));
+        return AfterTransaction.execute(transactionManager, () -> {
+            Comment comment = findComment(projectId, commentId, actor);
+            CommentReply reply = findReply(comment, replyId);
+            requireContent(content);
+            if (!isAuthor(actor, reply.getAuthor(), reply.getAuthorLabel(), reply.getAuthorAgentId())) {
+                throw new ForbiddenException("Only the author can edit this reply");
+            }
+            MentionParser.Parsed parsed = parseMentions(projectId, content, actor);
+            List<Mention> added = MentionParser.added(reply.getContent(), parsed.content());
+            reply.setContent(parsed.content());
+            reply.setEditedAt(OffsetDateTime.now());
+            commentReplyRepository.save(reply);
+            commentSignals.mentioned(comment, reply.getId(), added, parsed.content(), actor);
+            return toReplyView(reply, agentsFor(null, List.of(reply)));
+        });
     }
 
     /** Deletes a reply: its author or a project admin; a machine actor only machine-written replies. */
@@ -546,7 +565,8 @@ public class CommentService {
     public void deleteReply(String projectId, String commentId, String replyId, ProjectActor actor) {
         Comment comment = findComment(projectId, commentId, actor);
         CommentReply reply = findReply(comment, replyId);
-        requireAuthorOrAdmin(projectId, actor, reply.getAuthor(), "reply");
+        requireAuthorOrAdmin(projectId, actor, reply.getAuthor(), reply.getAuthorLabel(), reply.getAuthorAgentId(),
+                "reply");
         commentReplyRepository.delete(reply);
     }
 
@@ -559,29 +579,30 @@ public class CommentService {
      * actor: machine-written comments only) and stamps {@code editedAt}. Resolving or reopening is open to
      * anyone with access; reopening clears who resolved it.
      */
-    @Transactional
     public CommentWithRepliesView updateComment(String projectId, String commentId, String content,
                                                 Boolean resolved, ProjectActor actor) {
-        Comment comment = findComment(projectId, commentId, actor);
-        if (content == null && resolved == null) {
-            throw new BusinessException("Nothing to update: send content and/or status");
-        }
-        if (content != null) {
-            requireContent(content);
-            if (!isAuthor(actor, comment.getAuthor())) {
-                throw new ForbiddenException("Only the author can edit this comment");
+        return AfterTransaction.execute(transactionManager, () -> {
+            Comment comment = findComment(projectId, commentId, actor);
+            if (content == null && resolved == null) {
+                throw new BusinessException("Nothing to update: send content and/or status");
             }
-            MentionParser.Parsed parsed = parseMentions(projectId, content, actor);
-            List<Mention> added = MentionParser.added(comment.getContent(), parsed.content());
-            comment.setContent(parsed.content());
-            comment.setEditedAt(OffsetDateTime.now());
-            commentSignals.mentioned(comment, null, added, parsed.content(), actor);
-        }
-        if (resolved != null) {
-            applyResolved(comment, resolved, actor);
-        }
-        commentRepository.save(comment);
-        return viewOf(comment);
+            if (content != null) {
+                requireContent(content);
+                if (!isAuthor(actor, comment.getAuthor(), comment.getAuthorLabel(), comment.getAuthorAgentId())) {
+                    throw new ForbiddenException("Only the author can edit this comment");
+                }
+                MentionParser.Parsed parsed = parseMentions(projectId, content, actor);
+                List<Mention> added = MentionParser.added(comment.getContent(), parsed.content());
+                comment.setContent(parsed.content());
+                comment.setEditedAt(OffsetDateTime.now());
+                commentSignals.mentioned(comment, null, added, parsed.content(), actor);
+            }
+            if (resolved != null) {
+                applyResolved(comment, resolved, actor);
+            }
+            commentRepository.save(comment);
+            return viewOf(comment);
+        });
     }
 
     /** Marks a Work Item comment resolved; what the original {@code /resolve} route calls. */
@@ -612,7 +633,8 @@ public class CommentService {
     }
 
     private void deleteChecked(String projectId, Comment comment, ProjectActor actor) {
-        requireAuthorOrAdmin(projectId, actor, comment.getAuthor(), "comment");
+        requireAuthorOrAdmin(projectId, actor, comment.getAuthor(), comment.getAuthorLabel(),
+                comment.getAuthorAgentId(), "comment");
         commentRepository.delete(comment);
     }
 
@@ -632,10 +654,10 @@ public class CommentService {
         deleteChecked(projectId, findProjectDocComment(projectId, docId, commentId, actor), actor);
     }
 
-    @Transactional
     public CommentReplyView addProjectDocReply(String projectId, String docId, String commentId, ProjectActor actor,
                                                String content) {
-        return addReplyTo(findProjectDocComment(projectId, docId, commentId, actor), content, actor);
+        return AfterTransaction.execute(transactionManager, () ->
+                addReplyTo(findProjectDocComment(projectId, docId, commentId, actor), content, actor));
     }
 
     @Transactional
@@ -970,24 +992,37 @@ public class CommentService {
         }
     }
 
-    /** A person is the author when ids match; a machine actor only "wrote" rows that no person did. */
-    private static boolean isAuthor(ProjectActor actor, User author) {
+    /**
+     * A person is the author when ids match. A machine actor is the author only of a row that same machine wrote:
+     * the same agent when both sides carry an agent id, otherwise the same non-null label. A row a person wrote,
+     * or one with no usable machine identity, is never a machine actor's own.
+     */
+    private static boolean isAuthor(ProjectActor actor, User author, String authorLabel, String authorAgentId) {
         if (actor.user() != null) {
             return author != null && author.getId().equals(actor.userId());
         }
-        return author == null;
+        if (author != null) {
+            return false;
+        }
+        if (actor.agentId() != null && authorAgentId != null) {
+            return actor.agentId().equals(authorAgentId);
+        }
+        return actor.label() != null && authorLabel != null && actor.label().equals(authorLabel);
     }
 
     /**
-     * Author-or-admin for a person. A machine actor may delete only what a machine wrote: a run-scoped token is
-     * short-lived and non-attributable, and an agent's job is to answer a reviewer, not to remove their comment.
+     * Author-or-admin for a person. A machine actor may delete only what it wrote itself (see
+     * {@link #isAuthor}): a run-scoped token is short-lived and non-attributable, and an agent's job is to answer
+     * a reviewer, not to remove their comment or another agent's.
      */
-    private void requireAuthorOrAdmin(String projectId, ProjectActor actor, User author, String what) {
+    private void requireAuthorOrAdmin(String projectId, ProjectActor actor, User author, String authorLabel,
+                                      String authorAgentId, String what) {
         boolean allowed;
         if (actor.user() != null) {
-            allowed = isAuthor(actor, author) || projectSecurityService.isEditor(projectId, actor.userId());
+            allowed = isAuthor(actor, author, authorLabel, authorAgentId)
+                    || projectSecurityService.isEditor(projectId, actor.userId());
         } else {
-            allowed = author == null;
+            allowed = isAuthor(actor, author, authorLabel, authorAgentId);
         }
         if (!allowed) {
             throw new ForbiddenException("Only the " + what + " author or a project admin can delete this " + what);

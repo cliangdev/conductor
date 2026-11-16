@@ -62,9 +62,11 @@ class CommentServiceMentionsTest {
     SignalBus bus = mock(SignalBus.class);
     ProjectRepository projects = mock(ProjectRepository.class);
 
+    ProjectSecurityService security = mock(ProjectSecurityService.class);
     CommentService service = new CommentService(comments, replies, workItems, documents, members,
-            mock(ProjectSecurityService.class), mock(StorageService.class), bus, projects,
-            projectDocs, agents, mock(DocumentService.class), mock(ProjectDocService.class), parser, signals, requests);
+            security, mock(StorageService.class), bus, projects,
+            projectDocs, agents, mock(DocumentService.class), mock(ProjectDocService.class), parser, signals, requests,
+            mock(org.springframework.transaction.PlatformTransactionManager.class));
 
     User ann = user("u-ann", "Ann");
     User bob = user("u-bob", "Bob");
@@ -344,6 +346,123 @@ class CommentServiceMentionsTest {
 
         assertThat(saved.getAnchorExact()).isEqualTo("not in the page");
         assertThat(saved.getAnchorPrefix()).isNull();
+    }
+
+    // ---- who is the author of a machine-written row ----
+
+    private static final ProjectActor BOT_A = ProjectActor.agent("Bot A", "a-A");
+    private static final ProjectActor BOT_B = ProjectActor.agent("Bot B", "a-B");
+
+    private Comment machineThread(String label, String agentId) {
+        Comment c = thread(null, "bot text");
+        c.setAuthorLabel(label);
+        c.setAuthorAgentId(agentId);
+        return c;
+    }
+
+    private CommentReply machineReply(Comment thread, String label, String agentId) {
+        CommentReply r = new CommentReply();
+        r.setId("r-1");
+        r.setComment(thread);
+        r.setAuthorLabel(label);
+        r.setAuthorAgentId(agentId);
+        r.setContent("bot reply");
+        when(replies.findById("r-1")).thenReturn(Optional.of(r));
+        return r;
+    }
+
+    @Test
+    void anAgentCannotEditOrDeleteAnotherAgentsReplyButCanEditAndDeleteItsOwn() {
+        Comment thread = thread(ann, "root");
+        when(comments.findByIdWithAuthors("c-1")).thenReturn(Optional.of(thread));
+        machineReply(thread, "Bot B", "a-B");
+
+        assertThatThrownBy(() -> service.updateReply("p1", "c-1", "r-1", "mine now", BOT_A))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+        assertThatThrownBy(() -> service.deleteReply("p1", "c-1", "r-1", BOT_A))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+        verify(replies, never()).delete(any());
+
+        service.updateReply("p1", "c-1", "r-1", "edited by its author", BOT_B);
+        service.deleteReply("p1", "c-1", "r-1", BOT_B);
+        verify(replies).delete(any(CommentReply.class));
+    }
+
+    @Test
+    void aMachineActorIsNeverTheAuthorOfAPersonsRowOrOfARowWithoutAMatchingIdentity() {
+        Comment byPerson = thread(ann, "ann's");
+        when(comments.findByIdWithAuthors("c-1")).thenReturn(Optional.of(byPerson));
+        assertThatThrownBy(() -> service.deleteComment("p1", "c-1", BOT_A))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+        assertThatThrownBy(() -> service.updateComment("p1", "c-1", "x", null, BOT_A))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+
+        // A project API key (a label, no agent) cannot touch an agent's comment, whatever its label.
+        Comment byAgent = machineThread("Bot A", "a-A");
+        when(comments.findByIdWithAuthors("c-1")).thenReturn(Optional.of(byAgent));
+        assertThatThrownBy(() -> service.deleteComment("p1", "c-1", ProjectActor.agent("API key")))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+
+        // A row with neither a label nor an agent id belongs to no machine.
+        Comment anonymous = machineThread(null, null);
+        when(comments.findByIdWithAuthors("c-1")).thenReturn(Optional.of(anonymous));
+        assertThatThrownBy(() -> service.deleteComment("p1", "c-1", ProjectActor.agent("API key")))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+        verify(comments, never()).delete(any());
+    }
+
+    @Test
+    void aMachineWithTheSameLabelAndNoAgentIdMayDeleteItsOwnLabelledComment() {
+        Comment byKey = machineThread("API key", null);
+        when(comments.findByIdWithAuthors("c-1")).thenReturn(Optional.of(byKey));
+
+        service.deleteComment("p1", "c-1", ProjectActor.agent("API key"));
+
+        verify(comments).delete(byKey);
+    }
+
+    @Test
+    void anAgentMayDeleteItsOwnCommentAndNotAnotherAgents() {
+        Comment byA = machineThread("Bot A", "a-A");
+        when(comments.findByIdWithAuthors("c-1")).thenReturn(Optional.of(byA));
+        assertThatThrownBy(() -> service.deleteComment("p1", "c-1", BOT_B))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+
+        service.deleteComment("p1", "c-1", BOT_A);
+        verify(comments).delete(byA);
+    }
+
+    @Test
+    void peopleKeepTheirRules() {
+        Comment byAnn = thread(ann, "ann's");
+        when(comments.findByIdWithAuthors("c-1")).thenReturn(Optional.of(byAnn));
+
+        // Author edits; a non-author non-editor may not edit or delete; an editor may delete.
+        service.updateComment("p1", "c-1", "edited", null, ProjectActor.of(ann));
+        assertThatThrownBy(() -> service.updateComment("p1", "c-1", "x", null, ProjectActor.of(bob)))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+        assertThatThrownBy(() -> service.deleteComment("p1", "c-1", ProjectActor.of(bob)))
+                .isInstanceOf(com.conductor.exception.ForbiddenException.class);
+        when(security.isEditor("p1", "u-bob")).thenReturn(true);
+        service.deleteComment("p1", "c-1", ProjectActor.of(bob));
+        verify(comments).delete(byAnn);
+    }
+
+    // ---- the v1 project-doc shim notifies like the v2 create ----
+
+    @Test
+    void theV1ProjectDocCreateEmitsTheCommentAddedAndMentionSignalsLikeV2() {
+        parsesAs("hi @[Bob](user:u-bob)", BOB);
+
+        CommentWithRepliesView view = service.createProjectDocComment("p1", "pd-1", ProjectActor.of(ann),
+                "hi @[x](user:u-bob)", 2, "the line");
+
+        verify(signals).projectDocComment(eq(SignalTypes.CONDUCTOR_PROJECT_DOC_COMMENT_ADDED), any(Comment.class),
+                eq("hi @[Bob](user:u-bob)"), any());
+        verify(signals).mentioned(any(Comment.class), eq(null), eq(List.of(BOB)), eq("hi @[Bob](user:u-bob)"), any());
+        assertThat(view.content()).isEqualTo("hi @[Bob](user:u-bob)");
+        assertThat(view.lineNumber()).isEqualTo(2);
+        assertThat(view.quotedText()).isEqualTo("the line");
     }
 
     // ---- fixtures ----
