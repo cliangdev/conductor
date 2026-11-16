@@ -54,6 +54,12 @@ public class CommentAgentDispatchService {
     private final CommentAgentRequestService requestService;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate readTx;
+    /**
+     * Every write the dispatch makes runs in a transaction of its own. The dispatch is called after the comment's
+     * transaction committed, and in that phase the finished transaction is still bound to the thread, so a plain
+     * {@code @Transactional} (REQUIRED) method would join it and its writes would never be committed.
+     */
+    private final TransactionTemplate writeTx;
 
     public CommentAgentDispatchService(CommentRepository commentRepository,
                                        CommentReplyRepository replyRepository,
@@ -77,6 +83,8 @@ public class CommentAgentDispatchService {
         this.readTx = new TransactionTemplate(transactionManager);
         this.readTx.setReadOnly(true);
         this.readTx.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.writeTx = new TransactionTemplate(transactionManager);
+        this.writeTx.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
 
     /** What the agent is told about where it is: ids for its tools, plus the thread as plain text. */
@@ -137,7 +145,7 @@ public class CommentAgentDispatchService {
 
         WorkflowDefinition workflow;
         try {
-            workflow = provisioner.ensure(projectId);
+            workflow = writeTx.execute(status -> provisioner.ensure(projectId));
         } catch (CommentAgentWorkflowProvisioner.NameTakenException e) {
             requestService.recordError(requestId, "This workspace already has its own workflow named '"
                     + CommentAgentWorkflowProvisioner.WORKFLOW_NAME + "'. Rename it so agents can respond to comments.");
@@ -148,8 +156,10 @@ public class CommentAgentDispatchService {
         }
 
         try {
-            WorkflowRun run = workflowTriggerService.fireTrigger(workflow.getId(), "workflow_dispatch",
-                    payload(projectId, commentId, requestId, agent, requesterName, thread));
+            String workflowId = workflow.getId();
+            String payload = payload(projectId, commentId, requestId, agent, requesterName, thread);
+            WorkflowRun run = writeTx.execute(status ->
+                    workflowTriggerService.fireTrigger(workflowId, "workflow_dispatch", payload));
             requestService.recordRun(requestId, run.getId());
             log.info("Dispatched comment-agent run {} for comment {} agent {}", run.getId(), commentId, agentId);
         } catch (RuntimeException e) {

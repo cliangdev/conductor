@@ -1,4 +1,4 @@
-package com.conductor.creative;
+package com.conductor.tx;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,6 +10,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * Work to do once a transaction has finished <em>and let go of its connection</em>.
@@ -25,18 +26,21 @@ import java.util.function.Function;
  * <p>A caller that is itself inside a transaction (a test, or a future caller) gets the follow-ups after its
  * commit instead: the best that can be done, with the connection still held.
  */
-final class AfterTransaction {
+public final class AfterTransaction {
 
     private static final Logger log = LoggerFactory.getLogger(AfterTransaction.class);
+
+    /** The follow-ups of the {@link #execute} body running on this thread, if any; always cleared in a finally. */
+    private static final ThreadLocal<FollowUps> CURRENT = new ThreadLocal<>();
 
     private AfterTransaction() {
     }
 
     /** Collects the follow-ups a transactional body asks for. */
-    static final class FollowUps {
+    public static final class FollowUps {
         private final List<Runnable> tasks = new ArrayList<>();
 
-        void add(Runnable task) {
+        public void add(Runnable task) {
             tasks.add(task);
         }
 
@@ -52,9 +56,41 @@ final class AfterTransaction {
         }
     }
 
-    static <T> T execute(PlatformTransactionManager transactionManager, Function<FollowUps, T> body) {
+    /**
+     * The follow-ups of the body now running on this thread, or null outside {@link #execute}. {@code AfterCommit}
+     * uses it to hand its work here instead of registering an {@code afterCommit} synchronization, which would
+     * run while the committed transaction still holds its connection.
+     */
+    public static FollowUps current() {
+        return CURRENT.get();
+    }
+
+    /** As {@link #execute(PlatformTransactionManager, Function)} for a body that has no follow-ups of its own to add. */
+    public static <T> T execute(PlatformTransactionManager transactionManager, Supplier<T> body) {
+        return execute(transactionManager, followUps -> body.get());
+    }
+
+    public static <T> T execute(PlatformTransactionManager transactionManager, Function<FollowUps, T> body) {
+        FollowUps outer = CURRENT.get();
         FollowUps followUps = new FollowUps();
-        T result = new TransactionTemplate(transactionManager).execute(status -> body.apply(followUps));
+        T result = new TransactionTemplate(transactionManager).execute(status -> {
+            FollowUps previous = CURRENT.get();
+            CURRENT.set(followUps);
+            try {
+                return body.apply(followUps);
+            } finally {
+                if (previous == null) {
+                    CURRENT.remove();
+                } else {
+                    CURRENT.set(previous);
+                }
+            }
+        });
+        if (outer != null) {
+            // Nested in another body (it joined that body's transaction): the outer one decides when these run.
+            outer.add(followUps::runAll);
+            return result;
+        }
         if (TransactionSynchronizationManager.isActualTransactionActive()) {
             // Joined a caller's transaction: only its commit can start the follow-ups.
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {

@@ -1,5 +1,6 @@
 package com.conductor.creative;
 
+import com.conductor.tx.AfterTransaction;
 /**
  * A slide-text revision's render succeeded: the Creative's frames now show the edited text. Published once per
  * revision, <b>after the transaction that finished the render has committed</b> (so a listener sees the
