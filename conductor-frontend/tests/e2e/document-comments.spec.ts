@@ -50,6 +50,25 @@ async function token(page: Page): Promise<string> {
 const headers = (t: string) => ({ Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' })
 
 async function seed(page: Page, request: APIRequestContext) {
+  const ids = await seedIds(page, request)
+  await openIssue(page, ids)
+  return ids
+}
+
+interface Seeded {
+  token: string
+  projectId: string
+  issueId: string
+  docId: string
+}
+
+async function openIssue(page: Page, ids: Seeded, query = '') {
+  await setActiveProjectInStorage(page, ids.projectId)
+  await page.goto(`/app/projects/${ids.projectId}/issues/${ids.issueId}${query}`)
+  await expect(page.getByRole('heading', { name: 'Plan', level: 1 })).toBeVisible({ timeout: 15000 })
+}
+
+async function seedIds(page: Page, request: APIRequestContext): Promise<Seeded> {
   await page.goto('/app/projects')
   await page.waitForURL(/\/app\/projects/, { timeout: 15000 })
   const t = await token(page)
@@ -86,9 +105,7 @@ async function seed(page: Page, request: APIRequestContext) {
     expect(res.ok()).toBeTruthy()
   }
 
-  await setActiveProjectInStorage(page, project.id)
-  await page.goto(`/app/projects/${project.id}/issues/${issue.id}`)
-  await expect(page.getByRole('heading', { name: 'Plan', level: 1 })).toBeVisible({ timeout: 15000 })
+  return { token: t, projectId: project.id, issueId: issue.id, docId: doc.id }
 }
 
 /** Where the quoted words are on screen. The highlight is painted by the CSS Custom Highlight API, so it has no element: find the text. */
@@ -144,6 +161,63 @@ test.describe('desktop', () => {
     await expect(card(page, 2)).toHaveAttribute('data-active', 'true')
     await page.keyboard.press('k')
     await expect(card(page, 1)).toHaveAttribute('data-active', 'true')
+  })
+})
+
+test.describe('mentions, suggested edits and deep links', () => {
+  test.use({ viewport: { width: 1440, height: 900 } })
+
+  test('@ opens the picker and the mention shows as a chip', async ({ page, request }) => {
+    await seed(page, request)
+    await page.getByRole('button', { name: 'Comment on whole document' }).click()
+    const box = page.getByRole('textbox', { name: 'Comment on whole document' })
+    await box.fill('Looping in @')
+    const list = page.getByRole('listbox', { name: 'Mention someone' })
+    await expect(list).toBeVisible()
+    await page.keyboard.press('Enter')
+    // The box shows a readable @Name, never the stored token.
+    await expect(box).toHaveValue(/@[^[\]]+ $/)
+    await page.keyboard.press('Meta+Enter')
+    await expect(page.locator('[data-mention]').first()).toBeVisible({ timeout: 10000 })
+    await expect(page.locator('body')).not.toContainText('(user:')
+  })
+
+  test('a suggested edit shows old and new text and Accept rewrites the document', async ({ page, request }) => {
+    const ids = await seedIds(page, request)
+    const res = await request.post(`${BACKEND}/api/v2/projects/${ids.projectId}/comments`, {
+      data: {
+        target: { workItemId: ids.issueId, documentId: ids.docId },
+        content: 'Tighter wording',
+        anchor: { exact: QUOTES[2] },
+        suggestion: { text: 'launch in the new year' },
+      },
+      headers: headers(ids.token),
+    })
+    expect(res.ok()).toBeTruthy()
+    await openIssue(page, ids)
+
+    const suggestion = page.locator('[data-comment-id]', { hasText: 'Tighter wording' })
+    await expect(suggestion).toContainText('Suggestion')
+    await expect(suggestion.locator('del')).toHaveText(QUOTES[2])
+    await expect(suggestion.locator('ins')).toHaveText('launch in the new year')
+
+    await suggestion.getByRole('button', { name: 'Accept' }).click()
+    await expect(suggestion).toContainText('Accepted by')
+    await expect(page.getByText('launch in the new year', { exact: false }).first()).toBeVisible()
+  })
+
+  test('?comment= focuses that thread and then leaves the address', async ({ page, request }) => {
+    const ids = await seedIds(page, request)
+    const list = await (
+      await request.get(
+        `${BACKEND}/api/v2/projects/${ids.projectId}/comments?workItemId=${ids.issueId}&documentId=${ids.docId}&status=all`,
+        { headers: headers(ids.token) }
+      )
+    ).json()
+    const target = list.find((c: { content: string }) => c.content === 'Thread 2 body')
+    await openIssue(page, ids, `?doc=${ids.docId}&comment=${target.id}`)
+    await expect(card(page, 2)).toHaveAttribute('data-active', 'true', { timeout: 10000 })
+    await expect(page).not.toHaveURL(/comment=/)
   })
 })
 

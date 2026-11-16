@@ -15,6 +15,13 @@ export interface DocViewerProps {
   /** Checkbox toggling. The owning page holds the handler, since it owns `doc`. */
   onToggleTask?: (lineNumber: number, checked: boolean) => void
   tasksReadOnly?: boolean
+  /** Reload the doc's content and hash: an `@agent` request finished or a suggestion was accepted. */
+  onDocumentChanged?: () => void
+  /** Only editors can accept a suggested edit. */
+  canAcceptSuggestions?: boolean
+  /** A deep link (`?comment=`): focus this thread, then call `onFocusHandled`. */
+  focusCommentId?: string | null
+  onFocusHandled?: () => void
 }
 
 /**
@@ -32,6 +39,10 @@ export function DocViewer({
   isAdmin,
   onToggleTask,
   tasksReadOnly,
+  onDocumentChanged,
+  canAcceptSuggestions,
+  focusCommentId,
+  onFocusHandled,
 }: DocViewerProps) {
   const target = useMemo(() => ({ projectId, projectDocId: doc.id }), [projectId, doc.id])
   return (
@@ -45,6 +56,10 @@ export function DocViewer({
       isAdmin={isAdmin}
       onToggleTask={onToggleTask}
       tasksReadOnly={tasksReadOnly}
+      onDocumentChanged={onDocumentChanged}
+      canAcceptSuggestions={canAcceptSuggestions}
+      focusCommentId={focusCommentId}
+      onFocusHandled={onFocusHandled}
     />
   )
 }

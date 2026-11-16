@@ -40,6 +40,7 @@ import { useWorkItemRef } from '@/components/workitems/plan/useWorkItemRef'
 import { toastError, toastSuccess } from '@/components/ui/toast'
 import { FileX2, Minimize2 } from 'lucide-react'
 import { CommentableDocument } from '@/components/comments/CommentableDocument'
+import { useCommentDeepLink } from '@/components/comments/useCommentDeepLink'
 import { ReviewBar } from '@/components/reviews/ReviewBar'
 import { StatusBadge } from '@/components/ui/status-badge'
 import { CommentableHtmlDocument } from '@/components/markdown/CommentableHtmlDocument'
@@ -614,6 +615,37 @@ export function WorkItemDetailView({
     else setActiveTab(tabId)
   }
 
+  // ── Deep link: `?comment=<id>` (and `?doc=<documentId>`) from a notification ───────────────────
+  const { focusCommentId, clear: clearDeepLink } = useCommentDeepLink({
+    docs: documents,
+    docsLoading: documentsLoading,
+    comments,
+    commentsLoading,
+    selectedDocId,
+    activeTab,
+    selectDocument,
+  })
+
+  // The selected document changed under the reader (an `@agent` finished, a suggestion was accepted):
+  // fetch its text and hash again.
+  const reloadSelectedDocument = useCallback(async () => {
+    if (!accessToken || !selectedDocId) return
+    const docId = selectedDocId
+    try {
+      const full = await apiGet<DetailDocument>(
+        `/api/v2/projects/${projectId}/work-items/${issueId}/documents/${docId}`,
+        accessToken
+      )
+      setDocuments((prev) =>
+        prev.map((d) =>
+          d.id === docId ? { ...d, content: full.content ?? '', contentHash: full.contentHash ?? d.contentHash } : d
+        )
+      )
+    } catch {
+      // Non-fatal: the next visit loads it afresh.
+    }
+  }, [accessToken, projectId, issueId, selectedDocId])
+
   const mediaAssets = useMemo(() => assets.filter((a) => a.kind === 'file'), [assets])
 
   const canReview = can(roles, 'review.submit')
@@ -1041,6 +1073,10 @@ export function WorkItemDetailView({
         content={selectedDoc.content}
         target={{ projectId, workItemId: issueId, documentId: selectedDoc.id }}
         onCommentsChanged={fetchComments}
+        onDocumentChanged={reloadSelectedDocument}
+        canAcceptSuggestions={roles.length > 0 ? canEdit : undefined}
+        focusCommentId={focusCommentId}
+        onFocusHandled={clearDeepLink}
         token={accessToken!}
         currentUserId={user?.id ?? ''}
         currentUserName={user?.displayName || user?.name}
@@ -1080,6 +1116,10 @@ export function WorkItemDetailView({
         issueId={issueId}
         projectId={projectId}
         onCommentsChanged={fetchComments}
+        onDocumentChanged={reloadSelectedDocument}
+        canAcceptSuggestions={roles.length > 0 ? canEdit : undefined}
+        focusCommentId={focusCommentId}
+        onFocusHandled={clearDeepLink}
         token={accessToken!}
         currentUserId={user?.id ?? ''}
         currentUserName={user?.displayName || user?.name}

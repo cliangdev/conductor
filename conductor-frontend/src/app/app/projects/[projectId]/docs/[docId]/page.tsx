@@ -10,6 +10,7 @@ import type { ProjectDoc } from '@/lib/docs-api'
 import { apiErrorMessage } from '@/lib/api'
 import { useCan, usePermissions } from '@/contexts/PermissionsContext'
 import { DocViewer } from '@/components/docs/DocViewer'
+import { useCommentDeepLink } from '@/components/comments/useCommentDeepLink'
 import { DocHistoryPanel } from '@/components/docs/DocHistoryPanel'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { toastError } from '@/components/ui/toast'
@@ -33,6 +34,15 @@ export default function DocDetailPage() {
   // Toggles are numbered as they are sent, so a slow reply to an earlier one never overwrites the hash
   // that a later reply already set.
   const toggleSeq = useRef({ sent: 0, applied: 0 })
+  // `?comment=<id>` from a notification: focus that thread once, then drop the parameter.
+  const { focusCommentId, clear: handleFocusHandled } = useCommentDeepLink()
+  // An `@agent` finished or a suggestion was accepted: the doc's text and hash changed under us.
+  const handleDocumentChanged = useCallback(() => {
+    if (!accessToken) return
+    getDoc(projectId, docId, accessToken)
+      .then(setDoc)
+      .catch(() => {})
+  }, [accessToken, projectId, docId])
 
   useEffect(() => { if (!loading && doc) markPageReady('project-doc') }, [loading, doc])
 
@@ -145,6 +155,10 @@ export default function DocDetailPage() {
                 isAdmin={roles.includes('ADMIN')}
                 onToggleTask={handleToggleTask}
                 tasksReadOnly={!canEditDoc}
+                onDocumentChanged={handleDocumentChanged}
+                canAcceptSuggestions={canEditDoc}
+                focusCommentId={focusCommentId}
+                onFocusHandled={handleFocusHandled}
               />
             ) : (
               <p className="text-muted-foreground text-sm">No content yet.</p>

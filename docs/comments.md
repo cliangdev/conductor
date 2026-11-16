@@ -198,6 +198,13 @@ Each thread response carries the requests on it, oldest first (two queries howev
 
 `add_comment` (MCP) sends `anchor: {exact}` only. On `POST /comments` a QUOTE anchor with `exact` but neither `prefix` nor `suffix` gets them from the document: the current text is projected with `TextProjection`, `exact` is found with `QuoteMatcher` (the first occurrence when it appears more than once) and the 32-character `prefix`/`suffix` are filled the way the browser's `buildQuote` does. `sectionId`/`sectionTitle` are only kept if sent; they are not derived. If the text is not in the document the answer is `400 That text isn't in the document`. An anchor that already carries context is stored as sent, and the original Work Item route (`/work-items/{wi}/comments`) does not guess (old clients keep their behaviour).
 
+## Web UI behaviour
+
+- **Mentions:** typing `@` in any composer (rail, sheets, popover, whole-document, replies, edits) opens a listbox fed by `mentionables`. The box shows `@Name`; the stored token is substituted on send, and tokens are turned back into `@Name` when editing. Bodies render mentions as chips. The **Mine** filter keeps threads I wrote or am mentioned in (thread or any reply).
+- **`@agent`:** a thread shows "<agent> is working on it…" while a request is `PENDING`/`RUNNING`, or the failure text if `FAILED`. After posting a comment or reply with an agent token the list is refetched once about 1.5s later, then every 5s while anything is in flight (stops after 20 minutes), and on window focus. When a request finishes, the page reloads the document's content and hash.
+- **Suggested edits:** a "Suggest edit" toggle appears on new selection comments (not replies, whole-document comments or review drafts); it calls `suggestion-check` and is disabled with the reason when the selection is not suggestable. Cards show the old text struck out and the new text inserted, with Accept/Reject. Accepting reloads the document; 403 shows "Only editors can accept suggestions", 409 shows the server's detail and refetches.
+- **Deep links:** `?comment=<id>` on a project doc, and `?comment=<id>[&doc=<documentId>]` on a Work Item (the document tab is picked from `doc`, else from the comment), selects the document, focuses the thread (scrolls to its highlight, or opens the sheet on narrow screens) and then removes the parameters from the address.
+
 ## Expand / contract
 
 Preview deploys share the production database, so the move is in steps:
