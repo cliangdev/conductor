@@ -78,8 +78,10 @@ Open a PR and merge. CI publishes, tags `cli-vX.Y.Z`, and creates a GitHub Relea
 ## User update flow
 
 ```bash
-npm update -g @cliangdev/conductor   # pull latest CLI binary
-conductor init                        # re-install / update Claude assets
+conductor upgrade                     # pull latest CLI binary (npm i -g @cliangdev/conductor@latest)
+conductor init                        # re-install / update Claude assets (also refreshed on MCP start)
 ```
+
+The CLI tells users when they are behind: a stderr line after commands (TTY only), a one-time "Note for the user" block on the first successful MCP tool result, and a `cli-version` check in `conductor doctor`. Opt out with `CONDUCTOR_NO_UPDATE_CHECK=1`, `NO_UPDATE_NOTIFIER`, or `CI`.
 
 `conductor init` is idempotent — it overwrites changed assets and removes any `LEGACY_PATHS` without touching unrelated files.
