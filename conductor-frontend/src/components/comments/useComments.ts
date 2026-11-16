@@ -54,7 +54,7 @@ export interface CommentsApi {
   loading: boolean
   /** Reloads the list from the server. */
   /** Re-reads the threads. Background reads (polling, window focus) pass `silent` so an outage doesn't toast every few seconds. */
-  refresh: (opts?: { silent?: boolean }) => Promise<void>
+  refresh: (opts?: { silent?: boolean; skipIfPending?: boolean }) => Promise<void>
   create: (input: NewComment) => Promise<Comment | null>
   reply: (commentId: string, content: string) => Promise<void>
   edit: (commentId: string, content: string) => Promise<void>
@@ -119,10 +119,16 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
     targetKey.current = `${projectId}?${query}`
   }, [projectId, query])
 
-  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
-    const seq = ++requestSeq.current
+  // Reads still waiting, per target. A poll or focus refetch is skipped while one is pending: if the server is
+  // slower than the poll interval, starting another would make every answer out of date on arrival.
+  const pendingFor = useRef<Map<string, number>>(new Map())
+
+  const refresh = useCallback(async (opts?: { silent?: boolean; skipIfPending?: boolean }) => {
     const startedFor = `${projectId}?${query}`
+    if (opts?.skipIfPending && (pendingFor.current.get(startedFor) ?? 0) > 0) return
+    const seq = ++requestSeq.current
     const isStale = () => seq !== requestSeq.current || startedFor !== targetKey.current
+    pendingFor.current.set(startedFor, (pendingFor.current.get(startedFor) ?? 0) + 1)
     try {
       const data = await apiGet<Comment[]>(`${basePath(projectId)}?${query}&status=all`, token)
       if (isStale()) return
@@ -150,6 +156,9 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
       if (isStale()) return
       if (!opts?.silent) toastError(apiErrorMessage(err, 'Failed to load comments'))
     } finally {
+      const left = (pendingFor.current.get(startedFor) ?? 1) - 1
+      if (left > 0) pendingFor.current.set(startedFor, left)
+      else pendingFor.current.delete(startedFor)
       if (!isStale()) setLoading(false)
     }
   }, [projectId, query, token, setComments])
@@ -171,7 +180,7 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
         clearInterval(id)
         return
       }
-      void refresh({ silent: true })
+      void refresh({ silent: true, skipIfPending: true })
     }, AGENT_POLL_MS)
     return () => clearInterval(id)
   }, [anyInFlight, refresh])
@@ -179,7 +188,7 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
   // Coming back to the tab: pick up whatever changed meanwhile.
   useEffect(() => {
     function onFocus() {
-      void refresh({ silent: true })
+      void refresh({ silent: true, skipIfPending: true })
     }
     window.addEventListener('focus', onFocus)
     return () => window.removeEventListener('focus', onFocus)

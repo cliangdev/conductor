@@ -124,6 +124,26 @@ describe('useComments @agent polling', () => {
     expect(apiGet).toHaveBeenCalledTimes(4)
   })
 
+  it('skips a poll while the previous read is still waiting, so slow answers still land', async () => {
+    apiGet.mockResolvedValueOnce([thread('c1', { agentRequests: [req('PENDING')] })])
+    let answer: (value: Comment[]) => void = () => {}
+    apiGet.mockImplementationOnce(() => new Promise<Comment[]>((resolve) => (answer = resolve)))
+    const { result } = mount()
+    await flush()
+    expect(apiGet).toHaveBeenCalledTimes(1)
+    await advance(AGENT_POLL_MS) // starts the slow read
+    expect(apiGet).toHaveBeenCalledTimes(2)
+    await advance(AGENT_POLL_MS * 3) // the slow read is still waiting: no more reads start
+    expect(apiGet).toHaveBeenCalledTimes(2)
+    await act(async () => {
+      answer([thread('c1', { agentRequests: [req('SUCCEEDED')] })])
+    })
+    await flush()
+    expect(result.current.comments[0].agentRequests?.[0].status).toBe('SUCCEEDED')
+    await advance(AGENT_POLL_MS * 2)
+    expect(apiGet).toHaveBeenCalledTimes(2)
+  })
+
   it('does not poll when nothing is in flight', async () => {
     apiGet.mockResolvedValue([thread('c1', { agentRequests: [req('FAILED', { error: 'nope' })] })])
     mount()
