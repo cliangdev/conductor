@@ -111,9 +111,21 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
     setCommentsState(value)
   }, [])
 
+  // Which read is the latest, and which document the hook points at now. A read that finishes after a newer
+  // one was started, or after the target changed, is out of date and must not overwrite the list.
+  const requestSeq = useRef(0)
+  const targetKey = useRef(`${projectId}?${query}`)
+  useEffect(() => {
+    targetKey.current = `${projectId}?${query}`
+  }, [projectId, query])
+
   const refresh = useCallback(async (opts?: { silent?: boolean }) => {
+    const seq = ++requestSeq.current
+    const startedFor = `${projectId}?${query}`
+    const isStale = () => seq !== requestSeq.current || startedFor !== targetKey.current
     try {
       const data = await apiGet<Comment[]>(`${basePath(projectId)}?${query}&status=all`, token)
+      if (isStale()) return
       let finished = false
       for (const c of data) {
         for (const r of c.agentRequests ?? []) {
@@ -135,9 +147,10 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
       setComments(data)
       if (finished) onDocumentChanged.current?.()
     } catch (err) {
+      if (isStale()) return
       if (!opts?.silent) toastError(apiErrorMessage(err, 'Failed to load comments'))
     } finally {
-      setLoading(false)
+      if (!isStale()) setLoading(false)
     }
   }, [projectId, query, token, setComments])
 

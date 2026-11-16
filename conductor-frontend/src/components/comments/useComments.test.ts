@@ -138,4 +138,90 @@ describe('useComments', () => {
     })
     expect(onChanged).toHaveBeenCalledTimes(1)
   })
+
+  describe('stale responses', () => {
+    function deferred<T>() {
+      let resolve!: (v: T) => void
+      let reject!: (e: unknown) => void
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res
+        reject = rej
+      })
+      return { promise, resolve, reject }
+    }
+
+    it('shows the new document’s threads when the old document’s read finishes last', async () => {
+      const a = deferred<Comment[]>()
+      const b = deferred<Comment[]>()
+      apiGet.mockImplementation((url: string) => (url.includes('doc-A') ? a.promise : b.promise))
+      const { result, rerender } = renderHook(
+        ({ documentId }) => useComments({ projectId: 'p1', workItemId: 'wi1', documentId }, options),
+        { initialProps: { documentId: 'doc-A' } }
+      )
+      rerender({ documentId: 'doc-B' })
+      await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(2))
+
+      await act(async () => {
+        b.resolve([thread('from-b')])
+      })
+      await waitFor(() => expect(result.current.comments.map((c) => c.id)).toEqual(['from-b']))
+      await act(async () => {
+        a.resolve([thread('from-a')])
+      })
+
+      expect(result.current.comments.map((c) => c.id)).toEqual(['from-b'])
+      expect(result.current.loading).toBe(false)
+    })
+
+    it('ignores an older read of the same document that finishes after a newer one', async () => {
+      const first = deferred<Comment[]>()
+      const second = deferred<Comment[]>()
+      apiGet.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+      const { result } = renderHook(() => useComments(target, options))
+      await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1))
+
+      let refreshed: Promise<void> = Promise.resolve()
+      act(() => {
+        refreshed = result.current.refresh({ silent: true })
+      })
+      await act(async () => {
+        second.resolve([thread('newer')])
+        await refreshed
+      })
+      await act(async () => {
+        first.resolve([thread('older')])
+      })
+
+      expect(result.current.comments.map((c) => c.id)).toEqual(['newer'])
+    })
+
+    it('does not toast for a failed read that was already superseded', async () => {
+      const first = deferred<Comment[]>()
+      apiGet.mockReturnValueOnce(first.promise).mockResolvedValueOnce([thread('ok')])
+      const { result } = renderHook(() => useComments(target, options))
+      await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(1))
+      await act(async () => {
+        await result.current.refresh()
+      })
+      await act(async () => {
+        first.reject(new Error('late failure'))
+      })
+
+      expect(toastError).not.toHaveBeenCalled()
+      expect(result.current.comments.map((c) => c.id)).toEqual(['ok'])
+    })
+
+    it('still toasts a failed load, and not a silent one', async () => {
+      apiGet.mockRejectedValueOnce(new Error('down'))
+      const { result } = renderHook(() => useComments(target, options))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      expect(toastError).toHaveBeenCalledTimes(1)
+
+      apiGet.mockRejectedValueOnce(new Error('down'))
+      await act(async () => {
+        await result.current.refresh({ silent: true })
+      })
+      expect(toastError).toHaveBeenCalledTimes(1)
+    })
+  })
 })
