@@ -33,6 +33,12 @@ public final class SignalDispatchOrder {
     /** A future disposition-policy subscriber; last, since it acts on the outcome of everything above. */
     public static final int DISPOSITION_POLICY = 60;
 
+    /** Emails each newly @mentioned member of a comment (after the writing transaction commits). */
+    public static final int COMMENT_MENTION_EMAIL = 70;
+
+    /** Starts the @mentioned agent's run on a comment thread (after the writing transaction commits). */
+    public static final int COMMENT_AGENT_DISPATCH = 80;
+
     private SignalDispatchOrder() {
     }
 }

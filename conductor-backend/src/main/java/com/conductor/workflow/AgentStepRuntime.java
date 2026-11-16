@@ -38,6 +38,8 @@ public interface AgentStepRuntime {
      *                        Only the {@code claude-code} runtime can honor these — see {@link
      *                        ApiAgentStepRuntime}, which fails fast when this is non-empty.
      * @param extraEnv        interpolated {@code with.env} map, or empty. Same caveat as {@code credentials}.
+     * @param grantTools      {@code with.grant_tools}: namespaced tool ids granted to this one run on top of the
+     *                        agent's own {@code toolIds} (already validated against the tool registry), or empty.
      */
     record AgentStepCall(
             AgentExecutionService.AgentDefinition agent,
@@ -46,5 +48,15 @@ public interface AgentStepRuntime {
             Map<String, Object> outputSchema,
             Integer timeoutMinutes,
             List<Map<String, Object>> credentials,
-            Map<String, String> extraEnv) {}
+            Map<String, String> extraEnv,
+            List<String> grantTools) {
+
+        /** A call that grants no extra tools. */
+        public AgentStepCall(AgentExecutionService.AgentDefinition agent, String task,
+                             Map<String, Object> agentContext, Map<String, Object> outputSchema,
+                             Integer timeoutMinutes, List<Map<String, Object>> credentials,
+                             Map<String, String> extraEnv) {
+            this(agent, task, agentContext, outputSchema, timeoutMinutes, credentials, extraEnv, List.of());
+        }
+    }
 }

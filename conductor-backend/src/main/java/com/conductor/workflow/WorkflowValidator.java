@@ -456,6 +456,16 @@ public class WorkflowValidator {
             errors.add("agent step with.timeout_minutes must be an integer between 1 and 120");
         }
 
+        Object grantTools = step.with().get("grant_tools");
+        if (grantTools != null) {
+            boolean valid = grantTools instanceof List<?> list && list.stream()
+                    .allMatch(e -> e instanceof String s && s.trim().indexOf(':') > 0);
+            if (!valid) {
+                errors.add("agent step with.grant_tools must be a list of namespaced tool ids like "
+                        + "'comment:list_comments'");
+            }
+        }
+
         validateCredentialsAndEnv(step.with(), jobId, "agent step", errors, warnings);
     }
 

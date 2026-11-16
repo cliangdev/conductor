@@ -1,6 +1,8 @@
 package com.conductor.workflow;
 
 import com.conductor.agent.run.AgentExecutionService;
+import com.conductor.agent.tool.AgentToolRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -29,11 +31,22 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
     private final AgentRuntimeResolver runtimeResolver;
     private final WorkflowInterpolator interpolator;
     private final Map<String, AgentStepRuntime> runtimesById;
+    private final AgentToolRegistry toolRegistry;
 
     public AgentStepExecutor(AgentExecutionService agentExecutionService,
                              AgentRuntimeResolver runtimeResolver,
                              WorkflowInterpolator interpolator,
                              List<AgentStepRuntime> runtimes) {
+        this(agentExecutionService, runtimeResolver, interpolator, runtimes, null);
+    }
+
+    @Autowired
+    public AgentStepExecutor(AgentExecutionService agentExecutionService,
+                             AgentRuntimeResolver runtimeResolver,
+                             WorkflowInterpolator interpolator,
+                             List<AgentStepRuntime> runtimes,
+                             AgentToolRegistry toolRegistry) {
+        this.toolRegistry = toolRegistry;
         this.agentExecutionService = agentExecutionService;
         this.runtimeResolver = runtimeResolver;
         this.interpolator = interpolator;
@@ -107,6 +120,12 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
             timeoutMinutes = n.intValue();
         }
 
+        List<String> grantTools;
+        try {
+            grantTools = parseGrantTools(withBlock, projectId);
+        } catch (IllegalArgumentException e) {
+            return StepResult.failed("", e.getMessage());
+        }
         List<Map<String, Object>> credentials = parseCredentials(withBlock);
         Map<String, String> extraEnv = interpolateEnv(withBlock, ctx);
 
@@ -132,8 +151,42 @@ public class AgentStepExecutor implements WorkflowExecutionBackend {
 
         log.info("agent step: agent={} runtime={}", agentRef, runtimeId);
         AgentStepRuntime.AgentStepCall call = new AgentStepRuntime.AgentStepCall(
-                agent, task, agentContext, outputSchema, timeoutMinutes, credentials, extraEnv);
+                agent, task, agentContext, outputSchema, timeoutMinutes, credentials, extraEnv, grantTools);
         return runtime.run(context, call);
+    }
+
+    /**
+     * {@code with.grant_tools}: tool ids this one run may use in addition to the agent's own {@code toolIds}
+     * (the agent definition is shared, persisted state and is never changed by a step). Each must be a
+     * namespaced id ({@code source:name}) that the tool registry resolves for this project right now, so a
+     * workflow can only grant what the project could otherwise bind to an agent: an unknown id, or a source
+     * that is switched off for the project (the Knowledge Center when disabled), fails the step before anything
+     * runs. Literal ids; not interpolated.
+     */
+    List<String> parseGrantTools(Map<String, Object> withBlock, String projectId) {
+        Object raw = withBlock.get("grant_tools");
+        if (raw == null) {
+            return List.of();
+        }
+        if (!(raw instanceof List<?> list)) {
+            throw new IllegalArgumentException("Step 'with.grant_tools' must be a list of tool ids");
+        }
+        List<String> ids = new ArrayList<>();
+        for (Object entry : list) {
+            String id = entry instanceof String s ? s.trim() : "";
+            if (id.isEmpty() || id.indexOf(':') <= 0) {
+                throw new IllegalArgumentException(
+                        "Step 'with.grant_tools' entries must be namespaced tool ids like 'comment:list_comments'");
+            }
+            if (toolRegistry == null || toolRegistry.resolve(projectId, id).isEmpty()) {
+                throw new IllegalArgumentException("GRANT_TOOL_UNAVAILABLE: '" + id
+                        + "' is not a tool this project can use (unknown id, or its source is switched off)");
+            }
+            if (!ids.contains(id)) {
+                ids.add(id);
+            }
+        }
+        return ids;
     }
 
     /** {@code with.credentials} entries are literal {@code {connector, as}} maps — no interpolation on

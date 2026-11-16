@@ -17,7 +17,8 @@ public final class SystemWorkflows {
             KnowledgeWorkflowProvisioner.LIBRARIAN_WORKFLOW_NAME,
             KnowledgeWorkflowProvisioner.BOOTSTRAP_WORKFLOW_NAME,
             KnowledgeWorkflowProvisioner.NARRATOR_WORKFLOW_NAME,
-            CreativeWorkflowProvisioner.RENDER_WORKFLOW_NAME);
+            CreativeWorkflowProvisioner.RENDER_WORKFLOW_NAME,
+            com.conductor.comment.CommentAgentWorkflowProvisioner.WORKFLOW_NAME);
 
     private SystemWorkflows() {
     }
