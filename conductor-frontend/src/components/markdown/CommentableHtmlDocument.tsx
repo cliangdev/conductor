@@ -5,7 +5,9 @@ import { MessageSquare, MessageSquarePlus } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { CommentCard, PendingCommentCard } from '@/components/comments/CommentCard'
-import { CommentComposer } from '@/components/comments/CommentComposer'
+import { CommentComposer, type SubmitOptions } from '@/components/comments/CommentComposer'
+import { CommentsFeaturesProvider } from '@/components/comments/CommentsFeatures'
+import { involvesUser } from '@/components/comments/commentBody'
 import { CommentSheet, type CommentSheetView } from '@/components/comments/CommentSheet'
 import { CountBubbles, type CountBubbleItem } from '@/components/comments/CountBubbles'
 import { MarginRail, type MarginRailItem } from '@/components/comments/MarginRail'
@@ -45,6 +47,13 @@ interface Props {
   isAdmin?: boolean
   /** Called after a comment change has been saved, so counts elsewhere on the page can refresh. */
   onCommentsChanged?: () => void
+  /** The document was changed under the reader (an `@agent` finished, a suggestion was accepted): reload its content and hash. */
+  onDocumentChanged?: () => void
+  /** Only editors can accept a suggested edit. Leave unset when unknown: Accept is shown and a refusal explained. */
+  canAcceptSuggestions?: boolean
+  /** A deep link (`?comment=`): focus this thread once the comments have loaded, then call `onFocusHandled`. */
+  focusCommentId?: string | null
+  onFocusHandled?: () => void
   /** Batch review mode: a new comment is held client-side via `onAddPendingComment` instead of posted. */
   reviewMode?: boolean
   /** All of the Work Item's pending drafts — filtered internally to this component's `documentId`. */
@@ -127,18 +136,27 @@ function HtmlDocumentFrame({
   currentUserName,
   isAdmin = false,
   onCommentsChanged,
+  onDocumentChanged,
+  canAcceptSuggestions,
+  focusCommentId,
+  onFocusHandled,
   reviewMode = false,
   pendingComments = [],
   onAddPendingComment,
   onEditPendingComment,
   onRemovePendingComment,
 }: Props) {
+  const featureTarget = useMemo(
+    () => ({ projectId, workItemId: issueId, documentId }),
+    [projectId, issueId, documentId]
+  )
   const api = useComments(
-    { projectId, workItemId: issueId, documentId },
+    featureTarget,
     {
       token,
       currentUser: { id: currentUserId, name: currentUserName ?? 'You' },
       onChanged: onCommentsChanged,
+      onDocumentChanged,
     }
   )
   const comments = api.comments
@@ -259,10 +277,7 @@ function HtmlDocumentFrame({
   }, [readyCount, sendToFrame])
 
   // ── Rail contents ──────────────────────────────────────────────────────────
-  const mine = useCallback(
-    (c: Comment) => c.authorKind !== 'AGENT' && !!currentUserId && c.authorId === currentUserId,
-    [currentUserId]
-  )
+  const mine = useCallback((c: Comment) => involvesUser(c, currentUserId), [currentUserId])
 
   /** Whether a thread belongs in the current filter. The focused thread always stays, so acting on it never makes it vanish. */
   const inFilter = useCallback(
@@ -351,6 +366,26 @@ function HtmlDocumentFrame({
     },
     [placement, sendToFrame]
   )
+
+  // A deep link: focus the thread once its highlight has been placed, then let the page clean the URL.
+  useEffect(() => {
+    if (!focusCommentId || api.loading) return
+    const c = comments.find((x) => x.id === focusCommentId)
+    if (!c) {
+      onFocusHandled?.()
+      return
+    }
+    if (activeId !== c.id) {
+      setActiveId(c.id)
+      if (isResolved(c)) setFilter('resolved')
+      return
+    }
+    const spot = placement[c.id]
+    if (c.anchor && !spot) return
+    if (spot?.found) sendToFrame({ type: 'scrollTo', id: c.id })
+    if (!docked) setSheetView('thread')
+    onFocusHandled?.()
+  }, [focusCommentId, api.loading, comments, activeId, placement, sendToFrame, docked, onFocusHandled])
 
   const step = useCallback(
     (delta: number) => {
@@ -473,7 +508,7 @@ function HtmlDocumentFrame({
     setSelection(null)
   }
 
-  async function handleSubmit(text: string) {
+  async function handleSubmit(text: string, options?: SubmitOptions) {
     if (!composing) return
     if (reviewMode) {
       onAddPendingComment?.(composing.anchor, text, contentHash ?? undefined)
@@ -486,6 +521,7 @@ function HtmlDocumentFrame({
       content: text,
       anchor,
       ...(contentHash ? { documentHash: contentHash } : {}),
+      ...(options?.suggestion ? { suggestion: options.suggestion } : {}),
     })
     // Focus the new thread so its card is where the reader looks next.
     if (created) {
@@ -630,6 +666,12 @@ function HtmlDocumentFrame({
   }
 
   return (
+    <CommentsFeaturesProvider
+      target={featureTarget}
+      token={token}
+      canAcceptSuggestions={canAcceptSuggestions}
+      decideSuggestion={api.decideSuggestion}
+    >
     <div ref={wrapperRef} className="space-y-2">
       <div className="flex min-h-8 items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">Select text in the document to comment on it.</p>
@@ -689,7 +731,12 @@ function HtmlDocumentFrame({
                   {composing.anchor.exact}
                 </p>
               </blockquote>
-              <CommentComposer autoFocus onSubmit={handleSubmit} onCancel={() => setComposing(null)} />
+              <CommentComposer
+                autoFocus
+                onSubmit={handleSubmit}
+                onCancel={() => setComposing(null)}
+                suggestFor={reviewMode ? undefined : composing.anchor}
+              />
             </div>
           )}
         </div>
@@ -739,8 +786,10 @@ function HtmlDocumentFrame({
           }
           list={[...placed, ...unreported, ...resolvedStack].map(renderEntry)}
           onSubmitCompose={handleSubmit}
+          suggestFor={composing && !reviewMode ? composing.anchor : undefined}
         />
       )}
     </div>
+    </CommentsFeaturesProvider>
   )
 }

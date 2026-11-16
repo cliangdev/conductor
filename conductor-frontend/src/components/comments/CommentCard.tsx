@@ -10,7 +10,18 @@ import { ConfirmModal } from '@/components/ui/confirm-modal'
 import { RowActionsMenu, type RowActionMenuItem } from '@/components/ui/RowActionsMenu'
 import { AgentAvatar } from '@/components/agents/AgentAvatar'
 import { CommentComposer } from './CommentComposer'
-import type { Comment, CommentAuthorAgent, CommentAuthorKind, CommentReply, PendingCommentDraft } from './types'
+import { renderCommentBody } from './commentBody'
+import { useCommentsFeatures } from './CommentsFeatures'
+import type {
+  Comment,
+  CommentAgentRequest,
+  CommentAuthorAgent,
+  CommentAuthorKind,
+  CommentMention,
+  CommentReply,
+  CommentSuggestion,
+  PendingCommentDraft,
+} from './types'
 
 /** A body longer than this many lines is folded behind "Show more". */
 export const FOLD_LINES = 6
@@ -22,7 +33,9 @@ export const MAX_VISIBLE_REPLIES = 2
 /** Whether a body would run past `FOLD_LINES` lines: its own line breaks plus wrapping of long lines. */
 export function isLongBody(content: string): boolean {
   let lines = 0
-  for (const line of content.split('\n')) {
+  // Count a mention token as the name it shows, not as its (long) stored form.
+  const shown = content.replace(/@\[([^\]]*)\]\((?:user|agent):[^)\s]+\)/g, '@$1')
+  for (const line of shown.split('\n')) {
     lines += Math.max(1, Math.ceil(line.length / CHARS_PER_LINE))
     if (lines > FOLD_LINES) return true
   }
@@ -77,15 +90,23 @@ export function AuthorAvatar({
   )
 }
 
-/** Plain text, line breaks kept; long text folds behind "Show more". */
-function Body({ content, className }: { content: string; className?: string }) {
+/** Plain text, line breaks kept, mentions as chips; long text folds behind "Show more". */
+function Body({
+  content,
+  mentions,
+  className,
+}: {
+  content: string
+  mentions?: CommentMention[]
+  className?: string
+}) {
   const long = isLongBody(content)
   const [expanded, setExpanded] = useState(false)
   const folded = long && !expanded
   return (
     <div className={className}>
       <p className={cn('whitespace-pre-wrap break-words text-sm text-foreground', folded && 'line-clamp-6')}>
-        {content}
+        {renderCommentBody(content, mentions)}
       </p>
       {long && (
         <button
@@ -98,6 +119,93 @@ function Body({ content, className }: { content: string; className?: string }) {
         >
           {expanded ? 'Show less' : 'Show more'}
         </button>
+      )}
+    </div>
+  )
+}
+
+/** "<agent> is working on it…" with a pulsing dot, or the failure in plain words; nothing once it succeeded. */
+export function AgentRequestStatus({ request }: { request: CommentAgentRequest }) {
+  if (request.status === 'PENDING' || request.status === 'RUNNING') {
+    return (
+      <p
+        role="status"
+        data-agent-status="working"
+        className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"
+      >
+        <span className="relative flex h-2 w-2" aria-hidden>
+          <span className="absolute inline-flex h-full w-full rounded-full bg-primary opacity-60 motion-safe:animate-ping" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
+        </span>
+        {request.agentName} is working on it…
+      </p>
+    )
+  }
+  if (request.status === 'FAILED') {
+    return (
+      <p data-agent-status="failed" className="mt-2 text-xs text-destructive">
+        {request.error || `${request.agentName} couldn't finish this request.`}
+      </p>
+    )
+  }
+  return null
+}
+
+/** A suggested edit: old text struck out, new text inserted; people who can decide get Accept and Reject. */
+function SuggestionBlock({
+  comment,
+  suggestion,
+  canDecide,
+}: {
+  comment: Comment
+  suggestion: CommentSuggestion
+  canDecide: boolean
+}) {
+  const features = useCommentsFeatures()
+  const [busy, setBusy] = useState<'ACCEPT' | 'REJECT' | null>(null)
+  const old = comment.anchor?.exact ?? comment.quotedText ?? ''
+  const pending = suggestion.status === 'PENDING'
+  const showAccept = !features || features.canAcceptSuggestions
+
+  async function decide(decision: 'ACCEPT' | 'REJECT') {
+    if (!features || busy) return
+    setBusy(decision)
+    try {
+      await features.decideSuggestion(comment.id, decision)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  return (
+    <div className="mt-1.5" data-suggestion-status={suggestion.status.toLowerCase()}>
+      <p className="whitespace-pre-wrap break-words text-[13px]">
+        <del className="rounded-sm bg-suggest-del text-foreground">{old}</del>{' '}
+        {suggestion.text !== '' && (
+          <ins className="rounded-sm bg-suggest-ins text-foreground no-underline">{suggestion.text}</ins>
+        )}
+      </p>
+      {pending && canDecide && features && (
+        <div className="mt-2 flex items-center gap-1.5">
+          {showAccept && (
+            <Button size="sm" disabled={!!busy} onClick={() => void decide('ACCEPT')}>
+              {busy === 'ACCEPT' ? 'Accepting…' : 'Accept'}
+            </Button>
+          )}
+          <Button variant="outline" size="sm" disabled={!!busy} onClick={() => void decide('REJECT')}>
+            {busy === 'REJECT' ? 'Rejecting…' : 'Reject'}
+          </Button>
+        </div>
+      )}
+      {suggestion.status === 'ACCEPTED' && (
+        <p className="mt-1.5 text-xs font-medium text-status-approved">
+          {suggestion.decidedByName ? `Accepted by ${suggestion.decidedByName}` : 'Accepted'} · thread closed
+        </p>
+      )}
+      {suggestion.status === 'REJECTED' && (
+        <p className="mt-1.5 text-xs font-medium text-muted-foreground">
+          {suggestion.decidedByName ? `Rejected by ${suggestion.decidedByName}` : 'Rejected'}
+        </p>
       )}
     </div>
   )
@@ -243,7 +351,7 @@ export function CommentCard({
             />
           </div>
         ) : (
-          <Body content={r.content} className="mt-1" />
+          <Body content={r.content} mentions={r.mentions} className="mt-1" />
         )}
       </div>
     )
@@ -300,11 +408,19 @@ export function CommentCard({
               reopenItem
             )
           )}
-          <Body content={comment.content} className="mt-1" />
+          {comment.suggestion && (
+            <Badge variant="outline" className="mt-1.5 px-1.5 py-0 text-[10px] uppercase tracking-wide">
+              Suggestion
+            </Badge>
+          )}
+          {comment.suggestion && (
+            <SuggestionBlock comment={comment} suggestion={comment.suggestion} canDecide={!!currentUserId} />
+          )}
+          <Body content={comment.content} mentions={comment.mentions} className="mt-1" />
         </>
       )}
 
-      {resolved && (
+      {resolved && !comment.suggestion?.decidedByName && (
         <p className="mt-1.5 text-xs font-medium text-status-approved">
           {comment.resolvedByName ? `Resolved by ${comment.resolvedByName}` : 'Resolved'}
         </p>
@@ -327,6 +443,10 @@ export function CommentCard({
           {visibleReplies.map(renderReply)}
         </div>
       )}
+
+      {(comment.agentRequests ?? []).map((r) => (
+        <AgentRequestStatus key={`${r.agentId}:${r.createdAt}`} request={r} />
+      ))}
 
       {active && (
         <div className="mt-2 border-t border-border pt-2">

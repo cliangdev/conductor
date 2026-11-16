@@ -4,7 +4,8 @@ import type { ReactNode } from 'react'
 import { ChevronLeftIcon, ChevronRightIcon, ListIcon } from 'lucide-react'
 import { Sheet } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
-import { CommentComposer } from './CommentComposer'
+import { CommentComposer, type SubmitOptions } from './CommentComposer'
+import type { TextQuoteAnchor } from './types'
 import { useThreadKeys } from './RailHeader'
 
 /** What the sheet shows: one thread, the whole filtered list, or a new comment being written. */
@@ -31,7 +32,9 @@ interface Props {
   /** The cards (list view). */
   list?: ReactNode
   /** Posts the new comment (compose view). */
-  onSubmitCompose?: (text: string) => Promise<void> | void
+  onSubmitCompose?: (text: string, options?: SubmitOptions) => Promise<void> | void
+  /** The selection being commented on; offers "Suggest edit" in the compose view. */
+  suggestFor?: TextQuoteAnchor
 }
 
 function ThreadNav({ index, total, onPrev, onNext, onShowAll }: Props['nav'] & { onShowAll: () => void }) {
@@ -85,6 +88,7 @@ export function CommentSheet({
   listHeader,
   list,
   onSubmitCompose,
+  suggestFor,
 }: Props) {
   const title = !view ? 'Comments' : view.kind === 'thread' ? 'Comment' : view.kind === 'list' ? `Comments · ${total}` : 'Comment on selection'
 
@@ -124,7 +128,12 @@ export function CommentSheet({
           <blockquote className="mb-3 border-l-4 border-muted pl-3">
             <p className="line-clamp-4 text-xs italic leading-relaxed text-muted-foreground">{view.quote}</p>
           </blockquote>
-          <CommentComposer autoFocus onSubmit={(text) => onSubmitCompose?.(text)} onCancel={onClose} />
+          <CommentComposer
+            autoFocus
+            onSubmit={(text, options) => onSubmitCompose?.(text, options)}
+            onCancel={onClose}
+            suggestFor={suggestFor}
+          />
         </div>
       )}
     </Sheet>

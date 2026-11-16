@@ -67,6 +67,9 @@
     /* Commented words in a document; the active thread's words are stronger. Include alpha so text stays readable. */
     --comment-highlight: 45 90% 55% / 0.28;
     --comment-highlight-active: 40 90% 50% / 0.5;
+    /* Suggested edit: struck-out old text and inserted new text. */
+    --suggest-del: 0 70% 93%;
+    --suggest-ins: 145 50% 90%;
     --sidebar-bg: 220 16% 96%;
     --sidebar-border: 214 14% 90%;
     --sidebar-item-hover: 216 15% 94%;
@@ -127,6 +130,8 @@
     --status-failed: 0 69% 65%;
     --comment-highlight: 40 68% 54% / 0.22;
     --comment-highlight-active: 40 68% 54% / 0.45;
+    --suggest-del: 0 69% 65% / 0.18;
+    --suggest-ins: 145 45% 52% / 0.18;
     --sidebar-bg: 213 15% 12%;
     --sidebar-border: 215 14% 17%;
     --sidebar-item-hover: 213 14% 15%;

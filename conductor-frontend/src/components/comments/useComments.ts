@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiDelete, apiErrorMessage, apiGet, apiPatch, apiPost } from '@/lib/api'
 import { toastError } from '@/components/ui/toast'
-import type { Comment, CommentReply, TextQuoteAnchor } from './types'
+import { hasAgentMention } from './commentBody'
+import type { Comment, CommentAgentRequest, CommentReply, TextQuoteAnchor } from './types'
 
 /** What the comments belong to: a Work Item document, or a project doc. */
 export type CommentTarget =
@@ -16,6 +17,26 @@ export interface CommentsOptions {
   currentUser?: { id: string; name: string }
   /** Called after a change has been saved, so a page showing counts elsewhere can refresh them. */
   onChanged?: () => void
+  /**
+   * Called when the document itself was changed under the viewer: an `@agent` request finished, or a
+   * suggestion was accepted. The page should reload the document's content and hash.
+   */
+  onDocumentChanged?: () => void
+}
+
+/** Wait before looking for the `@agent` request a just-posted comment started (the server answers before dispatch). */
+export const AGENT_FIRST_REFETCH_MS = 1500
+/** How often the list is re-read while an `@agent` request is in flight. */
+export const AGENT_POLL_MS = 5000
+/** Polling gives up after this long. */
+export const AGENT_POLL_MAX_MS = 20 * 60 * 1000
+
+function requestKey(commentId: string, r: CommentAgentRequest): string {
+  return `${commentId}:${r.agentId}:${r.createdAt}`
+}
+
+function inFlight(r: CommentAgentRequest): boolean {
+  return r.status === 'PENDING' || r.status === 'RUNNING'
 }
 
 export interface NewComment {
@@ -24,6 +45,8 @@ export interface NewComment {
   anchor?: TextQuoteAnchor
   lineNumber?: number
   documentHash?: string
+  /** Makes this a suggested edit: `content` is the optional note, `suggestion.text` the replacement for the quote. */
+  suggestion?: { text: string }
 }
 
 export interface CommentsApi {
@@ -39,6 +62,8 @@ export interface CommentsApi {
   reopen: (commentId: string) => Promise<void>
   remove: (commentId: string) => Promise<void>
   removeReply: (commentId: string, replyId: string) => Promise<void>
+  /** Accepts or rejects a suggested edit. Resolves true when it was recorded. */
+  decideSuggestion: (commentId: string, decision: 'ACCEPT' | 'REJECT') => Promise<boolean>
 }
 
 function basePath(projectId: string): string {
@@ -66,9 +91,18 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
   // The latest list, readable inside async handlers so a revert restores the state from before the call.
   const latest = useRef<Comment[]>([])
   const onChanged = useRef(options.onChanged)
+  const onDocumentChanged = useRef(options.onDocumentChanged)
   useEffect(() => {
     onChanged.current = options.onChanged
+    onDocumentChanged.current = options.onDocumentChanged
   })
+  // `@agent` requests: the ones seen in flight, the ones already reported as finished, and when this
+  // viewer last posted a comment that mentions an agent (a request made after that counts as ours even
+  // if it finished before the first look at it).
+  const seenActive = useRef(new Set<string>())
+  const reported = useRef(new Set<string>())
+  const expectSince = useRef<number | null>(null)
+  const pollStart = useRef<number | null>(null)
 
   const setComments = useCallback((next: Comment[] | ((prev: Comment[]) => Comment[])) => {
     const value = typeof next === 'function' ? next(latest.current) : next
@@ -79,7 +113,26 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
   const refresh = useCallback(async () => {
     try {
       const data = await apiGet<Comment[]>(`${basePath(projectId)}?${query}&status=all`, token)
+      let finished = false
+      for (const c of data) {
+        for (const r of c.agentRequests ?? []) {
+          const key = requestKey(c.id, r)
+          if (inFlight(r)) {
+            seenActive.current.add(key)
+            continue
+          }
+          if (r.status !== 'SUCCEEDED' || reported.current.has(key)) continue
+          const ours =
+            seenActive.current.has(key) ||
+            (expectSince.current !== null && Date.parse(r.createdAt) >= expectSince.current - 5000)
+          if (ours) {
+            reported.current.add(key)
+            finished = true
+          }
+        }
+      }
       setComments(data)
+      if (finished) onDocumentChanged.current?.()
     } catch (err) {
       toastError(apiErrorMessage(err, 'Failed to load comments'))
     } finally {
@@ -90,6 +143,49 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  // Poll while an `@agent` request is pending or running; stop when none is, or after 20 minutes.
+  const anyInFlight = comments.some((c) => (c.agentRequests ?? []).some(inFlight))
+  useEffect(() => {
+    if (!anyInFlight) {
+      pollStart.current = null
+      return
+    }
+    if (pollStart.current === null) pollStart.current = Date.now()
+    const id = setInterval(() => {
+      if (pollStart.current !== null && Date.now() - pollStart.current > AGENT_POLL_MAX_MS) {
+        clearInterval(id)
+        return
+      }
+      void refresh()
+    }, AGENT_POLL_MS)
+    return () => clearInterval(id)
+  }, [anyInFlight, refresh])
+
+  // Coming back to the tab: pick up whatever changed meanwhile.
+  useEffect(() => {
+    function onFocus() {
+      void refresh()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refresh])
+
+  // Posting a comment or reply that mentions an agent starts a request the server reports only after the
+  // response, so look again shortly.
+  const agentTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => {
+    if (agentTimer.current) clearTimeout(agentTimer.current)
+  }, [])
+  const afterAgentMention = useCallback(
+    (content: string) => {
+      if (!hasAgentMention(content)) return
+      expectSince.current = Date.now()
+      if (agentTimer.current) clearTimeout(agentTimer.current)
+      agentTimer.current = setTimeout(() => void refresh(), AGENT_FIRST_REFETCH_MS)
+    },
+    [refresh]
+  )
 
   /** Applies `change` now; `request` saves it; on failure the list goes back to what it was and a toast says why. */
   const mutate = useCallback(
@@ -133,6 +229,7 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
         authorKind: 'USER',
         content: input.content,
         anchor: input.anchor ?? null,
+        suggestion: input.suggestion ? { text: input.suggestion.text, status: 'PENDING' } : null,
         lineNumber: input.lineNumber,
         quotedText: input.anchor?.exact ?? null,
         createdAt: now,
@@ -152,6 +249,7 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
               ...(input.anchor ? { anchor: input.anchor } : {}),
               ...(input.lineNumber ? { lineNumber: input.lineNumber } : {}),
               ...(input.documentHash ? { documentHash: input.documentHash } : {}),
+              ...(input.suggestion ? { suggestion: input.suggestion } : {}),
             },
             token
           )
@@ -161,10 +259,11 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
         },
         'Failed to add comment'
       )
+      if (created) afterAgentMention(input.content)
       return created
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, target.projectDocId, target.workItemId, target.documentId, token, currentUser?.id, currentUser?.name, mutate, setComments]
+    [projectId, target.projectDocId, target.workItemId, target.documentId, token, currentUser?.id, currentUser?.name, mutate, setComments, afterAgentMention, refresh]
   )
 
   const reply = useCallback(
@@ -178,7 +277,7 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
         content,
         createdAt: new Date().toISOString(),
       }
-      await mutate(
+      const ok = await mutate(
         (list) => list.map((c) => (c.id === commentId ? { ...c, replies: [...c.replies, temp] } : c)),
         async () => {
           const saved = await apiPost<CommentReply>(
@@ -196,8 +295,9 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
         },
         'Failed to send reply'
       )
+      if (ok) afterAgentMention(content)
     },
-    [projectId, token, currentUser?.id, currentUser?.name, mutate, setComments]
+    [projectId, token, currentUser?.id, currentUser?.name, mutate, setComments, afterAgentMention]
   )
 
   const edit = useCallback(
@@ -284,5 +384,40 @@ export function useComments(target: CommentTarget, options: CommentsOptions): Co
     [projectId, token, mutate]
   )
 
-  return { comments, loading, refresh, create, reply, edit, editReply, resolve, reopen, remove, removeReply }
+  const decideSuggestion = useCallback(
+    async (commentId: string, decision: 'ACCEPT' | 'REJECT'): Promise<boolean> => {
+      try {
+        const saved = await apiPost<Comment>(
+          `${basePath(projectId)}/${commentId}/suggestion-decision`,
+          { decision },
+          token
+        )
+        if (saved) setComments((list) => list.map((c) => (c.id === commentId ? { ...c, ...saved, replies: saved.replies ?? c.replies } : c)))
+        else await refresh()
+        onChanged.current?.()
+        if (decision === 'ACCEPT') {
+          // The document was edited: the page needs the new text and hash, and other comments were re-anchored.
+          onDocumentChanged.current?.()
+          await refresh()
+        }
+        return true
+      } catch (err) {
+        const status = (err as { status?: number } | null)?.status
+        if (status === 403) {
+          toastError(
+            decision === 'ACCEPT'
+              ? 'Only editors can accept suggestions'
+              : apiErrorMessage(err, 'You cannot decide this suggestion')
+          )
+        } else {
+          toastError(apiErrorMessage(err, 'Could not record that decision'))
+          if (status === 409) await refresh()
+        }
+        return false
+      }
+    },
+    [projectId, token, setComments, refresh]
+  )
+
+  return { comments, loading, refresh, create, reply, edit, editReply, resolve, reopen, remove, removeReply, decideSuggestion }
 }

@@ -6,7 +6,9 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { MarkdownRenderer } from '@/components/markdown/MarkdownRenderer'
 import { CommentCard, PendingCommentCard } from './CommentCard'
-import { CommentComposer } from './CommentComposer'
+import { CommentComposer, type SubmitOptions } from './CommentComposer'
+import { CommentsFeaturesProvider } from './CommentsFeatures'
+import { involvesUser } from './commentBody'
 import { CommentSheet, type CommentSheetView } from './CommentSheet'
 import { CountBubbles, type CountBubbleItem } from './CountBubbles'
 import { MarginRail, type MarginRailItem } from './MarginRail'
@@ -31,6 +33,13 @@ interface Props {
   isAdmin?: boolean
   /** Called after a comment change has been saved, so counts elsewhere on the page can refresh. */
   onCommentsChanged?: () => void
+  /** The document was changed under the reader (an `@agent` finished, a suggestion was accepted): reload its content and hash. */
+  onDocumentChanged?: () => void
+  /** Only editors can accept a suggested edit. Leave unset when unknown: Accept is shown and a refusal explained. */
+  canAcceptSuggestions?: boolean
+  /** A deep link (`?comment=`): focus this thread once the comments have loaded, then call `onFocusHandled`. */
+  focusCommentId?: string | null
+  onFocusHandled?: () => void
   onDocumentNavigate?: (filename: string) => void
   /**
    * Batch review mode (COND-22): when true, a new comment is held client-side via `onAddPendingComment`
@@ -154,6 +163,10 @@ export function CommentableDocument({
   currentUserName,
   isAdmin = false,
   onCommentsChanged,
+  onDocumentChanged,
+  canAcceptSuggestions,
+  focusCommentId,
+  onFocusHandled,
   onDocumentNavigate,
   reviewMode = false,
   pendingComments = [],
@@ -167,6 +180,7 @@ export function CommentableDocument({
     token,
     currentUser: { id: currentUserId, name: currentUserName ?? 'You' },
     onChanged: onCommentsChanged,
+    onDocumentChanged,
   })
   const comments = api.comments
 
@@ -225,10 +239,7 @@ export function CommentableDocument({
   const { placements, scrollToAnchor } = anchors
 
   // ── Rail contents ──────────────────────────────────────────────────────────
-  const mine = useCallback(
-    (c: Comment) => c.authorKind !== 'AGENT' && !!currentUserId && c.authorId === currentUserId,
-    [currentUserId]
-  )
+  const mine = useCallback((c: Comment) => involvesUser(c, currentUserId), [currentUserId])
 
   /** Whether a thread belongs in the current filter. The focused thread always stays, so acting on it never makes it vanish. */
   const inFilter = useCallback(
@@ -317,6 +328,26 @@ export function CommentableDocument({
       if (!scroll && mode !== 'wide') setSheetView('thread')
     }
   }, [focusThread, mode])
+
+  // A deep link: focus the thread once its highlight has been placed, then let the page clean the URL.
+  useEffect(() => {
+    if (!focusCommentId || api.loading) return
+    const c = comments.find((x) => x.id === focusCommentId)
+    if (!c) {
+      onFocusHandled?.()
+      return
+    }
+    if (activeId !== c.id) {
+      setActiveId(c.id)
+      if (isResolved(c)) setFilter('resolved')
+      return
+    }
+    const spot = placements[c.id]
+    if (kindOf(c) !== 'DOCUMENT' && !spot) return
+    if (spot?.found) scrollToAnchor(c.id)
+    if (mode !== 'wide') setSheetView('thread')
+    onFocusHandled?.()
+  }, [focusCommentId, api.loading, comments, activeId, placements, scrollToAnchor, mode, onFocusHandled])
 
   const step = useCallback(
     (delta: number) => {
@@ -426,7 +457,7 @@ export function CommentableDocument({
     window.getSelection?.()?.removeAllRanges()
   }
 
-  async function handleSubmit(text: string) {
+  async function handleSubmit(text: string, options?: SubmitOptions) {
     if (!composing) return
     const anchor = composing.anchor
     if (reviewMode) {
@@ -439,6 +470,7 @@ export function CommentableDocument({
       content: text,
       anchor,
       ...(contentHash ? { documentHash: contentHash } : {}),
+      ...(options?.suggestion ? { suggestion: options.suggestion } : {}),
     })
     // Focus the new thread so its card is where the reader looks next.
     if (created) {
@@ -598,6 +630,12 @@ export function CommentableDocument({
   }
 
   return (
+    <CommentsFeaturesProvider
+      target={target}
+      token={token}
+      canAcceptSuggestions={canAcceptSuggestions}
+      decideSuggestion={api.decideSuggestion}
+    >
     <div ref={wrapperRef} className="relative space-y-2">
       <div className="flex min-h-8 items-center justify-between gap-3">
         <p className="text-xs text-muted-foreground">Select text in the document to comment on it.</p>
@@ -675,7 +713,12 @@ export function CommentableDocument({
               {composing.anchor.exact}
             </p>
           </blockquote>
-          <CommentComposer autoFocus onSubmit={handleSubmit} onCancel={closeCompose} />
+          <CommentComposer
+            autoFocus
+            onSubmit={handleSubmit}
+            onCancel={closeCompose}
+            suggestFor={reviewMode ? undefined : composing.anchor}
+          />
         </div>
       )}
 
@@ -696,8 +739,10 @@ export function CommentableDocument({
           }
           list={[...placed, ...unreported, ...resolvedStack].map(renderEntry)}
           onSubmitCompose={handleSubmit}
+          suggestFor={composing && !reviewMode ? composing.anchor : undefined}
         />
       )}
     </div>
+    </CommentsFeaturesProvider>
   )
 }

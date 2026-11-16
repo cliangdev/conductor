@@ -33,6 +33,8 @@ const config: Config = {
           hover: 'hsl(var(--primary-hover))',
         },
         'accent-soft': 'hsl(var(--accent-soft))',
+        'suggest-del': 'hsl(var(--suggest-del))',
+        'suggest-ins': 'hsl(var(--suggest-ins))',
         secondary: {
           DEFAULT: 'hsl(var(--secondary))',
           foreground: 'hsl(var(--secondary-foreground))',
