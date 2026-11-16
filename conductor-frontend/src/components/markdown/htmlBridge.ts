@@ -344,6 +344,8 @@ function bridgeMain(buildQuote: any, findQuote: any, flattenText: any, rangeFor:
       handleLink(e, a)
       return
     }
+    // A click on skipped chrome (a sticky bar can sit over a highlight) never opens a comment.
+    if (t && t.closest && t.closest('[data-conductor-skip]')) return
     const sel = w.getSelection()
     if (sel && !sel.isCollapsed) return
     const id = hitTest(e.clientX, e.clientY)
@@ -375,7 +377,13 @@ function bridgeMain(buildQuote: any, findQuote: any, flattenText: any, rangeFor:
 
   // Content that scripts render after load becomes anchorable once the DOM settles.
   let mutationTimer: any = null
-  new MutationObserver(function () {
+  new MutationObserver(function (records: MutationRecord[]) {
+    // Skipped chrome (a contents outline rewriting its breadcrumb on scroll) holds no anchorable text.
+    const relevant = records.some(function (r) {
+      const el = r.target.nodeType === 1 ? (r.target as Element) : r.target.parentElement
+      return !el || !el.closest('script,style,noscript,template,[data-conductor-skip]')
+    })
+    if (!relevant) return
     if (mutationTimer) clearTimeout(mutationTimer)
     mutationTimer = setTimeout(function () {
       if (anchors.length > 0) resolveAll(false)

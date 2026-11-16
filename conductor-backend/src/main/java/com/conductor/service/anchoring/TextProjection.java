@@ -138,7 +138,7 @@ public final class TextProjection {
 
         private boolean isSkipped(Element el) {
             for (Element e = el; e != null; e = e.parent()) {
-                if (SKIP.contains(e.normalName()) || e.hasAttr("hidden")) {
+                if (SKIP.contains(e.normalName()) || e.hasAttr("hidden") || e.hasAttr("data-conductor-skip")) {
                     return true;
                 }
                 if (e == root) {

@@ -102,7 +102,9 @@ export function findQuote(
  * Each text node's `chars` lists the flat index of each of its characters, -1 where collapsed away.
  */
 export function flattenText(root: Element): FlatText {
-  const SKIP = 'script,style,noscript,template'
+  // `data-conductor-skip` marks page chrome (a PRD's contents outline, a sticky header) that repeats or
+  // summarizes the document: it is left out of quote matching, selection and highlight clicks.
+  const SKIP = 'script,style,noscript,template,[data-conductor-skip]'
   const BLOCKS =
     'address,article,aside,blockquote,dd,div,dl,dt,figcaption,figure,footer,form,h1,h2,h3,h4,h5,h6,' +
     'header,hr,li,main,nav,ol,p,pre,section,table,tbody,td,th,thead,tr,ul'
