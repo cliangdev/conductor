@@ -147,10 +147,13 @@ class CommentAgentDispatchE2ETest extends AbstractE2ETest {
         requests.recordError(first, "x");
         String second = requests.begin(projectId, commentId, agentA).orElseThrow();
 
-        requests.linkReply(commentId, agentA, "reply-1");
+        String replyId = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO comment_replies (id, comment_id, content, author_label) VALUES (?, ?, 'r', 'Agent A')",
+                replyId, commentId);
+        requests.linkReply(commentId, agentA, replyId);
 
         assertThat(jdbc.queryForObject("SELECT reply_id FROM comment_agent_requests WHERE id = ?", String.class, second))
-                .isEqualTo("reply-1");
+                .isEqualTo(replyId);
     }
 
     // --- refusals in plain words ---------------------------------------------------------------------------

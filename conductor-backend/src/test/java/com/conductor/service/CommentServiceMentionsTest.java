@@ -60,9 +60,10 @@ class CommentServiceMentionsTest {
     CommentSignals signals = mock(CommentSignals.class);
     CommentAgentRequestService requests = mock(CommentAgentRequestService.class);
     SignalBus bus = mock(SignalBus.class);
+    ProjectRepository projects = mock(ProjectRepository.class);
 
     CommentService service = new CommentService(comments, replies, workItems, documents, members,
-            mock(ProjectSecurityService.class), mock(StorageService.class), bus, mock(ProjectRepository.class),
+            mock(ProjectSecurityService.class), mock(StorageService.class), bus, projects,
             projectDocs, agents, parser, signals, requests);
 
     User ann = user("u-ann", "Ann");
@@ -90,6 +91,7 @@ class CommentServiceMentionsTest {
         projectDoc.setProject(project);
         projectDoc.setContent("alpha beta gamma");
 
+        when(projects.existsById(any())).thenReturn(true);
         when(members.existsByProjectIdAndUserId(any(), any())).thenReturn(true);
         when(workItems.findById("wi-1")).thenReturn(Optional.of(workItem));
         when(documents.findByIdAndWorkItemId("d-1", "wi-1")).thenReturn(Optional.of(document));
