@@ -71,7 +71,10 @@ jobs:
           FOUND=""
           PUBLISH=true
           for attempt in $(seq 1 30); do
-            if npm view "@cliangdev/conductor@${VERSION}" version >/dev/null 2>&1; then
+            # The version can be listed before its tarball is served (0.61.0's 404'd for ~6 minutes), and
+            # the image's npm install fetches the tarball, so wait for that too.
+            TARBALL=$(npm view "@cliangdev/conductor@${VERSION}" dist.tarball 2>/dev/null || true)
+            if [ -n "$TARBALL" ] && curl -sfIL --max-time 20 "$TARBALL" >/dev/null; then
               FOUND=1
               break
             fi
