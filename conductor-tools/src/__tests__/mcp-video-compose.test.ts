@@ -50,7 +50,7 @@ beforeEach(() => {
   probe.mockReset()
   probe.mockImplementation(async (file: string) =>
     file.endsWith('.wav')
-      ? ({ kind: 'AUDIO', contentType: 'audio/wav', durationSeconds: 10, hasAudio: true } as never)
+      ? ({ kind: 'AUDIO', contentType: 'audio/wav', durationSeconds: file.endsWith('voice.wav') ? 3 : 10, hasAudio: true } as never)
       : ({ kind: 'VIDEO', contentType: 'video/mp4', durationSeconds: 5, hasAudio: true, width: 1080, height: 1920 } as never),
   )
 })
@@ -200,6 +200,7 @@ describe('composeVideoTool: a render', () => {
     const sidecar = JSON.parse(readFileSync(`${full.videoPath}.provenance.json`, 'utf8'))
     expect(sidecar).toMatchObject({ licence: 'Own work', aiGenerated: true, source: expect.stringContaining('Own footage') })
     rmSync(join(tmp, 'b.png.provenance.json'))
+    writeFileSync(join(tmp, 'a.png.provenance.json'), JSON.stringify(side)) // no AI input left, so a missing sidecar means none for the video
     const part = await composeVideoTool({ spec: { ...spec(), id: 'second' } }, { projectRoot: tmp, deps: goodDeps(), pixel: noOcr })
     if (!part.ok) throw new Error(part.error)
     expect(part.provenance.recorded).toBe(false)
@@ -222,6 +223,61 @@ describe('composeVideoTool: a render', () => {
     const plain = await composeVideoTool({ spec: { ...spec(), id: 'plain', audio: { track: 'music.wav' } } }, { projectRoot: tmp, deps: goodDeps(), pixel: noOcr })
     if (!plain.ok) throw new Error(plain.error)
     expect(plain.provenance).toEqual({ recorded: true, needed: [], aiGenerated: false })
+  })
+
+  it('keeps the AI flag when a visual input has no sidecar but the voice is AI', async () => {
+    writeFileSync(join(tmp, 'hook.mp4.provenance.json'), JSON.stringify({ source: 'Own footage', licence: 'Own work', aiGenerated: false }))
+    writeFileSync(join(tmp, 'voice.wav'), 'x')
+    writeFileSync(join(tmp, 'voice.wav.provenance.json'), JSON.stringify({ source: 'Synthesised with TTS', licence: 'Generated, house use', aiGenerated: true }))
+    const res = await composeVideoTool({ spec: { ...spec(), audio: { voicePath: 'voice.wav' } } }, { projectRoot: tmp, deps: goodDeps(), pixel: noOcr })
+    if (!res.ok) throw new Error(res.error)
+    expect(res.provenance).toEqual({ recorded: true, needed: [join(tmp, 'a.png'), join(tmp, 'b.png')], aiGenerated: true })
+    const sidecar = JSON.parse(readFileSync(`${res.videoPath}.provenance.json`, 'utf8'))
+    expect(sidecar.aiGenerated).toBe(true)
+    expect(sidecar.source).toContain('Own footage')
+    expect(sidecar.source).toContain('a.png')
+    expect(sidecar.licence).toMatch(/unverified/)
+    // the note is truthful: it says the sidecar is incomplete, not that all is well
+    expect(res.nextStep).toMatch(/2 input files have no \.provenance\.json/)
+    expect(res.nextStep).toMatch(/aiGenerated true with the known sources only/)
+    expect(res.nextStep).toMatch(/aiGenerated: true to upload_creative_media/)
+    expect(res.nextStep).not.toMatch(/so the video has none/)
+  })
+
+  it('uses the offset recorded with the voice file and refuses a different one in the spec', async () => {
+    writeFileSync(join(tmp, 'voice.wav'), 'x')
+    writeFileSync(join(tmp, 'voice.wav.provenance.json'), JSON.stringify({ source: 's', licence: 'l', aiGenerated: true, offsetSec: 1.5 }))
+    const deps = goodDeps()
+    const res = await composeVideoTool({ spec: { ...spec(), audio: { voicePath: 'voice.wav' } } }, { projectRoot: tmp, deps, pixel: noOcr })
+    if (!res.ok) throw new Error(res.error)
+    expect(vi.mocked(deps.render!).mock.calls[0]![0]).toMatchObject({ voiceOffsetSec: 1.5 })
+    expect(JSON.parse(readFileSync(res.specPath, 'utf8')).audio.voiceOffsetSec).toBe(1.5)
+    const same = await composeVideoTool({ spec: { ...spec(), id: 'same', audio: { voicePath: 'voice.wav', voiceOffsetSec: 1.5 } } }, { projectRoot: tmp, deps: goodDeps(), pixel: noOcr })
+    expect(same.ok).toBe(true)
+    const diff = await composeVideoTool({ spec: { ...spec(), audio: { voicePath: 'voice.wav', voiceOffsetSec: 0.5 } } }, { projectRoot: tmp, deps: goodDeps(), pixel: noOcr })
+    expect(diff).toMatchObject({ ok: false, error: 'The video spec is invalid.' })
+    if (!diff.ok) expect(diff.errors?.[0]).toMatch(/0\.5 s differs from the 1\.5 s generate_voice_line recorded/)
+    // an explicit 0 against a recorded 1.5 also disagrees
+    const zero = await composeVideoTool({ spec: { ...spec(), audio: { voicePath: 'voice.wav', voiceOffsetSec: 0 } } }, { projectRoot: tmp, deps: goodDeps(), pixel: noOcr })
+    expect(zero.ok).toBe(false)
+  })
+
+  it('refuses a voice that would run past the end of the video, with the numbers', async () => {
+    writeFileSync(join(tmp, 'voice.wav'), 'x')
+    probe.mockImplementation(async (file: string) =>
+      file.endsWith('.wav')
+        ? ({ kind: 'AUDIO', contentType: 'audio/wav', durationSeconds: 7, hasAudio: true } as never)
+        : ({ kind: 'VIDEO', contentType: 'video/mp4', durationSeconds: 5, hasAudio: true, width: 1080, height: 1920 } as never),
+    )
+    const deps = goodDeps()
+    // video is 9.4 s (3.4 + 3 + 3); the voice would end at 10.4 s
+    const res = await composeVideoTool({ spec: { ...spec(), audio: { voicePath: 'voice.wav', voiceOffsetSec: 3.4 } } }, { projectRoot: tmp, deps, pixel: noOcr })
+    expect(res).toMatchObject({ ok: false, error: 'The video spec is invalid.' })
+    if (!res.ok) expect(res.errors?.[0]).toBe('audio.voicePath: voice ends at 10.4 s (starts at 3.4 s, runs 7.0 s), video is 9.4 s; lengthen the last segment or shorten the line.')
+    expect(deps.render).not.toHaveBeenCalled()
+    // within 0.05 s of the end is fine
+    const ok = await composeVideoTool({ spec: { ...spec(), id: 'fits', audio: { voicePath: 'voice.wav', voiceOffsetSec: 2.4 } } }, { projectRoot: tmp, deps: goodDeps(), pixel: noOcr })
+    expect(ok.ok).toBe(true)
   })
 
   it('passes voiceOffsetSec to the renderer and rejects a bad one', async () => {

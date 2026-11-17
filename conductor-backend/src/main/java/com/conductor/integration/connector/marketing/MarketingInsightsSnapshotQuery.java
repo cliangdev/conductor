@@ -104,7 +104,7 @@ public class MarketingInsightsSnapshotQuery {
      * evidence set as insights' {@code byTag}, not this snapshot's seven-day window, because a week can never
      * hold a settled Facebook post), through the shared attribution. A row carries the usual counters, the
      * median view and hook lift, the lift the verdict was read from ({@code basisLift}, which the rows are ranked on) and the server's {@code verdict}/{@code verdictMetric} ({@code LessonVerdictRules}); a
-     * hookType with no computable lift for its verdict's basis is left out; one with hook data but no view lift stays. Best lift first.
+     * hookType with no computable lift for its verdict's basis is left out; one with hook data but no view lift stays. Ordered by verdict tier (WORKS, NO_DIFFERENCE, NOT_ENOUGH_DATA, DOESNT_WORK), then verdict metric (hook, retention, view), then {@code basisLift} descending; the weekly digest keeps this order ({@code sourceOrder}).
      */
     private List<Map<String, Object>> byHookType(String projectId, OffsetDateTime now) {
         Map<String, java.util.Set<CreativeTagAttribution.TagValue>> tagsByTarget = tagAttribution.tagsByTarget(projectId);
@@ -151,8 +151,31 @@ public class MarketingInsightsSnapshotQuery {
             row.put("verdictMetric", verdict.metric());
             rows.add(row);
         });
-        rows.sort(Comparator.comparingDouble((Map<String, Object> r) -> (double) r.get("basisLift")).reversed());
+        rows.sort(Comparator
+                .comparingInt((Map<String, Object> r) -> verdictTier((String) r.get("verdict")))
+                .thenComparingInt(r -> metricPriority((String) r.get("verdictMetric")))
+                .thenComparing(Comparator.comparingDouble((Map<String, Object> r) -> (double) r.get("basisLift")).reversed()));
         return rows;
+    }
+
+    /** WORKS first, then NO_DIFFERENCE, NOT_ENOUGH_DATA, DOESNT_WORK last. */
+    private static int verdictTier(String verdict) {
+        return switch (verdict == null ? "" : verdict) {
+            case LessonVerdictRules.WORKS -> 0;
+            case LessonVerdictRules.NO_DIFFERENCE -> 1;
+            case LessonVerdictRules.NOT_ENOUGH_DATA -> 2;
+            case LessonVerdictRules.DOESNT_WORK -> 3;
+            default -> 4;
+        };
+    }
+
+    /** Lifts of different metrics are not comparable, so within a tier rows group by metric: hook, retention, view. */
+    private static int metricPriority(String metric) {
+        return switch (metric == null ? "" : metric) {
+            case LessonVerdictRules.HOOK_LIFT -> 0;
+            case LessonVerdictRules.RETENTION_LIFT -> 1;
+            default -> 2;
+        };
     }
 
     /**

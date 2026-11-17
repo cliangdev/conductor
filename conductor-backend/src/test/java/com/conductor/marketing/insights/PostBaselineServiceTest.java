@@ -235,7 +235,7 @@ class PostBaselineServiceTest {
             addHook(all, latest, "facebook", "REEL", i < 2 ? "{\"post_video_avg_time_watched\":5000}" : "{}");
         }
         // tiktok: never reports a hook.
-        for (int i = 0; i < 12; i++) addHook(all, latest, "tiktok", "REEL", "{\"reels_skip_rate\":0.1}");
+        for (int i = 0; i < 12; i++) addHook(all, latest, "tiktok", "REEL", "{\"reels_skip_rate\":10}");
         when(targets.findPublishedByFireTimeWindow(anyString(), any(), any(), any())).thenReturn(all);
         when(metrics.findLatestAvailableForTargets(anyList())).thenReturn(latest);
 

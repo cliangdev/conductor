@@ -45,7 +45,8 @@ public final class HookMetrics {
                 if (skip == null || skip < 0) {
                     yield null;
                 }
-                // Meta documents reels_skip_rate as a percentage, so 0.8 means 0.8%, never 80%.
+                // Meta documents reels_skip_rate as a percentage (0 to 100), so 0.8 means 0.8%, never 80%. That scale is
+                // taken from Meta's docs and is unverified against a live read; if a live value is a fraction, fix it here.
                 yield skip > 100 ? null : clamp(1.0 - skip / 100.0);
             }
             default -> null;

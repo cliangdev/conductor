@@ -503,6 +503,9 @@ export interface CreativePerformancePlatform {
   posts: number
   views: number
   engagementRate?: number | null
+  /** Instagram Reels only; null when the platform reports none. */
+  hookRate?: number | null
+  holdRate?: number | null
 }
 
 /** One Creative variant's attributed performance — published destinations whose media traces back

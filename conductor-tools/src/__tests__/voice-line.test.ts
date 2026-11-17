@@ -251,7 +251,7 @@ describe('generate_voice_line tool', () => {
     expect(r.disclosure).toMatch(/compliance-checklist/)
     expect(r.nextStep).toMatch(/voicePath/)
     const side = JSON.parse(readFileSync(`${r.audioPath}.provenance.json`, 'utf8'))
-    expect(side).toMatchObject({ aiGenerated: true, voice: 'en-US-Chirp3-HD-Aoede', timing: 'estimated', characters: 34 })
+    expect(side).toMatchObject({ aiGenerated: true, voice: 'en-US-Chirp3-HD-Aoede', timing: 'estimated', characters: 34, offsetSec: 0 })
     expect(side.textSha256).toMatch(/^[0-9a-f]{64}$/)
     expect(JSON.stringify(side)).not.toContain('saves dinner')
   })

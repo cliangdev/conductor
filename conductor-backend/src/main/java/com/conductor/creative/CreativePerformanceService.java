@@ -35,11 +35,7 @@ public class CreativePerformanceService {
 
     /** One platform's slice of one variant's numbers. */
     public record PlatformBreakdown(String platform, int posts, long views, Double engagementRate,
-                                    Double hookRate, Double holdRate) {
-        public PlatformBreakdown(String platform, int posts, long views, Double engagementRate) {
-            this(platform, posts, views, engagementRate, null, null);
-        }
-    }
+                                    Double hookRate, Double holdRate) {}
 
     /** One variant's roll-up — a row of {@code CreativeResponse}'s family, or of insights' top creatives. */
     public record VariantPerformance(String creativeId, String label, String headline, int posts, long views,

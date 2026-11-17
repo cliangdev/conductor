@@ -1187,8 +1187,8 @@ following the playbook helped at all.
 The same service and settled-only rule give each variant in `GET .../marketing/creatives/{id}/performance`
 (and `get_creative`, and insights' `creatives`) `settledPosts`, `medianViewLift`, `medianRetentionLift` and
 `beatBaselineShare`, next to its existing fields. The weekly `conductor-marketing` snapshot carries a
-`byHookType` dimension (hookType only) over the same settled 90 days, ranked on `basisLift` (the lift the row's verdict
-was read from: hook, retention or view) and carrying `medianViewLift`, `medianHookLift` and
+`byHookType` dimension (hookType only) over the same settled 90 days, ordered by verdict tier (`WORKS`, `NO_DIFFERENCE`, `NOT_ENOUGH_DATA`, `DOESNT_WORK`), then `verdictMetric` (hook, retention, view), then `basisLift` (the lift the row's verdict
+was read from) descending; the digest keeps that order and skips a row with no value and carrying `medianViewLift`, `medianHookLift` and
 `verdict`/`verdictMetric` per row (a hookType with no computable lift for its verdict's basis is left out), so the digest can say which
 hooks are working.
 
@@ -1228,7 +1228,7 @@ running_per_family`). `decide` — called on demand via `POST .../experiments/{i
 `conductor-marketing` weekly feed pull for every `RUNNING` experiment in the project — settles once every
 variant has at least one published, attributed destination with a snapshot at or after `fireTime +
 windowHours` (default 72): the comparison metric is `hook_rate` when the experiment asked for it and the variants share a platform that reports one
-(Instagram Reels only; compared on the shared platform, and variants with hook rates but no shared platform settle `INCONCLUSIVE`), else `avg_view_pct` when every variant reports it, else the
+(Instagram Reels only; compared on the platforms every variant reports one on, and when there is no such platform the experiment falls back exactly as for partial coverage), else `avg_view_pct` when every variant reports it, else the
 metric requested at creation (default `views`); an exact tie among the leaders settles `INCONCLUSIVE`
 immediately (the window has, by definition, already fully elapsed for everyone at that point). While any
 variant is still short of its own deadline, `decide` is a safe no-op that leaves the experiment `RUNNING`

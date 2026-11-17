@@ -5,7 +5,7 @@ import type { BrowserFactory } from '../../lib/creative-browser.js'
 import { readImageDimensions } from '../../lib/image-dimensions.js'
 import { placementFit } from '../../lib/image-common.js'
 import { probeMedia } from '../../lib/media-probe.js'
-import { readProvenanceSidecar, writeProvenanceSidecar, type SidecarProvenance } from '../../lib/provenance-sidecar.js'
+import { readProvenanceSidecar, readVoiceOffsetSec, writeProvenanceSidecar, type SidecarProvenance } from '../../lib/provenance-sidecar.js'
 import { SLIDESHOW_LAYOUT } from '../../lib/slideshow/spec.js'
 import {
   firstSecondTextCheck,
@@ -121,11 +121,15 @@ async function visualProvenance(paths: string[], audioPaths: string[] = []): Pro
     }
   }
   const anyAi = known.some((k) => k.aiGenerated)
-  if (missing.length > 0) return { sidecar: null, missing, anyAi }
+  // Inputs with no sidecar normally mean no sidecar for the video (upload asks for source and licence). But an
+  // AI flag must never be lost: with any AI input the sidecar is written with aiGenerated true and the known
+  // sources, and the missing inputs are still reported so the person is asked about them.
+  if (missing.length > 0 && !anyAi) return { sidecar: null, missing, anyAi }
+  const knownSources = unique(known.map((k) => k.source)).join('; ')
   return {
     sidecar: {
-      source: `Composed with Conductor's video composer from: ${unique(known.map((k) => k.source)).join('; ')}`,
-      licence: unique(known.map((k) => k.licence)).join('; '),
+      source: `Composed with Conductor's video composer from: ${knownSources}${missing.length > 0 ? `; no recorded source for ${missing.map((m) => basename(m)).join(', ')}` : ''}`,
+      licence: `${unique(known.map((k) => k.licence)).join('; ')}${missing.length > 0 ? '; licence of the unrecorded inputs unverified' : ''}`,
       aiGenerated: anyAi,
     },
     missing,
@@ -183,6 +187,7 @@ export async function composeVideoTool(params: ComposeVideoParams, options: Comp
       sources.push(undefined)
     }
   }
+  let voiceDurationSec: number | undefined
   for (const key of ['track', 'voicePath'] as const) {
     const file = spec.audio?.[key]
     if (!file) continue
@@ -190,15 +195,37 @@ export async function composeVideoTool(params: ComposeVideoParams, options: Comp
       await stat(file)
       const probe = await probeMedia(file)
       if (probe.kind !== 'AUDIO' && !(probe.kind === 'VIDEO' && probe.hasAudio)) throw new Error('not an audio file')
+      if (key === 'voicePath' && probe.durationSeconds) voiceDurationSec = probe.durationSeconds
     } catch (err) {
       fileErrors.push(`audio.${key}: ${err instanceof Error && err.message === 'not an audio file' ? 'not an audio file' : 'file not found or unreadable'}: ${file}`)
     }
   }
   if (fileErrors.length > 0) return fail('The video spec is invalid.', fileErrors)
 
+  // The voice offset: the spec's value, else the one generate_voice_line recorded beside the voice file. Two
+  // different values would mean captions and voice disagree, so that is refused.
+  if (spec.audio?.voicePath) {
+    const recorded = await readVoiceOffsetSec(spec.audio.voicePath)
+    const given = spec.audio.voiceOffsetSec
+    if (recorded !== null && given !== undefined && Math.abs(given - recorded) > 0.001) {
+      return fail('The video spec is invalid.', [`audio.voiceOffsetSec: ${given} s differs from the ${recorded} s generate_voice_line recorded for ${spec.audio.voicePath}; the captions were timed for ${recorded} s. Omit voiceOffsetSec, or call generate_voice_line again with offsetSec ${given}.`])
+    }
+    if (given === undefined && recorded !== null) spec.audio = { ...spec.audio, voiceOffsetSec: recorded }
+  }
+
   const resolved = resolveTimeline(spec, sources)
   if (!resolved.timeline) return fail('The video spec is invalid.', resolved.errors)
   const timeline: Timeline = resolved.timeline
+
+  // The renderer pads or trims the audio to the video's length, so a voice that runs past the end would be cut off.
+  if (spec.audio?.voicePath && voiceDurationSec !== undefined) {
+    const offset = spec.audio.voiceOffsetSec ?? 0
+    const ends = offset + voiceDurationSec
+    if (ends > timeline.totalSec + 0.05) {
+      const r = (n: number): string => (Math.round(n * 10) / 10).toFixed(1)
+      return fail('The video spec is invalid.', [`audio.voicePath: voice ends at ${r(ends)} s (starts at ${r(offset)} s, runs ${r(voiceDurationSec)} s), video is ${r(timeline.totalSec)} s; lengthen the last segment or shorten the line.`])
+    }
+  }
 
   const id = String(input.id ?? 'video').replace(/[^A-Za-z0-9._-]+/g, '-').slice(0, 40) || 'video'
   const outDir = params.draftDir ? resolve(root, params.draftDir) : join(root, VIDEOS_SUBDIR, `${stamp(options.now ?? new Date())}-${id}`)
@@ -282,9 +309,15 @@ export async function composeVideoTool(params: ComposeVideoParams, options: Comp
     provenance.recorded = true
   }
   const passed = !hasErrors(checks)
+  const nMissing = `${prov.missing.length} input file${prov.missing.length === 1 ? ' has' : 's have'} no .provenance.json`
   const provNote =
-    (prov.missing.length > 0 ? ` ${prov.missing.length} input file${prov.missing.length === 1 ? ' has' : 's have'} no .provenance.json, so the video has none: upload_creative_media will need source and licence.` : '') +
-    (prov.anyAi ? ' An input is AI-generated: the video is labelled AI-generated.' : '')
+    prov.missing.length > 0 && prov.anyAi
+      ? ` ${nMissing}, and an input is AI-generated: the video's own .provenance.json records aiGenerated true with the known sources only. Ask the person for the source and licence of the unrecorded inputs, then pass source, licence and aiGenerated: true to upload_creative_media (the sidecar's text is incomplete).`
+      : prov.missing.length > 0
+        ? ` ${nMissing}, so the video has none: upload_creative_media will need source and licence.`
+        : prov.anyAi
+          ? ' An input is AI-generated: the video is labelled AI-generated.'
+          : ''
   return {
     ok: true,
     rendered: true,

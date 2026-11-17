@@ -737,6 +737,11 @@ public class MetaGraphClient {
         for (String id : mediaIds) {
             JsonNode node = readNodeOrNull(id, "id,like_count,comments_count,media_product_type", token);
             if (node == null) {
+                // media_product_type is the only optional field: if Graph refused it (400) rather than the media
+                // being gone, the core read still answers. gone=true needs this retry to be refused too.
+                node = readNodeOrNull(id, "id,like_count,comments_count", token);
+            }
+            if (node == null) {
                 metrics.add(new PostMetrics(id, null, null, null, null, null, null, null, null, true, false));
                 continue;
             }

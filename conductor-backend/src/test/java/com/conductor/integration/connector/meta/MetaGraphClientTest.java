@@ -416,7 +416,7 @@ class MetaGraphClientTest {
                         MediaType.APPLICATION_JSON));
         server.expect(requestTo(containsString("/v21.0/m1/insights?metric=reels_skip_rate,ig_reels_avg_watch_time")))
                 .andRespond(withSuccess("{\"data\":["
-                        + "{\"name\":\"reels_skip_rate\",\"values\":[{\"value\":0.35}]},"
+                        + "{\"name\":\"reels_skip_rate\",\"values\":[{\"value\":35.0}]},"
                         + "{\"name\":\"ig_reels_avg_watch_time\",\"values\":[{\"value\":6200}]},"
                         + "{\"name\":\"ig_reels_video_view_total_time\",\"total_value\":{\"value\":620000}}]}",
                         MediaType.APPLICATION_JSON));
@@ -433,7 +433,7 @@ class MetaGraphClientTest {
             assertThat(m.totalInteractions()).isEqualTo(112L);
             assertThat(m.unavailable()).isFalse();
             assertThat(m.insightsForbidden()).isFalse();
-            assertThat(m.extra()).containsEntry("reels_skip_rate", 0.35)
+            assertThat(m.extra()).containsEntry("reels_skip_rate", 35.0)
                     .containsEntry("ig_reels_avg_watch_time", 6200.0)
                     .containsEntry("ig_reels_video_view_total_time", 620000.0);
         });
@@ -566,6 +566,30 @@ class MetaGraphClientTest {
             });
             server.verify();
         }
+    }
+
+    /** A 400 on media_product_type must not mark the media gone: the core counts are re-read without it. */
+    @Test
+    void readMediaMetrics_refusedMediaProductType_stillReturnsCountsAndIsNotGone() {
+        server.expect(requestTo(containsString("/v21.0/m7?fields=id,like_count,comments_count,media_product_type")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withStatus(org.springframework.http.HttpStatus.BAD_REQUEST)
+                        .contentType(MediaType.APPLICATION_JSON).body("{\"error\":{\"message\":\"bad field\"}}"));
+        server.expect(requestTo(org.hamcrest.Matchers.endsWith("/v21.0/m7?fields=id,like_count,comments_count")))
+                .andRespond(withSuccess("{\"id\":\"m7\",\"like_count\":4,\"comments_count\":2}",
+                        MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/v21.0/m7/insights?metric=views,reach")))
+                .andRespond(withSuccess("{\"data\":[{\"name\":\"views\",\"values\":[{\"value\":10}]}]}",
+                        MediaType.APPLICATION_JSON));
+
+        java.util.List<MetaGraphClient.PostMetrics> metrics = client.readMediaMetrics(java.util.List.of("m7"), "token");
+
+        assertThat(metrics).singleElement().satisfies(m -> {
+            assertThat(m.unavailable()).isFalse();
+            assertThat(m.likes()).isEqualTo(4L);
+            assertThat(m.comments()).isEqualTo(2L);
+            assertThat(m.views()).isEqualTo(10L);
+        });
+        server.verify();
     }
 
     /** Hook insights are asked only of Reels: any other media type would 400, so no request is made for it. */

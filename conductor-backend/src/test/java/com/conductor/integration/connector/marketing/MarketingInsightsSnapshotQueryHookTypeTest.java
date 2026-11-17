@@ -70,11 +70,59 @@ class MarketingInsightsSnapshotQueryHookTypeTest {
         List<Map<String, Object>> rows = new ArrayList<>((List<Map<String, Object>>) query
                 .fetch("p", Instant.now()).get("byHookType"));
 
-        // Sorted on each row's own basis: bold-claim 1.8 (hook), stat 1.5 (view), question 1.1 (hook, not its 3.0 view lift).
-        assertThat(rows).extracting(r -> r.get("hookType")).containsExactly("bold-claim", "stat", "question");
+        // WORKS hook rows first (bold-claim 1.8 over question 1.1, not its 3.0 view lift), then the
+        // NOT_ENOUGH_DATA view row.
+        assertThat(rows).extracting(r -> r.get("hookType")).containsExactly("bold-claim", "question", "stat");
         assertThat(rows.get(0).get("verdictMetric")).isEqualTo(LessonVerdictRules.HOOK_LIFT);
         assertThat(rows.get(0).get("medianViewLift")).isNull();
         assertThat(rows.get(0).get("medianHookLift")).isEqualTo(1.8);
-        assertThat(rows.get(1).get("verdictMetric")).isEqualTo(LessonVerdictRules.VIEW_LIFT);
+        assertThat(rows.get(2).get("verdictMetric")).isEqualTo(LessonVerdictRules.VIEW_LIFT);
+    }
+
+    private static PostBaselineService.LiftSummary viewOnly(Double viewLift, String viewVerdict) {
+        return new PostBaselineService.LiftSummary(viewLift, null, null, null, 3, 0, 0, 0, viewVerdict,
+                LessonVerdictRules.NOT_ENOUGH_DATA, null, null, 0, 0, LessonVerdictRules.NOT_ENOUGH_DATA);
+    }
+
+    private static PostBaselineService.LiftSummary hookOnly(Double hookLift, String hookVerdict) {
+        return new PostBaselineService.LiftSummary(null, null, null, null, 3, 0, 0, 0,
+                LessonVerdictRules.NOT_ENOUGH_DATA, LessonVerdictRules.NOT_ENOUGH_DATA, hookLift, null, 3, 0,
+                hookVerdict);
+    }
+
+    @Test
+    void ordersByVerdictTierThenMetricThenLift() {
+        String[] names = {"w-view", "w-hook", "dw-hook", "nd-view", "w-view-hi", "nede"};
+        PostBaselineService.LiftSummary[] lifts = {
+                viewOnly(2.5, LessonVerdictRules.WORKS), hookOnly(1.3, LessonVerdictRules.WORKS),
+                hookOnly(0.5, LessonVerdictRules.DOESNT_WORK), viewOnly(1.0, LessonVerdictRules.NO_DIFFERENCE),
+                viewOnly(2.9, LessonVerdictRules.WORKS), viewOnly(1.0, LessonVerdictRules.NOT_ENOUGH_DATA)};
+        List<PostBaselineService.Observation> observations = new ArrayList<>();
+        Map<String, Set<CreativeTagAttribution.TagValue>> tagMap = new java.util.HashMap<>();
+        PostBaselineService.Baselines evidence = mock(PostBaselineService.Baselines.class);
+        for (int i = 0; i < names.length; i++) {
+            PostBaselineService.Observation o = obs("t-" + i);
+            observations.add(o);
+            tagMap.put("t-" + i, Set.of(new CreativeTagAttribution.TagValue("hookType", names[i])));
+            when(evidence.summarize(List.of(o))).thenReturn(lifts[i]);
+        }
+        when(evidence.settled()).thenReturn(observations);
+        CreativeTagAttribution tags = mock(CreativeTagAttribution.class);
+        when(tags.tagsByTarget(anyString())).thenReturn(tagMap);
+        PostBaselineService baselines = mock(PostBaselineService.class);
+        when(baselines.baselines(anyString(), any(OffsetDateTime.class))).thenReturn(evidence);
+        PostPublishTargetRepository targets = mock(PostPublishTargetRepository.class);
+        when(targets.findPublishedWithWorkItemByFireTimeWindow(anyString(), any(), any())).thenReturn(List.of());
+        PostPublishTargetMetricRepository metrics = mock(PostPublishTargetMetricRepository.class);
+        when(metrics.findLatestAvailableForTargets(anyList())).thenReturn(List.of());
+        MarketingInsightsSnapshotQuery query = new MarketingInsightsSnapshotQuery(targets, metrics,
+                mock(WorkItemRepository.class), tags, baselines);
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) query.fetch("p", Instant.now()).get("byHookType");
+
+        // WORKS: hook before view, then lift desc within a metric; then NO_DIFFERENCE, NOT_ENOUGH_DATA, DOESNT_WORK.
+        assertThat(rows).extracting(r -> r.get("hookType"))
+                .containsExactly("w-hook", "w-view-hi", "w-view", "nd-view", "nede", "dw-hook");
     }
 }

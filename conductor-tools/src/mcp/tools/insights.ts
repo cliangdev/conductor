@@ -94,6 +94,8 @@ interface CreativePerformancePlatform {
   posts: number
   views: number
   engagementRate?: number | null
+  hookRate?: number | null
+  holdRate?: number | null
 }
 
 interface CreativePerformanceEntry {
@@ -196,6 +198,23 @@ function topGroups(groups: InsightsGroup[]): Record<string, unknown>[] {
     .map(trimGroup)
 }
 
+/**
+ * Per-platform views and hook/hold rates, nulls omitted. The entry's top-level hookRate/holdRate are null
+ * when more than one platform reports one (never blended), so this list is where a multi-platform
+ * Creative's rates live. Platforms with neither rate are left out to keep the payload small.
+ */
+export function trimPlatformRates(byPlatform: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(byPlatform)) return []
+  const out: Array<Record<string, unknown>> = []
+  for (const p of byPlatform as Array<Record<string, unknown>>) {
+    const hook = typeof p['hookRate'] === 'number' ? Math.round((p['hookRate'] as number) * 10000) / 10000 : undefined
+    const hold = typeof p['holdRate'] === 'number' ? Math.round((p['holdRate'] as number) * 10000) / 10000 : undefined
+    if (hook === undefined && hold === undefined) continue
+    out.push({ platform: p['platform'], views: p['views'], ...(hook !== undefined ? { hookRate: hook } : {}), ...(hold !== undefined ? { holdRate: hold } : {}) })
+  }
+  return out
+}
+
 /** The fields worth an agent's context for one Creative variant's attributed performance. */
 function trimCreative(entry: CreativePerformanceEntry): Record<string, unknown> {
   return omitNulls({
@@ -219,6 +238,10 @@ function trimCreative(entry: CreativePerformanceEntry): Record<string, unknown> 
     holdRate: round4(entry.holdRate),
     medianHookLift: round4(entry.medianHookLift),
     hookVerdict: entry.hookVerdict,
+    byPlatform: (() => {
+      const rates = trimPlatformRates(entry.byPlatform)
+      return rates.length ? rates : undefined
+    })(),
   })
 }
 

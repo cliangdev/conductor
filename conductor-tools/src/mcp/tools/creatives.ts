@@ -11,6 +11,7 @@ import { composePosterSheet } from '../../lib/poster-sheet.js'
 import { slideshowSpecView } from '../../lib/slideshow/spec-transport.js'
 import { compactRevisionState } from '../../lib/slideshow/revision-view.js'
 import { PROVENANCE_FIELD_MAX, fitProvenanceForUpload, readProvenanceSidecar } from '../../lib/provenance-sidecar.js'
+import { trimPlatformRates } from './insights.js'
 import { renderCreative as runLocalRender, renderViaApi } from '../../lib/creative-render.js'
 import { needsLocalRender } from '../../lib/creative-local-render.js'
 import type { DraftCheck } from '../../lib/creative-render.js'
@@ -46,6 +47,7 @@ function round4(n: unknown): number | null | undefined {
 
 /** The fields worth an agent's context for one variant's performance — a subset of CreativePerformanceEntry. */
 function trimPerformanceEntry(entry: Record<string, unknown>): Record<string, unknown> {
+  const rates = trimPlatformRates(entry['byPlatform'])
   return {
     creativeId: entry['creativeId'],
     label: entry['label'],
@@ -67,6 +69,7 @@ function trimPerformanceEntry(entry: Record<string, unknown>): Record<string, un
     holdRate: round4(entry['holdRate']),
     medianHookLift: round4(entry['medianHookLift']),
     hookVerdict: entry['hookVerdict'],
+    ...(rates.length ? { byPlatform: rates } : {}),
   }
 }
 

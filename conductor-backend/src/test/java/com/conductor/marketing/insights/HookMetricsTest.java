@@ -76,7 +76,7 @@ class HookMetricsTest {
     @Test
     void tiktokNeverReportsEither() {
         assertThat(HookMetrics.of("tiktok", json(
-                "{\"reels_skip_rate\":0.3,\"opening_hold\":0.9,\"avg_view_pct\":50,\"video_duration_s\":10}")))
+                "{\"reels_skip_rate\":30,\"opening_hold\":0.9,\"avg_view_pct\":50,\"video_duration_s\":10}")))
                 .isEqualTo(HookMetrics.Rates.NONE);
     }
 }

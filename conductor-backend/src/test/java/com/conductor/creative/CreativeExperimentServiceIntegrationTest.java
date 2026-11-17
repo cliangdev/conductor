@@ -191,6 +191,9 @@ class CreativeExperimentServiceIntegrationTest extends AbstractNoneWebIntegratio
 
         assertThat(decided.getWinnerCreativeId()).isEqualTo(a.getId());
         assertThat(decided.getSummary().get("comparisonMetric").asText()).isEqualTo("views");
+        // No platform every variant reports a hook rate on: no deciding hookRate, never INCONCLUSIVE for it.
+        assertThat(decided.getState()).isEqualTo(CreativeExperiment.STATE_DECIDED);
+        assertThat(decided.getSummary().get("variants").get(0).has("hookRate")).isFalse();
     }
 
     @Test

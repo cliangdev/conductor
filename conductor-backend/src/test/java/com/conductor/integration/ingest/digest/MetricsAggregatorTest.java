@@ -146,4 +146,47 @@ class MetricsAggregatorTest {
                 .extracting(DimensionRow::id)
                 .containsExactly("b", "c", "a");
     }
+
+    private MetricsSnapshot aggregateDimension(DimensionSpec dim, List<Map<String, Object>> rows) {
+        Map<String, Object> payload = Map.of("trend", List.of(), "dim", rows);
+        DigestSpec digest = new DigestSpec("trend", "date", List.of(), List.of(dim), "marketing/x.md", null);
+        IngestSpec spec = new IngestSpec("weekly", "label", "desc", IngestMode.SNAPSHOT, "search_analytics",
+                "metrics.digest.{connector}.{ingest}", null, null, null, null, digest);
+        return aggregator.aggregate(payload, spec, null);
+    }
+
+    @Test
+    void sourceOrderDimensionSkipsRowsWithoutAValue() {
+        java.util.HashMap<String, Object> noValue = new java.util.HashMap<>();
+        noValue.put("id", "hook-only");
+        noValue.put("v", null);
+        DimensionSpec dim = new DimensionSpec("dim", "d", "id", "v", 8, 8, null, null, null, true);
+
+        MetricsSnapshot snapshot = aggregateDimension(dim,
+                List.of(Map.of("id", "a", "v", 0.5), noValue, Map.of("id", "c", "v", 0.0)));
+
+        assertThat(snapshot.dimensionRows().get("dim")).extracting(DimensionRow::id).containsExactly("a", "c");
+    }
+
+    @Test
+    void otherDimensionsStillReadAMissingValueAsZero() {
+        java.util.HashMap<String, Object> noValue = new java.util.HashMap<>();
+        noValue.put("id", "none");
+        noValue.put("v", null);
+        DimensionSpec dim = new DimensionSpec("dim", "d", "id", "v", 8, 8, null, null, null);
+
+        MetricsSnapshot snapshot = aggregateDimension(dim, List.of(noValue, Map.of("id", "a", "v", 3.0)));
+
+        assertThat(snapshot.dimensionRows().get("dim")).extracting(DimensionRow::id).containsExactly("a", "none");
+    }
+
+    @Test
+    void sourceOrderDimensionKeepsTheConnectorsRanking() {
+        DimensionSpec dim = new DimensionSpec("dim", "d", "id", "v", 8, 8, null, null, null, true);
+
+        MetricsSnapshot snapshot = aggregateDimension(dim,
+                List.of(Map.of("id", "first", "v", 1.1), Map.of("id", "second", "v", 2.5)));
+
+        assertThat(snapshot.dimensionRows().get("dim")).extracting(DimensionRow::id).containsExactly("first", "second");
+    }
 }
