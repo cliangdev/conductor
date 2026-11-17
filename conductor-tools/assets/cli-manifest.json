@@ -93,6 +93,12 @@
       ]
     },
     {
+      "name": "upgrade",
+      "syntax": "conductor upgrade",
+      "description": "Update the Conductor CLI to the latest version (npm i -g @cliangdev/conductor@latest). Restart Claude Code afterwards; installed Claude commands refresh when the MCP server starts.",
+      "category": "project"
+    },
+    {
       "name": "lint",
       "syntax": "conductor lint [issueId]",
       "description": "Lint local Conductor PRD and tasks.json artifacts against the current schema. Useful for catching format errors before pushing.",

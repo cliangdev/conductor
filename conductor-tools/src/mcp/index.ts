@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { ListToolsRequestSchema, CallToolRequestSchema, type CallToolRequest, type ServerRequest, type ServerNotification } from '@modelcontextprotocol/sdk/types.js'
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js'
 import { getConfig, resolveProject } from './config.js'
 import { ApiError } from './api.js'
-import { refreshInstalledPluginAssets } from '../lib/plugin-assets.js'
+import { refreshInstalledPluginAssets, getPackageVersion } from '../lib/plugin-assets.js'
+import { startUpdateNotifier, withUpdateNotice } from '../lib/update-check.js'
 import {
   createWorkItem,
   updateWorkItem,
@@ -2405,6 +2407,9 @@ function errorResponse(error: string | { error: string; status?: number; code?: 
 export async function runMcpServer(): Promise<void> {
   refreshInstalledPluginAssets({ log: (message) => process.stderr.write(`${message}\n`) })
 
+  // Background only: never awaited, never touches stdout; a failed check is silent.
+  const updateNotifier = startUpdateNotifier(getPackageVersion())
+
   const server = new Server(
     { name: 'conductor-mcp', version: '0.1.0' },
     { capabilities: { tools: {} } }
@@ -2414,7 +2419,12 @@ export async function runMcpServer(): Promise<void> {
     return { tools: TOOLS }
   })
 
-  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+  // The notice rides on the first successful result after the background check resolved (see withUpdateNotice).
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) =>
+    withUpdateNotice(await handleCallTool(request, extra), updateNotifier)
+  )
+
+  const handleCallTool = async (request: CallToolRequest, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
     let config
     try {
       config = getConfig()
@@ -3770,7 +3780,7 @@ export async function runMcpServer(): Promise<void> {
       const message = err instanceof Error ? err.message : String(err)
       return errorResponse(message)
     }
-  })
+  }
 
   // The OCR worker (safe-zone checks) stays warm for the session and is stopped when the client disconnects,
   // so the process can exit.
