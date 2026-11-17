@@ -211,9 +211,9 @@ Preview deploys share the production database, so the move is in steps:
 
 1. **Expand** (`V204`): `comments` / `comment_replies` become nullable where needed and gain the project-doc and agent columns; the old release keeps working (it always fills the columns that became nullable and never sees project-doc rows).
 2. **Copy** (`V205`): every `doc_comments` / `doc_comment_replies` row is copied under the same id, and triggers mirror later writes to the legacy tables into the unified ones, one direction only: an INSERT creates the unified row if it is absent, an UPDATE changes only the columns it changed on an existing row (it never inserts), a DELETE deletes. A late write by the previous release therefore cannot reopen a thread resolved here or bring back a row deleted here. Code in this release writes `comments` only, so nothing is written twice. Limitation: the previous release does not read what this release writes for project docs.
-3. **Contract** (later migration): drop the triggers and the legacy tables `doc_comments` / `doc_comment_replies`, and remove the v1 project-doc comment paths, the old Work Item comment routes, and the `DocComment*` classes.
+3. **Contract** (`V209`): carries over any legacy row written after V205 that has no unified twin (rows older than V205 without a twin were deleted by the new code and stay deleted), then drops the mirror triggers, their functions and the tables `doc_comments` / `doc_comment_replies`. The `DocComment` entities and repositories are gone.
 
-`doc_comments` is legacy: do not write to it.
+The v1 project-doc comment paths and the old Work Item comment routes stay as shims over `CommentService` (`DocCommentService` is the v1 facade): CLIs older than 0.60 still call them. They can go once a minimum-CLI-version mechanism exists.
 
 ## Agent tools (MCP)
 

@@ -12,8 +12,8 @@ import com.conductor.creative.CreativeRepository;
 import com.conductor.creative.CreativeService;
 import com.conductor.creative.BrandKitService;
 import com.conductor.entity.Asset;
-import com.conductor.entity.DocComment;
-import com.conductor.entity.DocCommentReply;
+import com.conductor.entity.Comment;
+import com.conductor.entity.CommentReply;
 import com.conductor.entity.DocVersion;
 import com.conductor.entity.Document;
 import com.conductor.entity.MemberRole;
@@ -28,8 +28,8 @@ import com.conductor.knowledge.page.KnowledgePageRevision;
 import com.conductor.knowledge.page.KnowledgePageRevisionRepository;
 import com.conductor.knowledge.page.KnowledgePageService;
 import com.conductor.repository.AssetRepository;
-import com.conductor.repository.DocCommentReplyRepository;
-import com.conductor.repository.DocCommentRepository;
+import com.conductor.repository.CommentReplyRepository;
+import com.conductor.repository.CommentRepository;
 import com.conductor.repository.DocVersionRepository;
 import com.conductor.repository.DocumentRepository;
 import com.conductor.repository.ProjectDocRepository;
@@ -82,8 +82,8 @@ class ContentListQueryCountTest extends AbstractNoneWebIntegrationTest {
     @Autowired private ProjectDocService projectDocService;
     @Autowired private DocVersionRepository docVersionRepository;
     @Autowired private DocVersionService docVersionService;
-    @Autowired private DocCommentRepository docCommentRepository;
-    @Autowired private DocCommentReplyRepository docCommentReplyRepository;
+    @Autowired private CommentRepository commentRepository;
+    @Autowired private CommentReplyRepository commentReplyRepository;
     @Autowired private DocCommentService docCommentService;
     @Autowired private KnowledgePageRepository pageRepository;
     @Autowired private KnowledgePageRevisionRepository revisionRepository;
@@ -277,17 +277,18 @@ class ContentListQueryCountTest extends AbstractNoneWebIntegrationTest {
 
     private void addComments(ProjectDoc doc, User author, int n) {
         for (int i = 0; i < n; i++) {
-            DocComment c = new DocComment();
-            c.setDoc(doc);
+            Comment c = new Comment();
+            c.setProjectDoc(doc);
             c.setAuthor(author);
             c.setContent("comment " + i);
-            c = docCommentRepository.save(c);
+            c.setQuotedText("");
+            c = commentRepository.save(c);
             for (int r = 0; r < 2; r++) {
-                DocCommentReply reply = new DocCommentReply();
+                CommentReply reply = new CommentReply();
                 reply.setComment(c);
                 reply.setAuthor(author);
                 reply.setContent("reply " + r);
-                docCommentReplyRepository.save(reply);
+                commentReplyRepository.save(reply);
             }
         }
     }

@@ -118,7 +118,7 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 `work_items` → `documents` (GCP-backed, signed URLs); status/type are Workflow-defined strings, not enums  
 `work_items.parent_work_item_id` (PRD → `TASK` children, recursive) + `work_item_dependencies` (BLOCKS/DISCOVERED_FROM), `work_item_criteria`, `work_item_agent_sessions`, `milestones`; blocked/ready/stale/progress are derived on read — see [`docs/prd-tracking.md`](docs/prd-tracking.md)  
 `work_item_reviewers` → `reviews` (APPROVED/CHANGES_REQUESTED/COMMENTED)  
-`comments` + `comment_replies` (quote, line or whole-document anchors; one table for Work Item documents and project docs, written by people and agents — `doc_comments` is legacy), see [`docs/comments.md`](docs/comments.md)  
+`comments` + `comment_replies` (quote, line or whole-document anchors; one table for Work Item documents and project docs, written by people and agents), see [`docs/comments.md`](docs/comments.md)  
 `comment_agent_requests` (an `@agent` mention asking an addressable agent to revise the document; status derived from its workflow run), see [`docs/comments.md`](docs/comments.md#agent-in-a-thread)  
 `project_settings` (Discord webhook URL)  
 `invites`, `api_keys`  
