@@ -227,6 +227,11 @@ public class StepSchemaRegistry {
                         new StepFieldSchema("timeout_minutes", INTEGER, false,
                                 "Wall-clock timeout; only enforced by the claude-code runtime (the api "
                                         + "runtime is bounded by maxToolTurns instead).", "1-120"),
+                        new StepFieldSchema("grant_tools", ARRAY, false,
+                                "List of namespaced tool ids (e.g. comment:list_comments) this one run may use "
+                                        + "on top of the agent's own tools; the agent's saved tool list is not "
+                                        + "changed. Each id must be a tool the project can use.",
+                                "entries must be source:name ids; an id the project cannot use fails the step"),
                         new StepFieldSchema("credentials", ARRAY, false,
                                 "List of {connector, as} entries minting a runtime credential — claude-code "
                                         + "runtime only; fails the step on the api runtime.",

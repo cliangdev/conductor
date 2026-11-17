@@ -155,7 +155,7 @@ const MEMBERS = [
 ]
 const TRANSITIONS = [{ toStatus: 'DONE', label: 'Approve & Close', requiresReview: true }]
 
-const apiPost = vi.fn(async (url: string, body: Record<string, unknown>, _token?: string) => {
+const apiPost = vi.fn(async (url: string, body: Record<string, unknown>, _token?: string): Promise<unknown> => {
   if (url.includes('/reviewers')) {
     REVIEWERS = [...REVIEWERS, { userId: body.userId as string, name: 'Rita Reviewer', email: 'rita@x.com' }]
   } else if (url.includes('/reviews')) {
@@ -173,19 +173,18 @@ const apiPost = vi.fn(async (url: string, body: Record<string, unknown>, _token?
       },
     ]
   } else if (url.includes('/comments')) {
-    COMMENTS = [
-      ...COMMENTS,
-      {
-        id: `posted-${COMMENTS.length}`,
-        documentId: body.documentId as string,
-        authorId: 'user-1',
-        authorName: 'Ada Admin',
-        content: body.content as string,
-        lineNumber: body.lineNumber as number,
-        createdAt: new Date().toISOString(),
-        replies: [],
-      },
-    ]
+    const created: MockComment = {
+      id: `posted-${COMMENTS.length}`,
+      documentId: (body.target as { documentId: string }).documentId,
+      authorId: 'user-1',
+      authorName: 'Ada Admin',
+      content: body.content as string,
+      lineNumber: body.lineNumber as number,
+      createdAt: new Date().toISOString(),
+      replies: [],
+    }
+    COMMENTS = [...COMMENTS, created]
+    return created
   }
   return undefined
 })
@@ -235,7 +234,11 @@ vi.mock('@/lib/api', () => ({
     if (url.endsWith('/content-changes')) return Promise.resolve({ changes: CONTENT_CHANGES })
     if (url.endsWith('/marketing/creatives/cr-1')) return SLIDESHOW_CREATIVE ? Promise.resolve(SLIDESHOW_CREATIVE) : Promise.reject(new Error('no creative'))
     if (url.includes('/documents')) return Promise.resolve(DOCS)
-    if (url.includes('/comments')) return Promise.resolve(COMMENTS)
+    if (url.includes('/comments')) {
+      // The unified resource lists one document's comments; the older Work Item route lists them all.
+      const doc = url.match(/documentId=([^&]+)/)
+      return Promise.resolve(doc ? COMMENTS.filter((c) => c.documentId === decodeURIComponent(doc[1])) : COMMENTS)
+    }
     if (url.includes('/reviewers')) return Promise.resolve(REVIEWERS)
     if (url.includes('/reviews')) return failReviews ? Promise.reject(new Error('reviews down')) : Promise.resolve(REVIEWS)
     if (url.includes('/assets')) return Promise.resolve(ASSETS)
@@ -292,6 +295,18 @@ function resetFixtures() {
   }
   localStorage.clear()
   invalidateMembersCache('proj-1')
+}
+
+/** Selects `text` in the rendered document and drafts (in review mode) or posts a comment on it. */
+async function draftOnText(text: string, comment: string) {
+  const md = screen.getByTestId('markdown')
+  const node = md.firstChild as Text
+  const start = node.data.indexOf(text)
+  window.getSelection()!.setBaseAndExtent(node, start, node, start + text.length)
+  fireEvent.mouseUp(md)
+  fireEvent.click(await screen.findByRole('button', { name: 'Comment on selection' }))
+  await userEvent.type(screen.getByPlaceholderText(/add a comment/i), comment)
+  await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
 }
 
 async function renderView() {
@@ -539,10 +554,38 @@ describe('WorkItemDetailView', () => {
     })
   })
 
+  it('posts a selection comment to the unified resource and refreshes the document tab count', async () => {
+    DOCS = [
+      { id: 'doc-1', filename: 'prd.md', contentType: 'text/markdown', content: 'line one\nline two', contentHash: 'h1' },
+      { id: 'doc-2', filename: 'design.md', contentType: 'text/markdown', content: 'design content' },
+    ]
+    await renderView()
+    expect(screen.getByRole('tab', { name: /^prd\.md$/i })).toBeInTheDocument()
+
+    await draftOnText('line one', 'first thoughts')
+
+    await waitFor(() =>
+      expect(apiPost).toHaveBeenCalledWith(
+        '/api/v2/projects/proj-1/comments',
+        expect.objectContaining({
+          target: { workItemId: 'wi-1', documentId: 'doc-1' },
+          content: 'first thoughts',
+          anchor: expect.objectContaining({ exact: 'line one' }),
+          documentHash: 'h1',
+        }),
+        'token'
+      )
+    )
+    expect(await screen.findByRole('tab', { name: /prd\.md, 1 unresolved comment/i })).toBeInTheDocument()
+  })
+
   it('renders the comment popover within the document container, not viewport-fixed', async () => {
     await renderView()
-    const gutter = screen.getByLabelText('comment gutter')
-    fireEvent.click(gutter.querySelectorAll('button')[0])
+    const md = screen.getByTestId('markdown')
+    const node = md.firstChild as Text
+    window.getSelection()!.setBaseAndExtent(node, 0, node, 8)
+    fireEvent.mouseUp(md)
+    fireEvent.click(await screen.findByRole('button', { name: 'Comment on selection' }))
 
     const popover = await screen.findByTestId('comment-popover')
     expect(popover.className).toContain('absolute')
@@ -603,10 +646,7 @@ describe('WorkItemDetailView', () => {
       expect(bar.getByText(/reviewing — 0 pending comments/i)).toBeInTheDocument()
 
       // Draft a comment on line 1 — held client-side, not posted.
-      const gutter = screen.getByLabelText('comment gutter')
-      fireEvent.click(gutter.querySelectorAll('button')[0])
-      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'please fix this')
-      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
+      await draftOnText('line one', 'please fix this')
 
       expect(apiPost).not.toHaveBeenCalledWith(expect.stringContaining('/comments'), expect.anything(), expect.anything())
       expect(within(screen.getByTestId('review-bar')).getByText(/reviewing — 1 pending comment/i)).toBeInTheDocument()
@@ -617,7 +657,11 @@ describe('WorkItemDetailView', () => {
       await waitFor(() => {
         expect(apiPost).toHaveBeenCalledWith(
           expect.stringContaining('/comments'),
-          expect.objectContaining({ documentId: 'doc-1', lineNumber: 1, content: 'please fix this' }),
+          expect.objectContaining({
+            target: { workItemId: 'wi-1', documentId: 'doc-1' },
+            content: 'please fix this',
+            anchor: expect.objectContaining({ exact: 'line one' }),
+          }),
           'token'
         )
       })
@@ -639,10 +683,7 @@ describe('WorkItemDetailView', () => {
     it('persists the in-progress review draft across a remount', async () => {
       const { unmount } = await renderView()
       await userEvent.click(screen.getByRole('button', { name: /start review/i }))
-      const gutter = screen.getByLabelText('comment gutter')
-      fireEvent.click(gutter.querySelectorAll('button')[0])
-      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'draft across remount')
-      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
+      await draftOnText('line one', 'draft across remount')
       expect(within(screen.getByTestId('review-bar')).getByText(/1 pending comment/i)).toBeInTheDocument()
 
       unmount()
@@ -655,10 +696,7 @@ describe('WorkItemDetailView', () => {
     it('cancel discards pending comments after a confirm when any are drafted', async () => {
       await renderView()
       await userEvent.click(screen.getByRole('button', { name: /start review/i }))
-      const gutter = screen.getByLabelText('comment gutter')
-      fireEvent.click(gutter.querySelectorAll('button')[0])
-      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'about to discard')
-      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
+      await draftOnText('line one', 'about to discard')
 
       await userEvent.click(within(screen.getByTestId('review-bar')).getByRole('button', { name: 'Cancel' }))
       const modal = within(await screen.findByTestId('modal'))
@@ -679,10 +717,7 @@ describe('WorkItemDetailView', () => {
     it('scopes the persisted draft key to the signed-in user', async () => {
       await renderView()
       await userEvent.click(screen.getByRole('button', { name: /start review/i }))
-      const gutter = screen.getByLabelText('comment gutter')
-      fireEvent.click(gutter.querySelectorAll('button')[0])
-      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'scoped draft')
-      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
+      await draftOnText('line one', 'scoped draft')
 
       const raw = localStorage.getItem('wi_review_wi-1_user-1')
       expect(raw).not.toBeNull()
@@ -739,19 +774,21 @@ describe('WorkItemDetailView', () => {
     })
 
     it('drops stale drafts at submit time too, without blocking the ones that are still valid', async () => {
-      // Three lines up front so line 3 is a valid draft target.
+      // Two older line drafts restored from storage (new drafts are quote drafts); line 3 is valid now.
       DOCS = [{ id: 'doc-1', filename: 'prd.md', contentType: 'text/markdown', content: 'line one\nline two\nline three' }]
+      localStorage.setItem(
+        'wi_review_wi-1_user-1',
+        JSON.stringify({
+          version: 1,
+          active: true,
+          pending: [
+            { localId: 'p1', documentId: 'doc-1', lineNumber: 1, content: 'valid draft' },
+            { localId: 'p2', documentId: 'doc-1', lineNumber: 3, content: 'about to go stale' },
+          ],
+        })
+      )
       await renderView()
-      await userEvent.click(screen.getByRole('button', { name: /start review/i }))
-      const gutter = screen.getByLabelText('comment gutter')
-
-      fireEvent.click(gutter.querySelectorAll('button')[0]) // line 1 — stays valid
-      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'valid draft')
-      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
-
-      fireEvent.click(gutter.querySelectorAll('button')[2]) // line 3 — will go stale below
-      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'about to go stale')
-      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
+      await screen.findByTestId('review-bar')
 
       // The doc shrinks to one line before submit — the already-fetched `documents` state holds this
       // exact object, so mutating it in place (as a real edit-out-from-under-the-draft would look,
@@ -783,10 +820,7 @@ describe('WorkItemDetailView', () => {
     it('clears succeeded comments from pending even when the verdict POST fails, so a retry cannot double-post', async () => {
       await renderView()
       await userEvent.click(screen.getByRole('button', { name: /start review/i }))
-      const gutter = screen.getByLabelText('comment gutter')
-      fireEvent.click(gutter.querySelectorAll('button')[0])
-      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'about to succeed')
-      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
+      await draftOnText('line one', 'about to succeed')
 
       const originalPost = apiPost.getMockImplementation()!
       apiPost.mockImplementation(async (url: string, body: Record<string, unknown>, token?: string) => {
@@ -825,13 +859,11 @@ describe('WorkItemDetailView', () => {
     it('reopens a pending comment with its existing text instead of blank', async () => {
       await renderView()
       await userEvent.click(screen.getByRole('button', { name: /start review/i }))
-      const gutter = screen.getByLabelText('comment gutter')
-      fireEvent.click(gutter.querySelectorAll('button')[0])
-      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'edit me later')
-      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
+      await draftOnText('line one', 'edit me later')
 
-      fireEvent.click(gutter.querySelectorAll('button')[0])
-      await userEvent.click(await screen.findByLabelText('Edit pending comment'))
+      const card = document.querySelector('[data-comment-id^="draft:"]') as HTMLElement
+      fireEvent.pointerDown(within(card).getByRole('button', { name: 'More actions' }), { button: 0, ctrlKey: false })
+      await userEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }))
 
       expect(screen.getByDisplayValue('edit me later')).toBeInTheDocument()
     })
@@ -1097,8 +1129,8 @@ describe('HTML documents', () => {
       await userEvent.click(bar.getByRole('button', { name: 'Approve' }))
       await waitFor(() => {
         expect(apiPost).toHaveBeenCalledWith(
-          '/api/v2/projects/proj-1/work-items/wi-1/comments',
-          { documentId: 'doc-1', content: 'anchored draft', anchor: ANCHOR },
+          '/api/v2/projects/proj-1/comments',
+          { target: { workItemId: 'wi-1', documentId: 'doc-1' }, content: 'anchored draft', anchor: ANCHOR },
           'token'
         )
       })
@@ -1152,31 +1184,39 @@ describe('HTML documents', () => {
       await waitFor(() => {
         expect(apiPost).toHaveBeenCalledWith(
           expect.stringContaining('/comments'),
-          { documentId: 'doc-1', content: 'old draft', anchor: ANCHOR, documentHash: 'hash-old' },
+          {
+            target: { workItemId: 'wi-1', documentId: 'doc-1' },
+            content: 'old draft',
+            anchor: ANCHOR,
+            documentHash: 'hash-old',
+          },
           'token'
         )
       })
     })
 
-    it('stamps a markdown line draft with the displayed version and sends it on submit', async () => {
+    it('stamps a markdown quote draft with the displayed version and sends it on submit', async () => {
       DOCS = [
         { id: 'doc-1', filename: 'prd.md', contentType: 'text/markdown', content: 'line one\nline two', contentHash: 'md-hash' },
       ]
       await renderView()
       await userEvent.click(screen.getByRole('button', { name: /start review/i }))
-      fireEvent.click(screen.getByLabelText('comment gutter').querySelectorAll('button')[0])
-      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'line draft')
-      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
+      await draftOnText('line one', 'line draft')
 
       expect(JSON.parse(localStorage.getItem('wi_review_wi-1_user-1')!).pending[0]).toMatchObject({
-        lineNumber: 1,
+        anchor: { exact: 'line one' },
         documentHash: 'md-hash',
       })
       await userEvent.click(within(screen.getByTestId('review-bar')).getByRole('button', { name: 'Approve' }))
       await waitFor(() => {
         expect(apiPost).toHaveBeenCalledWith(
           expect.stringContaining('/comments'),
-          { documentId: 'doc-1', content: 'line draft', lineNumber: 1, documentHash: 'md-hash' },
+          expect.objectContaining({
+            target: { workItemId: 'wi-1', documentId: 'doc-1' },
+            content: 'line draft',
+            anchor: expect.objectContaining({ exact: 'line one' }),
+            documentHash: 'md-hash',
+          }),
           'token'
         )
       })
@@ -1186,9 +1226,7 @@ describe('HTML documents', () => {
       DOCS = [{ id: 'doc-1', filename: 'prd.md', contentType: 'text/markdown', content: 'line one', contentHash: null }]
       await renderView()
       await userEvent.click(screen.getByRole('button', { name: /start review/i }))
-      fireEvent.click(screen.getByLabelText('comment gutter').querySelectorAll('button')[0])
-      await userEvent.type(screen.getByPlaceholderText(/add a comment/i), 'no hash')
-      await userEvent.click(within(await screen.findByTestId('comment-popover')).getByRole('button', { name: 'Comment' }))
+      await draftOnText('line one', 'no hash')
       await userEvent.click(within(screen.getByTestId('review-bar')).getByRole('button', { name: 'Approve' }))
       await waitFor(() => expect(apiPost).toHaveBeenCalledWith(expect.stringContaining('/comments'), expect.anything(), 'token'))
       const body = apiPost.mock.calls.find((c) => (c[0] as string).includes('/comments'))![1]

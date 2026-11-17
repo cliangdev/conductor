@@ -59,8 +59,12 @@ public class ApiAgentStepRuntime implements AgentStepRuntime {
             // The agent module resolves the agent by slug-then-id internally (single load, possibly a
             // second lookup after AgentStepExecutor's resolveDefinition — see AgentExecutionService.run's
             // javadoc); the workflow package depends only on the runner facade, not on agent persistence.
-            AgentRunResult result = agentExecutionService.run(
-                    projectId, agentRef, call.task(), call.agentContext(), call.outputSchema());
+            AgentRunResult result = call.grantTools() == null || call.grantTools().isEmpty()
+                    ? agentExecutionService.run(
+                            projectId, agentRef, call.task(), call.agentContext(), call.outputSchema())
+                    : agentExecutionService.run(
+                            projectId, agentRef, call.task(), call.agentContext(), call.outputSchema(),
+                            new java.util.LinkedHashSet<>(call.grantTools()));
 
             String text = result.outputText() == null ? "" : result.outputText();
             Map<String, Object> structured = result.structuredJson();

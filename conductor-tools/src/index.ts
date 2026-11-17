@@ -16,6 +16,8 @@ import { registerDashboard } from './commands/dashboard.js'
 import { registerStatus } from './commands/status.js'
 import { registerLint } from './commands/lint.js'
 import { registerCreative } from './commands/creative.js'
+import { registerUpgrade } from './commands/upgrade.js'
+import { registerUpdateNotice } from './lib/update-notice-hook.js'
 
 const program = new Command()
 
@@ -36,5 +38,7 @@ registerDashboard(program)
 registerStatus(program)
 registerLint(program)
 registerCreative(program)
+registerUpgrade(program)
+registerUpdateNotice(program, version)
 
 program.parse()

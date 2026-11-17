@@ -47,7 +47,7 @@ A bridge script is added to the document at render time (never stored). It runs 
 
 ## Anchors and `outdated`
 
-Comments use the W3C Web Annotation TextQuoteSelector model. An HTML comment must carry `anchor`; a markdown comment must carry `lineNumber`; the server returns 400 otherwise. Anchored comments return `lineNumber: 0`, so clients use `anchor != null` to tell them apart.
+The unified comments resource (`/api/v2/projects/{p}/comments`, see [comments.md](comments.md)) also accepts an anchor on markdown documents and whole-document comments on both; the rules below are those of the older Work Item route, which is kept. Comments use the W3C Web Annotation TextQuoteSelector model. An HTML comment must carry `anchor`; a markdown comment must carry `lineNumber`; the server returns 400 otherwise. Anchored comments return `lineNumber: 0`, so clients use `anchor != null` to tell them apart.
 
 ```
 anchor: { exact, prefix?, suffix?, sectionId?, sectionTitle? } | null
@@ -55,11 +55,12 @@ outdated: boolean
 ```
 
 - `exact` is the selected text; `prefix`/`suffix` are about 32 characters either side, used to pick the right match when the quote repeats. `sectionId`/`sectionTitle` name the nearest ancestor with an `id` and its heading. `quotedText` equals `anchor.exact`.
-- **Text model.** The bridge flattens visible text nodes (skipping `script`, `style`, `noscript` and hidden elements), collapses whitespace and inserts a virtual space at block-element boundaries. `exact` therefore reads like rendered text (for example "Goals Ship it") and may not match the HTML source byte for byte. Agents should search for it loosely (ignoring tags and whitespace) or jump to `sectionId`.
+- **Text model.** The bridge flattens visible text nodes (skipping `script`, `style`, `noscript`, hidden elements and anything inside `[data-conductor-skip]`), collapses whitespace and inserts a virtual space at block-element boundaries. `exact` therefore reads like rendered text (for example "Goals Ship it") and may not match the HTML source byte for byte. Agents should search for it loosely (ignoring tags and whitespace) or jump to `sectionId`.
+- `data-conductor-skip` marks page chrome that repeats or summarizes the document, such as a PRD's contents outline: its text is never matched, selecting it offers no comment, and clicks on it never open a highlight underneath.
 - Hidden matches are ignored; if only hidden matches exist, the comment is Unplaced. The bridge re-runs when the DOM changes, so text that scripts add after load can be anchored.
 - **Outdated.** Document responses expose `contentHash` (SHA-256 of the content). `POST /comments` takes an optional `documentHash`, the version the reviewer saw; review-mode drafts keep the hash they were written against, and old clients that omit it get the current hash. `outdated` is true when the comment's stamped hash differs from the document's current hash, and false when either is unknown (older comments).
 - Whether a quote still exists is decided by the client, because only the client can run the page. Quotes it cannot find are listed under **Unplaced** with their quoted text. If a document switches between markdown and HTML, its old line comments appear as Unplaced in the HTML viewer.
-- Agents read these through `list_work_item_comments`.
+- Agents read these through `list_comments` (and work through them with `/conductor:comments`).
 
 ## The HTML PRD contract (`prd.html`, schema v2)
 
@@ -70,6 +71,7 @@ The same content rules as the markdown PRD, expressed with attributes. `conducto
 - `glossary` and `reference-patterns` hold real entries or exactly `<p><em>None.</em></p>` (lint also accepts `_None._`).
 - Each feature is `<article id="P0-1" data-feature="P0-1">` with an `<h3>`, a `<dl>` whose `<dt>`s are What, Not, Inputs, Outputs, Invariants, and a `<ul data-acs>` of `<li data-ac="AC-P0-1.1">`. P0 features need all of them; P1 features may omit Not, Inputs, Outputs and Invariants.
 - AC ids match `^AC-P[01]-\d+\.\d+$`, are unique, and carry their feature's id (`AC-P0-3.2` only inside `P0-3`). `tasks.json` `covers_acs` is cross-checked against them.
+- Contents: `<nav class="toc" data-prd-toc data-conductor-skip>` beside `<main>` in a `<div class="shell">`, with the template's contents CSS and script, which build the outline from the section, feature and AC markers (a rail at 960px and wider, a sticky one-line bar below). The script adds no ids. Lint warns, without failing, when a `prd.html` has no `nav[data-prd-toc]`; `/conductor:prd` documents a contents upgrade for older PRDs.
 - Self-contained: inline `<style>`/`<script>`, Google Fonts, and pinned scripts only from the five CSP hosts. Lint warns on `fetch`/XHR, `window.claude`, `window.open` and scripts from other hosts. Links are plain `<a href>`: `#hash` scrolls in the frame and `http(s)` opens in a new tab through the app.
 
 ## Importing a claude.ai artifact

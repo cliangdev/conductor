@@ -118,7 +118,8 @@ A **`project` is the single top-level "Workspace"** — "Workspace" is the user-
 `work_items` → `documents` (GCP-backed, signed URLs); status/type are Workflow-defined strings, not enums  
 `work_items.parent_work_item_id` (PRD → `TASK` children, recursive) + `work_item_dependencies` (BLOCKS/DISCOVERED_FROM), `work_item_criteria`, `work_item_agent_sessions`, `milestones`; blocked/ready/stale/progress are derived on read — see [`docs/prd-tracking.md`](docs/prd-tracking.md)  
 `work_item_reviewers` → `reviews` (APPROVED/CHANGES_REQUESTED/COMMENTED)  
-`comments` + `comment_replies` (line-level or selection-based anchors)  
+`comments` + `comment_replies` (quote, line or whole-document anchors; one table for Work Item documents and project docs, written by people and agents — `doc_comments` is legacy), see [`docs/comments.md`](docs/comments.md)  
+`comment_agent_requests` (an `@agent` mention asking an addressable agent to revise the document; status derived from its workflow run), see [`docs/comments.md`](docs/comments.md#agent-in-a-thread)  
 `project_settings` (Discord webhook URL)  
 `invites`, `api_keys`  
 `workflow_definitions` → `workflow_definition_versions` (immutable published snapshots) → `workflow_runs`/`workflow_job_runs`/`workflow_step_runs`; plus `workflow_secrets`, `workflow_artifacts`, `runtime_targets` (BYO Cloud Run)  
@@ -177,6 +178,7 @@ See `scripts/gcloud-alias-example.sh` for a persistent shell alias.
 - [`docs/creatives-guide.md`](docs/creatives-guide.md) — Creatives how-to for marketers: Brand Kit setup, making artwork via Claude Code/Desktop or the web app, attaching it to a Post, hook experiments.
 - [`docs/marketing-report.md`](docs/marketing-report.md) — The one-call marketing report (`GET /marketing/report`): sections, status bands, organic-vs-paid split, keyword outcomes, change log, and the stored industry benchmarks it compares against.
 - [`docs/integrations-product-metrics.md`](docs/integrations-product-metrics.md) — The `product-metrics` connector contract (v1): what a product backend serves for the in-app channel, plus its JSON Schema.
+- [`docs/comments.md`](docs/comments.md) — Unified comments: targets, kinds (QUOTE/LINE/DOCUMENT), open/resolved, user vs agent authors, @mentions, `@agent` revising the document, `/api/v2/.../comments`, expand/contract from `doc_comments`.
 - [`docs/publishing-live-test.md`](docs/publishing-live-test.md) — Checklist for proving publishing against real Facebook, Instagram and TikTok accounts: app setup, scopes, redirect URI, test matrix, log signatures.
 - [`docs/mcp-tool-guidelines.md`](docs/mcp-tool-guidelines.md) — MCP tool design principles: context budget, action–verify pattern, dispatch–status pattern, checklist. **Read before creating or updating any MCP tool.**
 - [`docs/html-documents.md`](docs/html-documents.md) — HTML Work Item documents: sandbox + CSP and its limits, comment bridge protocol, text-quote anchors and `outdated`, the `prd.html` schema-v2 contract, claude.ai artifact import, upload.

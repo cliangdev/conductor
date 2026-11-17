@@ -4,7 +4,8 @@ import * as os from 'os'
 import { Command } from 'commander'
 import chalk from 'chalk'
 import { readConfig, CONFIG_PATH } from '../lib/config.js'
-import { getAssetSrcDir, getPluginInstallStatus } from '../lib/plugin-assets.js'
+import { getAssetSrcDir, getPluginInstallStatus, getPackageVersion } from '../lib/plugin-assets.js'
+import { checkForUpdate, UPGRADE_COMMAND, PACKAGE_NAME } from '../lib/update-check.js'
 import { checkCodexCli, type CodexStatus } from '../lib/codex-image.js'
 import { resolveImageSettings, resolveOpenAiKey } from '../lib/image-generation.js'
 import { resolveGeminiKey } from '../lib/gemini-omni.js'
@@ -94,6 +95,20 @@ export async function checkVideoGeneration(): Promise<{ status: 'pass' | 'warn';
   return { status: 'pass', message: `Video generation: Gemini Omni, key set (from ${source}); ${spend}` }
 }
 
+/** Fresh registry lookup (bypasses the 24h cache). Unreachable registry is a neutral skip, never a failure. */
+export async function checkCliVersion(): Promise<{ status: 'pass' | 'warn' | 'skip'; message: string }> {
+  const current = getPackageVersion()
+  const result = await checkForUpdate(current, { force: true, ignoreDisabled: true })
+  if (!result) return { status: 'skip', message: `CLI version ${current}: could not reach the npm registry — skipped` }
+  if (result.outdated) {
+    return {
+      status: 'warn',
+      message: `CLI ${current} is outdated (${result.latest} is available) — run \`${UPGRADE_COMMAND}\` (or npm i -g ${PACKAGE_NAME}@latest && conductor init), then restart Claude Code`,
+    }
+  }
+  return { status: 'pass', message: `CLI up to date (${current})` }
+}
+
 export function registerDoctor(program: Command): void {
   program
     .command('doctor')
@@ -105,7 +120,7 @@ Examples:
   conductor doctor --json`)
     .action(async (options: { json?: boolean }) => {
       if (options.json) {
-        const checks: Array<{ name: string; status: 'pass' | 'fail' | 'warn'; message: string }> = []
+        const checks: Array<{ name: string; status: 'pass' | 'fail' | 'warn' | 'skip'; message: string }> = []
 
         const configExists = checkConfigFile()
         checks.push({
@@ -151,6 +166,9 @@ Examples:
         if (location !== 'none' && outdated) {
           checks.push({ name: 'plugin-version', status: 'warn', message: 'Claude plugin outdated — re-run conductor init to update' })
         }
+
+        const cli = await checkCliVersion()
+        checks.push({ name: 'cli-version', status: cli.status, message: cli.message })
 
         const images = await checkImageGeneration()
         checks.push({ name: 'image-generation', status: images.status, message: images.message })
@@ -204,6 +222,16 @@ Examples:
 
       if (location !== 'none' && outdated) {
         console.log(`${chalk.yellow('⚠')} Claude plugin outdated — re-run conductor init to update`)
+        warnings++
+      }
+
+      const cli = await checkCliVersion()
+      if (cli.status === 'pass') {
+        console.log(`${chalk.green('✓')} ${cli.message}`)
+      } else if (cli.status === 'skip') {
+        console.log(`${chalk.dim('-')} ${cli.message}`)
+      } else {
+        console.log(`${chalk.yellow('⚠')} ${cli.message}`)
         warnings++
       }
 

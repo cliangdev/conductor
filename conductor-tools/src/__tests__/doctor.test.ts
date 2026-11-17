@@ -15,6 +15,14 @@ const mockGetAssetSrcDir = vi.fn()
 vi.mock('../lib/plugin-assets.js', () => ({
   getAssetSrcDir: mockGetAssetSrcDir,
   getPluginInstallStatus: mockGetPluginInstallStatus,
+  getPackageVersion: () => '1.0.0',
+}))
+
+const mockCheckForUpdate = vi.fn()
+vi.mock('../lib/update-check.js', () => ({
+  checkForUpdate: mockCheckForUpdate,
+  UPGRADE_COMMAND: 'conductor upgrade',
+  PACKAGE_NAME: '@cliangdev/conductor',
 }))
 
 vi.mock('../lib/next-steps.js', () => ({
@@ -36,6 +44,7 @@ describe('doctor command', () => {
     delete process.env['CONDUCTOR_IMAGE_MODEL']
     delete process.env['CONDUCTOR_IMAGE_QUALITY']
     mockCheckCodexCli.mockResolvedValue({ state: 'ready', version: 'codex-cli 0.162.1' })
+    mockCheckForUpdate.mockResolvedValue({ current: '1.0.0', latest: '1.0.0', outdated: false })
     mockGetAssetSrcDir.mockReturnValue('/mock/assets')
     mockGetPluginInstallStatus.mockReturnValue({ location: 'global', outdated: false })
   })
@@ -281,6 +290,31 @@ describe('doctor command', () => {
       expect(result).toBe(false)
 
       vi.unstubAllGlobals()
+    })
+  })
+
+  describe('checkCliVersion', () => {
+    it('passes when up to date', async () => {
+      const { checkCliVersion } = await import('../commands/doctor.js')
+      const r = await checkCliVersion()
+      expect(r.status).toBe('pass')
+    })
+
+    it('warns with the exact command when outdated', async () => {
+      mockCheckForUpdate.mockResolvedValue({ current: '1.0.0', latest: '1.2.0', outdated: true })
+      const { checkCliVersion } = await import('../commands/doctor.js')
+      const r = await checkCliVersion()
+      expect(r.status).toBe('warn')
+      expect(r.message).toContain('conductor upgrade')
+      expect(r.message).toContain('1.2.0')
+      expect(mockCheckForUpdate).toHaveBeenCalledWith('1.0.0', { force: true, ignoreDisabled: true })
+    })
+
+    it('skips (neutral) when the registry is unreachable', async () => {
+      mockCheckForUpdate.mockResolvedValue(null)
+      const { checkCliVersion } = await import('../commands/doctor.js')
+      const r = await checkCliVersion()
+      expect(r.status).toBe('skip')
     })
   })
 })

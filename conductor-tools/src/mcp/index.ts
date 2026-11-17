@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { ListToolsRequestSchema, CallToolRequestSchema, type CallToolRequest, type ServerRequest, type ServerNotification } from '@modelcontextprotocol/sdk/types.js'
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js'
 import { getConfig, resolveProject } from './config.js'
 import { ApiError } from './api.js'
-import { refreshInstalledPluginAssets } from '../lib/plugin-assets.js'
+import { refreshInstalledPluginAssets, getPackageVersion } from '../lib/plugin-assets.js'
+import { startUpdateNotifier, withUpdateNotice } from '../lib/update-check.js'
 import {
   createWorkItem,
   updateWorkItem,
@@ -25,7 +27,7 @@ import {
   draftHealthUpdate,
 } from './tools/delivery.js'
 import { deleteDocument, scaffoldDocument, writeDocument } from './tools/documents.js'
-import { listWorkItemComments } from './tools/comments.js'
+import { listComments, addComment, respondToComment, readDocument } from './tools/comments.js'
 import {
   listWorkflows,
   getAvailableTransitions,
@@ -162,9 +164,6 @@ import {
   moveProjectDoc,
   deleteProjectDoc,
   setProjectDocTask,
-  listProjectDocComments,
-  commentOnProjectDoc,
-  respondToProjectDocComment,
   listProjectDocVersions,
   restoreProjectDocVersion,
   uploadProjectDocImage,
@@ -535,18 +534,59 @@ export const TOOLS = [
     },
   },
   {
-    name: 'list_work_item_comments',
-    description: 'List comments on a Work Item, optionally filtered by resolved status. Canonical tool. Comments on HTML documents carry anchor (quoted rendered text plus section id/title) and outdated (document changed since). The quote is rendered text, not source: search the HTML loosely (ignore tags and whitespace) or use sectionId.',
+    name: 'list_comments',
+    description: 'List comment threads on one document: a Work Item document (issueId, optionally filename — omit it for every document of the item) or a project doc (docId). Open threads by default. Each thread has id, kind (QUOTE, LINE or DOCUMENT), the quote or line it is on, anchorStatus when set, author, body, resolved and replies. Answer with respond_to_comment.',
     inputSchema: {
       type: 'object',
       properties: {
         issueId: { type: 'string', description: 'Work Item ID' },
-        resolved: {
-          type: 'boolean',
-          description: 'Filter by resolved status. true = resolved only, false = unresolved only, omit = all comments',
-        },
+        filename: { type: 'string', description: 'Document filename on the Work Item' },
+        docId: { type: 'string', description: 'Project doc ID (from list_project_docs) — use instead of issueId' },
+        status: { type: 'string', enum: ['open', 'resolved', 'all'], description: 'Default open' },
       },
-      required: ['issueId'],
+      required: [],
+    },
+  },
+  {
+    name: 'add_comment',
+    description: 'Start a comment thread on a document: a Work Item document (issueId + filename) or a project doc (docId). Pass quote — exact text from the document — to anchor it there; without quote the comment is on the whole document. Add suggestion (replacement text, needs quote) to propose an edit a person accepts or rejects; refused if the quote is repeated or spans formatting. Verify with list_comments.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        filename: { type: 'string', description: 'Document filename on the Work Item' },
+        docId: { type: 'string', description: 'Project doc ID — use instead of issueId' },
+        body: { type: 'string', description: 'Comment text' },
+        quote: { type: 'string', description: 'Exact text from the document to anchor to (max 2000 chars). Omit for a whole-document comment' },
+        suggestion: { type: 'string', description: 'Replacement text for quote, as a suggested edit (requires quote)' },
+      },
+      required: ['body'],
+    },
+  },
+  {
+    name: 'respond_to_comment',
+    description: 'Answer a comment thread: post a reply, resolve it, reopen it, or a reply plus one of those. Provide at least one of reply, resolve, reopen (not both resolve and reopen). Verify with list_comments.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        commentId: { type: 'string', description: 'Thread ID (from list_comments)' },
+        reply: { type: 'string', description: 'Reply text' },
+        resolve: { type: 'boolean', description: 'true to resolve the thread' },
+        reopen: { type: 'boolean', description: 'true to reopen a resolved thread' },
+      },
+      required: ['commentId'],
+    },
+  },
+  {
+    name: 'read_document',
+    description: 'Read a Work Item document\'s full text and its contentHash. Pass that hash as baseContentHash to write_document so the write is refused if someone edited the document meanwhile. For project docs use read_project_doc.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        issueId: { type: 'string', description: 'Work Item ID' },
+        filename: { type: 'string', description: 'Document filename' },
+      },
+      required: ['issueId', 'filename'],
     },
   },
   {
@@ -563,7 +603,7 @@ export const TOOLS = [
   },
   {
     name: 'write_document',
-    description: 'Create or update a Work Item document by filename with full content (upsert). Works headlessly (workflow containers) — supersedes scaffold_document+Write for new documents. Verify via the returned document response.',
+    description: 'Create or update a Work Item document by filename with full content (upsert). Works headlessly (workflow containers) — supersedes scaffold_document+Write for new documents. Pass baseContentHash (from read_document) when revising an existing document. Verify via the returned document response.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -571,6 +611,7 @@ export const TOOLS = [
         filename: { type: 'string', description: 'Document filename (e.g., prd.html, prd.md)' },
         content: { type: 'string', description: 'Full document content' },
         contentType: { type: 'string', description: 'MIME type (optional, defaults from the filename extension: .html text/html, .md text/markdown, .json application/json, else text/plain)' },
+        baseContentHash: { type: 'string', description: 'contentHash from read_document. If the document changed since, the write is refused (409) — read again and redo' },
       },
       required: ['issueId', 'filename', 'content'],
     },
@@ -1027,7 +1068,7 @@ export const TOOLS = [
   },
   {
     name: 'read_project_doc',
-    description: 'Read one project document by path ("Plans/Q3 Roadmap") or docId. Returns full Markdown content plus taskLines — every checkbox with its 1-based line number and state, which is what set_project_doc_task takes. Pass versionNumber (from list_project_doc_versions) to read an earlier version instead of the current one.',
+    description: 'Read one project document by path ("Plans/Q3 Roadmap") or docId. Returns full Markdown content, contentHash and taskLines — every checkbox with its 1-based line number and state, which is what set_project_doc_task takes. Pass versionNumber (from list_project_doc_versions) to read an earlier version instead of the current one.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1040,12 +1081,13 @@ export const TOOLS = [
   },
   {
     name: 'write_project_doc',
-    description: 'Create or replace a project document at a path, creating any missing folders (upsert). Replaces the whole document, records a version, and marks unresolved line comments stale — to tick a checkbox use set_project_doc_task instead, which does none of that. Verify with read_project_doc.',
+    description: 'Create or replace a project document at a path, creating any missing folders (upsert). Replaces the whole document, records a version, and marks unresolved line comments stale — to tick a checkbox use set_project_doc_task instead, which does none of that. Pass baseContentHash (from read_project_doc) when revising. Verify with read_project_doc.',
     inputSchema: {
       type: 'object',
       properties: {
         path: { type: 'string', description: 'Destination path, e.g. "Plans/Q3 Roadmap" — folder segments are created if missing' },
         content: { type: 'string', description: 'Full Markdown content' },
+        baseContentHash: { type: 'string', description: 'contentHash from read_project_doc. If the doc changed since, the write is refused (409) — read again and redo' },
       },
       required: ['path', 'content'],
     },
@@ -1087,49 +1129,6 @@ export const TOOLS = [
         checked: { type: 'boolean', description: 'true to check the box, false to uncheck' },
       },
       required: ['lineNumber', 'checked'],
-    },
-  },
-  {
-    name: 'list_project_doc_comments',
-    description: 'Read the comments humans left on a project document — each with its anchored lineNumber, quotedText, lineStale flag and replies. Unresolved only by default. Answer them with respond_to_project_doc_comment.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Document path' },
-        docId: { type: 'string', description: 'Document ID — use instead of path' },
-        includeResolved: { type: 'boolean', description: 'Include already-resolved threads (default false)' },
-      },
-      required: [],
-    },
-  },
-  {
-    name: 'comment_on_project_doc',
-    description: 'Leave a comment anchored to one line of a project document. lineNumber is 1-based against raw content including frontmatter. Verify with list_project_doc_comments.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Document path' },
-        docId: { type: 'string', description: 'Document ID — use instead of path' },
-        lineNumber: { type: 'number', description: '1-based line number to anchor the comment to' },
-        content: { type: 'string', description: 'Comment text' },
-        quotedText: { type: 'string', description: 'Optional snippet of the line being commented on, shown as context' },
-      },
-      required: ['lineNumber', 'content'],
-    },
-  },
-  {
-    name: 'respond_to_project_doc_comment',
-    description: 'Answer a comment thread on a project document: post a reply, mark it resolved, or both. Verify with list_project_doc_comments.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Document path' },
-        docId: { type: 'string', description: 'Document ID — use instead of path' },
-        commentId: { type: 'string', description: 'ID of the comment thread (from list_project_doc_comments)' },
-        reply: { type: 'string', description: 'Reply text to post on the thread' },
-        resolve: { type: 'boolean', description: 'true to mark the thread resolved' },
-      },
-      required: ['commentId'],
     },
   },
   {
@@ -2491,6 +2490,9 @@ function errorResponse(error: string | { error: string; status?: number; code?: 
 export async function runMcpServer(): Promise<void> {
   refreshInstalledPluginAssets({ log: (message) => process.stderr.write(`${message}\n`) })
 
+  // Background only: never awaited, never touches stdout; a failed check is silent.
+  const updateNotifier = startUpdateNotifier(getPackageVersion())
+
   const server = new Server(
     { name: 'conductor-mcp', version: '0.1.0' },
     { capabilities: { tools: {} } }
@@ -2500,7 +2502,12 @@ export async function runMcpServer(): Promise<void> {
     return { tools: TOOLS }
   })
 
-  server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+  // The notice rides on the first successful result after the background check resolved (see withUpdateNotice).
+  server.setRequestHandler(CallToolRequestSchema, async (request, extra) =>
+    withUpdateNotice(await handleCallTool(request, extra), updateNotifier)
+  )
+
+  const handleCallTool = async (request: CallToolRequest, extra: RequestHandlerExtra<ServerRequest, ServerNotification>) => {
     let config
     try {
       config = getConfig()
@@ -2817,6 +2824,7 @@ export async function runMcpServer(): Promise<void> {
               filename: params['filename'] as string,
               content: params['content'] as string,
               contentType: params['contentType'] as string | undefined,
+              baseContentHash: params['baseContentHash'] as string | undefined,
             },
             config
           )
@@ -2978,12 +2986,47 @@ export async function runMcpServer(): Promise<void> {
           )
           return successResponse(result)
         }
-        case 'list_work_item_comments': {
-          const result = await listWorkItemComments(
+        case 'list_comments': {
+          const result = await listComments(
             {
-              issueId: params['issueId'] as string,
-              resolved: params['resolved'] as boolean | undefined,
+              issueId: params['issueId'] as string | undefined,
+              filename: params['filename'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+              status: params['status'] as 'open' | 'resolved' | 'all' | undefined,
             },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'add_comment': {
+          const result = await addComment(
+            {
+              issueId: params['issueId'] as string | undefined,
+              filename: params['filename'] as string | undefined,
+              docId: params['docId'] as string | undefined,
+              body: params['body'] as string,
+              quote: params['quote'] as string | undefined,
+              suggestion: params['suggestion'] as string | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'respond_to_comment': {
+          const result = await respondToComment(
+            {
+              commentId: params['commentId'] as string,
+              reply: params['reply'] as string | undefined,
+              resolve: params['resolve'] as boolean | undefined,
+              reopen: params['reopen'] as boolean | undefined,
+            },
+            config
+          )
+          return successResponse(result)
+        }
+        case 'read_document': {
+          const result = await readDocument(
+            { issueId: params['issueId'] as string, filename: params['filename'] as string },
             config
           )
           return successResponse(result)
@@ -3087,6 +3130,7 @@ export async function runMcpServer(): Promise<void> {
             {
               path: params['path'] as string,
               content: params['content'] as string,
+              baseContentHash: params['baseContentHash'] as string | undefined,
             },
             config
           )
@@ -3120,43 +3164,6 @@ export async function runMcpServer(): Promise<void> {
               docId: params['docId'] as string | undefined,
               lineNumber: params['lineNumber'] as number,
               checked: params['checked'] as boolean,
-            },
-            config
-          )
-          return successResponse(result)
-        }
-        case 'list_project_doc_comments': {
-          const result = await listProjectDocComments(
-            {
-              path: params['path'] as string | undefined,
-              docId: params['docId'] as string | undefined,
-              includeResolved: params['includeResolved'] as boolean | undefined,
-            },
-            config
-          )
-          return successResponse(result)
-        }
-        case 'comment_on_project_doc': {
-          const result = await commentOnProjectDoc(
-            {
-              path: params['path'] as string | undefined,
-              docId: params['docId'] as string | undefined,
-              lineNumber: params['lineNumber'] as number,
-              content: params['content'] as string,
-              quotedText: params['quotedText'] as string | undefined,
-            },
-            config
-          )
-          return successResponse(result)
-        }
-        case 'respond_to_project_doc_comment': {
-          const result = await respondToProjectDocComment(
-            {
-              path: params['path'] as string | undefined,
-              docId: params['docId'] as string | undefined,
-              commentId: params['commentId'] as string,
-              reply: params['reply'] as string | undefined,
-              resolve: params['resolve'] as boolean | undefined,
             },
             config
           )
@@ -3881,7 +3888,7 @@ export async function runMcpServer(): Promise<void> {
       const message = err instanceof Error ? err.message : String(err)
       return errorResponse(message)
     }
-  })
+  }
 
   // The OCR worker (safe-zone checks) stays warm for the session and is stopped when the client disconnects,
   // so the process can exit.

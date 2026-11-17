@@ -78,9 +78,9 @@ describe('scheduled items on the grid', () => {
       item({ id: '3', status: 'DRAFT', scheduledFor: '2026-03-09T15:00:00Z' }),
     ])
 
-    expect(screen.getByTestId('calendar-chip-1').className).toContain('status-done')
-    expect(screen.getByTestId('calendar-chip-2').className).toContain('status-progress')
-    expect(screen.getByTestId('calendar-chip-3').className).toContain('status-draft')
+    expect(screen.getByTestId('calendar-dot-1').className).toContain('status-done')
+    expect(screen.getByTestId('calendar-dot-2').className).toContain('status-progress')
+    expect(screen.getByTestId('calendar-dot-3').className).toContain('status-draft')
   })
 
   it('buckets an item by its own schedule timezone, not the viewer local zone', () => {
@@ -264,6 +264,96 @@ describe('links out to where an item ended up', () => {
   })
 })
 
+describe('two-line cards', () => {
+  const sched = { scheduledFor: '2026-03-05T19:00:00Z' }
+
+  it('clamps the title to two lines rather than truncating to one', () => {
+    renderCalendar([item({ id: '1', title: 'A very long story title '.repeat(6), ...sched })])
+
+    const link = screen.getByTestId('calendar-chip-1')
+    expect(link).toHaveClass('line-clamp-2')
+    expect(link).not.toHaveClass('truncate')
+  })
+
+  it('shows the scheduled time in the item zone', () => {
+    renderCalendar([item({ id: '1', ...sched })])
+
+    expect(day('2026-03-05')).toHaveTextContent(/7:00\s?PM/)
+  })
+
+  it('renders one mark per target, linking the matching link by type prefix', () => {
+    renderCalendar([
+      item({
+        id: '1',
+        ...sched,
+        publishTargets: [
+          { platform: 'INSTAGRAM', state: 'PUBLISHED' },
+          { platform: 'tiktok', state: 'PUBLISHED' },
+          { platform: 'youtube', state: 'PENDING' },
+        ],
+        externalLinks: [
+          { url: 'https://instagram.com/p/1', type: 'instagram_post' },
+          { url: 'https://tiktok.com/v/1', type: 'TikTok_post' },
+        ],
+      }),
+    ])
+
+    expect(screen.getByRole('link', { name: 'Open on Instagram' })).toHaveAttribute('href', 'https://instagram.com/p/1')
+    expect(screen.getByRole('link', { name: 'Open on TikTok' })).toHaveAttribute('href', 'https://tiktok.com/v/1')
+    // YouTube has a mark but nothing to open yet.
+    expect(screen.getAllByRole('img', { name: 'YouTube' }).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('link', { name: /YouTube/ })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('link')).toHaveLength(3)
+  })
+
+  it('flags a FAILED target', () => {
+    renderCalendar([
+      item({
+        id: '1',
+        ...sched,
+        publishTargets: [
+          { platform: 'instagram', state: 'FAILED' },
+          { platform: 'tiktok', state: 'PUBLISHED' },
+        ],
+      }),
+    ])
+
+    expect(screen.getByTestId('mark-failed-instagram')).toBeInTheDocument()
+    expect(screen.queryByTestId('mark-failed-tiktok')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('img', { name: 'Instagram failed' }).length).toBeGreaterThan(0)
+  })
+
+  it('still renders a link that matches no target as the generic outward link', () => {
+    renderCalendar([
+      item({
+        id: '1',
+        ...sched,
+        publishTargets: [{ platform: 'instagram', state: 'PUBLISHED' }],
+        externalLinks: [
+          { url: 'https://instagram.com/p/1', type: 'instagram_post' },
+          { url: 'https://github.com/o/r/pull/1', type: 'github_pr', label: 'PR 1' },
+        ],
+      }),
+    ])
+
+    expect(screen.getByRole('link', { name: 'Open on Instagram' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Open PR 1/ })).toHaveAttribute('href', 'https://github.com/o/r/pull/1')
+  })
+
+  it('never nests an anchor inside another anchor', () => {
+    renderCalendar([
+      item({
+        id: '1',
+        ...sched,
+        publishTargets: [{ platform: 'instagram', state: 'PUBLISHED' }],
+        externalLinks: [{ url: 'https://instagram.com/p/1', type: 'instagram_post' }],
+      }),
+    ])
+
+    for (const a of document.querySelectorAll('a')) expect(a.querySelector('a')).toBeNull()
+  })
+})
+
 describe('workflow-agnostic', () => {
   const source = readFileSync(
     resolve(__dirname, 'WorkItemCalendarView.tsx'),
@@ -307,7 +397,7 @@ describe('workflow-agnostic', () => {
         issues={[item({ id: '1', status: 'DONE', scheduledFor: '2026-03-05T15:00:00Z' })]}
       />
     )
-    expect(screen.getByTestId('calendar-chip-1').className).toContain('status-done')
+    expect(screen.getByTestId('calendar-dot-1').className).toContain('status-done')
   })
 })
 

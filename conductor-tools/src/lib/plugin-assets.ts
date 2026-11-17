@@ -13,6 +13,7 @@ const PLUGIN_FILES = [
   'commands/conductor/breakdown.md',
   'commands/conductor/implement.md',
   'commands/conductor/fix.md',
+  'commands/conductor/comments.md',
   'commands/conductor/workflow.md',
   'commands/conductor/marketing.md',
   'agents/conductor-researcher.md',

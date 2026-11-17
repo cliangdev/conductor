@@ -14,6 +14,6 @@ public interface CommentReplyRepository extends JpaRepository<CommentReply, Stri
     List<CommentReply> findAllByCommentId(String commentId);
 
     /** Replies for a whole set of comments in one query, authors fetch-joined. */
-    @Query("SELECT r FROM CommentReply r JOIN FETCH r.author WHERE r.comment.id IN :commentIds")
+    @Query("SELECT r FROM CommentReply r LEFT JOIN FETCH r.author WHERE r.comment.id IN :commentIds ORDER BY r.createdAt")
     List<CommentReply> findAllByCommentIdIn(@Param("commentIds") java.util.Collection<String> commentIds);
 }

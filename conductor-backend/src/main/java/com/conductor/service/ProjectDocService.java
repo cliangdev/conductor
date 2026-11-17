@@ -1,5 +1,7 @@
 package com.conductor.service;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import com.conductor.entity.DocFolder;
 import com.conductor.entity.DocVersion;
 import com.conductor.entity.Project;
@@ -10,6 +12,7 @@ import com.conductor.repository.DocVersionRepository;
 import com.conductor.repository.ProjectDocRepository;
 import com.conductor.repository.ProjectRepository;
 import jakarta.persistence.EntityNotFoundException;
+import com.conductor.service.anchoring.CommentAnchorService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
@@ -36,9 +39,17 @@ public class ProjectDocService {
     private final DocFolderService docFolderService;
     private final ProjectRepository projectRepository;
 
+    /**
+     * Re-reads a row after locking it. The locking query returns the instance this transaction already holds
+     * without reloading it, so a caller that read the document earlier in the same transaction (accepting a
+     * suggestion does) would compare against the text it read before the lock. Null only in plain unit tests.
+     */
+    @PersistenceContext
+    private EntityManager entityManager;
+
     @Lazy
     @Autowired
-    private DocCommentService docCommentService;
+    private CommentAnchorService commentAnchorService;
 
     public ProjectDocService(
             ProjectDocRepository projectDocRepository,
@@ -153,7 +164,27 @@ public class ProjectDocService {
 
     @Transactional
     public ProjectDoc updateDoc(String projectId, String docId, String content, ProjectActor actor) {
+        return updateDoc(projectId, docId, content, actor, null);
+    }
+
+    /** SHA-256 hex of the stored content — what clients pass back as {@code baseContentHash}. */
+    public static String contentHash(ProjectDoc doc) {
+        return com.conductor.service.DocumentContent.sha256Hex(doc.getContent() == null ? "" : doc.getContent());
+    }
+
+    @Transactional
+    public ProjectDoc updateDoc(String projectId, String docId, String content, ProjectActor actor,
+                                String baseContentHash) {
+        // Lock the row first so concurrent updates run one after the other and the hash check sees the current text.
+        projectDocRepository.lockById(docId);
         ProjectDoc doc = getDoc(projectId, docId);
+        if (entityManager != null) {
+            entityManager.refresh(doc);
+        }
+        if (baseContentHash != null && !baseContentHash.equalsIgnoreCase(contentHash(doc))) {
+            throw new com.conductor.exception.ConflictException(
+                    "Document changed since you read it — read it again before writing.");
+        }
 
         // Signed image URLs never reach the database: a client that read this doc got freshly signed
         // URLs back, and writing those through verbatim would store links that expire in minutes.
@@ -175,7 +206,9 @@ public class ProjectDocService {
         version.setAuthorLabel(actor.label());
         docVersionRepository.save(version);
 
-        docCommentService.markCommentsStale(docId);
+        // Open comments follow their text to its new place, or are orphaned / flagged stale (CommentAnchorService).
+        commentAnchorService.reanchor(
+                new CommentTarget.ProjectDoc(docId), stored, DocumentContent.sha256Hex(stored), "text/markdown");
 
         return doc;
     }
@@ -185,7 +218,7 @@ public class ProjectDocService {
      * editor.
      *
      * <p>Deliberately does <em>not</em> do the two things {@link #updateDoc} does: no {@link DocVersion}
-     * is minted (otherwise every click would add a history entry) and comments are not marked stale.
+     * is minted (otherwise every click would add a history entry) and comments are not re-anchored.
      * Marking them stale would be wrong anyway — {@code [ ]} and {@code [x]} are the same width, so no
      * line moves and every existing line anchor still points where it did.
      *

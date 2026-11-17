@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 import { Config } from '../config.js'
+import { conflictAsClearError } from './doc-conflict.js'
 import { apiGet, apiPost, apiPut, apiPatch, apiDelete, apiPostFile } from '../api.js'
 
 /**
@@ -9,8 +10,8 @@ import { apiGet, apiPost, apiPut, apiPatch, apiDelete, apiPostFile } from '../ap
  *
  * Docs are addressed by path ("Plans/Q3 Roadmap"): folder segments plus the doc title. Flow:
  * list_project_docs maps the tree, read_project_doc returns content plus a ready-made index of its task
- * lines, write_project_doc upserts (creating folders on the way), set_project_doc_task ticks one box,
- * and the comment tools read and answer human feedback. Every full-content write is versioned, so
+ * lines, write_project_doc upserts (creating folders on the way) and set_project_doc_task ticks one box.
+ * Comments live in comments.ts (list_comments / add_comment / respond_to_comment). Every full-content write is versioned, so
  * list_project_doc_versions / restore_project_doc_version can walk that history back.
  */
 
@@ -27,6 +28,7 @@ interface DocRow {
   folderId: string | null
   title: string
   content?: string | null
+  contentHash?: string | null
   createdByName?: string
   updatedByName?: string
   updatedAt?: string
@@ -285,6 +287,8 @@ export async function readProjectDoc(
     title: doc.title,
     versionNumber: params.versionNumber,
     content,
+    // Of the current content only: a historical version's hash is not a valid base for a write.
+    contentHash: params.versionNumber === undefined ? (doc.contentHash ?? null) : undefined,
     updatedByName: doc.updatedByName,
     updatedAt: doc.updatedAt,
     // Precomputed so a checkbox can be ticked by line number without the caller counting lines itself.
@@ -395,7 +399,7 @@ export async function uploadProjectDocImage(
 }
 
 export async function writeProjectDoc(
-  params: { path: string; content: string },
+  params: { path: string; content: string; baseContentHash?: string },
   config: Config
 ): Promise<Record<string, unknown>> {
   const { folderSegments, title } = splitPath(params.path)
@@ -403,7 +407,13 @@ export async function writeProjectDoc(
   const existing = (await listDocsIn(folderId, config)).find((d) => d.title === title)
 
   if (existing) {
-    await apiPut<DocRow>(`${docsBase(config)}/${existing.id}`, { content: params.content }, config)
+    const body: Record<string, unknown> = { content: params.content }
+    if (params.baseContentHash) body['baseContentHash'] = params.baseContentHash
+    try {
+      await apiPut<DocRow>(`${docsBase(config)}/${existing.id}`, body, config)
+    } catch (err) {
+      throw conflictAsClearError(err)
+    }
     return { docId: existing.id, path: params.path, created: false }
   }
 
@@ -526,54 +536,3 @@ export async function setProjectDocTask(
   }
 }
 
-export async function listProjectDocComments(
-  params: { path?: string; docId?: string; includeResolved?: boolean },
-  config: Config
-): Promise<unknown[]> {
-  const docId = await requireDocId(params, config)
-  const raw = await apiGet<Record<string, unknown>[]>(`${docsBase(config)}/${docId}/comments`, config)
-  const comments = Array.isArray(raw) ? raw : []
-  if (params.includeResolved) return comments
-  return comments.filter((c) => c['resolvedAt'] == null)
-}
-
-export async function commentOnProjectDoc(
-  params: { path?: string; docId?: string; lineNumber: number; content: string; quotedText?: string },
-  config: Config
-): Promise<Record<string, unknown>> {
-  const docId = await requireDocId(params, config)
-  const body: Record<string, unknown> = { content: params.content, lineNumber: params.lineNumber }
-  if (params.quotedText !== undefined) body['quotedText'] = params.quotedText
-  return apiPost<Record<string, unknown>>(`${docsBase(config)}/${docId}/comments`, body, config)
-}
-
-/**
- * Reply to and/or resolve one thread — the two halves of answering a review comment, which agents
- * almost always do together.
- */
-export async function respondToProjectDocComment(
-  params: { path?: string; docId?: string; commentId: string; reply?: string; resolve?: boolean },
-  config: Config
-): Promise<Record<string, unknown>> {
-  if (params.reply === undefined && params.resolve !== true) {
-    throw new Error('Provide reply, resolve: true, or both')
-  }
-  const docId = await requireDocId(params, config)
-  const result: Record<string, unknown> = { docId, commentId: params.commentId }
-
-  if (params.reply !== undefined) {
-    await apiPost(
-      `${docsBase(config)}/${docId}/comments/${params.commentId}/replies`,
-      { content: params.reply },
-      config
-    )
-    result['replied'] = true
-  }
-
-  if (params.resolve === true) {
-    await apiPatch(`${docsBase(config)}/${docId}/comments/${params.commentId}/resolve`, {}, config)
-    result['resolved'] = true
-  }
-
-  return result
-}

@@ -1,7 +1,6 @@
 package com.conductor.v2.controller;
 
 import com.conductor.entity.Comment;
-import com.conductor.entity.User;
 import com.conductor.generated.v2.api.WorkItemCommentsApi;
 import com.conductor.generated.v2.model.AddCommentReplyRequest;
 import com.conductor.generated.v2.model.CommentReplyResponse;
@@ -10,11 +9,12 @@ import com.conductor.generated.v2.model.CommentWithRepliesResponse;
 import com.conductor.generated.v2.model.CreateCommentRequest;
 import com.conductor.generated.v2.model.TextQuoteAnchor;
 import com.conductor.service.CommentService;
+import com.conductor.service.ProjectActor;
+import com.conductor.service.ProjectSecurityService;
 import com.conductor.service.view.CommentAnchor;
 import com.conductor.service.view.CommentReplyView;
 import com.conductor.service.view.CommentWithRepliesView;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -34,15 +34,17 @@ import java.util.List;
 public class WorkItemCommentsController implements WorkItemCommentsApi {
 
     private final CommentService commentService;
+    private final ProjectSecurityService projectSecurityService;
 
-    public WorkItemCommentsController(CommentService commentService) {
+    public WorkItemCommentsController(CommentService commentService, ProjectSecurityService projectSecurityService) {
         this.commentService = commentService;
+        this.projectSecurityService = projectSecurityService;
     }
 
     @Override
     public ResponseEntity<CommentResponse> createWorkItemComment(String projectId, String workItemId,
                                                                  CreateCommentRequest request) {
-        User caller = currentUser();
+        ProjectActor caller = projectSecurityService.requireProjectAccess(projectId);
         CommentService.CommentResult created = commentService.createComment(
                 projectId, workItemId, request.getDocumentId(), request.getContent(), request.getLineNumber(),
                 toDomain(request.getAnchor()), request.getDocumentHash(), caller);
@@ -53,7 +55,7 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
     public ResponseEntity<List<CommentWithRepliesResponse>> listWorkItemComments(String projectId,
                                                                                  String workItemId,
                                                                                  Boolean resolved) {
-        User caller = currentUser();
+        ProjectActor caller = projectSecurityService.requireProjectAccess(projectId);
         List<CommentWithRepliesResponse> v2 = commentService.listComments(projectId, workItemId, resolved, caller)
                 .stream()
                 .map(WorkItemCommentsController::toV2WithReplies)
@@ -65,7 +67,7 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
     public ResponseEntity<CommentReplyResponse> addWorkItemCommentReply(String projectId, String workItemId,
                                                                         String commentId,
                                                                         AddCommentReplyRequest request) {
-        User caller = currentUser();
+        ProjectActor caller = projectSecurityService.requireProjectAccess(projectId);
         CommentReplyView reply = commentService.addReply(projectId, workItemId, commentId, request.getContent(), caller);
         return ResponseEntity.status(201).body(toV2Reply(reply));
     }
@@ -73,14 +75,14 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
     @Override
     public ResponseEntity<CommentResponse> resolveWorkItemComment(String projectId, String workItemId,
                                                                   String commentId) {
-        User caller = currentUser();
+        ProjectActor caller = projectSecurityService.requireProjectAccess(projectId);
         CommentService.CommentResult resolved = commentService.resolveComment(projectId, workItemId, commentId, caller);
         return ResponseEntity.ok(toV2(resolved.comment(), resolved.outdated()));
     }
 
     @Override
     public ResponseEntity<Void> deleteWorkItemComment(String projectId, String workItemId, String commentId) {
-        User caller = currentUser();
+        ProjectActor caller = projectSecurityService.requireProjectAccess(projectId);
         commentService.deleteComment(projectId, workItemId, commentId, caller);
         return ResponseEntity.noContent().build();
     }
@@ -101,7 +103,8 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
 
     private static CommentResponse toV2(Comment comment, boolean outdated) {
         return new CommentResponse(
-                comment.getId(), comment.getDocument().getId(), comment.getAuthor().getId(),
+                comment.getId(), comment.getDocument().getId(),
+                comment.getAuthor() != null ? comment.getAuthor().getId() : null,
                 comment.getContent(), outdated, comment.getCreatedAt())
                 .lineNumber(comment.getLineNumber())
                 .quotedText(comment.getQuotedText())
@@ -129,9 +132,5 @@ public class WorkItemCommentsController implements WorkItemCommentsApi {
         return new CommentReplyResponse(
                 v.id(), v.commentId(), v.authorId(), v.content(), v.createdAt())
                 .authorName(v.authorName());
-    }
-
-    private User currentUser() {
-        return (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     }
 }

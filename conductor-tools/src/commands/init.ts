@@ -9,7 +9,7 @@ import ora from 'ora'
 import { readConfig, writeConfig } from '../lib/config.js'
 import { apiGet, apiPost } from '../lib/api.js'
 import { findAvailablePort, waitForOAuthCallback } from '../lib/oauth-server.js'
-import { startDaemon } from './start.js'
+import { ensureDaemonWatching } from './start.js'
 import { installPluginAssets, getAssetSrcDir, writePluginVersionMarker, getPackageVersion, computeInstalledFileHashes } from '../lib/plugin-assets.js'
 import { printNextSteps } from '../lib/next-steps.js'
 
@@ -311,9 +311,16 @@ Examples:
       writeConfig({ ...config, localPath: projectRoot, projects: updatedProjects })
 
       console.log()
-      const ok = await startDaemon()
-      if (ok) {
+      const daemon = await ensureDaemonWatching(path.join(projectRoot, '.conductor', 'issues'))
+      if (daemon === 'started') {
         console.log(chalk.green('✓ Sync daemon started'))
+      } else if (daemon === 'watching') {
+        console.log(chalk.green('✓ Sync daemon is watching this repo'))
+      } else if (daemon === 'restarted') {
+        console.log(chalk.green('✓ Sync daemon restarted to watch this repo'))
+      } else if (daemon === 'busy') {
+        console.log(chalk.yellow('! The sync daemon is running a workflow job and is not watching this repo yet.'))
+        console.log(chalk.yellow('  When it finishes, run `conductor stop && conductor start` so files here sync.'))
       } else {
         console.log(chalk.red('✗ Daemon failed to start — run `conductor start` to retry'))
       }

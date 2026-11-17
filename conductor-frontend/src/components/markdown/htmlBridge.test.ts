@@ -1,82 +1,11 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { buildQuote, findQuote, bridgeSource } from './htmlBridge'
+import * as textQuote from '@/lib/textQuote'
 
-describe('buildQuote', () => {
-  const text = 'The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs.'
-
-  it('returns the exact text with 32 characters of context either side', () => {
-    const start = text.indexOf('jumps')
-    const q = buildQuote(text, start, start + 'jumps over'.length)
-    expect(q.exact).toBe('jumps over')
-    expect(q.prefix).toBe('The quick brown fox '.slice(-32))
-    expect(q.suffix).toBe(' the lazy dog. Pack my box with ')
-    expect(q.suffix).toHaveLength(32)
-  })
-
-  it('keeps short context at the document edges', () => {
-    const q = buildQuote('Hello world', 0, 5)
-    expect(q).toEqual({ exact: 'Hello', prefix: '', suffix: ' world' })
-  })
-
-  it('collapses whitespace and trims the selection', () => {
-    const q = buildQuote('a  b\n\n c    d   e', 3, 14)
-    expect(q.exact).toBe('b c d')
-    expect(q.prefix).toBe('a ')
-    expect(q.suffix).toBe(' e')
-  })
-
-  it('reads a quote across a block boundary with one space', () => {
-    const text = 'Goals Ship it today'
-    expect(buildQuote(text, 0, 'Goals Ship it'.length).exact).toBe('Goals Ship it')
-  })
-
-  it('caps the quote at 2000 characters', () => {
-    const long = 'word '.repeat(1000)
-    const q = buildQuote(long, 0, long.length)
-    expect(q.exact.length).toBeLessThanOrEqual(2000)
-    expect(q.exact.length).toBeGreaterThan(1990)
-  })
-})
-
-describe('findQuote', () => {
-  it('finds a unique quote', () => {
-    const text = 'alpha beta gamma'
-    expect(findQuote(text, { exact: 'beta' })).toEqual({ start: 6, end: 10 })
-  })
-
-  it('decides between repeated text by the prefix and suffix', () => {
-    const text = 'Total: 20 of 26 users. Later: 20 of 26 signups. Last: 20 of 26 posts.'
-    const second = text.indexOf('20 of 26', 20)
-    const q = buildQuote(text, second, second + 8)
-    expect(findQuote(text, q)).toEqual({ start: second, end: second + 8 })
-    const third = text.lastIndexOf('20 of 26')
-    expect(findQuote(text, buildQuote(text, third, third + 8))).toEqual({ start: third, end: third + 8 })
-  })
-
-  it('weighs the suffix when the prefix is the same', () => {
-    const text = 'see item one. see item two.'
-    const q = { exact: 'item', prefix: 'see ', suffix: ' two.' }
-    expect(findQuote(text, q)).toEqual({ start: text.indexOf('item', 10), end: text.indexOf('item', 10) + 4 })
-  })
-
-  it('takes the first exact match when neither side agrees', () => {
-    const text = 'foo bar foo baz foo'
-    expect(findQuote(text, { exact: 'foo', prefix: 'zzz', suffix: 'qqq' })).toEqual({ start: 0, end: 3 })
-  })
-
-  it('matches across differently spaced input', () => {
-    expect(findQuote('one two three', { exact: 'two\n  three' })).toEqual({ start: 4, end: 13 })
-  })
-
-  it('skips matches the caller rejects, and is null when every match is rejected', () => {
-    const text = 'foo bar foo'
-    expect(findQuote(text, { exact: 'foo' }, (start) => start > 0)).toEqual({ start: 8, end: 11 })
-    expect(findQuote(text, { exact: 'foo' }, () => false)).toBeNull()
-  })
-
-  it('returns null when the text is not there', () => {
-    expect(findQuote('alpha beta', { exact: 'delta', prefix: 'alpha ' })).toBeNull()
-    expect(findQuote('alpha beta', { exact: '   ' })).toBeNull()
+describe('htmlBridge exports', () => {
+  it('still re-exports the quote helpers, which now live in lib/textQuote', () => {
+    expect(buildQuote).toBe(textQuote.buildQuote)
+    expect(findQuote).toBe(textQuote.findQuote)
   })
 })
 
@@ -159,6 +88,21 @@ describe('bridgeSource', () => {
       expect(m.rect).toBeTruthy()
     })
 
+    it('reports a touch selection from selectionchange alone, once it has settled', async () => {
+      const t = document.querySelector('h1')!.firstChild as Text
+      const range = document.createRange()
+      range.setStart(t, 0)
+      range.setEnd(t, 3)
+      window.getSelection()!.addRange(range)
+      // No mouseup or keyup: only the selection events a touch drag produces.
+      document.dispatchEvent(new Event('selectionchange'))
+      document.dispatchEvent(new Event('selectionchange'))
+      expect(posted.find((p) => p.type === 'selection')).toBeUndefined()
+      const m = await waitForPost('selection')
+      expect(m.exact).toBe('Rep')
+      expect(posted.filter((p) => p.type === 'selection')).toHaveLength(1)
+    })
+
     it('reports when the selection is cleared', async () => {
       const t = document.querySelector('h1')!.firstChild as Text
       const range = document.createRange()
@@ -195,6 +139,43 @@ describe('bridgeSource', () => {
         ['b', false],
         ['c', true],
       ])
+    })
+
+    it('leaves data-conductor-skip chrome out of quote matching, selection and highlight clicks', async () => {
+      document.body.innerHTML = `
+        <nav data-conductor-skip><a href="#goals">Goals</a><span>Outline only</span><button>Contents</button></nav>
+        <section id="goals"><h2>Goals</h2><p>Ship the outline today.</p></section>`
+      sendFromParent({
+        type: 'anchors',
+        anchors: [
+          { id: 'nav', exact: 'Outline only' },
+          { id: 'doc', exact: 'Ship the outline' },
+        ],
+      })
+      const m = await waitForPost('anchored')
+      const results = m.results as Array<{ id: string; found: boolean }>
+      expect(results.map((r) => [r.id, r.found])).toEqual([
+        ['nav', false],
+        ['doc', true],
+      ])
+
+      // Selecting inside the outline offers no comment.
+      posted.length = 0
+      const t = document.querySelector('nav span')!.firstChild as Text
+      const range = document.createRange()
+      range.setStart(t, 0)
+      range.setEnd(t, 4)
+      window.getSelection()!.addRange(range)
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(posted.find((p) => p.type === 'selection')).toBeUndefined()
+
+      // A button in the outline sits over the highlight (jsdom gives every range the same box): no open.
+      window.getSelection()!.removeAllRanges()
+      posted.length = 0
+      document.querySelector('nav button')!.dispatchEvent(new MouseEvent('click', { bubbles: true, clientX: 5, clientY: 5 }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      expect(posted.find((p) => p.type === 'open')).toBeUndefined()
     })
 
     it('puts a space between adjacent blocks and at <br>, but not between inline elements', async () => {

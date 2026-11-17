@@ -22,7 +22,7 @@ function Terminal() {
         ))}
       </div>
       <pre className="overflow-x-auto px-5 py-[18px] font-mono text-[12.5px] leading-[1.85]">
-        {"$ npx @cliangdev/conductor init\n"}
+        {"$ conductor init\n"}
         <span style={muted}>Workspace linked. MCP server ready.</span>
         {"\n\n> /conductor:prd offline mode for saved recipes\n"}
         <span style={accent}>create_work_item</span>

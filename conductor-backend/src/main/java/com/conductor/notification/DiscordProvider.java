@@ -177,7 +177,7 @@ public class DiscordProvider implements NotificationProvider {
      * The same naive plural the frontend's route builder uses, so the two agree on the URL. Deliberately
      * not a general pluralizer: it only has to match {@code pluralizeNoun} in {@code lib/workflows.ts}.
      */
-    static String pluralize(String noun) {
+    public static String pluralize(String noun) {
         if (noun.endsWith("y") && noun.length() > 1 && "aeiou".indexOf(noun.charAt(noun.length() - 2)) < 0) {
             return noun.substring(0, noun.length() - 1) + "ies";
         }
@@ -251,6 +251,26 @@ public class DiscordProvider implements NotificationProvider {
                 title = "Comment Reply";
                 description = author + " replied on: " + workItemTitle
                         + (excerpt.isBlank() ? "" : "\n> " + excerpt);
+            }
+            case DOC_COMMENT_ADDED, DOC_COMMENT_REPLY -> {
+                String author = meta.getOrDefault("commentAuthor", "");
+                String excerpt = meta.getOrDefault("excerpt", "");
+                String docTitle = meta.getOrDefault("docTitle", "a doc");
+                boolean reply = event.getEventType() == EventType.DOC_COMMENT_REPLY;
+                title = reply ? "Comment Reply" : "Comment Added";
+                description = author + (reply ? " replied on: " : " commented on: ") + docTitle
+                        + (excerpt.isBlank() ? "" : "\n> " + excerpt);
+                link = meta.getOrDefault("link", frontendUrl + "/app/projects/" + projectId + "/docs");
+            }
+            case COMMENT_MENTIONED -> {
+                String author = meta.getOrDefault("commentAuthor", "");
+                String names = meta.getOrDefault("mentionedNames", "");
+                String excerpt = meta.getOrDefault("excerpt", "");
+                title = "Mentioned in a comment";
+                // Plain text on purpose: a name in an embed pings nobody, and allowed_mentions stays empty.
+                description = author + " mentioned " + names + " on " + meta.getOrDefault("documentTitle", "a document")
+                        + (excerpt.isBlank() ? "" : "\n> " + excerpt);
+                link = meta.getOrDefault("link", link);
             }
             case MEMBER_JOINED -> {
                 String memberName = meta.getOrDefault("memberName", "");
@@ -357,7 +377,9 @@ public class DiscordProvider implements NotificationProvider {
             );
             return "{\"embeds\":[{" + embedBase + fields + "}]}";
         }
-        return "{\"embeds\":[{" + embedBase + "}]}";
+        String card = "{\"embeds\":[{" + embedBase + "}]}";
+        // A mention card names people, so it says outright that it pings nobody.
+        return event.getEventType() == EventType.COMMENT_MENTIONED ? withNoMentions(card) : card;
     }
 
     @Override

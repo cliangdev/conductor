@@ -8,7 +8,6 @@ import com.conductor.entity.User;
 import com.conductor.exception.BusinessException;
 import com.conductor.exception.ConflictException;
 import com.conductor.exception.GlobalExceptionHandler;
-import com.conductor.repository.DocCommentReplyRepository;
 import com.conductor.entity.MemberRole;
 import com.conductor.entity.ProjectMember;
 import com.conductor.repository.ProjectApiKeyRepository;
@@ -70,7 +69,6 @@ class ProjectDocsControllerTest {
     @MockitoBean private ProjectDocService projectDocService;
     @MockitoBean private DocVersionService docVersionService;
     @MockitoBean private DocCommentService docCommentService;
-    @MockitoBean private DocCommentReplyRepository docCommentReplyRepository;
     @MockitoBean private StorageService storageService;
     @MockitoBean private ProjectMemberRepository projectMemberRepository;
 

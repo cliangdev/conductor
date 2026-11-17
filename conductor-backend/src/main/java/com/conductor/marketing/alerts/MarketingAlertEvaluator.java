@@ -57,7 +57,7 @@ import java.util.UUID;
  * read below is the read service's own short transaction, every state write is a short {@code REQUIRES_NEW}
  * transaction of its own, and the Discord call is made with none open. Published from inside a transaction instead
  * (a future caller, a test), it runs after that commit: the best that can be done there is to hold the committed
- * transaction's connection while these short ones run (see {@code AfterTransaction} in the creative package).
+ * transaction's connection while these short ones run (see {@code com.conductor.tx.AfterTransaction}).
  *
  * <h2>Failure</h2>
  * Nothing thrown here reaches the pull: an alert is never worth a failed ingest. A source that could not be read

@@ -267,10 +267,10 @@ class ContentListQueryCountTest extends AbstractNoneWebIntegrationTest {
         ProjectDoc d20 = projectDoc(p20, 0);
         addComments(d1, u, 1);
         addComments(d20, u, 20);
-        int q1 = queries(() -> docCommentService.listThreads(p1.getId(), d1.getId()));
-        int q20 = queries(() -> docCommentService.listThreads(p20.getId(), d20.getId()));
+        int q1 = queries(() -> docCommentService.listThreads(p1.getId(), d1.getId(), com.conductor.service.ProjectActor.of(u)));
+        int q20 = queries(() -> docCommentService.listThreads(p20.getId(), d20.getId(), com.conductor.service.ProjectActor.of(u)));
         assertCounts(q1, q20, "doc comments");
-        var threads = docCommentService.listThreads(p20.getId(), d20.getId());
+        var threads = docCommentService.listThreads(p20.getId(), d20.getId(), com.conductor.service.ProjectActor.of(u));
         assertThat(threads).hasSize(20);
         assertThat(threads).allSatisfy(t -> assertThat(t.replies()).hasSize(2));
     }
