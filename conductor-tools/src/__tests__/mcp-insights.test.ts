@@ -94,7 +94,7 @@ function fixture() {
     ],
     coverage: { platforms: ['instagram', 'facebook'], notes: ['TikTok reconnect needed for insights.'] },
     creatives: [
-      { creativeId: 'c12b', label: '12b', headline: 'Hook B', posts: 3, views: 900, engagementRate: 0.199999, avgViewPct: null, views72h: 800, byPlatform: [] },
+      { creativeId: 'c12b', label: '12b', headline: 'Hook B', posts: 3, views: 900, engagementRate: 0.199999, avgViewPct: null, views72h: 800, byPlatform: [{ platform: 'YOUTUBE', posts: 1, views: 500, hookRate: null, holdRate: 0.5123456 }, { platform: 'TIKTOK', posts: 2, views: 400 }] },
       { creativeId: 'c12a', label: '12a', headline: 'Hook A', posts: 2, views: 400, engagementRate: 0.1, avgViewPct: null, views72h: null, byPlatform: [] },
     ],
   }
@@ -153,7 +153,7 @@ describe('get_marketing_insights', () => {
 
     const topCreatives = result['topCreatives'] as Record<string, unknown>[]
     expect(topCreatives).toHaveLength(2)
-    expect(topCreatives[0]).toEqual({ creativeId: 'c12b', label: '12b', headline: 'Hook B', posts: 3, views: 900, engagementRate: 0.2, views72h: 800 })
+    expect(topCreatives[0]).toEqual({ creativeId: 'c12b', label: '12b', headline: 'Hook B', posts: 3, views: 900, engagementRate: 0.2, views72h: 800, byPlatform: [{ platform: 'YOUTUBE', views: 500, holdRate: 0.5123 }] })
     expect(topCreatives[1]).not.toHaveProperty('avgViewPct')
     expect(topCreatives[1]).not.toHaveProperty('views72h')
   })

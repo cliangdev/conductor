@@ -25,6 +25,7 @@ public class CreativeExperiment {
     public static final String METRIC_VIEWS = "views";
     public static final String METRIC_ENGAGEMENT_RATE = "engagement_rate";
     public static final String METRIC_AVG_VIEW_PCT = "avg_view_pct";
+    public static final String METRIC_HOOK_RATE = "hook_rate";
 
     public static final String STATE_RUNNING = "RUNNING";
     public static final String STATE_DECIDED = "DECIDED";

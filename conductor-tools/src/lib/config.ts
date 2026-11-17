@@ -38,6 +38,13 @@ export interface Config {
   videoDailyCapUsd?: number
   /** Partial override of the video rate table, USD per second, e.g. { "fast": 0.12, "omni-720p": 0.1 }. */
   videoRates?: Record<string, number>
+  /** `generate_voice_line` caps in USD (defaults 0.25 per call, 2 per day; its own ledger, voice-spend.json). */
+  voicePerCallCapUsd?: number
+  voiceDailyCapUsd?: number
+  /** Estimates at or under this need no confirmCost (default 0.05). */
+  voiceConfirmAboveUsd?: number
+  /** Partial override of the voice rate table, USD per 1M characters by family, e.g. { "Chirp3-HD": 30, "Neural2": 16 }. */
+  voiceRates?: Record<string, number>
 }
 
 export const CONFIG_PATH = path.join(os.homedir(), '.conductor', 'config.json')

@@ -39,6 +39,15 @@ Each exists because of a known failure mode (sources are in `references/rubric.m
   `references/slideshow-formats.md`. STILL and MOTION stay for ideas that really are one still, an
   ad, or a motion piece. A slideshow never carries a logo, badge or offer; its text look is native
   unless the run's choice names a kit style or an inline `style`.
+- **Route by platform.** TikTok takes photo slideshows and video. Instagram, Facebook and YouTube take
+  video only for organic reach: a slideshow bound for them goes as its MP4 (`carouselAs: "video"`),
+  not as a photo or feed post, with a spoken first line once a voice is available and, until then, a
+  plain note that it has none. Reason: photo posts there reach followers only, and a new account has
+  none (`references/platform-specs.md`, "Per-platform format"). The strategist's brief and the
+  art director's direction state the format per platform.
+- **Native look for organic video.** The first frame of a video and slide 1 use plain platform-style
+  text: no eyebrow label, no kit accent, no lockup, no CTA badge. An organic MOTION uses
+  `motion.preset` `none` so the headline is on screen at frame 0.
 - **Rejected copy stays rejected.** A CTA or offer line on a card or in a caption is opt-in per
   request, never a default. That means a sales line: the kit's `ctaClaim`, a trial, price, plan or
   discount. Naming the app so it can be searched is not one. Approved lines in the knowledge pages are allowed, not required. When the
@@ -197,7 +206,7 @@ Three `Agent` calls in ONE message so they run in parallel, `subagent_type:
 1. story/emotion  2. utility/education  3. trend/humor (the only one allowed web search)
 
 Each gets `brief.md`, `context/media.json`, `references/idea-template.md`,
-`references/capabilities.md` (the `RENDER`/`FILM` test) and `references/voice.md`, and writes 4 ideas.
+`references/capabilities.md` (the `RENDER`/`FILM` test), `references/hooks.md` and `references/voice.md`, and writes 4 ideas.
 The brief names the hypothesis under test. If it names one, tell each ideator it may use it, and that across the run
 at most one idea tests it: the ideator whose angle fits best marks one idea `Tests: H<n>`, the others
 mark none.
@@ -219,7 +228,7 @@ Build one pool from all the angle files:
 ### S3a — Creative director, text round -> `judging/scores.md`
 
 `Agent(subagent_type: "conductor-marketing-creative-director")`, mode `text-round`. Inputs:
-`brief.md`, `ideas/pool.md`, `context/learning-director.md`, `references/rubric.md`, `references/voice.md`. It scores every idea independently, reasoning
+`brief.md`, `ideas/pool.md`, `context/learning-director.md`, `references/rubric.md`, `references/hooks.md`, `references/voice.md`. It scores every idea independently, reasoning
 before each score, and names the top 3 eligible ideas (fewer when the rubric's gates leave fewer; it says so).
 Then apply the test rule yourself: if `testIdea` is eligible (no gate failed in `scores.md`) and its
 weighted total is within 5 points of the third finalist's, it joins the finalists in place of the
@@ -262,8 +271,8 @@ so it judges from the text and says so.
 
 Read `decision.md`, then set `winner`, `tag` and `runnerUps` in `run.json`, and the run's own
 `tags`: `hookType` from the winning idea's hook type, `angle` from `idMap` (`story-emotion`,
-`utility-education` or `trend-humor`), `format` from the idea's format and `archetype` for a
-slideshow. `hypothesis` is `plannedHypothesis` only when the winner is the idea in `testIdea`; otherwise it
+`utility-education` or `trend-humor`) and `format` from the idea's format (all three required, never
+left null at the commit) and `archetype` for a slideshow. `hypothesis` is `plannedHypothesis` only when the winner is the idea in `testIdea`; otherwise it
 stays null. `lessons` is the winning idea's `Follows` ids, minus any the final script no longer
 follows, at most 5. Do not ask the person
 which idea to take; show the decision at the gate.
@@ -272,9 +281,11 @@ which idea to take; show the decision at the gate.
 
 First copy the winning idea's block from `ideas/pool.md` to `ideas/winner.md`. Then
 `Agent(subagent_type: "conductor-marketing-scriptwriter")` with `brief.md`, `decision.md`, `ideas/winner.md`, `references/script-template.md`, `references/platform-specs.md`,
-`references/publish-pack-template.md` and `references/voice.md` (required on every scriptwriter run, including the reruns below). Besides the script it writes the "Numbers and sources" list (every number on a card or in a caption, with its source record) and the Publish copy section: a
+`references/publish-pack-template.md`, `references/hooks.md` and `references/voice.md` (voice required on every scriptwriter run, including the reruns below). Besides the script it writes the "Numbers and sources" list (every number on a card or in a caption, with its source record) and the Publish copy section: a
 caption per platform whose call to action names the app so it can be searched, hashtags, a pinned
-comment and 2 to 3 alternate hooks with a hookType each.
+comment and 2 to 3 alternate hooks with a hookType each (spare hooks for later pieces; not a second
+post of the same body). The script's hook has Visual, On screen and Spoken or sound, never the
+product name; it also carries the Comment trigger and, for 15 s or less, the Loop.
 For a `MOTION` winner tell it that the render shows one headline and one optional body, animated
 by preset, then an end card that holds the final frame: no timed multi-beat on-screen text. Extra
 beats belong in a story or carousel sequence, or in the caption. When merging into `publish-pack.json`, append each platform's hashtags to its `captionOverride`
@@ -449,9 +460,11 @@ Keep it short:
 - next steps:
   - make the Post with the `conductor-marketing-publish` skill (the Creative is
     not on a Post yet, because a run never creates one);
-  - to test a runner-up's hook, cut it as a lettered variant of the Creative with `variantOf` and
-    `create_experiment`, passing the variant only the tags that differ (its `hookType`, its
-    `hypothesis` if it is the tested arm, its `lessons`); the control keeps no `hypothesis` tag;
+  - to test a runner-up's hook, make it its own piece with its own body and read the hook types
+    through `byTag` (`references/learning-loop.md`, "Explore"); never post the same body twice on one
+    account and platform with a new hook, since all four platforms treat that as duplicate content.
+    A lettered variant (`variantOf` plus `create_experiment`) is only for a cross-platform or paid
+    comparison;
   - for `FILM`: film it, upload the clip, then run `/conductor:marketing create` and pick a clip I have.
 
 ## Failure handling

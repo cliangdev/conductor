@@ -218,6 +218,8 @@ class FacebookPublishAction {
             if (m.shares() != null) row.put("shares", m.shares());
             if (m.reach() != null) row.put("reach", m.reach());
             if (m.watchTimeSeconds() != null) row.put("watch_time_seconds", m.watchTimeSeconds());
+            // Optional hook and watch numbers; each is present only when the platform answered it.
+            m.extra().forEach((key, value) -> row.putIfAbsent(key, value));
             rows.add(row);
             insightsForbidden = insightsForbidden || m.insightsForbidden();
         }

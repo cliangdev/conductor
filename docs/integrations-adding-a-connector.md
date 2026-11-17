@@ -221,7 +221,8 @@ Each entry is an `IngestSpec`:
 | Field | Description |
 |---|---|
 | `key` / `label` | Identity and display — `key` also names the payload field holding the row list (e.g. `"topQueries"`). |
-| `idField` / `valueField` | Row keys for the entry's identity and ranked value. |
+| `idField` / `valueField` | Row keys for the entry's identity and ranked value. A missing value is read as 0, except in a `sourceOrder` dimension, where the row is skipped. |
+| `sourceOrder` | Optional. `true` keeps the connector's own row order instead of re-sorting on `valueField` (for rankings one number can't express, e.g. `byHookType`). |
 | `topN` | How many top rows to watch for movers (defaults to all rows). |
 | `baselineN` | How many rows to persist as the next period's baseline — bounds `connector_feed.last_stats` regardless of how wide the source's own top-N list is (defaults to the current row count). |
 | `minAbsolute` / `minRelative` / `minRankMove` | Thresholds for flagging a rank-stable entry as a mover by value change, or a rank shift as material on its own. |

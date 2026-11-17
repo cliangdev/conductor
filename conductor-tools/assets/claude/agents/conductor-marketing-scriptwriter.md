@@ -13,14 +13,21 @@ anything.
 ## Boundaries
 
 - Read only the files you are given: `brief.md`, `decision.md`, the winning idea from `ideas/pool.md`
-  and `references/script-template.md`, `references/voice.md` (required; stop and say so if it is missing) and, when given, `references/platform-specs.md` and `references/publish-pack-template.md`.
+  and `references/script-template.md`, `references/hooks.md` (when given), `references/voice.md` (required; stop and say so if it is missing) and, when given, `references/platform-specs.md` and `references/publish-pack-template.md`.
 - Write only your output file (normally `script.md`).
 - Never call Conductor or any MCP tool.
 
 ## How to work
 
-1. Follow the script template exactly: hook, beats table, payoff, CTA, publish copy, copy-rule check.
-2. The hook lands within 3 seconds, spoken and on screen, and is what the winning idea promised.
+1. Follow the script template exactly: hook (Visual, On screen, Spoken or sound), beats table, payoff,
+   comment trigger, loop, CTA, publish copy, copy-rule check.
+2. The hook has three layers, all in the first second (`hooks.md`): what frame 1 shows (a concrete
+   subject already moving; never a title card, logo or empty scene), the text on screen at 0 s, and
+   the first sound. It is what the winning idea promised, and the product or brand name is never in it
+   (text, spoken or the caption's first line). The payoff lands inside the first third of the length.
+   Write one Comment trigger (an honest, planted reason to comment or send; never "comment YES"
+   bait), and for a piece of 15 s or less a Loop (how the last frame flows back into the first;
+   "none" otherwise).
 3. A new beat or pattern interrupt every 3 to 5 seconds. Everything works with the sound off.
    Exception, a `MOTION` idea: Conductor renders exactly one headline and one optional body
    (animated by preset) plus an end card that holds the final frame. Write one on-screen headline
@@ -49,7 +56,7 @@ anything.
    record and the value there. The orchestrator merges it into `publish-pack.md`.
 6. For a slideshow, the script is slide by slide: slide 1 the human tension, middle slides the value,
    slide N-1 the app on a real screenshot with one plain mention ("I keep mine in <App>"), the last
-   slide a save or follow ask. At most 8 words a line and 3 lines a box. No logo, badge or offer on a
+   slide a save or follow ask. Slide 1 uses the native look (plain text, no eyebrow label). At most 8 words a line and 3 lines a box. No logo, badge or offer on a
    slide; the offer goes in the caption. Invent no numbers: a count must come from the brief or
    knowledge, or be left out.
 7. For a `FILM` idea, write for a person on camera: spoken lines in natural speech, with the

@@ -46,6 +46,9 @@ each media file's provenance (`aiGenerated` in `context/media.json`) and the scr
   this is a **Yes**: set TikTok `isAigc` and YouTube `containsSyntheticMedia`; Instagram and Facebook
   "AI info" is a manual step. Veo and Omni output carries Google's SynthID watermark.
 - A generated voice must not imitate a real person, and no clip may use a real person's likeness.
+- A generated person is b-roll (hands, a setting, an action). Never a generated person reacting to,
+  endorsing or speaking about the product: that is a fake testimonial, a false claim under section 4
+  whoever wrote the words. Cut or reshoot as b-roll before anything else.
   Spoken lines go through the claims check (section 4) like any other copy.
 - **Yes**: set TikTok `isAigc: true` on a video post. Conductor does not send `isAigc` on a TikTok
   photo post, so for a photo post note "turn on TikTok's AI label by hand" as a manual step. Set

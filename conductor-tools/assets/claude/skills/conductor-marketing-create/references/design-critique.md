@@ -8,7 +8,8 @@ claim to have judged kerning or hairline spacing; judge what is visible at a gla
 
 ## Which criteria apply
 
-Stills, ads and brand-layout creatives use the six criteria below. An organic slideshow (a
+Stills, ads and brand-layout creatives use the six criteria below. Brand layouts are for these
+and for ads; organic video and slides do not take them. An organic slideshow (a
 `compose_slideshow` CAROUSEL) uses the five slideshow criteria further down instead, because it is
 meant to look native, not like an ad.
 
@@ -45,7 +46,9 @@ Look at the contact sheet: slide 1 at full size, then the slides in order. Score
 2. **Each slide earns the next swipe**: every slide has one job and a reason to go on; no filler slide, no slide that repeats the last.
 3. **People would save or send it**: the middle slides hold something to keep or to send to a named person.
 4. **The app is the payoff, not the opener**: it appears on slide N-1 on a real screenshot with one plain mention, never on slide 1 and never as a logo, badge or offer.
-5. **Native look**: text boxes and photos feel like a person's post. Banner-ad signs (a logo lockup, a badge, a tagline stack, a call-to-action button) score 1 or 2.
+5. **Native look**: text boxes and photos feel like a person's post. Banner-ad signs (a logo lockup, a badge, a tagline stack, a call-to-action button) score 1 or 2. So does a branded or title-card first frame or slide 1: an eyebrow label, kit accent colour on words, a lockup or logo, a CTA badge, or a static card with no concrete subject. Slide 1 and a video's first frame use plain platform-style text (`box` or `stroke`).
+
+For a video (a slideshow MP4, a clip, a MOTION piece), also look at frame 0: a still, branded or empty first frame scores 1 on the native-look criterion and 1 on scroll-stop, whatever the later frames do.
 
 Act on the scores as below. Show them in one line, for example:
 `Slideshow: scroll-stop 4, next-swipe 3, save/send 4, app-as-payoff 4, native 5. Weakest: slide 3 repeats slide 2.`

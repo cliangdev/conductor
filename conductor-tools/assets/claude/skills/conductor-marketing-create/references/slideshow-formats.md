@@ -5,14 +5,19 @@ promotes an app or product by being worth watching first. Build it with `compose
 post it as a CAROUSEL Creative. Ads use the brand layouts (STILL) instead; this is not the ad path.
 
 Branding is light: no logo, badge or offer on the slides, and the product appears as the payoff, not
-the opener. The look of the text (font, colours, sizes) is separate and optional: see Style.
+the opener. Where the slideshow also goes out as a video (below, "Per platform"), its first frame is
+slide 1: it has the native look, so no eyebrow label, no kit accent colour on words, no lockup or logo
+and no CTA badge; plain platform-style text (`box` or `stroke`) over a concrete photo that already
+shows the result or the odd thing (`hooks.md`, frame 1 test). Brand layouts stay for ads and STILL
+artwork. The look of the text (font, colours, sizes) is separate and optional: see Style.
 
 ## Post anatomy
 
 Aim for 5 to 7 slides. Each slide has one job.
 
-1. **Slide 1, the hook.** A human tension or a result people want to keep. Never a feature, the
-   product name or a price.
+1. **Slide 1, the hook.** A human tension or a result people want to keep, with all three hook layers
+   (visual, text, sound if it goes out as video; `hooks.md`). Never a feature, the product name or a
+   price, an eyebrow label, a title card or raw or unfinished state when the finished result exists.
 2. **Middle slides, the value.** The part people save or send: the list, the plan, the fix, the story
    beat. Saves and sends carry a post beyond followers.
 3. **Slide N-1, the payoff.** The product in use on a real screenshot (a `screen` slide, optionally
@@ -146,6 +151,14 @@ Two separate choices, never conflated:
   (`references/brand-kit-setup.md`, "Make a kit style from slides"). A saved Creative keeps its `slideStyle`
   unless `update_creative` (or a draft over `baseCreativeId`) changes the slides without sending a
   `slideStyle`, which clears it; send the new `style` with the new slides, or `slideStyle: null` to clear it.
+
+## Per platform
+
+TikTok takes a photo slideshow and a video. Instagram, Facebook and YouTube take video only for
+organic reach: send the slideshow there as its MP4 (`carouselAs: "video"`), not as a photo or feed
+post. Photo posts on those platforms reach followers only, and a new account has none. Add a spoken
+first line to the MP4 once a voice is available; until then say plainly that the video has music and
+text but no voice. See `platform-specs.md`, "Per-platform format".
 
 ## Honesty and brand
 

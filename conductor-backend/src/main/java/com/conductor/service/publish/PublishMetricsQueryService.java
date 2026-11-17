@@ -4,6 +4,7 @@ import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.User;
 import com.conductor.entity.WorkItem;
+import com.conductor.marketing.insights.HookMetrics;
 import com.conductor.repository.PostPublishTargetMetricRepository;
 import com.conductor.repository.PostPublishTargetRepository;
 import com.conductor.repository.WorkItemRepository;
@@ -30,11 +31,21 @@ public class PublishMetricsQueryService {
 
     /** A snapshot as a client sees it. */
     public record Snapshot(OffsetDateTime observedAt, Long views, Long likes, Long comments, Long shares,
-                           Long saves, Long reach, Long impressions, Long watchTimeSeconds, boolean unavailable) {
+                           Long saves, Long reach, Long impressions, Long watchTimeSeconds, boolean unavailable,
+                           Double hookRate, Double holdRate) {
+
+        Snapshot(OffsetDateTime observedAt, Long views, Long likes, Long comments, Long shares, Long saves,
+                 Long reach, Long impressions, Long watchTimeSeconds, boolean unavailable) {
+            this(observedAt, views, likes, comments, shares, saves, reach, impressions, watchTimeSeconds,
+                    unavailable, null, null);
+        }
 
         static Snapshot of(PostPublishTargetMetric m) {
+            HookMetrics.Rates rates = m.isUnavailable() ? HookMetrics.Rates.NONE
+                    : HookMetrics.of(m.getPlatform(), m.getExtra());
             return new Snapshot(m.getObservedAt(), m.getViews(), m.getLikes(), m.getComments(), m.getShares(),
-                    m.getSaves(), m.getReach(), m.getImpressions(), m.getWatchTimeSeconds(), m.isUnavailable());
+                    m.getSaves(), m.getReach(), m.getImpressions(), m.getWatchTimeSeconds(), m.isUnavailable(),
+                    rates.hookRate(), rates.holdRate());
         }
     }
 
@@ -47,7 +58,11 @@ public class PublishMetricsQueryService {
 
     /** One row of the project ranking. */
     public record TopPost(String workItemId, String displayId, String title, String targetId, String platform,
-                          String accountLabel, String permalink, String metric, long value, OffsetDateTime observedAt) {}
+                          String accountLabel, String permalink, String metric, long value, Double rate,
+                          OffsetDateTime observedAt) {}
+
+    /** The metric whose ranking is a derived rate rather than a counter; see {@link HookMetrics}. */
+    static final String HOOK_RATE = "hook_rate";
 
     private static final Map<String, ToLongFunction<PostPublishTargetMetric>> METRICS = Map.of(
             "views", m -> orZero(m.getViews()),
@@ -75,7 +90,7 @@ public class PublishMetricsQueryService {
 
     /** The metric names a ranking accepts. */
     public static List<String> metricNames() {
-        return List.of("views", "likes", "comments", "shares", "saves", "reach", "impressions");
+        return List.of("views", "likes", "comments", "shares", "saves", "reach", "impressions", HOOK_RATE);
     }
 
     @Transactional(readOnly = true)
@@ -137,8 +152,9 @@ public class PublishMetricsQueryService {
                                   int limit, User caller) {
         verifyMembership(projectId, caller);
         String metricName = metric == null || metric.isBlank() ? "views" : metric.trim().toLowerCase(Locale.ROOT);
+        boolean hookRanking = HOOK_RATE.equals(metricName);
         ToLongFunction<PostPublishTargetMetric> read = METRICS.get(metricName);
-        if (read == null) {
+        if (read == null && !hookRanking) {
             throw new IllegalArgumentException("Unknown metric '" + metric + "'; one of " + metricNames());
         }
         String platformFilter = platform == null || platform.isBlank() ? null : platform.trim().toLowerCase(Locale.ROOT);
@@ -146,6 +162,11 @@ public class PublishMetricsQueryService {
         List<TopPost> rows = new ArrayList<>();
         for (PostPublishTargetMetric m : latest) {
             if (m.isUnavailable()) {
+                continue;
+            }
+            // A destination that does not report a hook rate (TikTok never does) is left out, not ranked last.
+            Double hookRate = hookRanking ? HookMetrics.of(m.getPlatform(), m.getExtra()).hookRate() : null;
+            if (hookRanking && hookRate == null) {
                 continue;
             }
             PostPublishTarget target = targetRepository.findById(m.getTargetId()).orElse(null);
@@ -157,7 +178,8 @@ public class PublishMetricsQueryService {
                     m.getTargetId(), m.getPlatform(),
                     target != null ? target.getPlatformAccountLabel() : null,
                     target != null ? target.getPermalink() : null,
-                    metricName, read.applyAsLong(m), m.getObservedAt()));
+                    metricName, hookRanking ? Math.round(hookRate * 10_000) : read.applyAsLong(m), hookRate,
+                    m.getObservedAt()));
         }
         rows.sort(Comparator.comparingLong(TopPost::value).reversed());
         int cap = Math.max(1, Math.min(limit, 100));

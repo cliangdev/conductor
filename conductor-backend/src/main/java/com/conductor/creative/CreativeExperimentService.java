@@ -1,5 +1,6 @@
 package com.conductor.creative;
 
+import com.conductor.marketing.insights.HookMetrics;
 import com.conductor.entity.PostPublishTarget;
 import com.conductor.entity.PostPublishTargetMetric;
 import com.conductor.entity.User;
@@ -24,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 
 /**
  * Hook experiments (COND-24 T5): {@link #create} opens one RUNNING experiment on a Creative family of
@@ -55,7 +57,8 @@ public class CreativeExperimentService {
     static final int INCONCLUSIVE_GRACE_DAYS = 7;
 
     private static final Set<String> ALLOWED_METRICS = Set.of(
-            CreativeExperiment.METRIC_VIEWS, CreativeExperiment.METRIC_ENGAGEMENT_RATE, CreativeExperiment.METRIC_AVG_VIEW_PCT);
+            CreativeExperiment.METRIC_VIEWS, CreativeExperiment.METRIC_ENGAGEMENT_RATE, CreativeExperiment.METRIC_AVG_VIEW_PCT,
+            CreativeExperiment.METRIC_HOOK_RATE);
 
     private final CreativeExperimentRepository experimentRepository;
     private final CreativeRepository creativeRepository;
@@ -83,7 +86,7 @@ public class CreativeExperimentService {
 
     /** One variant's numbers at the experiment's decision window, or the lack of them. */
     private record VariantWindowData(boolean hasData, Long views, Double engagementRate, Double avgViewPct,
-                                     OffsetDateTime earliestFireTime) {}
+                                     Map<String, Double> hookRateByPlatform, OffsetDateTime earliestFireTime) {}
 
     @Transactional
     public CreativeExperiment create(String projectId, String creativeId, String metricRaw, Integer windowHours, User caller) {
@@ -204,16 +207,36 @@ public class CreativeExperimentService {
             experiment.setState(CreativeExperiment.STATE_INCONCLUSIVE);
             experiment.setWinnerCreativeId(null);
             experiment.setDecidedAt(now);
-            experiment.setSummary(buildSummary(family, dataByCreative, null, "insufficient_data"));
+            experiment.setSummary(buildSummary(family, dataByCreative, null, Set.of(), "insufficient_data"));
             return experimentRepository.save(experiment);
         }
 
         boolean allHaveAvgViewPct = dataByCreative.values().stream().allMatch(d -> d.avgViewPct() != null);
-        String comparisonMetric = allHaveAvgViewPct ? CreativeExperiment.METRIC_AVG_VIEW_PCT : experiment.getMetric();
+        // hook_rate is compared only when the experiment asked for it and every variant reports it (TikTok never
+        // does); otherwise the rule is the one that always applied.
+        boolean hookRequested = CreativeExperiment.METRIC_HOOK_RATE.equals(experiment.getMetric());
+        // Hook rates are only comparable within one platform, so hook_rate is used only when at least one platform
+        // is reported by every variant (and compared on those platforms); otherwise the rule that always applied.
+        Set<String> commonHookPlatforms = dataByCreative.values().stream()
+                .map(d -> d.hookRateByPlatform().keySet())
+                .reduce((x, y) -> {
+                    Set<String> both = new TreeSet<>(x);
+                    both.retainAll(y);
+                    return both;
+                }).orElse(Set.of());
+        boolean allHaveHookRate = !commonHookPlatforms.isEmpty();
+        String comparisonMetric = hookRequested && allHaveHookRate ? CreativeExperiment.METRIC_HOOK_RATE
+                : allHaveAvgViewPct ? CreativeExperiment.METRIC_AVG_VIEW_PCT
+                : hookRequested ? CreativeExperiment.METRIC_VIEWS : experiment.getMetric();
 
         Map<String, Double> comparisonValues = new LinkedHashMap<>();
         for (Creative variant : family) {
-            comparisonValues.put(variant.getId(), comparisonValue(dataByCreative.get(variant.getId()), comparisonMetric));
+            VariantWindowData variantData = dataByCreative.get(variant.getId());
+            comparisonValues.put(variant.getId(),
+                    CreativeExperiment.METRIC_HOOK_RATE.equals(comparisonMetric)
+                            ? commonHookPlatforms.stream().mapToDouble(variantData.hookRateByPlatform()::get)
+                                    .average().orElse(0)
+                            : comparisonValue(variantData, comparisonMetric));
         }
         double max = comparisonValues.values().stream().mapToDouble(Double::doubleValue).max().orElse(0);
         List<String> leaders = comparisonValues.entrySet().stream()
@@ -225,11 +248,11 @@ public class CreativeExperimentService {
         if (leaders.size() != 1) {
             experiment.setState(CreativeExperiment.STATE_INCONCLUSIVE);
             experiment.setWinnerCreativeId(null);
-            experiment.setSummary(buildSummary(family, dataByCreative, comparisonMetric, "tie"));
+            experiment.setSummary(buildSummary(family, dataByCreative, comparisonMetric, commonHookPlatforms, "tie"));
         } else {
             experiment.setState(CreativeExperiment.STATE_DECIDED);
             experiment.setWinnerCreativeId(leaders.get(0));
-            experiment.setSummary(buildSummary(family, dataByCreative, comparisonMetric, null));
+            experiment.setSummary(buildSummary(family, dataByCreative, comparisonMetric, commonHookPlatforms, null));
         }
         return experimentRepository.save(experiment);
     }
@@ -277,6 +300,7 @@ public class CreativeExperimentService {
         long views = 0;
         long engagementNumerator = 0;
         List<Double> avgViewPcts = new ArrayList<>();
+        Map<String, List<Double>> hookByPlatform = new LinkedHashMap<>();
         boolean any = false;
         for (PostPublishTarget target : targets) {
             OffsetDateTime deadline = target.getFireTime().plusHours(windowHours);
@@ -292,14 +316,21 @@ public class CreativeExperimentService {
             if (avgPct != null) {
                 avgViewPcts.add(avgPct);
             }
+            Double hook = HookMetrics.of(target.getPlatform(), m.getExtra()).hookRate();
+            if (hook != null) {
+                hookByPlatform.computeIfAbsent(target.getPlatform(), k -> new ArrayList<>()).add(hook);
+            }
         }
         if (!any) {
-            return new VariantWindowData(false, null, null, null, earliest);
+            return new VariantWindowData(false, null, null, null, Map.of(), earliest);
         }
         Double engagementRate = views > 0 ? (double) engagementNumerator / views : 0.0;
         Double avgViewPct = avgViewPcts.isEmpty() ? null
                 : avgViewPcts.stream().mapToDouble(Double::doubleValue).average().orElse(0);
-        return new VariantWindowData(true, views, engagementRate, avgViewPct, earliest);
+        Map<String, Double> hookRateByPlatform = new LinkedHashMap<>();
+        hookByPlatform.forEach((platform, values) ->
+                hookRateByPlatform.put(platform, values.stream().mapToDouble(Double::doubleValue).average().orElse(0)));
+        return new VariantWindowData(true, views, engagementRate, avgViewPct, hookRateByPlatform, earliest);
     }
 
     /** The instant after which a variant still missing window data is "overdue" rather than "not due yet". */
@@ -318,7 +349,7 @@ public class CreativeExperimentService {
     }
 
     private JsonNode buildSummary(List<Creative> family, Map<String, VariantWindowData> dataByCreative,
-                                  String comparisonMetric, String reason) {
+                                  String comparisonMetric, Set<String> hookPlatforms, String reason) {
         ObjectNode root = objectMapper.createObjectNode();
         if (comparisonMetric != null) {
             root.put("comparisonMetric", comparisonMetric);
@@ -344,6 +375,16 @@ public class CreativeExperimentService {
             }
             if (data.avgViewPct() != null) {
                 row.put("avgViewPct", data.avgViewPct());
+            }
+            if (!data.hookRateByPlatform().isEmpty()) {
+                ObjectNode byPlatform = row.putObject("hookRateByPlatform");
+                data.hookRateByPlatform().forEach(byPlatform::put);
+                // The deciding value: the mean over the platforms the decision compared on; null-free, so only
+                // present when hook_rate decided it.
+                if (CreativeExperiment.METRIC_HOOK_RATE.equals(comparisonMetric)) {
+                    row.put("hookRate", hookPlatforms.stream().mapToDouble(data.hookRateByPlatform()::get)
+                            .average().orElse(0));
+                }
             }
         }
         return root;
@@ -383,7 +424,7 @@ public class CreativeExperimentService {
             return CreativeExperiment.METRIC_VIEWS;
         }
         if (!ALLOWED_METRICS.contains(raw)) {
-            throw new BusinessException("Unknown metric '" + raw + "'; expected views, engagement_rate or avg_view_pct");
+            throw new BusinessException("Unknown metric '" + raw + "'; expected views, engagement_rate, avg_view_pct or hook_rate");
         }
         return raw;
     }

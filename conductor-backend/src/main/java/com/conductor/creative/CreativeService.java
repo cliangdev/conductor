@@ -646,7 +646,7 @@ public class CreativeService {
         variant.setSlideshow(root.getSlideshow());
         variant.setSlideStyle(root.getSlideStyle());
         variant.setSlideshowSpec(root.getSlideshowSpec());
-        // A variant inherits the descriptive tags (hookType, angle, format, archetype) of the Creative it was cut from, not
+        // A variant inherits the descriptive tags (hookType, visualHook, soundHook, angle, format, archetype) of the Creative it was cut from, not
         // the family root's and never hypothesis/lessons/previewRounds; the request's tags merge over them.
         variant.setTags(CreativeTagsSupport.forVariant(objectMapper, source.getTags(), request != null ? request.getTags() : null));
         variant.setTypeOverrides(objectMapper.createObjectNode());

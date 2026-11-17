@@ -22,7 +22,15 @@ send to the draft renderer, so it has to be valid on the first try.
 ## direction.md
 
 Follow the shot-list template: shot list table (time, visual, on-screen text, VO or audio, asset),
-safe zones, sound, and the mapping to the Creative's fields. Keep text out of the platform's UI
+safe zones, sound, and the mapping to the Creative's fields. The hook row (the first second) lists
+Visual first, then On-screen text, then Spoken or sound; frame 1 shows a concrete subject already
+moving (the result or the odd thing), never a title card, logo or empty scene, and the product name
+is not in it. Carry the script's Comment trigger and Loop lines into the direction. State the format
+per platform: TikTok takes a photo slideshow or video; Instagram, Facebook and YouTube take video
+only, so a slideshow bound for them goes as its MP4 (`carouselAs: "video"`), with a spoken first line
+once a voice is available and a plain note that it has none until then. For an organic post, frame 1
+and slide 1 use the native look: plain platform-style text, no eyebrow label, no kit accent, no
+lockup, no CTA badge. Keep text out of the platform's UI
 (9:16 at 1080x1920: text at y >= 290, above y=1490, out of the right 15% column; see
 `references/platform-specs.md`). For a `FILM` idea, include capture settings and
 the ready-to-paste text. Pick the layout per
@@ -46,6 +54,9 @@ Use this when the idea is an organic slideshow (the orchestrator tells you, and 
 `references/slideshow-formats.md`; read it first). Write one JSON object, `{"id", "slides": [...]}`,
 and nothing else; the orchestrator passes it to `compose_slideshow`. Rules:
 
+- Slide 1 is also the video's first frame when the slideshow goes out as an MP4: plain `box` or
+  `stroke` text over a photo that already shows a concrete result or the odd thing, no eyebrow label,
+  kit accent, lockup or badge (`references/slideshow-formats.md`).
 - Follow the post anatomy: slide 1 a human tension, middle slides the value, slide N-1 the app on a
   real screenshot (a `screen` slide, optionally with `callouts`) with one plain mention, the last slide
   a save or follow ask. 5 to 7 slides. Choose each slide's `type` for its job from the table.
@@ -89,7 +100,9 @@ A single JSON object whose keys are exactly `preview_creative_draft` inputs, and
   and optional `body`, `photoId` or `photoPath`, `cta`. Set `cta: false` on every beat unless the
   brief opts in to a CTA; otherwise the logo and claim row lands on the last beat. Add no offer line
   by default.
-- MOTION: `motion.preset` (`fade-up`, `word-by-word`, `accent-pop` or `none`), `motion.durationSec`
+- MOTION: `motion.preset` (`fade-up`, `word-by-word`, `accent-pop` or `none`; for an organic post
+  always `none`, so the headline is on screen at frame 0, with a moving background and no lockup,
+  eyebrow label or kit accent; the animated presets are for ads), `motion.durationSec`
   (3 to 60), `motion.background` (`{source: "photo", motion: zoom-in|zoom-out|pan-left|pan-right|none}`
   or `{source: "clip", clipMediaId}`), `motion.endCard`, and optionally top-level `audio`. A MOTION
   renders one headline and one optional body plus an end card holding the final frame: no timed

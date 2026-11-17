@@ -839,4 +839,87 @@ class YouTubeConnectorTest {
             assertThat(row).doesNotContainKey("watch_time_seconds");
         });
     }
+
+    // --- hook numbers: engagedViews and the opening of the retention curve ---
+
+    @Test
+    void getVideoStatistics_carriesEngagedViews_andNoOpeningHold() {
+        when(dataClient.listVideoStatistics(ACCESS_TOKEN, List.of("vid-1")))
+                .thenReturn(List.of(new YouTubeDataClient.VideoStatistics("vid-1", 500L, 40L, 3L, false)));
+        when(dataClient.listVideoAnalytics(eq(ACCESS_TOKEN), eq(List.of("vid-1")), isNull()))
+                .thenReturn(List.of(new YouTubeDataClient.VideoAnalytics("vid-1", 120.0, 45.5, 62.3, false, 410.0)));
+
+        ActionResult result = connector.invoke("get_video_statistics", Map.of("post_ids", List.of("vid-1")), ctx());
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) result.output().get("metrics");
+        assertThat(rows).singleElement().satisfies(row -> {
+            assertThat(row.get("engaged_views")).isEqualTo(410L);
+            assertThat(row).doesNotContainKey("opening_hold");
+        });
+    }
+
+    @Test
+    void dataClient_listVideoAnalytics_readsEngagedViews_andAsksNoRetentionCurve() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
+                .thenAnswer(invocation -> {
+                    String uri = invocation.<URI>getArgument(0).toString();
+                    org.junit.jupiter.api.Assertions.assertFalse(uri.contains("elapsedVideoTimeRatio"),
+                            "no per-video retention report is requested");
+                    return ResponseEntity.ok("""
+                            {"columnHeaders":[{"name":"video"},{"name":"estimatedMinutesWatched"},
+                              {"name":"averageViewDuration"},{"name":"averageViewPercentage"},{"name":"engagedViews"}],
+                             "rows":[["vid-1",120,45.5,62.3,410]]}""");
+                });
+
+        List<YouTubeDataClient.VideoAnalytics> result =
+                new YouTubeDataClient(restTemplate).listVideoAnalytics(ACCESS_TOKEN, List.of("vid-1"), null);
+
+        assertThat(result).singleElement().satisfies(v -> {
+            assertThat(v.engagedViews()).isEqualTo(410.0);
+            assertThat(v.averageViewPercentage()).isEqualTo(62.3);
+        });
+    }
+
+    @Test
+    void dataClient_listVideoAnalytics_engagedViewsRefused_retriesWithoutIt() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
+                .thenAnswer(invocation -> {
+                    String uri = invocation.<URI>getArgument(0).toString();
+                    if (uri.contains("engagedViews")) {
+                        throw new HttpClientErrorException(HttpStatus.BAD_REQUEST);
+                    }
+                    return ResponseEntity.ok("""
+                            {"columnHeaders":[{"name":"video"},{"name":"estimatedMinutesWatched"},
+                              {"name":"averageViewDuration"},{"name":"averageViewPercentage"}],
+                             "rows":[["vid-1",120,45.5,62.3]]}""");
+                });
+
+        List<YouTubeDataClient.VideoAnalytics> result =
+                new YouTubeDataClient(restTemplate).listVideoAnalytics(ACCESS_TOKEN, List.of("vid-1"), null);
+
+        assertThat(result).singleElement().satisfies(v -> {
+            assertThat(v.estimatedMinutesWatched()).isEqualTo(120.0);
+            assertThat(v.engagedViews()).isNull();
+            assertThat(v.forbidden()).isFalse();
+        });
+    }
+
+    @Test
+    void dataClient_listVideoAnalytics_forbidden_marksForbiddenInOneCall() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        when(restTemplate.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
+                .thenThrow(new HttpClientErrorException(HttpStatus.FORBIDDEN));
+
+        List<YouTubeDataClient.VideoAnalytics> result =
+                new YouTubeDataClient(restTemplate).listVideoAnalytics(ACCESS_TOKEN, List.of("vid-1"), null);
+
+        assertThat(result).singleElement().satisfies(v -> {
+            assertThat(v.forbidden()).isTrue();
+        });
+        org.mockito.Mockito.verify(restTemplate, org.mockito.Mockito.times(1))
+                .exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class));
+    }
 }

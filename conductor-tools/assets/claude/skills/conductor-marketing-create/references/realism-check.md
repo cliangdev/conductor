@@ -42,6 +42,9 @@ orchestrator.
   realism and the absence of on-image text are shared. One prompt with the dish name swapped in is a
   defect.
 - **No people's faces, hands only if needed.** No text, logos or packaging brands in the image.
+- **A generated person is b-roll**: hands, a kitchen, an action. Never a generated person reacting
+  to, endorsing or speaking about the product: it reads as a fake testimonial, and fully generated
+  testimonial and emotional content takes the largest engagement penalty of any AI content.
 
 For a subject that is not food, keep the same spirit: ordinary light, a lived-in setting, every
 repeated object different, imperfect framing.
@@ -77,6 +80,8 @@ For a clip from `generate_creative_video`, see `references/direct.md`, "Video fr
 4 fps contact sheet, then 100% crops of the face and hands at 2 or 3 timestamps (ffmpeg frame
 extraction), then listen to the audio if there is any. Any tell is a FAIL.
 
+- **Role**: a generated person who reacts to, endorses or talks about the product is a FAIL,
+  whatever else passes. Generated people appear only as b-roll (hands, an action, a setting).
 - **Face**: exaggerated or bug eyes, rubber faces, unnatural mouth motion.
 - **Hands**: morphing or merging, fingers appearing or vanishing.
 - **Identity**: the person, clothes or set drifting between frames.

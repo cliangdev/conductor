@@ -45,6 +45,13 @@ needs changing until it fits.
   This is the default for an organic `RENDER` post. It needs real photos and, for the payoff slide,
   a real app screenshot; it takes no Brand Kit layout. Ads keep using STILL.
 
+- **Composed video** (`compose_video`): one 9:16 MP4 of 3 to 90 s built locally from a timeline: clips
+  trimmed to a beat and still images joined by hard cuts (or a 0.5 s fade), with timed text on screen
+  from 0 s in the native slideshow look (no Brand Kit), over clip sound, a music file and a voice file
+  you already have. It is posted as a CLIP. This is how a 2 to 4 s moving hook opens a body of more
+  clips or slides. It needs the footage or generated clips and stills as local files; it cannot make
+  footage or long narration; a short voice line comes from `generate_voice_line`. See `references/video-timeline.md`.
+
 ## Hard requirements (a draft is refused without them)
 
 - **A photo.** Every STILL needs one, and so does a carousel or story, whose beats inherit the main
@@ -98,7 +105,12 @@ money and is never chosen unprompted. Flow and checks: `references/direct.md`, "
 - Real footage of people, places, cooking or the product in use. A generated clip (below) can stand in
   only when a video route is configured and the person asked for motion.
 - Real product screens: they come from screen recordings, never from generation.
-- Long voiceover narration. A clip's own short spoken line (below) is supported; narration is not.
+- Long voiceover narration (over about 60 words). A short spoken line or short narration is supported:
+  `generate_voice_line` makes it (Google Cloud Text-to-Speech, a synthetic voice that needs the AI
+  label) and `compose_video` mixes it with word-timed captions; see `references/video-timeline.md`,
+  "Voice". A generated clip's own short spoken line is also supported (below).
+- Cutting or trimming a clip any other way: the trim and join live in `compose_video`, and it has no
+  speed changes, effects, transitions beyond cut and fade, or captions that follow speech.
 - Charts, illustrations, or text inside a generated image. In a STILL each card is one photo plus
   text; grids, stacks and collages exist only as slideshow slides (above).
 - Anything that relies on a product claim the brief can't confirm. That's a copy problem, not a

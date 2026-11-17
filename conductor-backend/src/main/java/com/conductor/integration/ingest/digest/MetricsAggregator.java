@@ -98,9 +98,14 @@ public class MetricsAggregator {
             Map<String, Object> row = (Map<String, Object>) o;
             Object id = row.get(d.idField());
             if (id == null) continue;
+            // In a source-ordered dimension (a lift ranked upstream) a row with no value is skipped, not read as 0:
+            // a missing lift is not the worst one. Other dimensions keep reading a missing count as 0.
+            if (d.keepsSourceOrder() && row.get(d.valueField()) == null) continue;
             rows.add(new DimensionRow(String.valueOf(id), toDouble(row.get(d.valueField()))));
         }
-        rows.sort(Comparator.comparingDouble(DimensionRow::value).reversed());
+        if (!d.keepsSourceOrder()) {
+            rows.sort(Comparator.comparingDouble(DimensionRow::value).reversed());
+        }
         return rows;
     }
 

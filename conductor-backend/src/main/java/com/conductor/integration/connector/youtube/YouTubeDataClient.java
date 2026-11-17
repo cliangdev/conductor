@@ -328,7 +328,13 @@ public class YouTubeDataClient {
      * once-per-row concern the caller already owns for the entity column.
      */
     public record VideoAnalytics(String id, Double estimatedMinutesWatched, Double averageViewDurationSeconds,
-                                 Double averageViewPercentage, boolean forbidden) {}
+                                 Double averageViewPercentage, boolean forbidden, Double engagedViews) {
+
+        public VideoAnalytics(String id, Double estimatedMinutesWatched, Double averageViewDurationSeconds,
+                              Double averageViewPercentage, boolean forbidden) {
+            this(id, estimatedMinutesWatched, averageViewDurationSeconds, averageViewPercentage, forbidden, null);
+        }
+    }
 
     /**
      * Reads watch time and retention for up to fifty videos in one {@code reports} call
@@ -342,6 +348,9 @@ public class YouTubeDataClient {
      * caught rather than thrown, so the caller can keep the counts it already has and fall back to nulls
      * for retention — never failing the whole metrics batch over the newer, narrower scope. A 5xx/IO
      * failure still propagates, same as every other read in this class.
+     *
+     * <p>One optional addition, degrading to null without costing the rest: {@code engagedViews} rides
+     * the same report (a 400 retries the report without it).
      */
     public List<VideoAnalytics> listVideoAnalytics(String accessToken, List<String> videoIds, Instant startDate) {
         if (videoIds == null || videoIds.isEmpty()) {
@@ -349,25 +358,45 @@ public class YouTubeDataClient {
         }
         String start = startDate != null ? ANALYTICS_DATE.format(startDate) : ANALYTICS_EPOCH_START;
         String end = ANALYTICS_DATE.format(Instant.now());
+        String baseMetrics = "views,likes,comments,shares,estimatedMinutesWatched,"
+                + "averageViewDuration,averageViewPercentage";
+        List<VideoAnalytics> report;
+        try {
+            report = fetchAnalyticsReport(accessToken, videoIds, start, end, baseMetrics + ",engagedViews");
+        } catch (HttpClientErrorException withEngaged) {
+            if (withEngaged.getStatusCode().value() == 403) {
+                return forbiddenAnalytics(videoIds, withEngaged);
+            }
+            // engagedViews refused (or any other 400): the report that always worked is the one that counts.
+            try {
+                report = fetchAnalyticsReport(accessToken, videoIds, start, end, baseMetrics);
+            } catch (HttpClientErrorException e) {
+                return forbiddenAnalytics(videoIds, e);
+            }
+        }
+        return report;
+    }
+
+    private List<VideoAnalytics> forbiddenAnalytics(List<String> videoIds, HttpClientErrorException e) {
+        boolean forbidden = e.getStatusCode().value() == 403;
+        log.debug("YouTube analytics unavailable for {} video(s): {} {}", videoIds.size(),
+                e.getStatusCode().value(), e.getResponseBodyAsString());
+        return videoIds.stream().map(id -> new VideoAnalytics(id, null, null, null, forbidden)).toList();
+    }
+
+    private List<VideoAnalytics> fetchAnalyticsReport(String accessToken, List<String> videoIds, String start,
+                                                      String end, String metrics) {
         URI uri = UriComponentsBuilder.fromUriString(ANALYTICS_BASE + "/reports")
                 .queryParam("ids", "channel==MINE")
                 .queryParam("startDate", start)
                 .queryParam("endDate", end)
                 .queryParam("dimensions", "video")
                 .queryParam("filters", "video==" + String.join(",", videoIds))
-                .queryParam("metrics", "views,likes,comments,shares,estimatedMinutesWatched,"
-                        + "averageViewDuration,averageViewPercentage")
+                .queryParam("metrics", metrics)
                 .build().toUri();
-        try {
-            ResponseEntity<String> response = restTemplate.exchange(uri, HttpMethod.GET,
-                    new HttpEntity<>(bearer(accessToken)), String.class);
-            return parseAnalyticsReport(response.getBody());
-        } catch (HttpClientErrorException e) {
-            boolean forbidden = e.getStatusCode().value() == 403;
-            log.debug("YouTube analytics unavailable for {} video(s): {} {}", videoIds.size(),
-                    e.getStatusCode().value(), e.getResponseBodyAsString());
-            return videoIds.stream().map(id -> new VideoAnalytics(id, null, null, null, forbidden)).toList();
-        }
+        ResponseEntity<String> response = restTemplate.exchange(uri, HttpMethod.GET,
+                new HttpEntity<>(bearer(accessToken)), String.class);
+        return parseAnalyticsReport(response.getBody());
     }
 
     private List<VideoAnalytics> parseAnalyticsReport(String json) {
@@ -383,6 +412,7 @@ public class YouTubeDataClient {
         int minutesIdx = columns.indexOf("estimatedMinutesWatched");
         int durationIdx = columns.indexOf("averageViewDuration");
         int percentIdx = columns.indexOf("averageViewPercentage");
+        int engagedIdx = columns.indexOf("engagedViews");
         List<VideoAnalytics> result = new ArrayList<>();
         for (JsonNode row : rows) {
             if (!row.isArray() || videoIdx < 0 || videoIdx >= row.size()) {
@@ -394,7 +424,7 @@ public class YouTubeDataClient {
             }
             result.add(new VideoAnalytics(id,
                     numericColumn(row, minutesIdx), numericColumn(row, durationIdx),
-                    numericColumn(row, percentIdx), false));
+                    numericColumn(row, percentIdx), false, numericColumn(row, engagedIdx)));
         }
         return result;
     }

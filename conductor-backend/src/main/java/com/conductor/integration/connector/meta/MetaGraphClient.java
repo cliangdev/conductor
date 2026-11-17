@@ -462,11 +462,22 @@ public class MetaGraphClient {
      * media ({@link #readMediaMetrics}). {@code insightsForbidden} is true when the insights read itself
      * came back 403 (a connection that predates the {@code read_insights} /
      * {@code instagram_manage_insights} scope), so the caller can surface a reconnect hint without failing
-     * the read that still produced likes/comments.
+     * the read that still produced likes/comments. {@code extra} carries the optional hook and watch numbers
+     * (Instagram {@code reels_skip_rate}, {@code ig_reels_avg_watch_time}, {@code ig_reels_video_view_total_time};
+     * Facebook {@code post_video_avg_time_watched}, {@code video_duration_s}), each
+     * present only when the platform answered it; empty otherwise. TikTok reports none of them.
      */
     public record PostMetrics(String id, Long views, Long likes, Long comments, Long shares, Long reach,
                               Long saves, Long totalInteractions, Long watchTimeSeconds, boolean unavailable,
-                              boolean insightsForbidden) {}
+                              boolean insightsForbidden, Map<String, Object> extra) {
+
+        public PostMetrics(String id, Long views, Long likes, Long comments, Long shares, Long reach, Long saves,
+                           Long totalInteractions, Long watchTimeSeconds, boolean unavailable,
+                           boolean insightsForbidden) {
+            this(id, views, likes, comments, shares, reach, saves, totalInteractions, watchTimeSeconds, unavailable,
+                    insightsForbidden, Map.of());
+        }
+    }
 
     /**
      * Whether {@code id} names a Reel video rather than a Page post: a Page post id is always
@@ -527,6 +538,7 @@ public class MetaGraphClient {
             Long views;
             Long reach = null;
             Long watchTimeSeconds = null;
+            Map<String, Object> extra = new java.util.LinkedHashMap<>();
             boolean forbidden;
             if (reel) {
                 // fb_reels_total_plays counts replays, as Facebook's own "Views" does; blue_reels_play_count
@@ -539,6 +551,16 @@ public class MetaGraphClient {
                 Long viewTimeMs = values.get("post_video_view_time");
                 watchTimeSeconds = viewTimeMs == null ? null : viewTimeMs / 1000;
                 forbidden = reelInsights.forbidden();
+                if (values.get("post_video_avg_time_watched") != null) {
+                    extra.put("post_video_avg_time_watched", values.get("post_video_avg_time_watched"));
+                }
+                if (!forbidden) {
+                    JsonNode lengthNode = readNodeOrNullQuietly(id, "length", pageToken);
+                    if (lengthNode != null && lengthNode.path("length").isNumber()
+                            && lengthNode.path("length").asDouble() > 0) {
+                        extra.put("video_duration_s", lengthNode.path("length").asDouble());
+                    }
+                }
             } else {
                 InsightValues insights = readInsightValues(id, "insights", FACEBOOK_POST_INSIGHTS, pageToken);
                 views = insights.values().get("post_media_view");
@@ -546,7 +568,7 @@ public class MetaGraphClient {
                 forbidden = insights.forbidden();
             }
             metrics.add(new PostMetrics(id, views, likes, comments, shares, reach, null, null, watchTimeSeconds,
-                    false, forbidden));
+                    false, forbidden, extra));
         }
         return metrics;
     }
@@ -570,7 +592,8 @@ public class MetaGraphClient {
      * fails the call, and {@link #readInsightValues} then retries each on its own.
      */
     private static final String FACEBOOK_REEL_INSIGHTS =
-            "fb_reels_total_plays,blue_reels_play_count,post_impressions_unique,post_video_view_time";
+            "fb_reels_total_plays,blue_reels_play_count,post_impressions_unique,post_video_view_time,"
+                    + "post_video_avg_time_watched";
 
     /** Insight metric values by name; {@code forbidden} when the edge answered 403 (no {@code read_insights}). */
     private record InsightValues(Map<String, Long> values, boolean forbidden) {
@@ -682,6 +705,20 @@ public class MetaGraphClient {
         }
     }
 
+    /**
+     * An optional field read that never fails the pull: any refusal or error (403, 429, 5xx, I/O) is logged
+     * and answered with null, so the node keeps the numbers already read.
+     */
+    private JsonNode readNodeOrNullQuietly(String id, String fields, String token) {
+        try {
+            return readNodeOrNull(id, fields, token);
+        } catch (RuntimeException e) {
+            log.warn("Optional read of fields [{}] on node {} failed, continuing without it: {}", fields, id,
+                    e.getMessage());
+            return null;
+        }
+    }
+
     /** Metric names read off the insights edge; see {@link #readMediaInsights}. */
     private static final String INSIGHTS_METRICS = "views,reach,saved,shares,total_interactions";
 
@@ -698,19 +735,96 @@ public class MetaGraphClient {
         }
         List<PostMetrics> metrics = new ArrayList<>();
         for (String id : mediaIds) {
-            JsonNode node = readNodeOrNull(id, "id,like_count,comments_count", token);
+            JsonNode node = readNodeOrNull(id, "id,like_count,comments_count,media_product_type", token);
+            if (node == null) {
+                // media_product_type is the only optional field: if Graph refused it (400) rather than the media
+                // being gone, the core read still answers. gone=true needs this retry to be refused too.
+                node = readNodeOrNull(id, "id,like_count,comments_count", token);
+            }
             if (node == null) {
                 metrics.add(new PostMetrics(id, null, null, null, null, null, null, null, null, true, false));
                 continue;
             }
             MediaInsights insights = readMediaInsights(id, token);
+            boolean reel = "REELS".equals(node.path("media_product_type").asText(null));
+            Map<String, Object> hook = insights.forbidden() || !reel ? Map.of() : readReelHookInsights(id, token);
             metrics.add(new PostMetrics(id, insights.views(),
                     node.path("like_count").isNumber() ? node.path("like_count").asLong() : null,
                     node.path("comments_count").isNumber() ? node.path("comments_count").asLong() : null,
-                    insights.shares(), insights.reach(), insights.saves(), insights.totalInteractions(), null,
-                    false, insights.forbidden()));
+                    insights.shares(), insights.reach(), insights.saves(), insights.totalInteractions(),
+                    null, false, insights.forbidden(), hook));
         }
         return metrics;
+    }
+
+    /** Reels-only hook and watch metrics, read apart from {@link #INSIGHTS_METRICS}; see {@link #readReelHookInsights}. */
+    private static final List<String> REEL_HOOK_METRICS =
+            List.of("reels_skip_rate", "ig_reels_avg_watch_time", "ig_reels_video_view_total_time");
+
+    /**
+     * Reads a Reel's skip rate, average watch time and total play time (milliseconds), each only when Meta
+     * answers it. A separate edge call from {@link #INSIGHTS_METRICS} so that a media type or Graph version
+     * that refuses these (a 400 on anything that is not a Reel, or on a version before Meta added them)
+     * never costs the media its views and reach. A refused combined call falls back to {@code reels_skip_rate}
+     * alone, and only when that answers are the other two asked; every 4xx is a gap, never an error.
+     */
+    private Map<String, Object> readReelHookInsights(String mediaId, String token) {
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        Map<String, Double> all = readInsightDoubles(mediaId, String.join(",", REEL_HOOK_METRICS), token);
+        if (all == null) {
+            all = new java.util.HashMap<>();
+            Map<String, Double> skip = readInsightDoubles(mediaId, REEL_HOOK_METRICS.get(0), token);
+            if (skip != null) {
+                all.putAll(skip);
+                for (String metric : REEL_HOOK_METRICS.subList(1, REEL_HOOK_METRICS.size())) {
+                    Map<String, Double> one = readInsightDoubles(mediaId, metric, token);
+                    if (one != null) {
+                        all.putAll(one);
+                    }
+                }
+            }
+        }
+        for (String metric : REEL_HOOK_METRICS) {
+            if (all.get(metric) != null) {
+                out.put(metric, all.get(metric));
+            }
+        }
+        return out;
+    }
+
+    /** {@code /{mediaId}/insights} values by metric name as doubles; null when Meta refuses the request (4xx). */
+    private Map<String, Double> readInsightDoubles(String mediaId, String metricsCsv, String token) {
+        URI uri = requireGraphUri(UriComponentsBuilder.fromUriString(GRAPH_BASE + "/" + mediaId + "/insights")
+                .queryParam("metric", metricsCsv)
+                .encode().build().toUri());
+        try {
+            ResponseEntity<String> response = restTemplate.exchange(
+                    uri, HttpMethod.GET, new HttpEntity<>(bearer(token)), String.class);
+            return parseInsightDoubles(parseJson(response.getBody()));
+        } catch (HttpClientErrorException e) {
+            log.debug("Instagram insights [{}] unavailable for media {}: {} {}", metricsCsv, mediaId,
+                    e.getStatusCode().value(), e.getResponseBodyAsString());
+            return null;
+        }
+    }
+
+    /** {@code data[]} as name to number, reading {@code values[0].value} or {@code total_value.value}. */
+    static Map<String, Double> parseInsightDoubles(JsonNode body) {
+        Map<String, Double> byName = new java.util.HashMap<>();
+        JsonNode data = body != null && body.path("data").isArray() ? body.path("data") : null;
+        if (data == null) {
+            return byName;
+        }
+        for (JsonNode entry : data) {
+            String name = entry.path("name").asText(null);
+            JsonNode values = entry.path("values");
+            JsonNode value = values.isArray() && !values.isEmpty() ? values.get(0).path("value")
+                    : entry.path("total_value").path("value");
+            if (name != null && value.isNumber()) {
+                byName.put(name, value.asDouble());
+            }
+        }
+        return byName;
     }
 
     /** One media's insights edge answer — everything null when the read failed, see {@link #readMediaInsights}. */

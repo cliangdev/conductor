@@ -45,7 +45,7 @@ Run: <runId>   Creative: <display id, or "not yet committed">   Tags: hook <type
   platform, with the window it came from, or "no data yet">
 - **Options:** <the option keys and values this platform gets, from publish-pack.json>
 
-## Alternate hooks (for variantOf hook experiments)
+## Alternate hooks (spares for later pieces with their own bodies, not a re-post of this one)
 1. <hook line> (<hookType>)
 2. <hook line> (<hookType>)
 3. <optional>

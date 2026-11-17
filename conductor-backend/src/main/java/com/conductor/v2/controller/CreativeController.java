@@ -571,7 +571,8 @@ public class CreativeController implements CreativesApi {
     private CreativePerformanceEntry toResponse(CreativePerformanceService.VariantPerformance p) {
         return new CreativePerformanceEntry(p.creativeId(), p.label(), p.posts(), p.views(),
                 p.byPlatform().stream()
-                        .map(b -> new CreativePerformancePlatform(b.platform(), b.posts(), b.views()).engagementRate(b.engagementRate()))
+                        .map(b -> new CreativePerformancePlatform(b.platform(), b.posts(), b.views()).engagementRate(b.engagementRate())
+                                .hookRate(b.hookRate()).holdRate(b.holdRate()))
                         .toList())
                 .headline(p.headline())
                 .engagementRate(p.engagementRate())
@@ -584,7 +585,11 @@ public class CreativeController implements CreativesApi {
                 .withBaselinePosts(p.withBaselinePosts())
                 .beatBaselinePosts(p.beatBaselinePosts())
                 .viewVerdict(p.viewVerdict())
-                .retentionVerdict(p.retentionVerdict());
+                .retentionVerdict(p.retentionVerdict())
+                .hookRate(p.hookRate())
+                .holdRate(p.holdRate())
+                .medianHookLift(p.medianHookLift())
+                .hookVerdict(p.hookVerdict());
     }
 
     private CreativeExperimentResponse toResponse(CreativeExperiment e) {

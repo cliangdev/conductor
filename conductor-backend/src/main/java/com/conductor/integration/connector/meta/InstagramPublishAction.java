@@ -99,6 +99,8 @@ class InstagramPublishAction {
             if (m.reach() != null) row.put("reach", m.reach());
             if (m.saves() != null) row.put("saves", m.saves());
             if (m.totalInteractions() != null) row.put("total_interactions", m.totalInteractions());
+            // Optional hook and watch numbers; each is present only when the platform answered it.
+            m.extra().forEach((key, value) -> row.putIfAbsent(key, value));
             rows.add(row);
             insightsForbidden = insightsForbidden || m.insightsForbidden();
         }

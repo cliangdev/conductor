@@ -24,6 +24,13 @@ export interface SidecarData extends SidecarProvenance {
   /** Google embeds SynthID in Veo and Omni output. */
   synthId?: boolean
   durationSeconds?: number
+  /** Synthetic voice (generate_voice_line): the voice, a hash of the spoken text (not the text) and how words were timed. */
+  voice?: string
+  textSha256?: string
+  characters?: number
+  timing?: string
+  /** Synthetic voice: where the voice starts in the video; compose_video reads it as the default for audio.voiceOffsetSec. */
+  offsetSec?: number
 }
 
 export const sidecarPath = (filePath: string): string => `${filePath}.provenance.json`
@@ -95,4 +102,15 @@ export async function readProvenanceSidecar(filePath: string): Promise<SidecarPr
 
 export async function writeProvenanceSidecar(filePath: string, data: SidecarData): Promise<void> {
   await writeFile(sidecarPath(filePath), JSON.stringify(data, null, 2) + '\n')
+}
+
+/** The voice start offset a generate_voice_line sidecar recorded, or null (no sidecar, no offset, or an unreadable one). */
+export async function readVoiceOffsetSec(filePath: string): Promise<number | null> {
+  try {
+    const o = JSON.parse(await readFile(sidecarPath(filePath), 'utf8')) as Record<string, unknown>
+    const v = o?.['offsetSec']
+    return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null
+  } catch {
+    return null
+  }
 }

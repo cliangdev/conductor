@@ -136,6 +136,14 @@ silent, without the track), and change it with `set_publish_targets` if they wan
 least 3 s, YouTube Shorts 60 s when a track is attached); the preflight warns. Without a track the
 key is never set.
 
+**Photo posts to Instagram or Facebook.** Photo posts on those platforms reach followers only, and a
+new account has none; organic reach comes from video. When the person asks for a photo or carousel
+post to Instagram or Facebook (or leaves `carouselAs` on `photos` for them), say that once, in one
+line, and offer the video form: a slideshow's MP4 (`carouselAs: "video"`), with a spoken first line
+once a voice is available and, until then, music and text only. Do not block: the person decides, and
+a photo post goes out if they say so. TikTok takes photo slideshows and video; YouTube takes video
+only.
+
 Then run this checklist against the copy, per destination, and **halt on any failure** — report it
 and ask how to proceed. Do not fix content yourself.
 

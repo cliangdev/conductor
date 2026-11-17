@@ -10,7 +10,15 @@ the Creative's own fields.
 ## Shot list
 | Time | Visual | On-screen text | VO / audio | Asset |
 |------|--------|----------------|------------|-------|
-| 0-3s | ... | ... | ... | <media id, "to film", or none> |
+| 0-1s (hook) | <frame 1: a concrete subject already moving, the result or the odd thing; never a title card, logo or empty scene> | <text on screen at 0 s> | <first-second line or action sound; "none" only on a photo slideshow> | <media id, "to film", or none> |
+| 1-3s | ... | ... | ... | ... |
+
+The hook row is Visual first, then On-screen, then Spoken or sound, all inside the first second.
+The product name is not in it. The payoff lands inside the first third.
+
+## Comment trigger and loop
+- Comment trigger: <one planted, honest reason to comment or send; never "comment YES" bait>
+- Loop: <pieces of 15 s or less: how the last frame flows back into the first; otherwise "none">
 
 ## Safe zones
 - At 1080x1920 keep text at y >= 290 and above y=1490 (above about y=1250 when the caption is long),

@@ -641,7 +641,11 @@ describe('get_creative', () => {
       .mockResolvedValueOnce({
         creativeId: 'c12a',
         family: [
-          { creativeId: 'c12a', label: '12a', headline: 'A', posts: 2, views: 100, engagementRate: 0.123456, avgViewPct: null, views72h: 90, byPlatform: [] },
+          { creativeId: 'c12a', label: '12a', headline: 'A', posts: 2, views: 100, engagementRate: 0.123456, avgViewPct: null, views72h: 90, hookRate: null, holdRate: null, byPlatform: [
+            { platform: 'INSTAGRAM', posts: 1, views: 60, engagementRate: 0.1, hookRate: 0.612345, holdRate: 0.4 },
+            { platform: 'YOUTUBE', posts: 1, views: 40, engagementRate: 0.1, hookRate: null, holdRate: 0.31234 },
+            { platform: 'TIKTOK', posts: 1, views: 9, engagementRate: 0.1, hookRate: null, holdRate: null },
+          ] },
           { creativeId: 'c12b', label: '12b', headline: 'B', posts: 1, views: 50, engagementRate: null, avgViewPct: null, views72h: null, byPlatform: [] },
         ],
       })
@@ -656,7 +660,12 @@ describe('get_creative', () => {
     const performance = result['performance'] as Array<Record<string, unknown>>
     expect(performance).toHaveLength(2)
     expect(performance[0]!['engagementRate']).toBe(0.1235)
-    expect(performance[0]).not.toHaveProperty('byPlatform')
+    // Per-platform rates pass through compactly: rounded, nulls omitted, platforms with no rate left out.
+    expect(performance[0]!['byPlatform']).toEqual([
+      { platform: 'INSTAGRAM', views: 60, hookRate: 0.6123, holdRate: 0.4 },
+      { platform: 'YOUTUBE', views: 40, holdRate: 0.3123 },
+    ])
+    expect(performance[1]).not.toHaveProperty('byPlatform')
   })
 
   it('falls back to listing experiments by creativeId when there is no activeExperimentId', async () => {
