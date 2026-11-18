@@ -244,97 +244,12 @@ class UnifiedCommentsE2ETest extends AbstractE2ETest {
         assertThat(asList(legacyThread.get("replies"))).hasSize(1);
     }
 
-    // --- legacy-table triggers ------------------------------------------------------------------------
-
     @Test
-    void writesToTheLegacyDocCommentTablesShowUpInTheUnifiedOnes() {
-        String commentId = UUID.randomUUID().toString();
-        String replyId = UUID.randomUUID().toString();
-        String userId = jdbc.queryForObject("SELECT created_by FROM project_docs WHERE id = ?", String.class, projectDocId);
-
-        jdbc.update("INSERT INTO doc_comments (id, doc_id, author_id, content, line_number, quoted_text) VALUES (?,?,?,?,?,?)",
-                commentId, projectDocId, userId, "old code wrote this", 2, "the second line");
-        jdbc.update("INSERT INTO doc_comment_replies (id, comment_id, author_id, content) VALUES (?,?,?,?)",
-                replyId, commentId, userId, "old reply");
-        jdbc.update("INSERT INTO doc_comments (id, doc_id, author_label, content) VALUES (?,?,?,?)",
-                UUID.randomUUID().toString(), projectDocId, "Agent (run abcd1234)", "old agent comment");
-
-        List<Map<String, Object>> threads = list("?projectDocId=" + projectDocId, admin);
-        assertThat(threads).hasSize(2);
-        Map<String, Object> mirrored = threads.stream().filter(c -> c.get("id").equals(commentId)).findFirst().orElseThrow();
-        assertThat(mirrored).containsEntry("kind", "LINE").containsEntry("lineNumber", 2)
-                .containsEntry("content", "old code wrote this").containsEntry("authorKind", "USER");
-        assertThat(asList(mirrored.get("replies"))).hasSize(1);
-        assertThat(threads).anySatisfy(c -> assertThat(c).containsEntry("authorName", "Agent (run abcd1234)")
-                .containsEntry("authorKind", "AGENT").containsEntry("kind", "DOCUMENT"));
-
-        // Update (resolve) and delete are mirrored too.
-        jdbc.update("UPDATE doc_comments SET resolved_at = now(), resolved_by = ?, content = 'edited' WHERE id = ?",
-                userId, commentId);
-        Map<String, Object> afterUpdate = list("?projectDocId=" + projectDocId + "&status=resolved", admin).get(0);
-        assertThat(afterUpdate).containsEntry("id", commentId).containsEntry("content", "edited");
-
-        jdbc.update("DELETE FROM doc_comment_replies WHERE id = ?", replyId);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM comment_replies WHERE id = ?", Integer.class, replyId)).isZero();
-        jdbc.update("DELETE FROM doc_comments WHERE id = ?", commentId);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM comments WHERE id = ?", Integer.class, commentId)).isZero();
-    }
-
-    @Test
-    void legacyUpdatesOnlyTouchWhatTheyChangedAndNeverResurrectRows() {
-        String userId = jdbc.queryForObject("SELECT created_by FROM project_docs WHERE id = ?", String.class, projectDocId);
-        String commentId = UUID.randomUUID().toString();
-        String replyId = UUID.randomUUID().toString();
-        jdbc.update("INSERT INTO doc_comments (id, doc_id, author_id, content, line_number, quoted_text) VALUES (?,?,?,?,?,?)",
-                commentId, projectDocId, userId, "old", 2, "the second line");
-        jdbc.update("INSERT INTO doc_comment_replies (id, comment_id, author_id, content) VALUES (?,?,?,?)",
-                replyId, commentId, userId, "old reply");
-        // An insert is mirrored, and re-inserting does not overwrite what is there.
-        assertThat(jdbc.queryForObject("SELECT content FROM comments WHERE id = ?", String.class, commentId)).isEqualTo("old");
-
-        // The new code resolves the thread and edits the reply.
-        jdbc.update("UPDATE comments SET resolved_at = now(), resolved_by = ? WHERE id = ?", userId, commentId);
-        jdbc.update("UPDATE comment_replies SET content = 'new reply' WHERE id = ?", replyId);
-
-        // The old release's stale-flag sweep (line_stale/updated_at) and a no-op reply save must not undo them.
-        jdbc.update("UPDATE doc_comments SET line_stale = true, updated_at = now() WHERE id = ?", commentId);
-        jdbc.update("UPDATE doc_comment_replies SET author_label = author_label WHERE id = ?", replyId);
-        assertThat(jdbc.queryForObject("SELECT resolved_at IS NOT NULL FROM comments WHERE id = ?", Boolean.class, commentId)).isTrue();
-        assertThat(jdbc.queryForObject("SELECT resolved_by FROM comments WHERE id = ?", String.class, commentId)).isEqualTo(userId);
-        assertThat(jdbc.queryForObject("SELECT line_stale FROM comments WHERE id = ?", Boolean.class, commentId)).isTrue();
-        assertThat(jdbc.queryForObject("SELECT content FROM comment_replies WHERE id = ?", String.class, replyId)).isEqualTo("new reply");
-
-        // An old-style resolve and edit are still mirrored.
-        String other = UUID.randomUUID().toString();
-        jdbc.update("INSERT INTO doc_comments (id, doc_id, author_id, content) VALUES (?,?,?,?)", other, projectDocId, userId, "x");
-        jdbc.update("UPDATE doc_comments SET resolved_at = now(), resolved_by = ?, content = 'y' WHERE id = ?", userId, other);
-        assertThat(jdbc.queryForObject("SELECT resolved_at IS NOT NULL FROM comments WHERE id = ?", Boolean.class, other)).isTrue();
-        assertThat(jdbc.queryForObject("SELECT content FROM comments WHERE id = ?", String.class, other)).isEqualTo("y");
-        String otherReply = UUID.randomUUID().toString();
-        jdbc.update("INSERT INTO doc_comment_replies (id, comment_id, author_id, content) VALUES (?,?,?,?)", otherReply, other, userId, "r");
-        jdbc.update("UPDATE doc_comment_replies SET content = 'r2' WHERE id = ?", otherReply);
-        assertThat(jdbc.queryForObject("SELECT content FROM comment_replies WHERE id = ?", String.class, otherReply)).isEqualTo("r2");
-
-        // A row the new code deleted stays deleted when the old release writes its legacy twin.
-        jdbc.update("DELETE FROM comment_replies WHERE id = ?", replyId);
-        jdbc.update("UPDATE doc_comment_replies SET content = 'late' WHERE id = ?", replyId);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM comment_replies WHERE id = ?", Integer.class, replyId)).isZero();
-        jdbc.update("DELETE FROM comments WHERE id = ?", commentId);
-        jdbc.update("UPDATE doc_comments SET line_stale = false, content = 'late' WHERE id = ?", commentId);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM comments WHERE id = ?", Integer.class, commentId)).isZero();
-    }
-
-    @Test
-    void newCodeWritesTheUnifiedTableOnlyAndDeletingADocCleansUp() {
+    void deletingADocRemovesItsComments() {
         Map<String, Object> created = create(projectDocTarget(), "new code", null, null, admin);
-        assertThat(jdbc.queryForObject("SELECT count(*) FROM doc_comments WHERE id = ?", Integer.class,
-                created.get("id"))).isZero();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM comments WHERE id = ?", Integer.class,
                 created.get("id"))).isEqualTo(1);
 
-        // Legacy rows are removed with their doc without tripping the mirroring trigger.
-        jdbc.update("INSERT INTO doc_comments (id, doc_id, author_label, content) VALUES (?,?,?,?)",
-                UUID.randomUUID().toString(), projectDocId, "Agent", "legacy");
         assertThat(delete("/api/v1/projects/" + projectId + "/docs/" + projectDocId, admin).is2xxSuccessful()).isTrue();
         assertThat(jdbc.queryForObject("SELECT count(*) FROM comments WHERE project_doc_id = ?", Integer.class,
                 projectDocId)).isZero();
