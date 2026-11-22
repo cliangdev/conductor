@@ -834,10 +834,14 @@ paths:
     delete:
       tags:
         - work-item-documents
-      summary: Delete a document
+      summary: Delete a document by id or filename
+      description: >
+        The only DELETE on this URL shape. A second one keyed by filename would be the same route to
+        the router, which then refuses both as ambiguous.
       operationId: deleteWorkItemDocument
       security:
         - bearerAuth: []
+        - apiKeyAuth: []
       parameters:
         - name: projectId
           in: path
@@ -852,6 +856,7 @@ paths:
         - name: docId
           in: path
           required: true
+          description: The document's id, or its filename
           schema:
             type: string
       responses:
@@ -928,46 +933,6 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "409":
           description: baseContentHash does not match the current document — it changed since it was read
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
-    delete:
-      tags:
-        - work-item-documents
-      summary: Delete a document by filename
-      operationId: deleteWorkItemDocumentByFilename
-      security:
-        - bearerAuth: []
-        - apiKeyAuth: []
-      parameters:
-        - name: projectId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: workItemId
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: filename
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "204":
-          description: Document deleted
-        "401":
-          description: Not authenticated
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "404":
-          description: Document not found
           content:
             application/json:
               schema:

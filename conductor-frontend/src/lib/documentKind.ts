@@ -26,3 +26,19 @@ export function isMarkdownDocument(doc: DocumentLike): boolean {
   const type = mediaType(doc.contentType)
   return type === 'text/markdown' || type === 'text/plain' || doc.filename.toLowerCase().endsWith('.md')
 }
+
+/** A Work Item's PRD, in the order it is preferred: `prd.html` is the current format, `prd.md` the older one. */
+const PRD_FILENAMES = ['prd.html', 'prd.md']
+
+export function isPrdDocument(doc: DocumentLike): boolean {
+  return PRD_FILENAMES.includes(doc.filename.toLowerCase())
+}
+
+/** The PRD ahead of its supporting documents, which keep the server's order (oldest first). */
+export function withPrdFirst<T extends DocumentLike>(docs: T[]): T[] {
+  const rank = (doc: T) => {
+    const index = PRD_FILENAMES.indexOf(doc.filename.toLowerCase())
+    return index === -1 ? PRD_FILENAMES.length : index
+  }
+  return [...docs].sort((a, b) => rank(a) - rank(b))
+}

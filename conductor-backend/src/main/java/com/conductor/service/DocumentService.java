@@ -197,24 +197,13 @@ public class DocumentService {
         return toDocumentView(document);
     }
 
+    /** Deletes by id, or by filename when no document has that id: both arrive on the same URL. */
     @Transactional
-    public void deleteDocumentByFilename(String projectId, String workItemId, String filename) {
+    public void deleteDocument(String projectId, String workItemId, String docIdOrFilename) {
         findWorkItemInProject(projectId, workItemId);
         projectSecurityService.requireProjectEditor(projectId);
-        Document document = documentRepository.findByWorkItemIdAndFilename(workItemId, filename)
-                .orElseThrow(() -> new EntityNotFoundException("Document not found"));
-        String storagePath = document.getStoragePath();
-        documentRepository.delete(document);
-        if (storagePath != null) {
-            gcpStorageService.delete(storagePath);
-        }
-    }
-
-    @Transactional
-    public void deleteDocument(String projectId, String workItemId, String docId) {
-        findWorkItemInProject(projectId, workItemId);
-        projectSecurityService.requireProjectEditor(projectId);
-        Document document = documentRepository.findByIdAndWorkItemId(docId, workItemId)
+        Document document = documentRepository.findByIdAndWorkItemId(docIdOrFilename, workItemId)
+                .or(() -> documentRepository.findByWorkItemIdAndFilename(workItemId, docIdOrFilename))
                 .orElseThrow(() -> new EntityNotFoundException("Document not found"));
         String storagePath = document.getStoragePath();
         documentRepository.delete(document);

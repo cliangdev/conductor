@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isHtmlDocument, isMarkdownDocument } from './documentKind'
+import { isHtmlDocument, isMarkdownDocument, isPrdDocument, withPrdFirst } from './documentKind'
 
 describe('isHtmlDocument', () => {
   it('treats a PRD.HTML file stored as text/markdown as HTML (extension wins)', () => {
@@ -36,5 +36,22 @@ describe('isMarkdownDocument', () => {
 
   it('rejects binaries', () => {
     expect(isMarkdownDocument({ filename: 'a.png', contentType: 'image/png' })).toBe(false)
+  })
+})
+
+describe('withPrdFirst', () => {
+  const names = (...files: string[]) => withPrdFirst(files.map((filename) => ({ filename }))).map((d) => d.filename)
+
+  it('puts the PRD first and keeps the order of the rest', () => {
+    expect(names('architecture.md', 'mockup.html', 'prd.html')).toEqual(['prd.html', 'architecture.md', 'mockup.html'])
+  })
+
+  it('puts prd.html before an older prd.md', () => {
+    expect(names('prd.md', 'architecture.md', 'prd.html')).toEqual(['prd.html', 'prd.md', 'architecture.md'])
+  })
+
+  it('leaves a Work Item without a PRD in its own order', () => {
+    expect(names('notes.md', 'plan.html', 'prd-notes.md')).toEqual(['notes.md', 'plan.html', 'prd-notes.md'])
+    expect(isPrdDocument({ filename: 'prd-notes.md' })).toBe(false)
   })
 })
