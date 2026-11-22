@@ -62,7 +62,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { registerPaletteActions } from '@/components/layout/CommandPalette'
 import { openMenuTrigger } from '@/components/workitems/useWorkItemListState'
 import { timeAgo } from '@/lib/format'
-import { isHtmlDocument, isMarkdownDocument } from '@/lib/documentKind'
+import { isHtmlDocument, isMarkdownDocument, isPrdDocument, withPrdFirst } from '@/lib/documentKind'
 import { readPersistedJSON, writePersistedJSON, removePersisted } from '@/lib/persisted'
 import { cn } from '@/lib/utils'
 import {
@@ -307,7 +307,7 @@ export function WorkItemDetailView({
       `/api/v2/projects/${projectId}/work-items/${issueId}/documents`,
       accessToken
     )
-    const visible = docs.filter((d) => d.filename !== 'tasks.json')
+    const visible = withPrdFirst(docs.filter((d) => d.filename !== 'tasks.json'))
     // The list carries summaries only (no content); keep any body already fetched for a document.
     setDocuments((prev) => {
       const known = new Map(prev.map((d) => [d.id, d]))
@@ -319,8 +319,8 @@ export function WorkItemDetailView({
     })
     setSelectedDocId((prev) => {
       if (prev) return prev
-      const firstMd = docs.find(isMarkdown)
-      return firstMd?.id ?? docs[0]?.id ?? null
+      const preferred = visible.find(isPrdDocument) ?? docs.find(isMarkdown)
+      return preferred?.id ?? docs[0]?.id ?? null
     })
     return visible
   }, [accessToken, projectId, issueId])

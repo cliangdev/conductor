@@ -1109,6 +1109,19 @@ describe('HTML documents', () => {
     DOCS = [{ id: 'doc-1', filename: 'prd.html', contentType: 'text/html', content: HTML }]
   })
 
+  it('shows an HTML PRD as the first tab and opens it, though it was created after the markdown documents', async () => {
+    DOCS = [
+      { id: 'doc-2', filename: 'architecture.md', contentType: 'text/markdown', content: '# Architecture' },
+      { id: 'doc-1', filename: 'prd.html', contentType: 'text/html', content: HTML },
+    ]
+    await renderView()
+
+    const prd = await screen.findByRole('tab', { name: /prd\.html/ })
+    const other = screen.getByRole('tab', { name: /architecture\.md/ })
+    expect(prd.compareDocumentPosition(other) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(prd).toHaveAttribute('aria-selected', 'true')
+  })
+
   describe('review mode', () => {
     it('keeps an anchored draft that has no line number when restoring, and posts its anchor on submit', async () => {
       localStorage.setItem(

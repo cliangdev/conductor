@@ -551,7 +551,7 @@ class DocumentServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.findByWorkItemIdAndFilename("issue-1", "spec.md")).thenReturn(Optional.of(testDocument));
 
-        documentService.deleteDocumentByFilename("proj-1", "issue-1", "spec.md");
+        documentService.deleteDocument("proj-1", "issue-1", "spec.md");
 
         verify(documentRepository).delete(testDocument);
         verify(gcpStorageService).delete("proj-1/issues/issue-1/doc-1/spec.md");
@@ -562,7 +562,7 @@ class DocumentServiceTest {
         when(workItemRepository.findById("issue-1")).thenReturn(Optional.of(testIssue));
         when(documentRepository.findByWorkItemIdAndFilename("issue-1", "nonexistent.md")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> documentService.deleteDocumentByFilename("proj-1", "issue-1", "nonexistent.md"))
+        assertThatThrownBy(() -> documentService.deleteDocument("proj-1", "issue-1", "nonexistent.md"))
                 .isInstanceOf(EntityNotFoundException.class)
                 .hasMessage("Document not found");
     }

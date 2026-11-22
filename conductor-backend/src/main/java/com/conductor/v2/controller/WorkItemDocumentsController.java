@@ -72,13 +72,6 @@ public class WorkItemDocumentsController implements WorkItemDocumentsApi {
         return ResponseEntity.status(created ? 201 : 200).body(toV2(document));
     }
 
-    @Override
-    public ResponseEntity<Void> deleteWorkItemDocumentByFilename(String projectId, String workItemId,
-                                                                 String filename) {
-        documentService.deleteDocumentByFilename(projectId, workItemId, filename);
-        return ResponseEntity.noContent().build();
-    }
-
     private static DocumentSummaryResponse toV2Summary(DocumentView v) {
         return new DocumentSummaryResponse(v.id(), v.workItemId(), v.filename(), v.contentType(), v.createdAt())
                 .contentHash(v.contentHash())
