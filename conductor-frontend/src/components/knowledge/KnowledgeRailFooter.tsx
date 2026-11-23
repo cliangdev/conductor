@@ -13,7 +13,7 @@ import {
 } from '@/lib/knowledge-api'
 import { listWorkflows, listWorkflowRuns } from '@/lib/workflows'
 
-type HealthState = 'needs-attention' | 'working' | 'up-to-date' | 'waiting-for-sources'
+type HealthState = 'paused' | 'needs-attention' | 'working' | 'up-to-date' | 'waiting-for-sources'
 
 // Matches KnowledgeIngestScheduler's own 30s tick, so the chip never lags meaningfully behind the
 // pipeline it's summarizing — this component lives in the persistent Knowledge layout and, absent
@@ -26,6 +26,12 @@ const HEALTH_POLL_INTERVAL_MS = 60_000
 interface HealthData {
   counts: KnowledgeSourceCounts
   lastRunFailed: boolean
+  /** The librarian workflow's id, when one exists — the paused and failed-run chips link to it. */
+  librarianId?: string
+  /** False when the librarian is disabled (e.g. auto-paused by the consecutive-failures breaker). */
+  librarianEnabled: boolean
+  /** The id of the librarian's latest run, set only when that run FAILED. */
+  failedRunId?: string
 }
 
 /**
@@ -54,25 +60,38 @@ export function KnowledgeRailFooter({
   const [suggestedCount, setSuggestedCount] = useState(0)
 
   const loadHealth = useCallback(async (): Promise<HealthData> => {
-    // The counts and the librarian's last run are independent, so they are asked together.
-    const lastRunFailedPromise = (async () => {
+    // The counts and the librarian's workflow/last run are independent, so they are asked together.
+    const librarianPromise = (async (): Promise<
+      Pick<HealthData, 'lastRunFailed' | 'librarianId' | 'librarianEnabled' | 'failedRunId'>
+    > => {
+      const none = { lastRunFailed: false, librarianEnabled: true }
       try {
         const workflows = await listWorkflows(projectId, token)
         const librarian = workflows.find((w) => w.name === KNOWLEDGE_LIBRARIAN_SLUG)
-        if (!librarian) return false
+        if (!librarian) return none
+        // A paused librarian is the headline state; its last run adds nothing, so skip the fetch.
+        if (!librarian.enabled) {
+          return { lastRunFailed: false, librarianId: librarian.id, librarianEnabled: false }
+        }
         const runs = await listWorkflowRuns(projectId, librarian.id, token, { page: 0, size: 1 })
-        return runs[0]?.status === 'FAILED'
+        const failed = runs[0]?.status === 'FAILED'
+        return {
+          lastRunFailed: failed,
+          librarianId: librarian.id,
+          librarianEnabled: true,
+          failedRunId: failed ? runs[0].id : undefined,
+        }
       } catch {
         // Run history is a nice-to-have for the health chip — fall back to counts-only.
-        return false
+        return none
       }
     })()
-    const [counts, lastRunFailed] = await Promise.all([
+    const [counts, librarian] = await Promise.all([
       getKnowledgeSourceCounts(projectId, token),
-      lastRunFailedPromise,
+      librarianPromise,
     ])
 
-    return { counts, lastRunFailed }
+    return { counts, ...librarian }
   }, [projectId, token])
 
   useEffect(() => {
@@ -143,6 +162,7 @@ export function KnowledgeRailFooter({
 }
 
 function healthState(data: HealthData, hasContent: boolean | undefined): HealthState {
+  if (data.librarianId && !data.librarianEnabled) return 'paused'
   if (data.counts.dead > 0 || data.lastRunFailed) return 'needs-attention'
   if (data.counts.processing > 0 || data.counts.pending > 0) return 'working'
   // Nothing has ever been processed and the wiki has no content pages -- a brand-new, untouched
@@ -162,13 +182,27 @@ function HealthChip({
   hasContent: boolean | undefined
 }) {
   const state = healthState(data, hasContent)
+  const workflowHref = `/app/projects/${projectId}/workflows/${data.librarianId}`
+  const waiting = data.counts.pending + data.counts.processing
   const href =
-    state === 'needs-attention'
-      ? `/app/projects/${projectId}/knowledge/activity?tab=inbox&status=DEAD`
-      : `/app/projects/${projectId}/knowledge/activity`
+    state === 'paused'
+      ? workflowHref
+      : state === 'needs-attention'
+        ? data.counts.dead > 0 || !data.librarianId
+          ? `/app/projects/${projectId}/knowledge/activity?tab=inbox&status=DEAD`
+          : data.failedRunId
+            ? `${workflowHref}/runs/${data.failedRunId}`
+            : workflowHref
+        : `/app/projects/${projectId}/knowledge/activity`
 
   const badge =
-    state === 'needs-attention' ? (
+    state === 'paused' ? (
+      // Amber, not red: the breaker did its job and a person needs to resume it.
+      <StatusBadge
+        status="setuprequired"
+        label={waiting > 0 ? `Librarian · paused — ${waiting} waiting` : 'Librarian · paused'}
+      />
+    ) : state === 'needs-attention' ? (
       <StatusBadge status="failed" label="Librarian · needs attention" />
     ) : state === 'working' ? (
       <StatusBadge
