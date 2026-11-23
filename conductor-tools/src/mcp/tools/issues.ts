@@ -382,10 +382,20 @@ async function getWorkItemImpl(
   // ever updated by this client — so a status the backend changed on its own (a publish roll-up to
   // Published or Failed, a bundle-guard revert) was invisible to an agent polling here. The local file
   // still comes along, as what it is: the locally authored content.
-  const issue = await apiGet<IssueResponse>(endpoint.item(config.projectId, params.issueId), config)
+  const itemPath = endpoint.item(config.projectId, params.issueId)
+  const [issue, criteria] = await Promise.all([
+    apiGet<IssueResponse>(itemPath, config),
+    // The criteria (with the ids mark_criterion_met takes) are what an agent works a task against. A failure
+    // here must not hide the item itself, so it is reported beside it instead of thrown.
+    Promise.resolve()
+      .then(() => apiGet<Record<string, unknown>[]>(`${itemPath}/criteria`, config))
+      .then((rows) => (Array.isArray(rows) ? rows : null))
+      .catch(() => null),
+  ])
   const local = readIssueFile(config, params.issueId)
   return {
     ...(issue as unknown as Record<string, unknown>),
+    ...(criteria !== null ? { criteria } : { criteriaUnavailable: true }),
     localPath,
     ...(absolutePath ? { absolutePath } : {}),
     ...(local !== null ? { localContent: local } : {}),

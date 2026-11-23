@@ -11,7 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.OffsetDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -24,7 +26,8 @@ import java.util.Map;
  * <p>{@code kind} is {@code auto} (a test or an agent can verify it) or {@code manual} (a person checks); it
  * defaults to {@code auto} when omitted, matching the schema. Replacing the list keeps the progress already
  * made on a criterion that is sent again -- matched by {@code externalRef} when it has one, otherwise by
- * identical text -- so re-asserting the same list is harmless and never un-ticks anything.
+ * identical text -- so re-asserting the same list is harmless and never un-ticks anything. Rows that share a
+ * key are matched in order, one input each, and any left unmatched are deleted, so a duplicate can't linger.
  */
 @Service
 public class WorkItemCriteriaService {
@@ -75,9 +78,11 @@ public class WorkItemCriteriaService {
             throw new BusinessException("A Work Item can carry at most " + MAX_CRITERIA + " criteria");
         }
         List<WorkItemCriterion> existing = criterionRepository.findByWorkItemIdOrderByPositionAscCreatedAtAsc(itemId);
-        Map<String, WorkItemCriterion> available = new HashMap<>();
+        // Every stored row, queued by key in list order: two rows can share a key (one externalRef on two
+        // criteria), and a row no input claims must still be deleted below.
+        Map<String, Deque<WorkItemCriterion>> available = new HashMap<>();
         for (WorkItemCriterion c : existing) {
-            available.putIfAbsent(matchKey(c.getExternalRef(), c.getText()), c);
+            available.computeIfAbsent(matchKey(c.getExternalRef(), c.getText()), k -> new ArrayDeque<>()).add(c);
         }
 
         List<WorkItemCriterion> result = new ArrayList<>();
@@ -91,7 +96,8 @@ public class WorkItemCriteriaService {
             if (ref != null && ref.length() > 32) {
                 throw new BusinessException("externalRef must be at most 32 characters");
             }
-            WorkItemCriterion row = available.remove(matchKey(ref, text));
+            Deque<WorkItemCriterion> same = available.get(matchKey(ref, text));
+            WorkItemCriterion row = same == null ? null : same.poll();
             if (row == null) {
                 row = new WorkItemCriterion();
                 row.setProjectId(projectId);
@@ -104,7 +110,14 @@ public class WorkItemCriteriaService {
             result.add(row);
         }
         // Whatever was not matched is gone from the new list.
-        criterionRepository.deleteAll(new ArrayList<>(available.values()));
+        List<WorkItemCriterion> unmatched = new ArrayList<>();
+        existing.forEach(c -> {
+            Deque<WorkItemCriterion> same = available.get(matchKey(c.getExternalRef(), c.getText()));
+            if (same != null && same.contains(c)) {
+                unmatched.add(c);
+            }
+        });
+        criterionRepository.deleteAll(unmatched);
         return criterionRepository.saveAll(result);
     }
 

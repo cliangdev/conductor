@@ -105,6 +105,49 @@ class WorkItemCriteriaServiceTest {
     }
 
     @Test
+    void replaceAllRemovesADuplicateRowThatSharesAReference() {
+        WorkItemCriterion first = existing("c-a", "Terms ban abuse", "AC-P0-8.4", 0);
+        first.setMet(true);
+        WorkItemCriterion duplicate = existing("c-b", "Legal skim recorded", "AC-P0-8.4", 1);
+        stored.addAll(List.of(first, duplicate));
+
+        List<WorkItemCriterion> rows = service.replaceAll(PROJECT, "item-1", List.of(in("Terms ban abuse", null, "AC-P0-8.4")));
+
+        assertThat(rows).containsExactly(first);
+        assertThat(first.isMet()).isTrue();
+        org.mockito.Mockito.verify(criterionRepository).deleteAll(List.of(duplicate));
+    }
+
+    @Test
+    void replaceAllWithNothingRemovesEveryRowIncludingDuplicates() {
+        WorkItemCriterion a = existing("c-a", "One", "AC-1", 0);
+        WorkItemCriterion b = existing("c-b", "Two", "AC-1", 1);
+        WorkItemCriterion c = existing("c-c", "Three", "AC-1", 2);
+        stored.addAll(List.of(a, b, c));
+
+        service.replaceAll(PROJECT, "item-1", List.of());
+
+        org.mockito.Mockito.verify(criterionRepository).deleteAll(org.mockito.ArgumentMatchers.argThat(
+                (List<WorkItemCriterion> gone) -> gone.size() == 3 && gone.containsAll(List.of(a, b, c))));
+    }
+
+    @Test
+    void resendingTwoCriteriaWithOneReferenceKeepsEachRowAndItsProgress() {
+        WorkItemCriterion first = existing("c-a", "First", "AC-1", 0);
+        first.setMet(true);
+        WorkItemCriterion second = existing("c-b", "Second", "AC-1", 1);
+        stored.addAll(List.of(first, second));
+
+        List<WorkItemCriterion> rows = service.replaceAll(PROJECT, "item-1", List.of(
+                in("First", null, "AC-1"), in("Second", null, "AC-1")));
+
+        assertThat(rows).containsExactly(first, second);
+        assertThat(first.isMet()).isTrue();
+        assertThat(second.isMet()).isFalse();
+        org.mockito.Mockito.verify(criterionRepository).deleteAll(List.of());
+    }
+
+    @Test
     void replaceAllRefusesBlankTextAndUnknownKind() {
         assertThatThrownBy(() -> service.replaceAll(PROJECT, "item-1", List.of(in("  ", null, null))))
                 .isInstanceOf(BusinessException.class);

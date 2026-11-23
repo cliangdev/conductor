@@ -400,7 +400,7 @@ export const TOOLS = [
   },
   {
     name: 'get_work_item',
-    description: 'Get a single Work Item by ID. Canonical tool (targets the v2 work-items API).',
+    description: 'Get a single Work Item by ID, with its acceptance criteria ({criterionId, text, kind, externalRef, met, evidence}; criteriaUnavailable: true when they could not be read). Canonical tool (targets the v2 work-items API).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -461,7 +461,7 @@ export const TOOLS = [
   },
   {
     name: 'mark_criterion_met',
-    description: 'Mark an acceptance criterion met or unmet, identified by criterionId or externalRef. Returns {criterionId, met, criteriaMet, criteriaTotal}; verify with get_work_item_tree.',
+    description: 'Mark an acceptance criterion met or unmet, identified by criterionId or externalRef (refused when the externalRef matches more than one; pass criterionId). Returns {criterionId, met, criteriaMet, criteriaTotal}; verify with get_work_item_tree.',
     inputSchema: {
       type: 'object',
       properties: {
