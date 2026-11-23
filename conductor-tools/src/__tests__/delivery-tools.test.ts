@@ -216,6 +216,17 @@ describe('delivery tools', () => {
       expect(out).toEqual({ criterionId: 'c1', met: false, criteriaMet: 0, criteriaTotal: 4 })
     })
 
+    it('errors when an externalRef matches more than one criterion, naming their ids, without patching', async () => {
+      mock(apiGet).mockResolvedValue([
+        { criterionId: 'c1', externalRef: 'AC-1', text: 'one' },
+        { criterionId: 'c2', externalRef: 'AC-1', text: 'two' },
+      ])
+      const out = await markCriterionMet({ issueId: 'a', externalRef: 'AC-1', met: true }, config)
+      expect(out).toHaveProperty('error')
+      expect(String((out as { error: string }).error)).toMatch(/c1.*c2/)
+      expect(apiPatch).not.toHaveBeenCalled()
+    })
+
     it('errors on an unknown externalRef without patching', async () => {
       mock(apiGet).mockResolvedValue([{ criterionId: 'c1', externalRef: 'AC-1' }])
       const out = await markCriterionMet({ issueId: 'a', externalRef: 'NOPE', met: true }, config)

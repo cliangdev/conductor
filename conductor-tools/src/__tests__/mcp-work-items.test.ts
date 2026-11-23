@@ -96,6 +96,28 @@ describe('canonical work_item MCP tools target v2', () => {
     )
   })
 
+  it('get_work_item includes the criteria with their ids, as conductor:implement reads them', async () => {
+    const criteria = [
+      { criterionId: 'c1', text: 'Saves are refused', kind: 'auto', externalRef: 'AC-P0-1.2', met: false },
+      { criterionId: 'c2', text: 'Owner checked', kind: 'manual', externalRef: null, met: true, evidence: 'PR 1' },
+    ]
+    ;(apiGet as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) =>
+      url.endsWith('/criteria') ? criteria : { id: 'w1', displayId: 'C-9' })
+    const out = await getWorkItem({ issueId: 'w1' }, config)
+    expect(apiGet).toHaveBeenCalledWith('/api/v2/projects/proj-1/work-items/w1/criteria', config)
+    expect(out).toMatchObject({ id: 'w1', displayId: 'C-9', criteria })
+  })
+
+  it('get_work_item still returns the item when its criteria cannot be read', async () => {
+    ;(apiGet as ReturnType<typeof vi.fn>).mockImplementation(async (url: string) => {
+      if (url.endsWith('/criteria')) throw new Error('API error 500')
+      return { id: 'w1' }
+    })
+    const out = await getWorkItem({ issueId: 'w1' }, config)
+    expect(out).toMatchObject({ id: 'w1', criteriaUnavailable: true })
+    expect(out).not.toHaveProperty('criteria')
+  })
+
   it('get_work_item GETs the v2 item when no local file exists', async () => {
     ;(apiGet as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'w1' })
     await getWorkItem({ issueId: 'w1' }, config)

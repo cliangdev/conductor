@@ -100,11 +100,15 @@ export async function markCriterionMet(
   if (!criterionId) {
     if (!params.externalRef) return { error: 'Pass criterionId or externalRef.' }
     const rows = await apiGet<Criterion[]>(criteriaPath, config)
-    const match = rows.find((r) => r.externalRef === params.externalRef)
-    if (!match) {
+    const matches = rows.filter((r) => r.externalRef === params.externalRef)
+    if (matches.length === 0) {
       return { error: `No criterion with externalRef "${params.externalRef}" on this Work Item.` }
     }
-    criterionId = match.criterionId
+    if (matches.length > 1) {
+      const ids = matches.map((m) => m.criterionId).join(', ')
+      return { error: `externalRef "${params.externalRef}" matches ${matches.length} criteria (${ids}); pass criterionId.` }
+    }
+    criterionId = matches[0].criterionId
   }
 
   const body: Record<string, unknown> = { met: params.met }
