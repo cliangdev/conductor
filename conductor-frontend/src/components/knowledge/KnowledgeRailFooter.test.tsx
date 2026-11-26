@@ -194,4 +194,60 @@ describe('KnowledgeRailFooter', () => {
 
     expect(await screen.findByText('Librarian · needs attention')).toBeInTheDocument()
   })
+
+  describe('paused librarian', () => {
+    const failedRun: WorkflowRunDto = { id: 'run-1', workflowId: 'wf-1', triggerType: 'workflow_dispatch', status: 'FAILED', startedAt: new Date().toISOString() }
+
+    it('shows paused with the waiting count, linking to the workflow page', async () => {
+      countsBehavior = () => Promise.resolve({ pending: 500, processing: 88, processed: 10, skipped: 0, dead: 0 })
+      listWorkflowsBehavior = () => Promise.resolve([workflow({ enabled: false, autoPauseReason: 'CONSECUTIVE_FAILURES' })])
+      listWorkflowRunsBehavior = () => Promise.resolve([failedRun])
+
+      render(<KnowledgeRailFooter projectId="proj-1" token="tok" />)
+
+      const text = await screen.findByText('Librarian · paused — 588 waiting')
+      expect(text.closest('a')).toHaveAttribute('href', '/app/projects/proj-1/workflows/wf-1')
+    })
+
+    it('shows plain paused when nothing is waiting', async () => {
+      listWorkflowsBehavior = () => Promise.resolve([workflow({ enabled: false })])
+
+      render(<KnowledgeRailFooter projectId="proj-1" token="tok" />)
+
+      expect(await screen.findByText('Librarian · paused')).toBeInTheDocument()
+    })
+
+    it('outranks needs-attention when sources are dead', async () => {
+      countsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 10, skipped: 0, dead: 3 })
+      listWorkflowsBehavior = () => Promise.resolve([workflow({ enabled: false })])
+
+      render(<KnowledgeRailFooter projectId="proj-1" token="tok" />)
+
+      expect(await screen.findByText('Librarian · paused')).toBeInTheDocument()
+      expect(screen.queryByText('Librarian · needs attention')).not.toBeInTheDocument()
+    })
+  })
+
+  it('links needs-attention to the failed run when there are no dead sources', async () => {
+    listWorkflowsBehavior = () => Promise.resolve([workflow()])
+    listWorkflowRunsBehavior = () =>
+      Promise.resolve([{ id: 'run-9', workflowId: 'wf-1', triggerType: 'workflow_dispatch', status: 'FAILED', startedAt: new Date().toISOString() }])
+
+    render(<KnowledgeRailFooter projectId="proj-1" token="tok" />)
+
+    const link = (await screen.findByText('Librarian · needs attention')).closest('a')
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/workflows/wf-1/runs/run-9')
+  })
+
+  it('keeps the DEAD filter link when sources are dead, even if the last run also failed', async () => {
+    countsBehavior = () => Promise.resolve({ pending: 0, processing: 0, processed: 10, skipped: 0, dead: 2 })
+    listWorkflowsBehavior = () => Promise.resolve([workflow()])
+    listWorkflowRunsBehavior = () =>
+      Promise.resolve([{ id: 'run-9', workflowId: 'wf-1', triggerType: 'workflow_dispatch', status: 'FAILED', startedAt: new Date().toISOString() }])
+
+    render(<KnowledgeRailFooter projectId="proj-1" token="tok" />)
+
+    const link = (await screen.findByText('Librarian · needs attention')).closest('a')
+    expect(link).toHaveAttribute('href', '/app/projects/proj-1/knowledge/activity?tab=inbox&status=DEAD')
+  })
 })
